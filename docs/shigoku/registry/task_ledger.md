@@ -1,7 +1,7 @@
 # SHIGOKU タスク台帳
 
 - 更新日: 2026-06-09
-- 総タスク数: 284
+- 総タスク数: 285
 - ステータス許可値: backlog / active / done / deferred / archived
 - doc_type 許可値: spec / roadmap / plan / subtask_plan / work_report / work_log / manual
 
@@ -291,3 +291,4 @@
 | SGK-2026-0272 | InjectionManager thin compatibility wrapper 群の段階削除 | active | subtask_plan | SGK-2026-0265 | docs/shigoku/subtasks/2026-06-09_injectionmanager-thin-compatibility-wrapper_subtask_plan.md |
 | SGK-2026-0273 | API probe 純粋 helper の追加抽出 (4関数) | active | subtask_plan | SGK-2026-0265 | docs/shigoku/subtasks/2026-06-09_api-probe-helper-4_subtask_plan.md |
 | SGK-2026-0274 | tool runner 結果整形の manager_internal 抽出 | active | subtask_plan | SGK-2026-0265 | docs/shigoku/subtasks/2026-06-09_tool-runner-manager-internal_subtask_plan.md |
+| SGK-2026-0275 | _process_single_url branch単位分割 | active | subtask_plan | SGK-2026-0265 | docs/shigoku/subtasks/2026-06-09_process-single-url-branch_subtask_plan.md |

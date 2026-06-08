@@ -106,6 +106,9 @@ from src.core.agents.swarm.injection.manager_internal.tool_runners import (
     format_cors_hunter_result,
     format_simple_hunter_result,
 )
+from src.core.agents.swarm.injection.manager_internal.process_url_dispatcher import (
+    process_unknown_classification_only,
+)
 from src.core.agents.swarm.injection.manager_internal.unknown_hypotheses import (
     build_unknown_hypotheses,
     build_unknown_idor_candidate_finding,
@@ -2681,22 +2684,20 @@ class InjectionManagerAgent(BaseManagerAgent):
                 )
 
                 if unknown_classification_only:
-                    unknown_profile = build_unknown_hypotheses(url, base_params, available_specialists=set(self.specialists.keys()))
-                    tested_params = sanitize_tested_params(
-                        list(unknown_profile.get("query_keys", [])) + list(unknown_profile.get("form_fields", [])),
+                    result = process_unknown_classification_only(
+                        url=url,
+                        base_params=base_params,
+                        available_specialists=set(self.specialists.keys()),
+                        source_agent_name=self.name,
                         excluded_params=self.EXCLUDED_TESTED_PARAMS,
                     )
-                    idor_candidate = build_unknown_idor_candidate_finding(
-                        url=url,
-                        tested_params=tested_params,
-                        unknown_profile=unknown_profile,
-                    source_agent_name=self.name,
-                    excluded_params=self.EXCLUDED_TESTED_PARAMS,
-                    )
+                    findings_count = result["findings_count"]
+                    findings_list = result["findings_list"]
+                    tested_params = result["tested_params"]
+                    unknown_profile = result["unknown_profile"]
+                    idor_candidate = result["idor_candidate"]
                     if idor_candidate is not None:
                         self.current_context["findings"].append(idor_candidate)
-                        findings_count = 1
-                        findings_list = [idor_candidate]
                     logger.info(
                         "[%s] unknown classification-only mode: url=%s hypotheses=%s specialists=%s",
                         self.name,
