@@ -9,7 +9,7 @@ related_docs:
 - docs/shigoku/specs/fix_injection_swarm.md
 title: '巨大ファイル分割計画 2/4: InjectionManager 分割'
 created_at: '2026-06-05'
-updated_at: '2026-06-08'
+updated_at: '2026-06-09'
 tags:
 - shigoku
 target: src/core/agents/swarm/injection/manager.py
@@ -116,6 +116,17 @@ target: src/core/agents/swarm/injection/manager.py
 - [x] 手順9.5/10: `_build_unknown_hypotheses`（~171行）、`_build_unknown_idor_candidate_finding`（~46行）を `manager_internal/unknown_hypotheses.py` へ抽出する。`current_context`へのmutationが多いため、事前にcharacter testを拡充し全unknown系分岐をカバーしてから着手する。テスト不十分な場合は【着手しない】判断とする。（`_run_unknown_hypothesis_scans` は全 hunter dispatcher のため【着手しない】。2関数のみ抽出。+21 char tests + 22 unit tests。抽出漏れ `unknown_profile` キーを修正。412 passed。）
 - [x] 手順10/10: `tests/core/agents/swarm/test_injection_manager.py`、`tests/core/agents/swarm/injection/` 配下の分類・unknown・SSRF・GraphQL・Phase2 関連回帰を実行し、`InjectionSwarm` の入力互換と出力互換を確認する。機能回帰に加えて `per-target duration`、`manager total duration`、`Phase1 completed URLs`、`validated/rejected ratio` を分割前後で比較し、 compatibility wrapper の削除候補を work_report に残す。（targeted tests は通過済み。Full suite + 性能比較は未実施。→ 実施完了。下記参照。）
 - [x] 手順11/10: 【最終判断・着手しない領域の明示】残存する `_run_api_minimal_check` 本体オーケストレーションと `dispatch` は「オーケストレーションの脊柱」として【着手しない】ことを確定する。これ以上の抽出はファイル行数削減が目的化しており、検出精度の事業価値を毀損するリスクが利益を上回る。`manager.py` の残存行数目標は撤廃し、責務境界の明確さのみを成功指標とする。（確定。`_run_api_minimal_check` 本体, `dispatch`, `_run_unknown_hypothesis_scans` の3件を着手しない。）
+
+### 4.0.1 追加実装ステップ候補（SGK-2026-0265 完了後の follow-up）
+
+以下は `manager.py` が 3854 行残っている現状に対して、CTO 判断で除外した高リスク領域を避けつつ、追加でコード量を減らすための候補である。実施時は SGK-2026-0265 を再オープンせず、新規 follow-up task を採番して `active` で追跡する。
+
+- [ ] 追加手順12/10: thin compatibility wrapper 群を段階削除する。対象は `_classify_url`、`_extract_form_field_names`、`_score_target_priority`、`_prioritize_targets`、`_sanitize_tested_params`、`_normalize_blind_correlation`、`_summarize_*` など、既に `manager_internal/*` へ抽出済みで `self` 状態に依存しない wrapper に限定する。まず呼び出し箇所が少ない wrapper から直接 import 関数へ置換し、`_sanitize_tested_params` のような多呼び出し wrapper は最後にまとめて置換する。検証は `tests/core/agents/swarm/injection/test_result_normalizer.py`、`test_manager_result_normalizer_character.py`、`test_manager_phase1_results_character.py`、`test_manager_target_selection_character.py` を先に実行する。
+- [ ] 追加手順13/10: API probe の純粋 helper を追加抽出する。対象は `_parse_json_dict`、`_mutate_schema_candidate_value`、`_extract_mass_assignment_schema_candidates`、`_build_mass_assignment_variant_payload` とし、`manager_internal/api_probe_payload.py` または責務名が明確な新規 `api_probe_mass_assignment.py` へ移す。`_run_api_minimal_check` 本体の時系列オーケストレーションは移動せず、helper の入力/出力だけを character test で固定する。
+- [ ] 追加手順14/10: tool runner 群の結果整形だけを `manager_internal/tool_runners.py` 側へ寄せる。public method (`run_sqli_hunter` など) は `manager.py` に facade として残し、specialist 実行、`current_context["findings"]` への追加、結果 dict の shape を既存互換のまま維持する。まず `run_lfi_check`、`run_open_redirect_check`、`run_cors_hunter` のように blind correlation を持たない runner から着手し、`sqli` / `cmd_ssrf` / `ssrf` は後回しにする。
+- [ ] 追加手順15/10: `_process_single_url` を branch 単位で分割する。最初に unknown classification-only branch と admin/api/csrf branch の result shape を character test で固定し、`process_url_dispatcher.py` など InjectionManager 専用モジュールへ小さな関数として移す。`_request_cache` 書き込み、`build_process_url_cache_entry`、`normalize_findings_additional_info` の出口は当面 facade 側に残し、cache shape の同時変更を避ける。
+- [ ] 追加手順16/10: `_ssrf_reachability_gate`、`_is_high_risk_endpoint`、`_build_timeout_cause_key`、`_refresh_auth_context_on_timeout`、`_emit_phase1_heartbeat` のうち、純粋判定またはログ専用に近いものだけを `execution_policy.py` または `phase1_results.py` へ追加移動する。timeout/backoff の意味が変わる変更は避け、`tests/core/agents/swarm/injection/test_ssrf_lane1_gate.py` と `test_manager_phase2_lane2_integration.py` を必ず局所回帰として実行する。
+- [ ] 追加手順17/10: 追加分割後も `_run_api_minimal_check` 本体、`dispatch` 本体、`_run_unknown_hypothesis_scans` 本体は引き続き「オーケストレーションの脊柱」として移動対象外にする。もし移動が必要になった場合は、既存 character test だけでは不十分なため、未認証 probe、authA/authB matrix、object A/B、method discovery、mass-assignment auto-reverification、read-only fallback の各分岐を先に fixture 化してから別計画で扱う。
 
 ### 4.1 手順10 Full Suite 回帰・性能比較結果
 

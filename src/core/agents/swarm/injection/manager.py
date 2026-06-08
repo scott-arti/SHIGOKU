@@ -32,9 +32,7 @@ from src.core.agents.swarm.injection.manager_internal.target_classifier import (
     classify_target_url,
 )
 from src.core.agents.swarm.injection.manager_internal.target_selection import (
-    extract_form_field_names,
     prioritize_targets,
-    score_target_priority,
 )
 from src.core.agents.swarm.injection.manager_internal.execution_policy import (
     cap_phase2_budget,
@@ -366,10 +364,6 @@ class InjectionManagerAgent(BaseManagerAgent):
     # --- URL の「タイプ」判定ヘルパー ---
 
     @staticmethod
-    def _classify_url(url: str, category: str = "") -> str:
-        """カテゴリヒントとパス名からターゲットの脆弱性種別を推定する。"""
-        return classify_target_url(url, category)
-
     @staticmethod
     def _ssrf_reachability_gate(url: str, base_params: Dict[str, Any]) -> tuple[bool, str]:
         """
@@ -420,52 +414,6 @@ class InjectionManagerAgent(BaseManagerAgent):
         return False, "no_ssrf_injection_point"
 
     @staticmethod
-    def _extract_form_field_names(forms: Any) -> set[str]:
-        """forms 構造から field/input 名を抽出する。"""
-        return extract_form_field_names(forms)
-
-    @staticmethod
-    def _score_target_priority(
-        url: str,
-        *,
-        category: str,
-        form_fields: set[str],
-        url_evidence: Dict[str, Any],
-    ) -> Tuple[int, List[str]]:
-        """
-        Step6 用の優先度スコアを返す。
-        スコアは高いほど先行実行する。
-        """
-        return score_target_priority(
-            url,
-            category=category,
-            form_fields=form_fields,
-            url_evidence=url_evidence,
-        )
-
-    @classmethod
-    def _prioritize_targets(
-        cls,
-        targets: List[str],
-        *,
-        forms_by_url: Optional[Dict[str, Any]] = None,
-        url_evidence_by_url: Optional[Dict[str, Dict[str, Any]]] = None,
-        category: str = "",
-    ) -> List[Tuple[str, int, List[str]]]:
-        """
-        URL に Step6 用スコアを付ける。
-
-        Returns:
-            (url, priority_score, priority_signals) のタプリリスト（score 降順）
-        """
-        return prioritize_targets(
-            targets,
-            forms_by_url=forms_by_url,
-            url_evidence_by_url=url_evidence_by_url,
-            category=category,
-        )
-
-    @staticmethod
     def _dedupe_preserve_order(items: List[str]) -> List[str]:
         """順序を維持して重複を除去する。"""
         deduped: List[str] = []
@@ -474,13 +422,6 @@ class InjectionManagerAgent(BaseManagerAgent):
                 deduped.append(item)
         return deduped
 
-    def _build_unknown_hypotheses(self, url: str, base_params: Dict[str, Any]) -> Dict[str, Any]:
-        return build_unknown_hypotheses(
-            url,
-            base_params,
-            available_specialists=set(self.specialists.keys()),
-        )
-
     async def _run_unknown_hypothesis_scans(
         self,
         url: str,
@@ -488,7 +429,7 @@ class InjectionManagerAgent(BaseManagerAgent):
         quick_mode: bool,
     ) -> Dict[str, Any]:
         """仮説に沿って必要な Specialist のみ実行する。"""
-        profile = self._build_unknown_hypotheses(url, base_params)
+        profile = build_unknown_hypotheses(url, base_params, available_specialists=set(self.specialists.keys()))
         selected = profile.get("selected_specialists", [])
 
         logger.info(
@@ -509,7 +450,7 @@ class InjectionManagerAgent(BaseManagerAgent):
                 sqli_result = await self.run_sqli_hunter(url=url, params=base_params, quick_mode=quick_mode)
                 unknown_results.append(sqli_result)
                 if not blind_correlation:
-                    blind_correlation = self._normalize_blind_correlation(
+                    blind_correlation = normalize_blind_correlation(
                         sqli_result.get("blind_correlation", {}) or {}
                     )
             elif specialist == "xss":
@@ -532,7 +473,7 @@ class InjectionManagerAgent(BaseManagerAgent):
                 cmd_result = await self.run_cmd_ssrf_hunter(url=url, params=base_params, quick_mode=quick_mode)
                 unknown_results.append(cmd_result)
                 if not blind_correlation:
-                    blind_correlation = self._normalize_blind_correlation(
+                    blind_correlation = normalize_blind_correlation(
                         cmd_result.get("blind_correlation", {}) or {}
                     )
             elif specialist == "ssrf":
@@ -552,27 +493,12 @@ class InjectionManagerAgent(BaseManagerAgent):
         return {
             "findings_count": findings_count,
             "findings": findings_list,
-            "tested_params": self._sanitize_tested_params(merged_params),
+            "tested_params": sanitize_tested_params(merged_params, excluded_params=self.EXCLUDED_TESTED_PARAMS),
             "reflection_observed": reflection_observed,
             "xss_evidence": xss_evidence,
-            "blind_correlation": self._normalize_blind_correlation(blind_correlation),
+            "blind_correlation": normalize_blind_correlation(blind_correlation),
             "unknown_profile": profile,
         }
-
-    def _build_unknown_idor_candidate_finding(
-        self,
-        *,
-        url: str,
-        tested_params: List[str],
-        unknown_profile: Dict[str, Any],
-    ) -> Optional[Finding]:
-        return build_unknown_idor_candidate_finding(
-            url=url,
-            tested_params=tested_params,
-            unknown_profile=unknown_profile,
-            source_agent_name=self.name,
-            excluded_params=self.EXCLUDED_TESTED_PARAMS,
-        )
 
     @staticmethod
     def _extract_security_level(cookies: str) -> str:
@@ -613,13 +539,10 @@ class InjectionManagerAgent(BaseManagerAgent):
         if vuln_type == "sqli":
             sqli_params = getattr(self.specialists.get("sqli"), "last_tested_params", []) or []
             xss_params = getattr(self.specialists.get("xss"), "last_tested_params", []) or []
-            return self._sanitize_tested_params(sqli_params + xss_params)
+            return sanitize_tested_params(sqli_params + xss_params, excluded_params=self.EXCLUDED_TESTED_PARAMS)
         if vuln_type == "xss":
-            return self._sanitize_tested_params(getattr(self.specialists.get("xss"), "last_tested_params", []) or [])
+            return sanitize_tested_params(getattr(self.specialists.get("xss"), "last_tested_params", []) or [])
         return []
-
-    def _sanitize_tested_params(self, params: List[str]) -> List[str]:
-        return sanitize_tested_params(params, excluded_params=self.EXCLUDED_TESTED_PARAMS)
 
     @staticmethod
     def _parse_json_dict(text: str) -> Dict[str, Any]:
@@ -766,10 +689,6 @@ class InjectionManagerAgent(BaseManagerAgent):
         return variant
 
     @staticmethod
-    def _build_object_ab_target(url: str) -> Dict[str, Any]:
-        return build_object_ab_target(url)
-
-    @staticmethod
     def _normalize_param_name_hints(raw: Any) -> List[str]:
         """LLM ツール呼び出し由来の param ヒントを正規化する。"""
         names: List[str] = []
@@ -902,30 +821,6 @@ class InjectionManagerAgent(BaseManagerAgent):
         return default_mode
 
     @staticmethod
-    def _normalize_detection_class_token(value: Any) -> str:
-        return normalize_detection_class_token(value)
-
-    def _infer_detection_class_for_finding(self, finding: Any, info: Dict[str, Any]) -> str:
-        return infer_detection_class_for_finding(finding, info)
-
-    def _normalize_findings_additional_info(
-        self,
-        findings: List[Any],
-        tested_params: Optional[List[str]],
-        detection_mode: str,
-    ) -> None:
-        normalize_findings_additional_info(
-            findings,
-            tested_params,
-            detection_mode,
-            excluded_params=self.EXCLUDED_TESTED_PARAMS,
-        )
-
-    @staticmethod
-    def _normalize_blind_correlation(blind: Any) -> Dict[str, Any]:
-        return normalize_blind_correlation(blind)
-
-    @staticmethod
     def _coerce_bool(value: Any, default: bool) -> bool:
         """task.params 由来の bool 風値を安全に bool へ変換する。"""
         if value is None:
@@ -971,17 +866,6 @@ class InjectionManagerAgent(BaseManagerAgent):
 
         profile = str(profile).lower()
         return profile if profile in {"bbpt", "ctf"} else "bbpt"
-
-    def _resolve_per_url_timeout(self, task: Task, target_url: str, vuln_type: str) -> int:
-        """URL/脆弱性タイプ別のタイムアウト秒数を決定する。"""
-        return resolve_per_url_timeout(
-            task,
-            target_url,
-            vuln_type,
-            default_timeout_seconds=self.PER_URL_TIMEOUT_SECONDS,
-            timeout_by_type=self.PER_URL_TIMEOUT_BY_TYPE,
-            blind_sqli_timeout_seconds=self.PER_URL_TIMEOUT_BLIND_SQLI_SECONDS,
-        )
 
     def _timeout_backoff_seconds(self, retry_count: int) -> float:
         """timeout リトライ時の指数バックオフ（ジッター付き）を返す。"""
@@ -1107,7 +991,7 @@ class InjectionManagerAgent(BaseManagerAgent):
                 weak_signal = True
 
             blind = entry.get("blind_correlation", {})
-            if self._has_actionable_blind_signal(blind):
+            if has_actionable_blind_signal(blind):
                 weak_signal = True
 
             url = str(entry.get("url", "") or "")
@@ -1121,92 +1005,6 @@ class InjectionManagerAgent(BaseManagerAgent):
             "weak_signal": weak_signal,
             "high_risk_endpoint": high_risk_endpoint,
         }
-
-    @staticmethod
-    def _summarize_skip_reason_counts(phase1_url_results: List[Dict[str, Any]]) -> Dict[str, int]:
-        return summarize_skip_reason_counts(phase1_url_results)
-
-    @staticmethod
-    def _summarize_skip_reason_unknown_counts(phase1_url_results: List[Dict[str, Any]]) -> Dict[str, int]:
-        return summarize_skip_reason_unknown_counts(phase1_url_results)
-
-    @staticmethod
-    def _summarize_low_ssrf_score_breakdown(phase1_url_results: List[Dict[str, Any]]) -> Dict[str, int]:
-        return summarize_low_ssrf_score_breakdown(phase1_url_results)
-
-    @staticmethod
-    def _has_actionable_blind_signal(blind: Any) -> bool:
-        return has_actionable_blind_signal(blind)
-
-    @classmethod
-    def _is_lane2_score_eligible(cls, ssrf_score: int, risk_override: bool) -> bool:
-        """Lane-2 昇格のスコア条件を判定する。"""
-        return is_lane2_score_eligible(
-            ssrf_score,
-            risk_override,
-            lane2_score_threshold=cls.LANE2_SCORE_THRESHOLD,
-        )
-
-    @staticmethod
-    def _extract_max_ssrf_score(phase1_url_results: List[Dict[str, Any]]) -> int:
-        return extract_max_ssrf_score(phase1_url_results)
-
-    @staticmethod
-    def _should_force_phase2_by_risk(
-        *,
-        phase1_findings: List[Any],
-        phase1_signals: Dict[str, bool],
-        high_risk_requires_phase2: bool,
-    ) -> bool:
-        return should_force_phase2_by_risk(
-            phase1_findings=phase1_findings,
-            phase1_signals=phase1_signals,
-            high_risk_requires_phase2=high_risk_requires_phase2,
-        )
-
-    @staticmethod
-    def _cap_phase2_budget(
-        *,
-        remaining_budget: int,
-        phase2_forced_by_risk: bool,
-        task_params: Dict[str, Any],
-    ) -> int:
-        return cap_phase2_budget(
-            remaining_budget=remaining_budget,
-            phase2_forced_by_risk=phase2_forced_by_risk,
-            task_params=task_params,
-        )
-
-    def _resolve_risk_force_allowlist(self, task: Task, scan_profile: str) -> set[str]:
-        """
-        高リスク endpoint でも Phase2 を強制する vuln_type の allowlist を返す。
-        Core+Coverage 方針: 高リスクカテゴリは findings=0 でも Phase2 を試行して取りこぼしを減らす。
-        速度悪化を抑えるため、対象は高リスク endpoint のみ・かつ risk_forced cap で制御する。
-        """
-        return resolve_risk_force_allowlist(task, scan_profile)
-
-    @staticmethod
-    def _collect_phase1_vuln_types(phase1_url_results: List[Dict[str, Any]]) -> set[str]:
-        return collect_phase1_vuln_types(phase1_url_results)
-
-    def _should_auto_early_return(
-        self,
-        task: Task,
-        phase1_findings: List[Any],
-        phase1_signals: Dict[str, bool],
-        phase1_vuln_types: set[str],
-    ) -> bool:
-        """
-        deterministic 精度が比較的高いカテゴリは finding が出た時点で自動早期終了して
-        Phase2 の長時間化を避ける。
-        """
-        return should_auto_early_return(
-            task,
-            phase1_findings=phase1_findings,
-            phase1_signals=phase1_signals,
-            phase1_vuln_types=phase1_vuln_types,
-            coerce_bool=self._coerce_bool,
-        )
 
     async def _run_csrf_minimal_check(self, url: str, base_params: Dict[str, Any]) -> Dict[str, Any]:
         """軽量 CSRF チェック（トークン欠如 + 擬似 forged request 成立性）。"""
@@ -1392,7 +1190,7 @@ class InjectionManagerAgent(BaseManagerAgent):
         )
 
         # IDOR/BOLA object A/B 比較（ID が特定できる場合のみ）
-        object_ab_candidate = self._build_object_ab_target(url)
+        object_ab_candidate = build_object_ab_target(url)
         if object_ab_candidate:
             object_ab_result = await run_object_ab_comparison(
                 request_client=request_client,
@@ -2208,15 +2006,16 @@ class InjectionManagerAgent(BaseManagerAgent):
 
         final_findings = self.current_context.get("findings", []) if isinstance(self.current_context, dict) else []
         if isinstance(final_findings, list) and findings_start_index < len(final_findings):
-            self._normalize_findings_additional_info(
+            normalize_findings_additional_info(
                 final_findings[findings_start_index:],
                 tested_params,
                 detection_mode,
+            excluded_params=self.EXCLUDED_TESTED_PARAMS,
             )
 
         return {
             "findings_count": findings_count,
-            "tested_params": self._sanitize_tested_params(tested_params),
+            "tested_params": sanitize_tested_params(tested_params, excluded_params=self.EXCLUDED_TESTED_PARAMS),
             "probe_sent": api_probe_sent,
             "probe_skipped_reason": api_probe_skipped_reason,
             "probe_request_raw": probe_request_raw,
@@ -2292,7 +2091,7 @@ class InjectionManagerAgent(BaseManagerAgent):
             url_evidence_by_url = {}
 
         # URL に優先度スコアを付ける（Step6: 成立確率順）
-        prioritized_targets = self._prioritize_targets(
+        prioritized_targets = prioritize_targets(
             targets,
             forms_by_url=forms_by_url,
             url_evidence_by_url=url_evidence_by_url,
@@ -2346,7 +2145,7 @@ class InjectionManagerAgent(BaseManagerAgent):
             # バッチ内の URL を順次処理
             # quick_mode=False で検出率を維持しつつ、URL 単位 timeout で全体ハングを防ぐ
             for target_url, priority_score, priority_signals in batch:
-                vuln_type = self._classify_url(target_url, category=task_category)
+                vuln_type = classify_target_url(target_url, category=task_category)
                 dedupe_key = f"{target_url}|{vuln_type}|{task_category}"
                 if dedupe_key in executed_keys:
                     self.current_context["url_results"].append({
@@ -2460,7 +2259,14 @@ class InjectionManagerAgent(BaseManagerAgent):
                     continue
 
                 # quick_mode=False で十分なターン数を確保しつつ、URL 単位 timeout を適用
-                per_url_timeout = self._resolve_per_url_timeout(task, target_url, vuln_type)
+                per_url_timeout = resolve_per_url_timeout(
+                    task,
+                    target_url,
+                    vuln_type,
+                    default_timeout_seconds=self.PER_URL_TIMEOUT_SECONDS,
+                    timeout_by_type=self.PER_URL_TIMEOUT_BY_TYPE,
+                    blind_sqli_timeout_seconds=self.PER_URL_TIMEOUT_BLIND_SQLI_SECONDS,
+                )
                 if scan_profile == "bbpt" and vuln_type == "xss":
                     per_url_timeout = max(per_url_timeout, 180)
                 elif scan_profile == "ctf" and vuln_type == "xss":
@@ -2668,20 +2474,20 @@ class InjectionManagerAgent(BaseManagerAgent):
         )
         phase1_url_results = list(self.current_context.get("url_results", []))
         phase1_signals = self._summarize_phase1_signals(phase1_url_results, task.target)
-        skip_reason_counts = self._summarize_skip_reason_counts(phase1_url_results)
-        skip_reason_unknown_counts = self._summarize_skip_reason_unknown_counts(phase1_url_results)
-        low_ssrf_score_breakdown = self._summarize_low_ssrf_score_breakdown(phase1_url_results)
-        phase1_vuln_types = self._collect_phase1_vuln_types(phase1_url_results)
-        risk_force_allowlist = self._resolve_risk_force_allowlist(task, scan_profile)
-        max_ssrf_score = self._extract_max_ssrf_score(phase1_url_results)
+        skip_reason_counts = summarize_skip_reason_counts(phase1_url_results)
+        skip_reason_unknown_counts = summarize_skip_reason_unknown_counts(phase1_url_results)
+        low_ssrf_score_breakdown = summarize_low_ssrf_score_breakdown(phase1_url_results)
+        phase1_vuln_types = collect_phase1_vuln_types(phase1_url_results)
+        risk_force_allowlist = resolve_risk_force_allowlist(task, scan_profile)
+        max_ssrf_score = extract_max_ssrf_score(phase1_url_results)
         risk_override = self._coerce_bool(task.params.get("risk_override"), default=False)
-        lane2_score_eligible = self._is_lane2_score_eligible(max_ssrf_score, risk_override)
+        lane2_score_eligible = is_lane2_score_eligible(max_ssrf_score, risk_override, lane2_score_threshold=self.LANE2_SCORE_THRESHOLD)
         high_risk_requires_phase2 = (
             phase1_signals["high_risk_endpoint"]
             and bool(phase1_vuln_types & risk_force_allowlist)
             and (lane2_score_eligible if task_category == CATEGORY_SSRF_CANDIDATE else True)
         )
-        phase2_forced_by_risk = self._should_force_phase2_by_risk(
+        phase2_forced_by_risk = should_force_phase2_by_risk(
             phase1_findings=phase1_findings,
             phase1_signals=phase1_signals,
             high_risk_requires_phase2=high_risk_requires_phase2,
@@ -2694,11 +2500,12 @@ class InjectionManagerAgent(BaseManagerAgent):
             task.params.get("phase1_early_return_on_findings"),
             default=(not phase1_coverage_mode),
         )
-        auto_early_return = self._should_auto_early_return(
+        auto_early_return = should_auto_early_return(
             task=task,
             phase1_findings=phase1_findings,
             phase1_signals=phase1_signals,
             phase1_vuln_types=phase1_vuln_types,
+            coerce_bool=self._coerce_bool,
         )
         if phase1_findings and (early_return_enabled or auto_early_return):
             reason = "phase1_early_return" if early_return_enabled else "phase1_auto_early_return_findings"
@@ -2797,7 +2604,7 @@ class InjectionManagerAgent(BaseManagerAgent):
 
         elapsed_after_phase1 = asyncio.get_event_loop().time() - manager_start
         remaining_budget = max(1, manager_timeout - int(elapsed_after_phase1))
-        remaining_budget = self._cap_phase2_budget(
+        remaining_budget = cap_phase2_budget(
             remaining_budget=remaining_budget,
             phase2_forced_by_risk=phase2_forced_by_risk,
             task_params=task.params,
@@ -2920,22 +2727,22 @@ class InjectionManagerAgent(BaseManagerAgent):
             if vuln_type == "sqli":
                 sqli_result = await self.run_sqli_hunter(url=url, params=base_params, quick_mode=quick_mode)
                 findings_count = sqli_result.get("findings_count", 0)
-                tested_params = self._sanitize_tested_params(sqli_result.get("tested_params", []))
-                blind_correlation = self._normalize_blind_correlation(
+                tested_params = sanitize_tested_params(sqli_result.get("tested_params", []), excluded_params=self.EXCLUDED_TESTED_PARAMS)
+                blind_correlation = normalize_blind_correlation(
                     sqli_result.get("blind_correlation", {}) or {}
                 )
                 findings_list = self.current_context["findings"][-findings_count:] if findings_count > 0 else []
                 if findings_count == 0:
                     # SQLi 発見なしの場合、XSS のみ実行
                     xss_result = await self.run_xss_hunter(url=url, params=base_params, quick_mode=quick_mode)
-                    tested_params = self._sanitize_tested_params(tested_params + xss_result.get("tested_params", []))
+                    tested_params = sanitize_tested_params(tested_params + xss_result.get("tested_params", []), excluded_params=self.EXCLUDED_TESTED_PARAMS)
                     reflection_observed = bool(xss_result.get("reflection_observed", False))
                     xss_evidence = str(xss_result.get("evidence", "") or "")
 
             elif vuln_type == "xss":
                 xss_result = await self.run_xss_hunter(url=url, params=base_params, quick_mode=quick_mode)
                 findings_count = xss_result.get("findings_count", 0)
-                tested_params = self._sanitize_tested_params(xss_result.get("tested_params", []))
+                tested_params = sanitize_tested_params(xss_result.get("tested_params", []), excluded_params=self.EXCLUDED_TESTED_PARAMS)
                 findings_list = self.current_context["findings"][-findings_count:] if findings_count > 0 else []
                 reflection_observed = bool(xss_result.get("reflection_observed", False))
                 xss_evidence = str(xss_result.get("evidence", "") or "")
@@ -2943,25 +2750,25 @@ class InjectionManagerAgent(BaseManagerAgent):
             elif vuln_type == "lfi":
                 lfi_result = await self.run_lfi_check(url=url, params=base_params)
                 findings_count = lfi_result.get("findings_count", 0)
-                tested_params = self._sanitize_tested_params(lfi_result.get("tested_params", []))
+                tested_params = sanitize_tested_params(lfi_result.get("tested_params", []), excluded_params=self.EXCLUDED_TESTED_PARAMS)
                 findings_list = self.current_context["findings"][-findings_count:] if findings_count > 0 else []
 
             elif vuln_type == "ssti":
                 ssti_result = await self.run_ssti_hunter(url=url, params=base_params)
                 findings_count = ssti_result.get("findings_count", 0)
-                tested_params = self._sanitize_tested_params(ssti_result.get("tested_params", []))
+                tested_params = sanitize_tested_params(ssti_result.get("tested_params", []), excluded_params=self.EXCLUDED_TESTED_PARAMS)
                 findings_list = self.current_context["findings"][-findings_count:] if findings_count > 0 else []
 
             elif vuln_type == "cors":
                 cors_result = await self.run_cors_hunter(url=url, params=base_params)
                 findings_count = cors_result.get("findings_count", 0)
-                tested_params = self._sanitize_tested_params(cors_result.get("tested_params", []))
+                tested_params = sanitize_tested_params(cors_result.get("tested_params", []), excluded_params=self.EXCLUDED_TESTED_PARAMS)
                 findings_list = self.current_context["findings"][-findings_count:] if findings_count > 0 else []
 
             elif vuln_type == "crlf":
                 crlf_result = await self.run_crlf_hunter(url=url, params=base_params)
                 findings_count = crlf_result.get("findings_count", 0)
-                tested_params = self._sanitize_tested_params(crlf_result.get("tested_params", []))
+                tested_params = sanitize_tested_params(crlf_result.get("tested_params", []), excluded_params=self.EXCLUDED_TESTED_PARAMS)
                 findings_list = self.current_context["findings"][-findings_count:] if findings_count > 0 else []
 
             elif vuln_type == "redirect":
@@ -2972,8 +2779,8 @@ class InjectionManagerAgent(BaseManagerAgent):
             elif vuln_type == "cmd_ssrf":
                 cmd_result = await self.run_cmd_ssrf_hunter(url=url, params=base_params)
                 findings_count = cmd_result.get("findings_count", 0)
-                tested_params = self._sanitize_tested_params(cmd_result.get("tested_params", []))
-                blind_correlation = self._normalize_blind_correlation(
+                tested_params = sanitize_tested_params(cmd_result.get("tested_params", []), excluded_params=self.EXCLUDED_TESTED_PARAMS)
+                blind_correlation = normalize_blind_correlation(
                     cmd_result.get("blind_correlation", {}) or {}
                 )
                 findings_list = self.current_context["findings"][-findings_count:] if findings_count > 0 else []
@@ -2981,25 +2788,25 @@ class InjectionManagerAgent(BaseManagerAgent):
             elif vuln_type == "ssrf":
                 ssrf_result = await self.run_ssrf_hunter(url=url, params=base_params)
                 findings_count = ssrf_result.get("findings_count", 0)
-                tested_params = self._sanitize_tested_params(ssrf_result.get("tested_params", []))
+                tested_params = sanitize_tested_params(ssrf_result.get("tested_params", []), excluded_params=self.EXCLUDED_TESTED_PARAMS)
                 findings_list = self.current_context["findings"][-findings_count:] if findings_count > 0 else []
 
             elif vuln_type == "csrf":
                 csrf_result = await self._run_csrf_minimal_check(url=url, base_params=base_params)
                 findings_count = csrf_result.get("findings_count", 0)
-                tested_params = self._sanitize_tested_params(csrf_result.get("tested_params", []))
+                tested_params = sanitize_tested_params(csrf_result.get("tested_params", []), excluded_params=self.EXCLUDED_TESTED_PARAMS)
                 findings_list = self.current_context["findings"][-findings_count:] if findings_count > 0 else []
 
             elif vuln_type == "api":
                 api_result = await self._run_api_minimal_check(url=url, base_params=base_params)
                 findings_count = api_result.get("findings_count", 0)
-                tested_params = self._sanitize_tested_params(api_result.get("tested_params", []))
+                tested_params = sanitize_tested_params(api_result.get("tested_params", []), excluded_params=self.EXCLUDED_TESTED_PARAMS)
 
             elif vuln_type == "admin":
                 # BizLogicSwarm代替: adminエンドポイント認可バイパス試行
                 admin_result = await self.run_admin_check(url=url, params=base_params)
                 findings_count = admin_result.get("findings_count", 0)
-                tested_params = self._sanitize_tested_params(admin_result.get("tested_params", []))
+                tested_params = sanitize_tested_params(admin_result.get("tested_params", []), excluded_params=self.EXCLUDED_TESTED_PARAMS)
                 findings_list = self.current_context["findings"][-findings_count:] if findings_count > 0 else []
                 blind_correlation = {}  # adminチェックは現状未対応
 
@@ -3010,14 +2817,17 @@ class InjectionManagerAgent(BaseManagerAgent):
                 )
 
                 if unknown_classification_only:
-                    unknown_profile = self._build_unknown_hypotheses(url, base_params)
-                    tested_params = self._sanitize_tested_params(
-                        list(unknown_profile.get("query_keys", [])) + list(unknown_profile.get("form_fields", []))
+                    unknown_profile = build_unknown_hypotheses(url, base_params, available_specialists=set(self.specialists.keys()))
+                    tested_params = sanitize_tested_params(
+                        list(unknown_profile.get("query_keys", [])) + list(unknown_profile.get("form_fields", [])),
+                        excluded_params=self.EXCLUDED_TESTED_PARAMS,
                     )
-                    idor_candidate = self._build_unknown_idor_candidate_finding(
+                    idor_candidate = build_unknown_idor_candidate_finding(
                         url=url,
                         tested_params=tested_params,
                         unknown_profile=unknown_profile,
+                    source_agent_name=self.name,
+                    excluded_params=self.EXCLUDED_TESTED_PARAMS,
                     )
                     if idor_candidate is not None:
                         self.current_context["findings"].append(idor_candidate)
@@ -3038,10 +2848,10 @@ class InjectionManagerAgent(BaseManagerAgent):
                     )
                     findings_count = unknown_result.get("findings_count", 0)
                     findings_list = unknown_result.get("findings", [])
-                    tested_params = self._sanitize_tested_params(unknown_result.get("tested_params", []))
+                    tested_params = sanitize_tested_params(unknown_result.get("tested_params", []), excluded_params=self.EXCLUDED_TESTED_PARAMS)
                     reflection_observed = bool(unknown_result.get("reflection_observed", False))
                     xss_evidence = str(unknown_result.get("xss_evidence", "") or "")
-                    blind_correlation = self._normalize_blind_correlation(
+                    blind_correlation = normalize_blind_correlation(
                         unknown_result.get("blind_correlation", {}) or {}
                     )
                     unknown_profile = unknown_result.get("unknown_profile", {}) or {}
@@ -3052,17 +2862,19 @@ class InjectionManagerAgent(BaseManagerAgent):
                         unknown_profile,
                     )
                     if findings_count == 0:
-                        idor_candidate = self._build_unknown_idor_candidate_finding(
+                        idor_candidate = build_unknown_idor_candidate_finding(
                             url=url,
                             tested_params=tested_params,
                             unknown_profile=unknown_profile,
+                        source_agent_name=self.name,
+                        excluded_params=self.EXCLUDED_TESTED_PARAMS,
                         )
                         if idor_candidate is not None:
                             self.current_context["findings"].append(idor_candidate)
                             findings_count = 1
                             findings_list = [idor_candidate]
 
-            self._normalize_findings_additional_info(findings_list, tested_params, detection_mode)
+            normalize_findings_additional_info(findings_list, tested_params, detection_mode, excluded_params=self.EXCLUDED_TESTED_PARAMS)
 
             # キャッシュに結果を保存
             cache_key = self._generate_cache_key(url, vuln_type, base_params)
@@ -3073,7 +2885,7 @@ class InjectionManagerAgent(BaseManagerAgent):
                 tested_params=tested_params,
                 reflection_observed=reflection_observed,
                 xss_evidence=xss_evidence,
-                blind_correlation=self._normalize_blind_correlation(blind_correlation),
+                blind_correlation=normalize_blind_correlation(blind_correlation),
                 unknown_profile=unknown_profile,
                 probe_sent=probe_sent,
                 probe_skipped_reason=probe_skipped_reason,
@@ -3098,7 +2910,7 @@ class InjectionManagerAgent(BaseManagerAgent):
                 tested_params=tested_params,
                 reflection_observed=False,
                 xss_evidence="",
-                blind_correlation=self._normalize_blind_correlation({}),
+                blind_correlation=normalize_blind_correlation({}),
                 unknown_profile=unknown_profile,
                 probe_sent=probe_sent,
                 probe_skipped_reason=probe_skipped_reason,
@@ -3120,7 +2932,7 @@ class InjectionManagerAgent(BaseManagerAgent):
             "tested_params": tested_params,
             "reflection_observed": reflection_observed,
             "xss_evidence": xss_evidence,
-            "blind_correlation": self._normalize_blind_correlation(blind_correlation),
+            "blind_correlation": normalize_blind_correlation(blind_correlation),
             "unknown_profile": unknown_profile,
             "probe_sent": probe_sent,
             "probe_skipped_reason": probe_skipped_reason,
@@ -3209,8 +3021,8 @@ class InjectionManagerAgent(BaseManagerAgent):
             blind_correlation = findings[0].additional_info.get("blind_correlation", {}) or {}
         if not blind_correlation:
             blind_correlation = getattr(self.specialists["sqli"], "last_blind_correlation", {}) or {}
-        blind_correlation = self._normalize_blind_correlation(blind_correlation)
-        self._normalize_findings_additional_info(findings, tested_params, detection_mode)
+        blind_correlation = normalize_blind_correlation(blind_correlation)
+        normalize_findings_additional_info(findings, tested_params, detection_mode, excluded_params=self.EXCLUDED_TESTED_PARAMS)
 
         # Layer 3: Hunter ツールの出力形式改善 - LLM が誤解しない明確な形式
         if findings:
@@ -3263,7 +3075,7 @@ class InjectionManagerAgent(BaseManagerAgent):
             tested_params = findings[0].additional_info.get("tested_params", [])
         if not tested_params:
             tested_params = getattr(self.specialists["xss"], "last_tested_params", []) or []
-        self._normalize_findings_additional_info(findings, tested_params, detection_mode)
+        normalize_findings_additional_info(findings, tested_params, detection_mode, excluded_params=self.EXCLUDED_TESTED_PARAMS)
 
         # Layer 3: Hunter ツールの出力形式改善 - LLM が誤解しない明確な形式
         if findings:
@@ -3317,8 +3129,8 @@ class InjectionManagerAgent(BaseManagerAgent):
 
         findings = await self.specialists["redirect"].execute_with_retry(target_task, quick_mode=quick_mode) or []
         self.current_context["findings"].extend(findings)
-        tested_params_from_url = self._sanitize_tested_params(list(parse_qs(urlparse(url).query).keys()))
-        self._normalize_findings_additional_info(findings, tested_params_from_url, detection_mode)
+        tested_params_from_url = sanitize_tested_params(list(parse_qs(urlparse(url).query).keys()), excluded_params=self.EXCLUDED_TESTED_PARAMS)
+        normalize_findings_additional_info(findings, tested_params_from_url, detection_mode, excluded_params=self.EXCLUDED_TESTED_PARAMS)
 
         if findings:
             finding = findings[0]
@@ -3342,13 +3154,13 @@ class InjectionManagerAgent(BaseManagerAgent):
                 "parameter": finding.additional_info.get("parameter", "") if hasattr(finding, 'additional_info') else "",
                 "payload": finding.additional_info.get("payload", "") if hasattr(finding, 'additional_info') else "",
                 "payloads_used": payloads_used,
-                "tested_params": self._sanitize_tested_params(tested_params),
+                "tested_params": sanitize_tested_params(tested_params, excluded_params=self.EXCLUDED_TESTED_PARAMS),
                 "evidence": finding.description if hasattr(finding, 'description') else str(finding),
                 "severity": finding.severity.name if hasattr(finding, 'severity') else "MEDIUM",
                 "info": f"Open Redirect vulnerability confirmed in parameter '{finding.additional_info.get('parameter', 'unknown')}'"
             }
         else:
-            fallback_tested_params = self._sanitize_tested_params(list(parse_qs(urlparse(url).query).keys()))
+            fallback_tested_params = sanitize_tested_params(list(parse_qs(urlparse(url).query).keys()), excluded_params=self.EXCLUDED_TESTED_PARAMS)
             return {
                 "findings_count": 0,
                 "success": False,
@@ -3381,7 +3193,7 @@ class InjectionManagerAgent(BaseManagerAgent):
         tested_params: List[str] = []
         if findings and hasattr(findings[0], "additional_info"):
             tested_params = findings[0].additional_info.get("tested_params", []) or []
-        self._normalize_findings_additional_info(findings, tested_params, detection_mode)
+        normalize_findings_additional_info(findings, tested_params, detection_mode, excluded_params=self.EXCLUDED_TESTED_PARAMS)
 
         if findings:
             finding = findings[0]
@@ -3393,11 +3205,11 @@ class InjectionManagerAgent(BaseManagerAgent):
                 "payload": finding.additional_info.get("payload", "") if hasattr(finding, 'additional_info') else "",
                 "evidence": finding.description if hasattr(finding, 'description') else str(finding),
                 "severity": finding.severity.name if hasattr(finding, 'severity') else "HIGH",
-                "tested_params": self._sanitize_tested_params(tested_params),
+                "tested_params": sanitize_tested_params(tested_params, excluded_params=self.EXCLUDED_TESTED_PARAMS),
                 "info": f"LFI vulnerability confirmed in parameter '{finding.additional_info.get('parameter', 'unknown')}'"
             }
         else:
-            fallback_tested_params = self._sanitize_tested_params(list(parse_qs(urlparse(url).query).keys()))
+            fallback_tested_params = sanitize_tested_params(list(parse_qs(urlparse(url).query).keys()), excluded_params=self.EXCLUDED_TESTED_PARAMS)
             return {
                 "findings_count": 0,
                 "success": False,
@@ -3452,11 +3264,11 @@ class InjectionManagerAgent(BaseManagerAgent):
                 "payload": finding.additional_info.get("payload", "") if hasattr(finding, "additional_info") else "",
                 "evidence": finding.description if hasattr(finding, "description") else str(finding),
                 "severity": finding.severity.name if hasattr(finding, "severity") else "CRITICAL",
-                "tested_params": self._sanitize_tested_params(tested_params),
+                "tested_params": sanitize_tested_params(tested_params, excluded_params=self.EXCLUDED_TESTED_PARAMS),
                 "vulnerable": True,
             }
         else:
-            fallback_tested_params = self._sanitize_tested_params(list(parse_qs(urlparse(url).query).keys()))
+            fallback_tested_params = sanitize_tested_params(list(parse_qs(urlparse(url).query).keys()), excluded_params=self.EXCLUDED_TESTED_PARAMS)
             return {
                 "findings_count": 0,
                 "success": False,
@@ -3673,8 +3485,8 @@ class InjectionManagerAgent(BaseManagerAgent):
             tested_params = getattr(self.specialists["cmd_ssrf"], "last_tested_params", []) or []
         if not blind_correlation:
             blind_correlation = getattr(self.specialists["cmd_ssrf"], "last_blind_correlation", {}) or {}
-        blind_correlation = self._normalize_blind_correlation(blind_correlation)
-        self._normalize_findings_additional_info(findings, tested_params, detection_mode)
+        blind_correlation = normalize_blind_correlation(blind_correlation)
+        normalize_findings_additional_info(findings, tested_params, detection_mode, excluded_params=self.EXCLUDED_TESTED_PARAMS)
 
         # Layer 3: Hunter ツールの出力形式改善
         if findings:
@@ -3687,12 +3499,12 @@ class InjectionManagerAgent(BaseManagerAgent):
                 "payload": finding.additional_info.get("payload", "") if hasattr(finding, 'additional_info') else "",
                 "evidence": finding.description if hasattr(finding, 'description') else str(finding),
                 "severity": finding.severity.name if hasattr(finding, 'severity') else "CRITICAL",
-                "tested_params": self._sanitize_tested_params(tested_params),
+                "tested_params": sanitize_tested_params(tested_params, excluded_params=self.EXCLUDED_TESTED_PARAMS),
                 "blind_correlation": blind_correlation,
                 "info": f"SSRF/Command Injection vulnerability confirmed"
             }
         else:
-            fallback_tested_params = tested_params or self._sanitize_tested_params(list(parse_qs(urlparse(url).query).keys()))
+            fallback_tested_params = tested_params or sanitize_tested_params(list(parse_qs(urlparse(url).query).keys()), excluded_params=self.EXCLUDED_TESTED_PARAMS)
             return {
                 "findings_count": 0,
                 "success": False,
@@ -3745,13 +3557,13 @@ class InjectionManagerAgent(BaseManagerAgent):
                 "matched_variant": info.get("matched_variant", ""),
                 "matched_variant_source": info.get("matched_variant_source", ""),
                 "severity": finding.severity.name if hasattr(finding, "severity") else "HIGH",
-                "tested_params": self._sanitize_tested_params(tested_params),
+                "tested_params": sanitize_tested_params(tested_params, excluded_params=self.EXCLUDED_TESTED_PARAMS),
                 "poc_request": info.get("poc_request", ""),
                 "poc_response": info.get("poc_response", ""),
                 "poc_html": info.get("poc_html", ""),
             }
 
-        fallback_tested_params = tested_params or self._sanitize_tested_params(list(parse_qs(urlparse(url).query).keys()))
+        fallback_tested_params = tested_params or sanitize_tested_params(list(parse_qs(urlparse(url).query).keys()), excluded_params=self.EXCLUDED_TESTED_PARAMS)
         return {
             "findings_count": 0,
             "success": False,

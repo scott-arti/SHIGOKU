@@ -1,8 +1,10 @@
-from src.core.agents.swarm.injection.manager import InjectionManagerAgent
+from src.core.agents.swarm.injection.manager_internal.result_normalizer import (
+    normalize_blind_correlation,
+)
 
 
 def test_normalize_blind_correlation_sets_dns_and_verdict():
-    normalized = InjectionManagerAgent._normalize_blind_correlation(
+    normalized = normalize_blind_correlation(
         {"time_based": {"confirmed": True}, "oob": {"confirmed": False, "hits": []}}
     )
     assert "dns" in normalized
@@ -12,7 +14,7 @@ def test_normalize_blind_correlation_sets_dns_and_verdict():
 
 
 def test_normalize_blind_correlation_sets_confirmed_on_two_of_three():
-    normalized = InjectionManagerAgent._normalize_blind_correlation(
+    normalized = normalize_blind_correlation(
         {
             "time_based": {"confirmed": True},
             "oob": {"confirmed": True, "hits": ["abc"]},
@@ -21,4 +23,3 @@ def test_normalize_blind_correlation_sets_confirmed_on_two_of_three():
     )
     assert normalized["correlated"] is True
     assert normalized["verdict"] == "confirmed"
-

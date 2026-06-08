@@ -1,7 +1,7 @@
 """
 CRLF 分類テスト
 
-_classify_url と _build_unknown_hypotheses が crlf_candidate タグと
+classify_target_url と build_unknown_hypotheses が crlf_candidate タグと
 CRLF 関連 URL / パラメータを正しく "crlf" に分類することを検証する。
 """
 
@@ -9,6 +9,12 @@ import pytest
 from unittest.mock import MagicMock
 
 from src.core.agents.swarm.injection.manager import InjectionManagerAgent
+from src.core.agents.swarm.injection.manager_internal.unknown_hypotheses import (
+    build_unknown_hypotheses,
+)
+from src.core.agents.swarm.injection.manager_internal.target_classifier import (
+    classify_target_url,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -23,50 +29,50 @@ def _agent() -> InjectionManagerAgent:
 
 
 def _hypotheses(agent: InjectionManagerAgent, url: str, base_params: dict = None) -> list:
-    """_build_unknown_hypotheses の返値から specialists リストを取り出す。"""
-    result = agent._build_unknown_hypotheses(url, base_params or {})
+    """build_unknown_hypotheses の返値から specialists リストを取り出す。"""
+    result = build_unknown_hypotheses(url, base_params or {}, available_specialists=set(agent.specialists.keys()))
     return result.get("selected_specialists", [])
 
 
 def _signals(agent: InjectionManagerAgent, url: str, base_params: dict = None) -> list:
-    result = agent._build_unknown_hypotheses(url, base_params or {})
+    result = build_unknown_hypotheses(url, base_params or {}, available_specialists=set(agent.specialists.keys()))
     return result.get("signals", [])
 
 
 # ---------------------------------------------------------------------------
-# _classify_url: crlf_candidate タグ → "crlf"
+# classify_target_url: crlf_candidate タグ → "crlf"
 # ---------------------------------------------------------------------------
 
 class TestClassifyUrlCRLF:
 
     def test_crlf_candidate_tag_returns_crlf(self):
-        result = InjectionManagerAgent._classify_url(
+        result = classify_target_url(
             "http://target.test/redirect?url=x", "crlf_candidate"
         )
         assert result == "crlf"
 
     def test_crlf_candidate_beats_redirect_param(self):
         """B6: crlf_candidate が redirect_param より先に評価される（誤分類防止）"""
-        result = InjectionManagerAgent._classify_url(
+        result = classify_target_url(
             "http://target.test/redirect?url=x", "crlf_candidate"
         )
         assert result == "crlf"
         # redirect_param が来ても crlf_candidate は上書きされない
-        result2 = InjectionManagerAgent._classify_url(
+        result2 = classify_target_url(
             "http://target.test/redirect?url=x", "redirect_param"
         )
         assert result2 == "redirect"
 
     def test_cors_candidate_unaffected(self):
         """CORS 分類が crlf 追加で壊れていない"""
-        result = InjectionManagerAgent._classify_url(
+        result = classify_target_url(
             "http://target.test/api/data", "cors_candidate"
         )
         assert result == "cors"
 
     def test_unknown_category_with_crlf_path_does_not_return_crlf_directly(self):
-        """カテゴリなし + /redirect パスは _classify_url では "redirect" を返す（パス判定より前にクエリ評価）"""
-        result = InjectionManagerAgent._classify_url(
+        """カテゴリなし + /redirect パスは classify_target_url では "redirect" を返す（パス判定より前にクエリ評価）"""
+        result = classify_target_url(
             "http://target.test/redirect?url=x", ""
         )
         # url= クエリパラメータがあるので redirect が先に取る

@@ -3,6 +3,12 @@ from unittest.mock import AsyncMock
 from types import SimpleNamespace
 
 from src.core.agents.swarm.injection.manager import InjectionManagerAgent
+from src.core.agents.swarm.injection.manager_internal.execution_policy import (
+    resolve_risk_force_allowlist,
+)
+from src.core.agents.swarm.injection.manager_internal.phase1_results import (
+    summarize_low_ssrf_score_breakdown,
+)
 from src.core.models.finding import Finding, VulnType, Severity
 
 
@@ -67,7 +73,7 @@ def test_resolve_risk_force_allowlist_defaults_cover_core_coverage():
     agent = InjectionManagerAgent(config={"model": "test-model"})
     task = SimpleNamespace(params={})
 
-    allow = agent._resolve_risk_force_allowlist(task, scan_profile="bbpt")
+    allow = resolve_risk_force_allowlist(task, scan_profile="bbpt")
 
     expected = {"sqli", "cmd_ssrf", "lfi", "csrf", "api", "redirect"}
     assert expected.issubset(allow)
@@ -77,7 +83,7 @@ def test_resolve_risk_force_allowlist_empty_list_disables_risk_force():
     agent = InjectionManagerAgent(config={"model": "test-model"})
     task = SimpleNamespace(params={"phase2_risk_force_vuln_types": []})
 
-    allow = agent._resolve_risk_force_allowlist(task, scan_profile="bbpt")
+    allow = resolve_risk_force_allowlist(task, scan_profile="bbpt")
 
     assert allow == set()
 
@@ -86,7 +92,7 @@ def test_resolve_risk_force_allowlist_uses_explicit_values():
     agent = InjectionManagerAgent(config={"model": "test-model"})
     task = SimpleNamespace(params={"phase2_risk_force_vuln_types": [" csrf ", "API", "", None]})
 
-    allow = agent._resolve_risk_force_allowlist(task, scan_profile="bbpt")
+    allow = resolve_risk_force_allowlist(task, scan_profile="bbpt")
 
     assert allow == {"csrf", "api"}
 
@@ -165,7 +171,7 @@ def test_summarize_low_ssrf_score_breakdown_counts_missing_features():
         },
     ]
 
-    out = InjectionManagerAgent._summarize_low_ssrf_score_breakdown(phase1_url_results)
+    out = summarize_low_ssrf_score_breakdown(phase1_url_results)
     assert out["query_url_param"] == 2
     assert out["body_url_param"] == 1
     assert out["graphql_variables"] == 1
@@ -185,7 +191,7 @@ def test_summarize_low_ssrf_score_breakdown_counts_dynamic_features():
             },
         }
     ]
-    out = InjectionManagerAgent._summarize_low_ssrf_score_breakdown(phase1_url_results)
+    out = summarize_low_ssrf_score_breakdown(phase1_url_results)
     assert out["query_url_param"] == 1
     assert out["dns_rebinding_hint"] == 1
     assert "oob_signal_strength" not in out

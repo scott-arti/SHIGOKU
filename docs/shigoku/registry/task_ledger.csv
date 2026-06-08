@@ -280,3 +280,4 @@ SGK-2026-0268,Haddix report payout-readiness output improvements,done,plan,SGK-2
 SGK-2026-0269,Git ignore cleanup for fresh GitHub repository,done,plan,SGK-2026-0065,docs/shigoku/plans/2026-06-08_git-ignore-cleanup-for-fresh-github-repository_plan.md
 SGK-2026-0270,Remove unused Caveman skill artifacts,done,plan,SGK-2026-0065,docs/shigoku/plans/2026-06-08_remove-unused-caveman-skill-artifacts_plan.md
 SGK-2026-0271,Remove secret-like test fixtures blocking GitHub push,done,plan,SGK-2026-0065,docs/shigoku/plans/2026-06-08_remove-secret-like-test-fixtures-blocking-github-push_plan.md
+SGK-2026-0272,InjectionManager thin compatibility wrapper 群の段階削除,active,subtask_plan,SGK-2026-0265,docs/shigoku/subtasks/2026-06-09_injectionmanager-thin-compatibility-wrapper_subtask_plan.md

@@ -4,6 +4,9 @@ from unittest.mock import MagicMock, AsyncMock, patch
 from types import SimpleNamespace
 from src.core.agents.swarm.injection.manager import InjectionManagerAgent
 from src.core.agents.swarm.base import Task
+from src.core.agents.swarm.injection.manager_internal.target_classifier import classify_target_url
+from src.core.agents.swarm.injection.manager_internal.target_selection import prioritize_targets
+from src.core.agents.swarm.injection.manager_internal.unknown_hypotheses import build_unknown_hypotheses
 from src.config import settings
 
 @pytest.mark.asyncio
@@ -140,28 +143,29 @@ async def test_process_single_url_unknown_executes_hypothesis_scan_when_opted_in
 async def test_process_single_url_unknown_classification_only_emits_idor_bola_candidate() -> None:
     manager = InjectionManagerAgent(config={"model": "test-model"})
     manager.current_context = {"findings": []}
-    manager._build_unknown_hypotheses = MagicMock(
-        return_value={
-            "path": "/account/settings",
-            "query_keys": ["user_id"],
-            "form_fields": [],
-            "source": "path+params",
-            "response_status": 0,
-            "content_type": "",
-            "csp_present": False,
-            "has_form_tag": False,
-            "hypotheses": ["idor"],
-            "signals": ["idor_signal"],
-            "selected_specialists": ["sqli"],
-        }
-    )
 
-    result = await manager._process_single_url(
-        url="http://example.com/account/settings?user_id=1",
-        vuln_type="unknown",
-        base_params={"_auth": {"auth_headers": {}, "cookies": ""}},
-        quick_mode=True,
-    )
+    with patch("src.core.agents.swarm.injection.manager.build_unknown_hypotheses",
+               MagicMock(
+                   return_value={
+                       "path": "/account/settings",
+                       "query_keys": ["user_id"],
+                       "form_fields": [],
+                       "source": "path+params",
+                       "response_status": 0,
+                       "content_type": "",
+                       "csp_present": False,
+                       "has_form_tag": False,
+                       "hypotheses": ["idor"],
+                       "signals": ["idor_signal"],
+                       "selected_specialists": ["sqli"],
+                   }
+               )):
+        result = await manager._process_single_url(
+            url="http://example.com/account/settings?user_id=1",
+            vuln_type="unknown",
+            base_params={"_auth": {"auth_headers": {}, "cookies": ""}},
+            quick_mode=True,
+        )
 
     assert result["findings_count"] == 1
     assert len(manager.current_context["findings"]) == 1
@@ -745,7 +749,7 @@ def test_prioritize_targets_scores_method_json_params_and_auth_boundary():
         }
     }
 
-    prioritized = manager._prioritize_targets(
+    prioritized = prioritize_targets(
         targets,
         forms_by_url=forms_by_url,
         url_evidence_by_url=url_evidence_by_url,
@@ -765,7 +769,6 @@ def test_prioritize_targets_scores_method_json_params_and_auth_boundary():
 @pytest.mark.asyncio
 async def test_dispatch_records_priority_score_in_url_results_and_execution_log():
     manager = InjectionManagerAgent(config={"model": "test-model"})
-    manager._resolve_risk_force_allowlist = MagicMock(return_value=set())
 
     manager._process_single_url = AsyncMock(
         return_value={
@@ -817,7 +820,8 @@ async def test_dispatch_records_priority_score_in_url_results_and_execution_log(
         },
     )
 
-    result = await manager.dispatch(task)
+    with patch("src.core.agents.swarm.injection.manager.resolve_risk_force_allowlist", return_value=set()):
+        result = await manager.dispatch(task)
 
     assert result.status == "success"
     assert manager.current_context["url_results"]
@@ -842,7 +846,6 @@ async def test_dispatch_records_priority_score_in_url_results_and_execution_log(
 @pytest.mark.asyncio
 async def test_dispatch_timeout_retry_guard_suppresses_same_cause_retries_for_low_priority() -> None:
     manager = InjectionManagerAgent(config={"model": "test-model"})
-    manager._resolve_risk_force_allowlist = MagicMock(return_value=set())
     manager._summarize_phase1_signals = MagicMock(
         return_value={"tool_error": False, "weak_signal": False, "high_risk_endpoint": False}
     )
@@ -876,7 +879,8 @@ async def test_dispatch_timeout_retry_guard_suppresses_same_cause_retries_for_lo
             },
         )
 
-        result = await manager.dispatch(task)
+        with patch("src.core.agents.swarm.injection.manager.resolve_risk_force_allowlist", return_value=set()):
+            result = await manager.dispatch(task)
     finally:
         settings.phase1_timeout_retry_same_cause_guard = old_guard
         settings.phase1_timeout_retry_guard_min_priority = old_min_priority
@@ -896,26 +900,26 @@ async def test_dispatch_timeout_retry_guard_suppresses_same_cause_retries_for_lo
 
 
 # ---------------------------------------------------------------------------
-# _classify_url: SSTI 分類テスト (A1-3)
+# classify_target_url: SSTI 分類テスト (A1-3)
 # ---------------------------------------------------------------------------
 
 def test_classify_url_ssti_candidate_category():
-    result = InjectionManagerAgent._classify_url("http://example.com/greet", "ssti_candidate")
+    result = classify_target_url("http://example.com/greet", "ssti_candidate")
     assert result == "ssti"
 
 
 def test_classify_url_render_path():
-    result = InjectionManagerAgent._classify_url("http://example.com/render/page", "")
+    result = classify_target_url("http://example.com/render/page", "")
     assert result == "ssti"
 
 
 def test_classify_url_tpl_path():
-    result = InjectionManagerAgent._classify_url("http://example.com/tpl/view", "")
+    result = classify_target_url("http://example.com/tpl/view", "")
     assert result == "ssti"
 
 
 def test_classify_url_template_param_ssti_candidate_not_lfi():
-    result = InjectionManagerAgent._classify_url(
+    result = classify_target_url(
         "http://example.com/page?template=foo", "ssti_candidate"
     )
     assert result == "ssti"
@@ -923,59 +927,62 @@ def test_classify_url_template_param_ssti_candidate_not_lfi():
 
 
 def test_classify_url_file_param_still_lfi():
-    result = InjectionManagerAgent._classify_url(
+    result = classify_target_url(
         "http://example.com/view?file=doc.pdf", "file_param"
     )
     assert result == "lfi"
 
 
-# _classify_url: CORS 分類テスト (A-2)
+# classify_target_url: CORS 分類テスト (A-2)
 # ---------------------------------------------------------------------------
 
 def test_classify_url_cors_candidate_category():
-    result = InjectionManagerAgent._classify_url("http://example.com/api/data", "cors_candidate")
+    result = classify_target_url("http://example.com/api/data", "cors_candidate")
     assert result == "cors"
 
 
 def test_classify_url_cors_candidate_takes_priority_over_api():
-    result = InjectionManagerAgent._classify_url("http://example.com/api/v1/users", "cors_candidate")
+    result = classify_target_url("http://example.com/api/v1/users", "cors_candidate")
     assert result == "cors"
     assert result != "api"
 
 
 def test_classify_url_cors_candidate_not_triggered_by_api_hint():
-    result = InjectionManagerAgent._classify_url("http://example.com/api/v1/users", "api_candidate")
+    result = classify_target_url("http://example.com/api/v1/users", "api_candidate")
     assert result == "api"
     assert result != "cors"
 
 
 # ---------------------------------------------------------------------------
-# _build_unknown_hypotheses: SSTI 仮説テスト (A1-4)
+# build_unknown_hypotheses: SSTI 仮説テスト (A1-4)
 # ---------------------------------------------------------------------------
 
 def test_hypotheses_ssti_signal_from_template_param():
     manager = InjectionManagerAgent(config={"model": "test-model"})
-    profile = manager._build_unknown_hypotheses(
+    profile = build_unknown_hypotheses(
         "http://example.com/page?template=foo",
         {"template": "foo"},
+        available_specialists=set(manager.specialists.keys()),
     )
     assert "ssti" in profile.get("hypotheses", [])
 
 
 def test_hypotheses_ssti_signal_from_render_path():
     manager = InjectionManagerAgent(config={"model": "test-model"})
-    profile = manager._build_unknown_hypotheses(
+    profile = build_unknown_hypotheses(
         "http://example.com/render?name=test",
         {"name": "test"},
+        available_specialists=set(manager.specialists.keys()),
     )
     assert "ssti" in profile.get("hypotheses", [])
 
 
 def test_specialist_map_ssti_maps_to_ssti():
     manager = InjectionManagerAgent(config={"model": "test-model"})
-    profile = manager._build_unknown_hypotheses(
+    profile = build_unknown_hypotheses(
         "http://example.com/render?name=test",
         {"name": "test"},
+        available_specialists=set(manager.specialists.keys()),
     )
     assert "ssti" in profile.get("selected_specialists", [])
 

@@ -98,8 +98,8 @@ class TestUnknownCategoryTriggersGraphQL:
         """unknown カテゴリで graphql パスが検出される"""
         manager = InjectionManagerAgent()
         
-        # Mock the _build_unknown_hypotheses to return graphql (dict format)
-        with patch.object(manager, "_build_unknown_hypotheses") as mock_build:
+        # Mock build_unknown_hypotheses to return graphql (dict format)
+        with patch("src.core.agents.swarm.injection.manager.build_unknown_hypotheses") as mock_build:
             mock_build.return_value = {
                 "hypotheses": ["graphql"],
                 "signals": ["graphql_signal"],

@@ -1,6 +1,8 @@
 import pytest
 
-from src.core.agents.swarm.injection.manager import InjectionManagerAgent
+from src.core.agents.swarm.injection.manager_internal.target_classifier import (
+    classify_target_url,
+)
 
 
 @pytest.mark.parametrize(
@@ -17,4 +19,4 @@ from src.core.agents.swarm.injection.manager import InjectionManagerAgent
     ],
 )
 def test_injection_manager_classification_character(url: str, category: str, expected: str) -> None:
-    assert InjectionManagerAgent._classify_url(url, category) == expected
+    assert classify_target_url(url, category) == expected

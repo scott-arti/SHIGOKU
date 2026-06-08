@@ -1,8 +1,9 @@
-from src.core.agents.swarm.injection.manager import InjectionManagerAgent
+from src.core.agents.swarm.injection.manager_internal.target_selection import (
+    prioritize_targets,
+)
 
 
-def test_injection_manager_prioritize_targets_character() -> None:
-    manager = InjectionManagerAgent(config={"model": "test-model"})
+def test_prioritize_targets_character() -> None:
     targets = [
         "http://example.com/healthz",
         "http://example.com/api/account/update?id=1&role=user",
@@ -20,7 +21,7 @@ def test_injection_manager_prioritize_targets_character() -> None:
         }
     }
 
-    prioritized = manager._prioritize_targets(
+    prioritized = prioritize_targets(
         targets,
         forms_by_url=forms_by_url,
         url_evidence_by_url=url_evidence_by_url,

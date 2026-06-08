@@ -1,7 +1,7 @@
 # SHIGOKU タスク台帳
 
-- 更新日: 2026-06-08
-- 総タスク数: 281
+- 更新日: 2026-06-09
+- 総タスク数: 282
 - ステータス許可値: backlog / active / done / deferred / archived
 - doc_type 許可値: spec / roadmap / plan / subtask_plan / work_report / work_log / manual
 
@@ -288,3 +288,4 @@
 | SGK-2026-0269 | Git ignore cleanup for fresh GitHub repository | done | plan | SGK-2026-0065 | docs/shigoku/plans/2026-06-08_git-ignore-cleanup-for-fresh-github-repository_plan.md |
 | SGK-2026-0270 | Remove unused Caveman skill artifacts | done | plan | SGK-2026-0065 | docs/shigoku/plans/2026-06-08_remove-unused-caveman-skill-artifacts_plan.md |
 | SGK-2026-0271 | Remove secret-like test fixtures blocking GitHub push | done | plan | SGK-2026-0065 | docs/shigoku/plans/2026-06-08_remove-secret-like-test-fixtures-blocking-github-push_plan.md |
+| SGK-2026-0272 | InjectionManager thin compatibility wrapper 群の段階削除 | active | subtask_plan | SGK-2026-0265 | docs/shigoku/subtasks/2026-06-09_injectionmanager-thin-compatibility-wrapper_subtask_plan.md |
