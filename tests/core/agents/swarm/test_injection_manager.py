@@ -7,6 +7,9 @@ from src.core.agents.swarm.base import Task
 from src.core.agents.swarm.injection.manager_internal.target_classifier import classify_target_url
 from src.core.agents.swarm.injection.manager_internal.target_selection import prioritize_targets
 from src.core.agents.swarm.injection.manager_internal.unknown_hypotheses import build_unknown_hypotheses
+from src.core.agents.swarm.injection.manager_internal.api_probe_payload import (
+    extract_mass_assignment_schema_candidates,
+)
 from src.config import settings
 
 @pytest.mark.asyncio
@@ -578,11 +581,12 @@ async def test_api_minimal_check_discovers_nearby_api_candidate_target():
 
 def test_extract_mass_assignment_schema_candidates_infers_fields_from_response_schema():
     manager = InjectionManagerAgent(config={"model": "test-model"})
-    candidates = manager._extract_mass_assignment_schema_candidates(
+    candidates = extract_mass_assignment_schema_candidates(
         response_bodies=[
             '{"user":{"role":"user","quota":10,"status":"inactive"},"is_admin":false,"display_name":"demo"}',
             '{"profile":{"permission":"read","tier":"free"}}',
-        ]
+        ],
+        excluded_params=manager.EXCLUDED_TESTED_PARAMS,
     )
 
     assert candidates.get("role") == "admin"
