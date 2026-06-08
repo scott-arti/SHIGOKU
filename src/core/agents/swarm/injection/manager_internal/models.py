@@ -1,0 +1,79 @@
+"""InjectionManager 専用 DTO。
+
+既存 dict shape と互換を維持する additive な導入。
+TypedDict を使用し、ランタイム挙動を変更しない。
+"""
+
+from typing import Any, Dict, List, Optional, TypedDict
+
+
+class DispatchContext(TypedDict, total=False):
+    """dispatch() の実行文脈。facade が所有する shared state。"""
+
+    findings: List[Any]
+    params: Dict[str, Any]
+    url_results: List[Dict[str, Any]]
+    auth_headers: Dict[str, str]
+    tag_taxonomy: Dict[str, Any]
+    scan_id: str
+    target_id: str
+    unknown_classification_only: bool
+    dynamic_context: Dict[str, Any]
+    find_links: bool
+    tech_stack: Optional[List[str]]
+
+
+class UrlExecutionRequest(TypedDict, total=False):
+    """_process_single_url への入力。"""
+
+    url: str
+    vuln_type: str
+    base_params: Dict[str, Any]
+    quick_mode: bool
+    detection_mode: str
+    collected_tested_params: List[str]
+    priority_score: int
+    priority_signals: List[str]
+    skip_reason: str
+    ssrf_score: int
+    score_breakdown: Dict[str, int]
+
+
+class UrlExecutionResult(TypedDict, total=False):
+    """_process_single_url の出力。"""
+
+    findings_count: int
+    vuln_type: str
+    findings: List[Any]
+    tested_params: List[str]
+    reflection_observed: bool
+    xss_evidence: str
+    blind_correlation: Dict[str, Any]
+    unknown_profile: Dict[str, Any]
+    skip_reason: str
+    status: str
+    probe_sent: bool
+    probe_skipped_reason: str
+    probe_request_raw: str
+    probe_response_raw: str
+    comparison_checks: List[Any]
+    auth_context_matrix: Dict[str, Any]
+    object_ab_comparison: Dict[str, Any]
+    schema_candidate_params: List[str]
+    single_request_validation: bool
+    detection_mode: str
+    ssrf_score: int
+    score_breakdown: Dict[str, int]
+    url_results: List[Any]
+    cache_hit: bool
+
+
+class NormalizationInput(TypedDict, total=False):
+    """result_normalizer 系の入力。"""
+
+    findings: List[Any]
+    context: Dict[str, Any]
+    tested_params: List[str]
+    detection_mode: str
+    blind_correlation: Dict[str, Any]
+    url_results: List[Dict[str, Any]]

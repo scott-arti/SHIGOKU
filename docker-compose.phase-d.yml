@@ -1,0 +1,112 @@
+# Docker Compose for Phase D Development and Testing
+# Includes: Redis (checkpoint), Playwright (XSS detection), App container
+
+version: '3.8'
+
+services:
+  # Redis for checkpoint persistence
+  redis:
+    image: redis:7-alpine
+    container_name: shigoku-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    networks:
+      - shigoku-network
+
+  # Playwright service for browser automation (XSS detection)
+  playwright:
+    image: mcr.microsoft.com/playwright:v1.40.0-jammy
+    container_name: shigoku-playwright
+    command: tail -f /dev/null  # Keep container running
+    volumes:
+      - ./src:/app/src:ro
+      - ./tests:/app/tests:ro
+    working_dir: /app
+    environment:
+      - PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+      - DISPLAY=:99
+    networks:
+      - shigoku-network
+    profiles:
+      - testing  # Only start when explicitly requested
+
+  # Main application container
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.phase-d
+    container_name: shigoku-app
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - PYTHONPATH=/app
+      - SHIGOKU_ENV=development
+      # Playwright settings (when available)
+      - PLAYWRIGHT_ENABLED=${PLAYWRIGHT_ENABLED:-false}
+      # Platform API tokens (set via .env)
+      - HACKERONE_TOKEN=${HACKERONE_TOKEN:-}
+      - BUGCROWD_TOKEN=${BUGCROWD_TOKEN:-}
+    volumes:
+      - ./src:/app/src
+      - ./config:/app/config
+      - ./workspace:/app/workspace
+      - ./logs:/app/logs
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - shigoku-network
+    command: python -m src.cli.cli --help
+
+  # Local OOB server for testing
+  oob-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.oob
+    container_name: shigoku-oob
+    ports:
+      - "8080:8080"
+      - "5353:53/udp"  # DNS
+    environment:
+      - OOB_DOMAIN=localhost
+      - OOB_HTTP_PORT=8080
+      - OOB_DNS_PORT=5353
+    networks:
+      - shigoku-network
+    profiles:
+      - oob  # Only start when explicitly requested
+
+  # Test runner
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile.phase-d
+    container_name: shigoku-test
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - PYTHONPATH=/app
+    volumes:
+      - ./src:/app/src
+      - ./tests:/app/tests
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - shigoku-network
+    command: pytest tests/integration/test_phase_d_implementation.py -v
+    profiles:
+      - testing
+
+volumes:
+  redis-data:
+
+networks:
+  shigoku-network:
+    driver: bridge

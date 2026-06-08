@@ -1,0 +1,16 @@
+name: ssrf_probe
+description: "Golden Recipe: Server-Side Request Forgery Detection - Direct tool execution"
+tags: ["injection", "ssrf", "oob"]
+severity: "critical"
+target_condition: null
+steps:
+  - tool: "tool_executor"
+    args:
+      tool_name: "nuclei"
+      args:
+        extra_args: "-t http/vulnerabilities/generic/ -tags ssrf"
+  - tool: "tool_executor"
+    args:
+      tool_name: "nuclei"
+      args:
+        extra_args: "-t http/cves/ -tags ssrf"

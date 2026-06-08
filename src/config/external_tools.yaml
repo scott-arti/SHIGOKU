@@ -1,0 +1,51 @@
+# External Tools Configuration
+# Phase E-2: External Tool Integration
+
+tools:
+  nuclei:
+    name: nuclei
+    enabled: true
+    version: "2.9.15"
+    timeout_seconds: 300
+    max_concurrent: 5
+    
+  dalfox:
+    name: dalfox
+    enabled: true
+    version: "2.9.3"
+    timeout_seconds: 180
+    max_concurrent: 3
+    
+  ffuf:
+    name: ffuf
+    enabled: true
+    version: "2.1.0"
+    timeout_seconds: 120
+    max_concurrent: 5
+    
+  nmap:
+    name: nmap
+    enabled: true
+    version: "7.94"
+    timeout_seconds: 600
+    max_concurrent: 3
+    
+  arjun:
+    name: arjun
+    enabled: true
+    version: "2.2.0"
+    timeout_seconds: 300
+    max_concurrent: 3
+    
+  gau:
+    name: gau
+    enabled: true
+    version: "2.2.1"
+    timeout_seconds: 180
+    max_concurrent: 5
+
+# Global Settings
+global:
+  default_timeout: 300
+  max_concurrent: 5
+  enable_health_check: true

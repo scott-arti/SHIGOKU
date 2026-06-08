@@ -1,0 +1,14 @@
+# 通知設定
+
+slack:
+  enabled: false  # trueに変更して使用
+  webhook_url: "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+  channels:
+    - "#bug-bounty"
+    - "#security-alerts"
+  severity_threshold: "high"  # critical, high, medium, low, info
+
+discord:
+  enabled: false  # trueに変更して使用
+  webhook_url: "https://discord.com/api/webhooks/YOUR/WEBHOOK/URL"
+  severity_threshold: "high"  # critical, high, medium, low, info

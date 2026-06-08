@@ -1,0 +1,110 @@
+# サブドメイン列挙用ワードリスト メタデータ
+# SHIGOKUが自動選択に使用
+
+base_path: /home/bbb/Documents/tools/wordlists
+
+files:
+  # ========== SecLists ==========
+  - name: subdomains-top1million-5000.txt
+    path: SecLists/Discovery/DNS/subdomains-top1million-5000.txt
+    source: SecLists
+    lines: 4989
+    size: small
+    strength: [general, stable, fast]
+    best_for: [first_scan, quick, unknown_target]
+
+  - name: subdomains-top1million-20000.txt
+    path: SecLists/Discovery/DNS/subdomains-top1million-20000.txt
+    source: SecLists
+    lines: 19966
+    size: medium
+    strength: [general, stable, balanced]
+    best_for: [standard_scan, bugbounty_mode]
+
+  - name: subdomains-top1million-110000.txt
+    path: SecLists/Discovery/DNS/subdomains-top1million-110000.txt
+    source: SecLists
+    lines: 114442
+    size: high
+    strength: [general, stable, comprehensive]
+    best_for: [deep_scan, thorough]
+
+  - name: bitquark-subdomains-top100000.txt
+    path: SecLists/Discovery/DNS/bitquark-subdomains-top100000.txt
+    source: SecLists
+    lines: 100000
+    size: high
+    strength: [general, comprehensive]
+    best_for: [deep_scan]
+
+  - name: dns-Jhaddix.txt
+    path: SecLists/Discovery/DNS/dns-Jhaddix.txt
+    source: JHaddix
+    lines: 2171687
+    size: massive
+    strength: [bugbounty, proven, curated]
+    best_for: [bugbounty_mode, deep_scan, high_value_target]
+
+  - name: n0kovo_subdomains.txt
+    path: SecLists/Discovery/DNS/n0kovo_subdomains.txt
+    source: SecLists
+    lines: 3000001
+    size: massive
+    strength: [comprehensive, modern]
+    best_for: [exhaustive_scan]
+
+  - name: bug-bounty-program-subdomains-trickest-inventory.txt
+    path: SecLists/Discovery/DNS/bug-bounty-program-subdomains-trickest-inventory.txt
+    source: Trickest
+    lines: 1613291
+    size: massive
+    strength: [bugbounty, real_world, curated]
+    best_for: [bugbounty_mode, high_value_target]
+
+  # ========== AssetNote (最新HTTPArchive) ==========
+  - name: 2m-subdomains.txt
+    path: AssetNote/2m-subdomains.txt
+    source: AssetNote
+    lines: 2167059
+    size: massive
+    strength: [modern, cloud, saas]
+    best_for: [aws, gcp, azure, k8s, modern_target]
+
+  - name: httparchive_subdomains_2025_11_27.txt
+    path: AssetNote/httparchive_subdomains_2025_11_27.txt
+    source: AssetNote
+    lines: 3216024
+    size: massive
+    strength: [modern, real_world, latest_2025]
+    best_for: [modern_target, real_world_data]
+
+  - name: best-dns-wordlist.txt
+    path: AssetNote/best-dns-wordlist.txt
+    source: AssetNote
+    lines: 9544235
+    size: enormous
+    strength: [exhaustive, comprehensive]
+    best_for: [exhaustive_scan, final_resort]
+
+# 選択ルール
+selection_rules:
+  mode_defaults:
+    bugbounty:
+      quick: subdomains-top1million-5000.txt
+      standard: dns-Jhaddix.txt
+      deep: bug-bounty-program-subdomains-trickest-inventory.txt
+    vulntest:
+      quick: subdomains-top1million-5000.txt
+      standard: subdomains-top1million-20000.txt
+      deep: subdomains-top1million-110000.txt
+    ctf:
+      quick: subdomains-top1million-5000.txt
+      standard: subdomains-top1million-5000.txt
+      deep: subdomains-top1million-20000.txt
+
+  tech_stack:
+    aws: 2m-subdomains.txt
+    gcp: 2m-subdomains.txt
+    azure: 2m-subdomains.txt
+    modern: httparchive_subdomains_2025_11_27.txt
+    default: subdomains-top1million-20000.txt

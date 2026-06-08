@@ -1,0 +1,94 @@
+# APIエンドポイント用ワードリスト メタデータ
+
+base_path: /home/bbb/Documents/tools/wordlists
+
+files:
+  # ========== AssetNote API ==========
+  - name: httparchive_apiroutes_2025_11_27.txt
+    path: AssetNote/httparchive_apiroutes_2025_11_27.txt
+    source: AssetNote
+    lines: 349647
+    size: high
+    strength: [api, rest, modern, latest_2025]
+    best_for: [api_scan, rest_api, modern_target]
+
+  - name: swagger-wordlist.txt
+    path: AssetNote/swagger-wordlist.txt
+    source: AssetNote
+    lines: 1000000 # 約29MB
+    size: massive
+    strength: [swagger, openapi, documented_api]
+    best_for: [swagger_scan, documented_api]
+
+  # ========== フレームワーク別 ==========
+  - name: httparchive_django_2025_11_27.txt
+    path: AssetNote/httparchive_django_2025_11_27.txt
+    source: AssetNote
+    lines: 47060
+    size: medium
+    strength: [django, python]
+    best_for: [django, python_framework]
+
+  - name: httparchive_laravel_2025_11_27.txt
+    path: AssetNote/httparchive_laravel_2025_11_27.txt
+    source: AssetNote
+    lines: 182433
+    size: high
+    strength: [laravel, php]
+    best_for: [laravel, php_framework]
+
+  - name: httparchive_rails_2025_11_27.txt
+    path: AssetNote/httparchive_rails_2025_11_27.txt
+    source: AssetNote
+    lines: 211471
+    size: high
+    strength: [rails, ruby]
+    best_for: [rails, ruby_framework]
+
+  - name: httparchive_express_2025_11_27.txt
+    path: AssetNote/httparchive_express_2025_11_27.txt
+    source: AssetNote
+    lines: 139235
+    size: high
+    strength: [express, nodejs]
+    best_for: [express, node_framework]
+
+  - name: httparchive_flask_2025_11_27.txt
+    path: AssetNote/httparchive_flask_2025_11_27.txt
+    source: AssetNote
+    lines: 1491
+    size: small
+    strength: [flask, python]
+    best_for: [flask, python_framework]
+
+  - name: httparchive_spring_2025_11_27.txt
+    path: AssetNote/httparchive_spring_2025_11_27.txt
+    source: AssetNote
+    lines: 2851
+    size: small
+    strength: [spring, java]
+    best_for: [spring, java_framework]
+
+selection_rules:
+  mode_defaults:
+    bugbounty:
+      quick: httparchive_apiroutes_2025_11_27.txt
+      standard: httparchive_apiroutes_2025_11_27.txt
+      deep: swagger-wordlist.txt
+    vulntest:
+      quick: httparchive_apiroutes_2025_11_27.txt
+      standard: httparchive_apiroutes_2025_11_27.txt
+      deep: httparchive_apiroutes_2025_11_27.txt
+    ctf:
+      quick: httparchive_apiroutes_2025_11_27.txt
+      standard: httparchive_apiroutes_2025_11_27.txt
+      deep: httparchive_apiroutes_2025_11_27.txt
+
+  tech_stack:
+    django: httparchive_django_2025_11_27.txt
+    laravel: httparchive_laravel_2025_11_27.txt
+    rails: httparchive_rails_2025_11_27.txt
+    express: httparchive_express_2025_11_27.txt
+    flask: httparchive_flask_2025_11_27.txt
+    spring: httparchive_spring_2025_11_27.txt
+    default: httparchive_apiroutes_2025_11_27.txt

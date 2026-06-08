@@ -1,0 +1,12 @@
+name: jwt_alg_none
+description: "JWT Algorithm None Attack"
+tags: ["auth", "jwt"]
+severity: "critical"
+target_condition: "tech_stack.auth == 'jwt'"
+steps:
+  - tool: "jwt_inspector"
+    action: "alg_none"
+  - tool: "jwt_inspector"
+    action: "rs256_hs256"
+references:
+  - "https://portswigger.net/web-security/jwt"

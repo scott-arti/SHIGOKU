@@ -1,0 +1,282 @@
+task_id,task_content,status,doc_type,parent_task_id,primary_doc
+SGK-2026-0001,SHIGOKU Documentation Hub,active,manual,,docs/shigoku/README.md
+SGK-2026-0002,将来の機能拡張 (Future Functions),active,roadmap,,docs/shigoku/roadmaps/future_functions.md
+SGK-2026-0003,📖 SHIGOKU ユーザーマニュアル（日本語版）,active,manual,SGK-2026-0101,docs/shigoku/manuals/MANUAL_JA.md
+SGK-2026-0004,SHIGOKU アーキテクチャ Q&A (2025.12),active,manual,,docs/shigoku/manuals/QA.md
+SGK-2026-0005,🚀 SHIGOKU クイックスタートガイド,active,manual,,docs/shigoku/manuals/QUICK_START.md
+SGK-2026-0006,⚙️ SHIGOKU リファレンスガイド,active,manual,,docs/shigoku/manuals/REFERENCE.md
+SGK-2026-0007,📘 SHIGOKU ユーザーマニュアル,active,manual,,docs/shigoku/manuals/USER_MANUAL.md
+SGK-2026-0008,CLI-First Ops Plan (MCPなし),active,manual,,docs/shigoku/manuals/manual_legacy/cli_first_ops_plan.md
+SGK-2026-0009,SHIGOKU Dashboard 機能マニュアル,active,manual,,docs/shigoku/manuals/manual_legacy/dashboard.md
+SGK-2026-0010,MyMethod,active,manual,,docs/shigoku/manuals/MyMethod.md
+SGK-2026-0011,コマンドラインツールの統合方法案,active,spec,,docs/shigoku/specs/TOOL_INTEGRATION_OPTIONS.md
+SGK-2026-0012,ADR-0005: 強化版 FFUF (Enhanced Edition) の統合とAIエージェントへの最適化,active,spec,,docs/shigoku/specs/adr/0005-enhanced-ffuf-integration.md
+SGK-2026-0013,ADR-001: エントリポイントの統一,active,spec,,docs/shigoku/specs/adr/001-entry-point-unification.md
+SGK-2026-0014,ADR 0010: Enhanced IDOR Logic and Mass Assignment Testing,active,spec,,docs/shigoku/specs/adr/0010-enhanced-idor-logic.md
+SGK-2026-0015,ADR-002: エージェントインターフェースの統一,active,spec,,docs/shigoku/specs/adr/002-agent-interface-protocol.md
+SGK-2026-0016,ADR-003: 技術的負債解消 - FastAPI ブロッキング I/O と例外処理改善,active,spec,,docs/shigoku/specs/adr/003-tech-debt-fastapi-exception-handling.md
+SGK-2026-0017,004. セキュリティと信頼性向上のためのバグ修正設計判断,active,spec,,docs/shigoku/specs/adr/004-bugfix-security-reliability-improvements.md
+SGK-2026-0018,005. エンジン信頼性向上とコスト最適化,active,spec,,docs/shigoku/specs/adr/005-engine-reliability-and-cost-optimization.md
+SGK-2026-0019,006. バグ修正と例外処理方針の改善,active,spec,,docs/shigoku/specs/adr/006-fix-critical-bugs-and-exception-handling.md
+SGK-2026-0020,007. プロンプトモジュールのリネームとユーティリティパッケージの導入,active,spec,,docs/shigoku/specs/adr/007-prompts-rename-and-utils-package.md
+SGK-2026-0021,ADR-008: Phase 1-3 技術的負債解消リファクタリング,active,spec,,docs/shigoku/specs/adr/008-phase1-3-technical-debt-resolution.md
+SGK-2026-0022,ADR-009: 技術的負債解消（Phase 0-4 完了）,active,spec,,docs/shigoku/specs/adr/009-tech-debt-resolution-complete.md
+SGK-2026-0023,ADR: エンドポイント承認キャッシュによるガードレール競合の解決,active,spec,,docs/shigoku/specs/adr/2026-02-27_RequestGuard_Implementation.md
+SGK-2026-0024,HexStrike vs SHIGOKU 比較分析,done,work_report,,docs/shigoku/reports/analysis/hexstrike_analysis.md
+SGK-2026-0026,Report Loop KPI Baseline (2026-05-11),done,work_report,,docs/shigoku/reports/analysis/report_loop_kpi_baseline_2026-05-11.md
+SGK-2026-0027,Caido Integration & Tagging Filter 実装計画,active,spec,,docs/shigoku/specs/caido_integration.md
+SGK-2026-0028,SHIGOKU MCP(Model Context Protocol) 導入検討ドキュメント,active,spec,,docs/shigoku/specs/design/mcp_integration_candidates.md
+SGK-2026-0029,Reconnaissance Pipeline シナリオ設計書,active,spec,,docs/shigoku/specs/design/recon_scenario.md
+SGK-2026-0030,Future Functions & Improvements,active,roadmap,,docs/shigoku/roadmaps/future_functions1.md
+SGK-2026-0031,AuthNinja - 認証突破エージェント,active,spec,,docs/shigoku/specs/modules/AUTH_NINJA.md
+SGK-2026-0032,AutoReporter - 脆弱性レポート自動生成エンジン,active,spec,,docs/shigoku/specs/modules/AUTO_REPORTER.md
+SGK-2026-0033,BizLogicHunter - ビジネスロジック脆弱性検証エージェント,active,spec,,docs/shigoku/specs/modules/BIZ_LOGIC_HUNTER.md
+SGK-2026-0034,Cartographer - サイトマッピングエンジン,active,spec,,docs/shigoku/specs/modules/CARTOGRAPHER.md
+SGK-2026-0035,CommitWatcher - Git リポジトリ監視エージェント,active,spec,,docs/shigoku/specs/modules/COMMIT_WATCHER.md
+SGK-2026-0036,EthicsGuard - 倫理ガードレールシステム,active,spec,,docs/shigoku/specs/modules/ETHICS_GUARD.md
+SGK-2026-0037,Fingerprinter - 技術スタック識別エンジン,active,spec,,docs/shigoku/specs/modules/FINGERPRINTER.md
+SGK-2026-0038,GAUIntegrator - GAU 統合モジュール,active,spec,,docs/shigoku/specs/modules/GAU_INTEGRATOR.md
+SGK-2026-0039,HeadlessCrawler - Headless ブラウザ統合モジュール,active,spec,,docs/shigoku/specs/modules/HEADLESS_CRAWLER.md
+SGK-2026-0040,KnowledgeGraph - Neo4j ナレッジグラフ連携モジュール,active,spec,,docs/shigoku/specs/modules/KNOWLEDGE_GRAPH.md
+SGK-2026-0041,ProgressiveScanner - 段階的スキャンモジュール,active,spec,,docs/shigoku/specs/modules/PROGRESSIVE_SCANNER.md
+SGK-2026-0042,ProxyLogAnalyzer - プロキシログ解析エンジン,active,spec,,docs/shigoku/specs/modules/PROXY_LOG_ANALYZER.md
+SGK-2026-0043,RAGSystem - Obsidian RAG 統合モジュール,active,spec,,docs/shigoku/specs/modules/RAG_SYSTEM.md
+SGK-2026-0044,URL Tagging Pipeline (URL タグ付けパイプライン),active,spec,,docs/shigoku/specs/modules/URL_TAGGING_PIPELINE.md
+SGK-2026-0045,VisualFilter - 画像解析・ページ分類エンジン,active,spec,,docs/shigoku/specs/modules/VISUAL_FILTER.md
+SGK-2026-0046,WordlistLearner - ワードリスト自動学習モジュール,active,spec,,docs/shigoku/specs/modules/WORDLIST_LEARNER.md
+SGK-2026-0047,WordlistManager - ワードリスト管理モジュール,active,spec,,docs/shigoku/specs/modules/WORDLIST_MANAGER.md
+SGK-2026-0048,Reconnaissance Pipeline シナリオ設計書,active,spec,,docs/shigoku/specs/recon_scenario.md
+SGK-2026-0049,脆弱性機能実装仕様書,active,spec,,docs/shigoku/specs/standards/vulnerability_feature_implementation_spec.md
+SGK-2026-0050,Report Loop CLI Optimization Implementation Plan,backlog,plan,,docs/shigoku/plans/superpowers/2026-05-11-report-loop-cli-optimization.md
+SGK-2026-0051,Raw Confirmed Stability + IDOR/Endpoint Class Recovery Implementation Plan,backlog,plan,,docs/shigoku/plans/superpowers/2026-05-13-raw-confirmed-idor-endpoint.md
+SGK-2026-0052,Auth Triple-Target Stability Execution Implementation Plan,backlog,plan,,docs/shigoku/plans/superpowers/2026-05-14-auth-triple-target-stability-execution-plan.md
+SGK-2026-0053,2026-05-14 Auth Triple Target Stability Run Log,backlog,plan,,docs/shigoku/plans/superpowers/2026-05-14-auth-triple-target-stability-run-log.md
+SGK-2026-0054,CRAPI + JuiceShop + DVWA 安定性プラン v3 (Auth-Aware / Anti-Curve-Fit),backlog,plan,,docs/shigoku/plans/superpowers/2026-05-14-crapi-juiceshop-dvwa-auth-stability-plan-v3.md
+SGK-2026-0055,CRAPI Stability Plan v2 (Anti-Curve-Fit Revision),backlog,plan,,docs/shigoku/plans/superpowers/2026-05-14-crapi-stability-anti-curve-fit-plan-v2.md
+SGK-2026-0056,Required Detection Class Hybrid Gate Implementation Plan,backlog,plan,,docs/shigoku/plans/superpowers/2026-05-14-required-class-hybrid-gate.md
+SGK-2026-0057,Ver1 SCN08/10/12 Policy Lock Implementation Plan,backlog,plan,,docs/shigoku/plans/superpowers/2026-05-14-ver1-scn08-10-12-policy-lock.md
+SGK-2026-0058,SSTI Detection Implementation Plan,done,plan,SGK-2026-0065,docs/shigoku/plans/2026-05-14_ssti_implementation_plan.md
+SGK-2026-0059,A-2〜B-2 実装計画書,backlog,plan,,docs/shigoku/plans/2026-05-15_a2_b2_implementation_plan.md
+SGK-2026-0060,A-3: CRLF 実実装 計画書,backlog,plan,,docs/shigoku/plans/2026-05-16_a3_crlf_implementation_plan.md
+SGK-2026-0061,B-1: GraphQL Introspection 実装計画書（アップデート版）,backlog,plan,,docs/shigoku/plans/2026-05-16_b1_graphql_implementation_plan.md
+SGK-2026-0062,B-1: GraphQL Introspection 実装計画書 v2.1（レビュー反映版）,backlog,plan,,docs/shigoku/plans/2026-05-16_b1_graphql_implementation_plan_v2.1.md
+SGK-2026-0063,REPORT Outputs Reference,done,work_report,SGK-2026-0065,docs/shigoku/reports/REPORT_OUTPUTS.md
+SGK-2026-0064,Bug Report (Placeholder),backlog,work_report,,docs/shigoku/reports/bug_report.md
+SGK-2026-0065,SHIGOKU 実装ロードマップ,active,roadmap,SGK-2026-0101,docs/shigoku/roadmaps/IMPLEMENTATION_ROADMAP.md
+SGK-2026-0066,SHIGOKU Bug Bounty Optimization Roadmap,active,roadmap,,docs/shigoku/roadmaps/bug_bounty_enhancements_2026.md
+SGK-2026-0067,File Upload Vulnerability Scanner Roadmap,active,roadmap,,docs/shigoku/roadmaps/file_upload_vulnerability.md
+SGK-2026-0068,bigRoadmap20260226,active,roadmap,,docs/shigoku/roadmaps/legacy_roadmap_dir/bigRoadmap20260226.md
+SGK-2026-0069,Roadmap: Unified Caido & Modern Web Scan Strategy,active,roadmap,,docs/shigoku/roadmaps/legacy_roadmap_dir/caido_integration_roadmap.md
+SGK-2026-0070,🗺️ SHIGOKU 統一ロードマップ — 最終確定版（外部フィードバック統合済み）,active,roadmap,SGK-2026-0101,docs/shigoku/roadmaps/shigoku_unified_roadmap_20260301.md
+SGK-2026-0071,2026-01-26_OOB_Headless.md Implementation Spec,active,spec,,docs/shigoku/specs/2026-01-26_OOB_Headless.md
+SGK-2026-0072,Proxy Integration & Error Replanning Spec,active,spec,,docs/shigoku/specs/2026-01-26_Proxy_ErrorHandling.md
+SGK-2026-0073,仕様書: Phase 1.3 Proxy Integration Completion,active,spec,,docs/shigoku/specs/2026-01-26_Proxy_Integration_Complete.md
+SGK-2026-0074,仕様書: Phase 2 Shared Workspace & Handoff Mechanism Integration,active,spec,,docs/shigoku/specs/2026-01-26_Shared_Workspace_and_Handoff.md
+SGK-2026-0075,Phase 1.3 & 1.4: Infrastructure Integration Specification,active,spec,,docs/shigoku/specs/2026-01-26_phase1_infrastructure_integration.md
+SGK-2026-0076,Specification: Project Integration & Dashboard Enhancements,active,spec,,docs/shigoku/specs/2026-01-30_project_integration.md
+SGK-2026-0077,リアルタイム実行ダッシュボード仕様書,active,spec,,docs/shigoku/specs/2026-02-06_realtime_execution_dashboard.md
+SGK-2026-0078,Phase 7: Tool Executor Agent & 環境最適化,active,spec,,docs/shigoku/specs/2026-02-08_RECIPE_EXECUTION_FIX.md
+SGK-2026-0079,Phase 6: 検出最適化と運用品質向上,active,spec,,docs/shigoku/specs/2026-02-08_phase6_detection_observability.md
+SGK-2026-0080,Specification: Fix File Storage & Findings Persistence,active,spec,,docs/shigoku/specs/2026-02-09_fix_storage_and_findings.md
+SGK-2026-0081,Specification: Hybrid Intelligence Architecture Refactoring (Phase 8.1 - 8.2),active,spec,,docs/shigoku/specs/2026-02-09_hybrid_intelligence_arch.md
+SGK-2026-0082,Phase 2: Hierarchical Manager Architecture Specification,active,spec,,docs/shigoku/specs/2026-02-11_PHASE2_MANAGER_ARCH.md
+SGK-2026-0083,Phase 1: 足場固めと構造改革 (Swarm化 & 入力正規化) 仕様書,active,spec,,docs/shigoku/specs/2026-02-12_phase1_refactor.md
+SGK-2026-0084,Specification: Phase 2 - 頭脳のアップグレード (Brain Upgrade),active,spec,,docs/shigoku/specs/2026-02-13_phase2_brain_upgrade.md
+SGK-2026-0085,Phase 4 仕様書: 深層攻撃の実装 (Post-Exploitation & Flag Capture),active,spec,,docs/shigoku/specs/2026-02-13_phase4_post_exploit.md
+SGK-2026-0086,Spec: データベース書き込み最適化 (Hybrid Batch Architecture),active,spec,,docs/shigoku/specs/2026-02-14_database_write_optimization.md
+SGK-2026-0087,仕様書: Quality-First 攻撃成功強化フロー（crAPI起点・汎用運用）,active,spec,,docs/shigoku/specs/2026-04-22_quality_first_execution_spec.md
+SGK-2026-0088,仕様書: crAPI起点で汎用性を維持する検出強化ロードマップ,active,spec,,docs/shigoku/specs/2026-04-29_generalizable_crapi_roadmap.md
+SGK-2026-0089,高速ベンチ運用 + P0採用決定 + Confirmed増加プラン（1ページ）,active,spec,,docs/shigoku/specs/2026-05-11_fast_bench_p0_decision_and_confirmed_growth_plan.md
+SGK-2026-0090,SCN01-07 測定用ベンチ計画（固定seed・固定session / 境界tightening）,active,spec,,docs/shigoku/specs/2026-05-11_scn01-07_benchmark_plan.md
+SGK-2026-0091,Ver.1.x HITL Gate Policy (SCN08/10/12),active,spec,,docs/shigoku/specs/2026-05-14_ver1x_hitl_gate_policy.md
+SGK-2026-0092,SHIGOKU 統合アーキテクチャ,active,spec,,docs/shigoku/specs/ARCHITECTURE.md
+SGK-2026-0093,実験的機能 (Experimental Features),active,spec,,docs/shigoku/specs/EXPERIMENTAL_FEATURES.md
+SGK-2026-0094,SHIGOKU 機能拡張マスタープラン,active,spec,SGK-2026-0065,docs/shigoku/specs/FEATURE_EXPANSION_PLAN.md
+SGK-2026-0095,IDOR (Insecure Direct Object Reference) / BOLA スキャナの実装課題と将来のロードマップ,active,spec,,docs/shigoku/specs/Kadai_idor_challenges_roadmap.md
+SGK-2026-0096,Feature Specification: Tier 4 - Master Conductor 知能の完全化,active,spec,,docs/shigoku/specs/REQ_tier4_mc_intelligence.md
+SGK-2026-0097,Tier 5: EthicsGuard 強化仕様書 (REQ_tier5_ethics_guard),active,spec,,docs/shigoku/specs/REQ_tier5_ethics_guard.md
+SGK-2026-0098,REQ: Tier 6 高度攻撃能力 (Advanced Attacks),active,spec,,docs/shigoku/specs/REQ_tier6_advanced_attacks.md
+SGK-2026-0099,SmartCmdSSRFHunter 強化仕様書,active,spec,,docs/shigoku/specs/SSRF_HUNTER_ENHANCEMENT.md
+SGK-2026-0100,🧠 SHIGOKU 技術設計書,active,spec,,docs/shigoku/specs/TECHNICAL_DESIGN2026-01-26.md
+SGK-2026-0101,🏗️ SHIGOKU 技術仕様書,active,spec,,docs/shigoku/specs/TECHNICAL_SPEC_JA.md
+SGK-2026-0102,LLM Actor-Critic Fuzzing Loop 仕様書,active,spec,,docs/shigoku/specs/actor_critic_payload_generator.md
+SGK-2026-0103,仕様書: AdaptivePerformanceTuner,active,spec,,docs/shigoku/specs/adaptive_performance_tuner.md
+SGK-2026-0104,Agent Hardening & Authentication Integration Specification,active,spec,,docs/shigoku/specs/agent_hardening_and_auth.md
+SGK-2026-0105,機能仕様書: Any-LLM (Proxy Gateway) の導入,active,spec,,docs/shigoku/specs/any-llm-integration.md
+SGK-2026-0106,Specification: Bug Bounty Optimization,active,spec,,docs/shigoku/specs/bug_bounty_enhancements.md
+SGK-2026-0107,Specification: Caido Sitemap Parser Agent,active,spec,,docs/shigoku/specs/caido_sitemap_agent.md
+SGK-2026-0108,SmartCmdSSRFHunter Phase 3 仕様書,active,spec,,docs/shigoku/specs/cmd_ssrf_phase3.md
+SGK-2026-0109,Command Injection & SSRF Specialist Feature Specification,active,spec,,docs/shigoku/specs/cmd_ssrf_specialist.md
+SGK-2026-0110,仕様書: 設定管理のリファクタリング (Pydantic Settings 移行),active,spec,,docs/shigoku/specs/config_refactoring.md
+SGK-2026-0111,仕様書: CPUバウンド処理のオフロード,active,spec,,docs/shigoku/specs/cpu_offloading.md
+SGK-2026-0112,Spec: DVWA Medium Bypasses (Phase 1),active,spec,,docs/shigoku/specs/dvwa_medium_bypass_phase1.md
+SGK-2026-0113,Specification: Phase 2 - Opaque Session & Auth Bypass Enhancement,active,spec,,docs/shigoku/specs/dvwa_medium_bypass_phase2.md
+SGK-2026-0114,Dynamic Recon and Context Propagation Specification,active,spec,,docs/shigoku/specs/dynamic_recon_attack.md
+SGK-2026-0115,Dynamic Resource Scaling Specification,active,spec,,docs/shigoku/specs/dynamic_resource_scaling.md
+SGK-2026-0116,Spec: エンジン・パフォーマンス最適化,active,spec,,docs/shigoku/specs/engine_performance_optimization.md
+SGK-2026-0117,Enhance Report History & Timezone,active,spec,,docs/shigoku/specs/enhance_report_history.md
+SGK-2026-0118,File Upload Vulnerability Scanner Specification,active,spec,,docs/shigoku/specs/file_upload_scanner.md
+SGK-2026-0119,File Upload Vulnerability Scanner v2 Specification (Revised: Context-Aware Path Prediction),active,spec,,docs/shigoku/specs/file_upload_scanner_v2.md
+SGK-2026-0120,Spec: AsyncNetworkClient のループ耐性向上と Event loop is closed エラーの修正,active,spec,,docs/shigoku/specs/fix_event_loop_closed.md
+SGK-2026-0121,仕様書: 実行時エラーとタイムアウトの修正,active,spec,,docs/shigoku/specs/fix_execution_errors.md
+SGK-2026-0122,仕様書: InjectionSwarm (InjectionManagerAgent) の正常化,active,spec,,docs/shigoku/specs/fix_injection_swarm.md
+SGK-2026-0123,Katana Target Generation Fix,active,spec,,docs/shigoku/specs/fix_katana_target_generation.md
+SGK-2026-0124,Spec: Recon Pipeline 空ターゲットガードの実装,active,spec,,docs/shigoku/specs/fix_recon_empty_target_error.md
+SGK-2026-0125,Report History & Timezone Fix Spec,active,spec,,docs/shigoku/specs/fix_report_history_and_timezone.md
+SGK-2026-0126,Spec: Fix SmartXSSHunter Logic and Prompts,active,spec,,docs/shigoku/specs/fix_smart_xss_logic.md
+SGK-2026-0127,Feature Specification: GitHub Client Optimization,active,spec,,docs/shigoku/specs/github_client_optimization.md
+SGK-2026-0128,GitHub MCP Integration (GitHub Dorks),active,spec,,docs/shigoku/specs/github_mcp_integration.md
+SGK-2026-0129,IDOR Enhancement Phase 2 & 3: Mass Assignment & Body Parsing,active,spec,,docs/shigoku/specs/idor_phase2_3.md
+SGK-2026-0130,Intelligence → MasterConductor 統合仕様書,active,spec,,docs/shigoku/specs/intelligence_mc_integration.md
+SGK-2026-0131,脆弱性連鎖（Vulnerability Chaining）の仕様書,active,spec,,docs/shigoku/specs/inter_agent_chaining.md
+SGK-2026-0132,仕様書: I/Oパフォーマンスとディスクアクセスの最適化,active,spec,,docs/shigoku/specs/io_performance_optimization.md
+SGK-2026-0133,Spec: Katana Headless Crawler Integration & Unified Caido Proxy Strategy,active,spec,,docs/shigoku/specs/katana_caido_integration.md
+SGK-2026-0134,LFI / Path Traversal Scanner v2 (Smart LFI Hunter) Specification,active,spec,,docs/shigoku/specs/lfi_scanner.md
+SGK-2026-0135,仕様書: LLM API呼び出しの最適化 (LLM Optimization),active,spec,,docs/shigoku/specs/llm_optimization.md
+SGK-2026-0136,Spec: BizLogicHunter Migration to Master Conductor Architecture,active,spec,,docs/shigoku/specs/migrate_biz_logic_hunter.md
+SGK-2026-0137,Feature Specification: Tier 3 IDOR 完全体 (MultiSessionManager & OpenAPI Privilege Guesser),active,spec,,docs/shigoku/specs/multi_session_manager.md
+SGK-2026-0138,Spec: AsyncNetworkClient のI/Oボトルネック解消,active,spec,,docs/shigoku/specs/optimize_network_io.md
+SGK-2026-0139,Spec: サブプロセス実行の最適化,active,spec,,docs/shigoku/specs/optimize_subprocess_execution.md
+SGK-2026-0140,仕様書：最適化された階層型キャッシュ戦略,active,spec,,docs/shigoku/specs/optimized_cache_strategy.md
+SGK-2026-0141,仕様書: 統合パフォーマンス最適化 (Performance Optimization v2),active,spec,,docs/shigoku/specs/performance_optimization_v2.md
+SGK-2026-0142,Phase 1.1: Swarm Retry Engine 仕様書,active,spec,,docs/shigoku/specs/phase1_1_swarm_retry_engine.md
+SGK-2026-0143,Phase 1.2: Dynamic Task Queue 仕様書,active,spec,,docs/shigoku/specs/phase1_2_dynamic_task_queue.md
+SGK-2026-0144,Phase 1.3: Proxy Chain & Async Network Client 仕様書,active,spec,,docs/shigoku/specs/phase1_3_proxy_chain.md
+SGK-2026-0145,Phase 1: 足場固めと構造改革 (Swarm化 & 入力正規化) 詳細仕様書,active,spec,,docs/shigoku/specs/phase1_refactor.md
+SGK-2026-0146,Phase 2.1: Critical Path Analysis 仕様書,active,spec,,docs/shigoku/specs/phase2_1_critical_path.md
+SGK-2026-0147,Phase 2.2: OOB (Out-of-Band) Detection 仕様書,active,spec,,docs/shigoku/specs/phase2_2_oob_detection.md
+SGK-2026-0148,Phase 2.3: Headless Browser Validator 仕様書,active,spec,,docs/shigoku/specs/phase2_3_headless_browser.md
+SGK-2026-0149,Phase 2.4: Race Condition Tester 仕様書,active,spec,,docs/shigoku/specs/phase2_4_race_condition.md
+SGK-2026-0150,Phase 2.5: Dynamic Wordlist Generation 仕様書,active,spec,,docs/shigoku/specs/phase2_5_dynamic_wordlist.md
+SGK-2026-0151,Phase 3.2: Fuzzing Swarm (Active Reconnaissance),active,spec,,docs/shigoku/specs/phase3_2_fuzzing_swarm.md
+SGK-2026-0152,Phase 3.6: Scanner Swarm Specification,active,spec,,docs/shigoku/specs/phase3_6_scanner_swarm.md
+SGK-2026-0153,Phase 3: ParamFuzzer & Intelligence Implementation,active,spec,,docs/shigoku/specs/phase3_param_fuzzer_and_intelligence.md
+SGK-2026-0154,Recon Pipeline 最適化評価レポート,active,spec,,docs/shigoku/specs/pipeline_optimization_report.md
+SGK-2026-0155,仕様書: コードプロファイリングの導入,active,spec,,docs/shigoku/specs/profiling_introduction.md
+SGK-2026-0156,Specification: Recipe Execution Engine Optimization,active,spec,,docs/shigoku/specs/recipe_engine_optimization.md
+SGK-2026-0157,偵察バッチ処理の最適化仕様書 (Spec.md),active,spec,,docs/shigoku/specs/recon_batch_processing.md
+SGK-2026-0158,仕様書: Recon Pipeline 並列数制御の最適化,active,spec,,docs/shigoku/specs/recon_concurrency_optimization.md
+SGK-2026-0159,Spec: Response Comparison Heuristics (IDOR 成立判定エンジン),active,spec,,docs/shigoku/specs/response_comparison_heuristics.md
+SGK-2026-0160,Spec: Shutdown Cleanup and Resource Management Fixes,active,spec,,docs/shigoku/specs/shutdown_fix.md
+SGK-2026-0161,Spec: Tier 1 (Phase 1 Closure) - `multipart/form-data` 対応 & Swarm Semaphore,active,spec,,docs/shigoku/specs/tier1_phase1_closure_20260301.md
+SGK-2026-0162,Spec: Tier 1 (Phase 2) - `IdorHunterSpecialist` 強化 (HPP & 動的プロパティ抽出),active,spec,,docs/shigoku/specs/tier1_phase2_idor_enhancement_20260301.md
+SGK-2026-0163,Tier 2 Phase 1: Intelligence Integration Spec,active,spec,,docs/shigoku/specs/tier2_phase1_intelligence_integration.md
+SGK-2026-0164,Spec: Tier 2 Phase 2 - 学習データに基づく動的スキャン最適化,active,spec,,docs/shigoku/specs/tier2_phase2_dynamic_optimization.md
+SGK-2026-0165,Tier 7: プラットフォーム化実装仕様 (Platformization Spec),active,spec,,docs/shigoku/specs/tier7_platformization.md
+SGK-2026-0166,Visibility & Metrics 仕様書,active,spec,,docs/shigoku/specs/visibility_and_metrics.md
+SGK-2026-0167,XSS Specialist (Stored & Reflected) Feature Specification,active,spec,,docs/shigoku/specs/xss_specialist.md
+SGK-2026-0168,Spec: XSS Hunter Workflow & Tool Integration Improvements,active,spec,,docs/shigoku/specs/xss_workflow_improvement.md
+SGK-2026-0169,IMPLEMANTATION PLAN: Phase 1 Refactor (Swarm & TargetAsset),backlog,subtask_plan,,docs/shigoku/subtasks/2026-02-12_phase1_implementation_plan.md
+SGK-2026-0170,Implementation Plan: Phase 2 - 頭脳のアップグレード,backlog,subtask_plan,,docs/shigoku/subtasks/2026-02-13_phase2_implementation_plan.md
+SGK-2026-0171,Phase 1: 足場固めと構造改革 (Swarm化 & 入力正規化) - TODO Tasks,backlog,subtask_plan,SGK-2026-0058,docs/shigoku/subtasks/phase1_tasks.md
+SGK-2026-0172,2025-12-25_Final_Audit_Refactoring,done,work_log,,docs/shigoku/worklogs/2025-12-25_Final_Audit_Refactoring.md
+SGK-2026-0173,2025-12-25_Implement_Golden_Recipes,done,work_log,,docs/shigoku/worklogs/2025-12-25_Implement_Golden_Recipes.md
+SGK-2026-0174,2025-12-25_Implement_SHIGOKU_Recipes_Fallback,done,work_log,,docs/shigoku/worklogs/2025-12-25_Implement_SHIGOKU_Recipes_Fallback.md
+SGK-2026-0175,2025-12-25_Integrate_Advanced_Sub_Agents,done,work_log,,docs/shigoku/worklogs/2025-12-25_Integrate_Advanced_Sub_Agents.md
+SGK-2026-0176,2025-12-25 Agent Portfolio Optimization,done,work_log,,docs/shigoku/worklogs/2025-12-25_Optimize_Agent_Portfolio.md
+SGK-2026-0177,2025-12-25_Refine_SHIGOKU_Workflow_Gaps,done,work_log,,docs/shigoku/worklogs/2025-12-25_Refine_SHIGOKU_Workflow_Gaps.md
+SGK-2026-0178,2025-12-25_SHIGOKU_Flow_Gap_Implementation,done,work_log,,docs/shigoku/worklogs/2025-12-25_SHIGOKU_Flow_Gap_Implementation.md
+SGK-2026-0179,2025-12-25_SHIGOKU_Gap_Implementation_Plan,done,work_log,,docs/shigoku/worklogs/2025-12-25_SHIGOKU_Gap_Implementation_Plan.md
+SGK-2026-0180,2025-12-25_Verify_SHIGOKU_Parallel_GPU,done,work_log,,docs/shigoku/worklogs/2025-12-25_Verify_SHIGOKU_Parallel_GPU.md
+SGK-2026-0181,2026-01-01_Enhance_CoT_Prompt,done,work_log,,docs/shigoku/worklogs/2026-01-01_Enhance_CoT_Prompt.md
+SGK-2026-0182,2026-01-01_Enhance_IDOR_Detection,done,work_log,,docs/shigoku/worklogs/2026-01-01_Enhance_IDOR_Detection.md
+SGK-2026-0183,2026-01-01_New_Security_Tool_Integration,done,work_log,,docs/shigoku/worklogs/2026-01-01_New_Security_Tool_Integration.md
+SGK-2026-0184,2026-01-01_Notification_System_Integration,done,work_log,,docs/shigoku/worklogs/2026-01-01_Notification_System_Integration.md
+SGK-2026-0185,2026-01-01_SSTI_Scanner_Implementation,done,work_log,,docs/shigoku/worklogs/2026-01-01_SSTI_Scanner_Implementation.md
+SGK-2026-0186,2026-01-01_Workflow_Definitions,done,work_log,,docs/shigoku/worklogs/2026-01-01_Workflow_Definitions.md
+SGK-2026-0187,2026-01-02_Enhance_RAG_Context,done,work_log,,docs/shigoku/worklogs/2026-01-02_Enhance_RAG_Context.md
+SGK-2026-0188,2026-01-02_Project_List_Feature,done,work_log,,docs/shigoku/worklogs/2026-01-02_Project_List_Feature.md
+SGK-2026-0189,作業ログ: SHIGOKU 機能拡張マスタープラン策定,done,work_log,,docs/shigoku/worklogs/2026-01-03_Feature_Expansion_Plan.md
+SGK-2026-0190,2026-01-03_Intelligence_Module,done,work_log,,docs/shigoku/worklogs/2026-01-03_Intelligence_Module.md
+SGK-2026-0191,作業ログ: 2026-01-03 Phase 1-3 コードレビュー＆テスト実装,done,work_log,,docs/shigoku/worklogs/2026-01-03_Phase1-3_Code_Review.md
+SGK-2026-0192,2026-01-03_Phase1-3_Code_Review_E2E,done,work_log,,docs/shigoku/worklogs/2026-01-03_Phase1-3_Code_Review_E2E.md
+SGK-2026-0193,2026-01-03_Phase1-3_Final,done,work_log,,docs/shigoku/worklogs/2026-01-03_Phase1-3_Final.md
+SGK-2026-0194,2026-01-03_Phase1_3_Feature_Expansion,done,work_log,,docs/shigoku/worklogs/2026-01-03_Phase1_3_Feature_Expansion.md
+SGK-2026-0195,2026-01-04_Agent_Registry_Phase1,done,work_log,,docs/shigoku/worklogs/2026-01-04_Agent_Registry_Phase1.md
+SGK-2026-0196,2026-01-04_Bug_Analysis_and_Fixes,done,work_log,,docs/shigoku/worklogs/2026-01-04_Bug_Analysis_and_Fixes.md
+SGK-2026-0197,2026-01-04_Bug_Fix_Investigation,done,work_log,,docs/shigoku/worklogs/2026-01-04_Bug_Fix_Investigation.md
+SGK-2026-0198,2026-01-04_Implement_Security_Guardrails,done,work_log,,docs/shigoku/worklogs/2026-01-04_Implement_Security_Guardrails.md
+SGK-2026-0199,Work Log - Implementing Security Features,done,work_log,,docs/shigoku/worklogs/2026-01-04_Implementing_Unimplemented_Features.md
+SGK-2026-0200,2026-01-04_Model_Routing,done,work_log,,docs/shigoku/worklogs/2026-01-04_Model_Routing.md
+SGK-2026-0201,2026-01-04_RAG_Chunking_Routing,done,work_log,,docs/shigoku/worklogs/2026-01-04_RAG_Chunking_Routing.md
+SGK-2026-0202,2026-01-04_RAG_Header_Chunking,done,work_log,,docs/shigoku/worklogs/2026-01-04_RAG_Header_Chunking.md
+SGK-2026-0203,2026-01-05_Bug_Fixes_Implementation,done,work_log,,docs/shigoku/worklogs/2026-01-05_Bug_Fixes_Implementation.md
+SGK-2026-0204,Work Log: 双方向 PII マスキング機能実装,done,work_log,,docs/shigoku/worklogs/2026-01-06_pii_masking.md
+SGK-2026-0205,Work Log: Reconnaissance Pipeline Step 1-8 完全実装,done,work_log,,docs/shigoku/worklogs/2026-01-10_Recon_Pipeline_Step1-8.md
+SGK-2026-0206,Work Log: Recon Pipeline Step 6 完全実装,done,work_log,,docs/shigoku/worklogs/2026-01-12_Recon_Pipeline_Step6_Implementation.md
+SGK-2026-0207,Work Log: MasterConductor 統合とセッション永続化,done,work_log,,docs/shigoku/worklogs/2026-01-14_MasterConductor_Session_Persistence.md
+SGK-2026-0208,Work Log: URL タグ付けパイプライン E2E テスト,done,work_log,,docs/shigoku/worklogs/2026-01-19_URL_Tagging_Pipeline_E2E.md
+SGK-2026-0209,2026-01-21 作業ログ,done,work_log,,docs/shigoku/worklogs/2026-01-21_Swarm_LLM_Specialists.md
+SGK-2026-0210,2026-01-22 作業ログ,done,work_log,,docs/shigoku/worklogs/2026-01-22_Context_Aware_MC_with_Neo4j.md
+SGK-2026-0211,Codex 引き継ぎ書 (Ver.1) - 2026-05-11,done,work_log,,docs/shigoku/worklogs/2026-05-11_log_codex_handover_v1.md
+SGK-2026-0212,2026-05-11 作業ログ: SCN07-12 Discord Notification Ver.1,done,work_log,,docs/shigoku/worklogs/2026-05-11_log_scn07-12_discord_notification_v1.md
+SGK-2026-0213,2026-05-12 Codex Handover v2 (SCN01-07: 品質優先 + 速度/コスト最適化),done,work_log,,docs/shigoku/worklogs/2026-05-12_log_codex_handover_v2.md
+SGK-2026-0214,2026-05-14 Codex Chat Work Summary,done,work_log,SGK-2026-0058,docs/shigoku/worklogs/2026-05-14_log_codex_chat_summary.md
+SGK-2026-0215,Remaining Bugs Plan (Legacy Root),done,plan,,docs/shigoku/plans/remaining_bugs_plan.md
+SGK-2026-0216,File Upload Implementation Plan (Legacy Root),backlog,plan,,docs/shigoku/plans/file_upload_implementation_plan_legacy.md
+SGK-2026-0217,Caido Log Integration Task Checklist (Legacy Root),done,work_log,,docs/shigoku/worklogs/caido_log_integration_task_checklist.md
+SGK-2026-0219,Non-SCN Vulnerability Discovery Evaluation Plan (Juice Shop/DVWA/CRAPI),done,plan,,docs/shigoku/plans/2026-05-19_non-scn-vulnerability-discovery-evaluation-plan-juice-shop-dvwa-crapi_plan.md
+SGK-2026-0220,B-2: SSRF 単体 Tester 実実装,done,plan,,docs/shigoku/plans/2026-05-19_b-2-ssrf-tester_plan.md
+SGK-2026-0221,Mock除去優先: OptimizedRecipeRunner と Discovery GraphQL 本実装接続,done,plan,SGK-2026-0065,docs/shigoku/plans/2026-05-19_mock-optimizedreciperunner-discovery-graphql_plan.md
+SGK-2026-0221-S01,GroupA: 実行経路のモック除去（OptimizedRecipeRunner / run_recipe）,done,subtask_plan,SGK-2026-0221,docs/shigoku/subtasks/2026-05-20_sgk-2026-0221-s01_groupa_execution-path_subtask_plan.md
+SGK-2026-0221-S02,GroupB: Discovery GraphQL 本実装接続（graphql.py / manager.py）,done,subtask_plan,SGK-2026-0221,docs/shigoku/subtasks/2026-05-20_sgk-2026-0221-s02_groupb_discovery-graphql_subtask_plan.md
+SGK-2026-0221-S03,GroupC: 回帰防止テストと可観測性・ドキュメント整備,done,subtask_plan,SGK-2026-0221,docs/shigoku/subtasks/2026-05-20_sgk-2026-0221-s03_groupc_regression-observability_subtask_plan.md
+SGK-2026-0222,SHIGOKU全体: 分散ランタイム制御共通基盤化（QPS/隔離/回復）,done,plan,,docs/shigoku/plans/2026-05-21_sgk-2026-0222_distributed-runtime-control_plan.md
+SGK-2026-0223,GraphQL Runtime 長時間回帰テスト計画（連続実行/状態リーク/劣化監視）,done,plan,SGK-2026-0221,docs/shigoku/plans/2026-05-21_sgk-2026-0223_graphql-longrun-regression-test_plan.md
+SGK-2026-0224,Operational Hardening Backlog: Alert/Contract/Auth/Learning/Tenant Isolation,done,plan,SGK-2026-0221,docs/shigoku/plans/2026-05-21_sgk-2026-0224_operational-hardening-backlog_plan.md
+SGK-2026-0225,Specification: _should_observe Observation Policy,active,spec,SGK-2026-0215,docs/shigoku/specs/2026-05-22_should_observe_observation_policy_spec.md
+SGK-2026-0231,SmartHunter特化チューニング、追加カテゴリ対応,done,plan,,docs/shigoku/plans/2026-05-22_juice-shop-phase-d-continuous-improvement_plan.md
+SGK-2026-0231-S01,外部ツール配置の整理とDalFox統合準備,done,subtask_plan,SGK-2026-0231,docs/shigoku/subtasks/2026-05-22_sgk-2026-0231-s01_external-tool-organization_subtask_plan.md
+SGK-2026-0232,Remaining Bugs Plan の実装/計画同期と未実装項目整理の完了報告,done,work_report,SGK-2026-0215,docs/shigoku/reports/2026-05-22_sgk-2026-0232_remaining-bugs-plan_closure_work_report.md
+SGK-2026-0233,Remaining Bugs Plan クローズ作業ログ,done,work_log,SGK-2026-0215,docs/shigoku/worklogs/2026-05-22_sgk-2026-0233_remaining-bugs-plan_closure_worklog.md
+SGK-2026-0238,外部ツールの重複実装分析と統合優先順位の整理,done,plan,SGK-2026-0231,docs/shigoku/plans/external_tool_duplication_analysis.md
+SGK-2026-0239,外部ツール統合の段階移行計画,done,plan,SGK-2026-0231,docs/shigoku/plans/external_tool_migration_plan.md
+SGK-2026-0231-S02,AIToolBridge統合検証、残Adapter実装、後方互換性整備、運用監視構築,done,subtask_plan,SGK-2026-0231,docs/shigoku/subtasks/2026-05-23_sgk-2026-0231-s02_ai-integration-and-adapter-expansion.md
+SGK-2026-0240,SSRF P0 判定品質強化（ベースライン差分・信頼度重み付け・最終到達判定・FP抑制検証）,done,plan,SGK-2026-0220,docs/shigoku/plans/2026-05-23_ssrf-p0-fp_plan.md
+SGK-2026-0241,ToolRegistry統合と技術的負債解消 (Phase E-3),done,plan,,docs/shigoku/plans/2026-05-23_toolregistry-phase-e-3_plan.md
+SGK-2026-0242,Phase D Bug Bounty Improvement Implementation,done,plan,SGK-2026-0231,docs/shigoku/plans/2026-05-24_phase-d-bug-bounty-improvement-implementation_plan.md
+SGK-2026-0243,Phase D Bug Bounty Improvement Implementation,done,plan,SGK-2026-0231,docs/shigoku/plans/2026-05-24_phase-d-bug-bounty-improvement-implementation_plan_v2.md
+SGK-2026-0244,XSS HunterのDalFox統合、DOM/Stored/Reflected XSS検出強化、Browser Pool実装,done,plan,SGK-2026-0231,docs/shigoku/plans/2026-05-24_xss-hunter-enhancement_plan.md
+SGK-2026-0245,Arjun/GAU 運用KPI・ガバナンス充足化実装計画,done,plan,SGK-2026-0239,docs/shigoku/plans/2026-05-26_arjun-gau-kpi_plan.md
+SGK-2026-0245,Arjun/GAU KPIしきい値運用と障害ドリル証跡の区切り完了報告,done,work_report,SGK-2026-0239,docs/shigoku/reports/2026-05-26_sgk-2026-0245_kpi-threshold-and-drill-kickoff_work_report.md
+SGK-2026-0246,台帳不整合 task_217_missing_file の原因特定と不要タスク参照の除去,done,work_log,SGK-2026-0222,docs/shigoku/worklogs/2026-05-26_sgk-2026-0246_registry-cleanup_task217_work_log.md
+SGK-2026-0222,RuntimeControlBackend抽象化とDiscovery GraphQLへの段階導入,done,work_log,,docs/shigoku/worklogs/2026-05-26_sgk-2026-0222_runtime-control-backend-implementation_work_log.md
+SGK-2026-0222,fail_open 例外運用の承認者・条件・有効時間を固定化,active,manual,,docs/shigoku/manuals/2026-05-26_runtime-control-fail-open-guard_runbook.md
+SGK-2026-0247,0242/0243の重複・空テンプレ状態を記録し、台帳クローズ判断の証跡を残す,done,work_report,SGK-2026-0243,docs/shigoku/reports/2026-05-27_sgk-2026-0247_phase-d-plan-template-closure_work_report.md
+SGK-2026-0248,0242/0243の差分確認とstatus更新、追跡用証跡の追加ログ,done,work_log,SGK-2026-0243,docs/shigoku/worklogs/2026-05-27_sgk-2026-0248_phase-d-plan-template-closure_work_log.md
+SGK-2026-0222,分散runtime control基盤・release governance・承認正本照合実装の完了報告,done,work_report,,docs/shigoku/reports/2026-05-27_sgk-2026-0222_distributed-runtime-control_work_report.md
+SGK-2026-0244-S01,SGK-2026-0244 の未実装項目（Stored XSS保存フェーズ、SmartXSSHunterのBrowserPool統合）を完了する子計画,active,subtask_plan,SGK-2026-0244,docs/shigoku/subtasks/2026-05-27_sgk-2026-0244-s01_xss-hunter-remaining-implementation_subtask_plan.md
+SGK-2026-0244,X2/X3/X4 の実装済み項目を再評価し、計画書ステータス更新と未完了項目を明確化した状況報告,done,work_report,SGK-2026-0244,docs/shigoku/reports/2026-05-29_sgk-2026-0244_x2-x4-status_work_report.md
+SGK-2026-0219,Non-SCN評価 Step1-7 実施結果と再判定（Conditional継続）,done,work_report,,docs/shigoku/reports/2026-05-31_sgk-2026-0219_non-scn-eval_work_report.md
+SGK-2026-0219,Non-SCN評価 Step1-7 実行ログ（baseline固定・再現性・再判定）,done,work_log,,docs/shigoku/worklogs/2026-05-31_sgk-2026-0219_non-scn-eval_work_log.md
+SGK-2026-0249,SGK-2026-0219 継続監視（Non-SCN評価の経過観察）,active,subtask_plan,SGK-2026-0219,docs/shigoku/subtasks/2026-05-31_sgk-2026-0219-non-scn_subtask_plan.md
+SGK-2026-0250,SGK-2026-0221 継続監視（GraphQL運用SLO/観測）,active,subtask_plan,SGK-2026-0221,docs/shigoku/subtasks/2026-05-31_sgk-2026-0221-graphql-slo_subtask_plan.md
+SGK-2026-0221,SGK-2026-0221 親計画クローズと継続監視分離の完了報告,done,work_report,SGK-2026-0065,docs/shigoku/reports/2026-05-31_sgk-2026-0221_plan-closure_work_report.md
+SGK-2026-0221,SGK-2026-0221 親計画クローズ作業ログ,done,work_log,SGK-2026-0065,docs/shigoku/worklogs/2026-05-31_sgk-2026-0221_plan-closure_work_log.md
+SGK-2026-0251,脆弱性チェーン高精度化実装計画,active,plan,SGK-2026-0131,docs/shigoku/plans/2026-06-01_task_plan.md
+SGK-2026-0251,SGK-2026-0251 Phase1 の実装完了と残課題整理,done,work_report,SGK-2026-0131,docs/shigoku/reports/2026-06-02_sgk-2026-0251_phase1-completion_work_report.md
+SGK-2026-0251,SGK-2026-0251 Phase1 完了の計画書反映と台帳更新ログ,done,work_log,SGK-2026-0131,docs/shigoku/worklogs/2026-06-02_sgk-2026-0251_phase1-completion_work_log.md
+SGK-2026-0252,脆弱性チェーン基盤分割と feasibility solver 実装,done,subtask_plan,SGK-2026-0251,docs/shigoku/subtasks/2026-06-02_feasibility-solver_subtask_plan.md
+SGK-2026-0253,脆弱性チェーンルール拡張と program overrides 整備,done,subtask_plan,SGK-2026-0251,docs/shigoku/subtasks/2026-06-02_program-overrides_subtask_plan.md
+SGK-2026-0253,precedence matrix、audit 観測項目、統合一致結果、切り戻し条件の完了報告,done,work_report,SGK-2026-0251,docs/shigoku/reports/2026-06-03_sgk-2026-0253_program-overrides_work_report.md
+SGK-2026-0253,SGK-2026-0253 の報告反映と台帳更新ログ,done,work_log,SGK-2026-0251,docs/shigoku/worklogs/2026-06-03_sgk-2026-0253_program-overrides_work_log.md
+SGK-2026-0254,脆弱性チェーン時間軸制約とセッション世代追跡,done,subtask_plan,SGK-2026-0251,docs/shigoku/subtasks/2026-06-02_task_subtask_plan.md
+SGK-2026-0255,脆弱性チェーン degrade 設計と運用Runbook 整備,done,subtask_plan,SGK-2026-0251,docs/shigoku/subtasks/2026-06-02_degrade-runbook_subtask_plan.md
+SGK-2026-0256,SGK-2026-0256 継続監視（program overrides 運用観測）,active,subtask_plan,SGK-2026-0253,docs/shigoku/subtasks/2026-06-03_sgk-2026-0253-program-overrides_subtask_plan.md
+SGK-2026-0257,SGK-2026-0253 技術的負債追跡（sample rules / schema test）,active,subtask_plan,SGK-2026-0253,docs/shigoku/subtasks/2026-06-03_sgk-2026-0253-sample-rules-schema-test_subtask_plan.md
+SGK-2026-0254,temporal constraint、audit/shadow 指標、representative 回帰確認の完了報告,done,work_report,SGK-2026-0251,docs/shigoku/reports/2026-06-03_sgk-2026-0254_temporal-state_work_report.md
+SGK-2026-0254,SGK-2026-0254 の報告反映と継続監視分離ログ,done,work_log,SGK-2026-0251,docs/shigoku/worklogs/2026-06-03_sgk-2026-0254_temporal-state_work_log.md
+SGK-2026-0258,temporal metadata 欠損率、representative session 回帰、reason code 安定性の継続監視,active,subtask_plan,SGK-2026-0254,docs/shigoku/subtasks/2026-06-03_sgk-2026-0258-temporal-followup_subtask_plan.md
+SGK-2026-0259,Recipe高度化: 単一セッション高額Auth/JWT/OAuth検出強化,active,subtask_plan,SGK-2026-0221,docs/shigoku/subtasks/2026-06-03_recipe-auth-jwt-oauth_subtask_plan.md
+SGK-2026-0260,Recipe運用フロー改善: Recon起点の選抜・実行・Swarm連携,active,subtask_plan,SGK-2026-0221,docs/shigoku/subtasks/2026-06-03_recipe-recon-swarm_subtask_plan.md
+SGK-2026-0261,Recon運用フロー改善: 攻撃面分類・Signal正規化・MC/Swarm受け渡し,active,subtask_plan,SGK-2026-0221,docs/shigoku/subtasks/2026-06-03_recon-signal-mc-swarm_subtask_plan.md
+SGK-2026-0262,継続学習運用改善: Obsidian/RAG・KG・Recipe連携の再設計,active,subtask_plan,SGK-2026-0221,docs/shigoku/subtasks/2026-06-03_obsidian-rag-kg-recipe_subtask_plan.md
+SGK-2026-0263,継続学習リファレンス: KG・RAG・MC・Recipe・Recon の理想アーキテクチャ,active,roadmap,,docs/shigoku/roadmaps/2026-06-03_continuous-learning-architecture-reference.md
+SGK-2026-0264,巨大ファイル分割計画 1/4: MasterConductor 分割,active,plan,SGK-2026-0065,docs/shigoku/plans/2026-06-05_master-conductor-split-plan_plan.md
+SGK-2026-0265,巨大ファイル分割計画 2/4: InjectionManager 分割,done,plan,SGK-2026-0065,docs/shigoku/plans/2026-06-05_injection-manager-split-plan_plan.md
+SGK-2026-0266,巨大ファイル分割計画 3/4: CLI Entrypoint 分割,active,plan,SGK-2026-0065,docs/shigoku/plans/2026-06-05_cli-entrypoint-split-plan_plan.md
+SGK-2026-0267,巨大ファイル分割計画 4/4: ReconPipeline 分割,active,plan,SGK-2026-0065,docs/shigoku/plans/2026-06-05_recon-pipeline-split-plan_plan.md
+SGK-2026-0268,Haddix report payout-readiness output improvements,done,plan,SGK-2026-0065,docs/shigoku/plans/2026-06-08_haddix-report-payout-readiness-output-improvements_plan.md
+SGK-2026-0269,Git ignore cleanup for fresh GitHub repository,done,plan,SGK-2026-0065,docs/shigoku/plans/2026-06-08_git-ignore-cleanup-for-fresh-github-repository_plan.md
+SGK-2026-0270,Remove unused Caveman skill artifacts,done,plan,SGK-2026-0065,docs/shigoku/plans/2026-06-08_remove-unused-caveman-skill-artifacts_plan.md
+SGK-2026-0271,Remove secret-like test fixtures blocking GitHub push,done,plan,SGK-2026-0065,docs/shigoku/plans/2026-06-08_remove-secret-like-test-fixtures-blocking-github-push_plan.md

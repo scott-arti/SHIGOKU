@@ -1,0 +1,73 @@
+# Cloud Diagnostic Recipe
+# クラウドメタデータ診断 (SSRF経由)
+
+name: cloud_metadata_diagnostic
+version: "1.0"
+description: |
+  クラウド環境（AWS/GCP/Azure）のメタデータエンドポイントに対するSSRF攻撃を検証します。
+  既存のcloud_metadata_scannerを活用した診断フローです。
+
+triggers:
+  - tech_stack contains "aws"
+  - tech_stack contains "gcp"
+  - tech_stack contains "azure"
+  - tech_stack contains "kubernetes"
+  - ssrf_candidate detected
+
+phases:
+  - name: discover_ssrf_endpoints
+    agent: ReconBot
+    actions:
+      - tool: httpx
+        profile: thorough
+        args:
+          tech_detect: true
+      - tool: katana
+        args:
+          depth: 2
+
+  - name: cloud_metadata_scan
+    agent: AttackAgent
+    condition: ssrf_candidates found
+    actions:
+      - tool: cloud_metadata_scanner
+        args:
+          mode: all_providers
+          check_imds_v2: true
+          timeout: 30
+        on_success:
+          - notify: critical
+          - save_finding: true
+
+  - name: credential_extraction
+    agent: AttackAgent
+    condition: metadata_accessible
+    actions:
+      - tool: cloud_metadata_scanner
+        args:
+          mode: credential_extraction
+          providers:
+            - aws
+            - gcp
+            - azure
+        on_success:
+          - notify: critical
+          - escalate: immediate
+
+  - name: report_generation
+    agent: Reporter
+    actions:
+      - generate_report:
+          format: hackerone
+          include_remediation: true
+
+remediation:
+  - "IMDSv2を有効化し、IMDSv1を無効化してください"
+  - "SSRF防止のため、サーバーサイドリクエストの宛先をホワイトリスト化してください"
+  - "メタデータサービスへのアクセスを必要なコンテナ/インスタンスに制限してください"
+  - "ネットワークポリシーで169.254.169.254へのアクセスを制限してください"
+
+severity_mapping:
+  metadata_accessible: high
+  credentials_exposed: critical
+  role_assumption_possible: critical

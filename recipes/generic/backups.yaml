@@ -1,0 +1,18 @@
+name: backup_files
+description: "Golden Recipe: Hunt for forgotten backup files - Direct tool execution"
+tags: ["generic", "backups", "exposure"]
+severity: "medium"
+target_condition: null
+steps:
+  - tool: "tool_executor"
+    args:
+      tool_name: "nuclei"
+      args:
+        extra_args: "-t http/exposures/backups/"
+  - tool: "tool_executor"
+    args:
+      tool_name: "ffuf"
+      args:
+        wordlist: "/home/bbb/Documents/tools/wordlists/SecLists/Discovery/Web-Content/common.txt"
+        match_code: "200"
+        extensions: "bak,old,backup,swp,orig,save,tmp"

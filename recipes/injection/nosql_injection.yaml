@@ -1,0 +1,16 @@
+name: nosql_injection
+description: "Golden Recipe: Detect NoSQL Injection - Direct tool execution"
+tags: ["injection", "nosql", "mongodb"]
+severity: "high"
+target_condition: "'MongoDB' in tech_stack or 'Node.js' in tech_stack"
+steps:
+  - tool: "tool_executor"
+    args:
+      tool_name: "nuclei"
+      args:
+        extra_args: "-tags nosql,mongodb -severity critical,high"
+  - tool: "tool_executor"
+    args:
+      tool_name: "nuclei"
+      args:
+        extra_args: "-t http/cves/ -tags nosql"

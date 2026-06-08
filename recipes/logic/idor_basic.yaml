@@ -1,0 +1,17 @@
+name: idor_basic
+description: "Basic IDOR Check - Direct tool execution"
+tags: ["logic", "idor"]
+severity: "high"
+target_condition: null
+steps:
+  - tool: "tool_executor"
+    args:
+      tool_name: "naabu"
+      args:
+        mode: "fast"
+        extra_args: "-p 80,443,8080,8443"
+  - tool: "tool_executor"
+    args:
+      tool_name: "nuclei"
+      args:
+        extra_args: "-tags idor -severity high,critical"

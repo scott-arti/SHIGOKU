@@ -1,0 +1,636 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SHIGOKU Attack Report</title>
+    <style>
+      :root {
+        --bg-color: #1a1a1a;
+        --text-color: #e0e0e0;
+        --accent-color: #00ff9d;
+        --success-color: #4caf50;
+        --fail-color: #f44336;
+        --panel-bg: #2d2d2d;
+        --border-color: #404040;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        background-color: var(--bg-color);
+        color: var(--text-color);
+        height: 100vh;
+        overflow: hidden;
+      }
+
+      .main-container {
+        display: flex;
+        width: 100%;
+        height: 100%;
+      }
+
+      /* Sidebar */
+      .sidebar {
+        width: 350px;
+        background-color: #252525;
+        border-right: 1px solid var(--border-color);
+        display: flex;
+        flex-direction: column;
+        flex-shrink: 0;
+      }
+
+      .sidebar-header {
+        padding: 15px;
+        border-bottom: 1px solid var(--border-color);
+        background: #202020;
+      }
+
+      .sidebar-title {
+        margin: 0;
+        color: var(--accent-color);
+        font-size: 1.2rem;
+      }
+
+      .tab-buttons {
+        display: flex;
+        gap: 5px;
+        margin-top: 10px;
+      }
+
+      .tab-btn {
+        flex: 1;
+        padding: 6px;
+        background: #333;
+        color: #aaa;
+        border: 1px solid #444;
+        cursor: pointer;
+        border-radius: 4px;
+        transition: all 0.2s;
+      }
+
+      .tab-btn:hover {
+        background: #444;
+      }
+
+      .tab-btn.active {
+        background: var(--accent-color);
+        color: #000;
+        border-color: var(--accent-color);
+        font-weight: bold;
+      }
+
+      .tab-content {
+        flex: 1;
+        overflow-y: auto;
+        padding: 10px;
+        display: none;
+      }
+
+      .tab-content.active {
+        display: block;
+      }
+
+      /* Tree Node */
+      .tree-node {
+        padding: 8px;
+        margin: 4px 0;
+        cursor: pointer;
+        border-radius: 4px;
+        display: flex;
+        align-items: center;
+        transition: background 0.2s;
+        font-size: 0.9rem;
+      }
+
+      .tree-node:hover {
+        background-color: #383838;
+      }
+
+      .tree-node.active {
+        background-color: #404040;
+        border-left: 3px solid var(--accent-color);
+      }
+
+      .status-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        margin-right: 10px;
+        flex-shrink: 0;
+      }
+      .status-success { background-color: var(--success-color); }
+      .status-failed { background-color: var(--fail-color); }
+      .status-pending { background-color: #757575; }
+      .status-skipped { background-color: #aaa; border: 1px solid #555; }
+
+      .task-children {
+        margin-left: 15px;
+        border-left: 1px solid #444;
+        padding-left: 5px;
+      }
+
+      /* Content Panel */
+      .content-panel {
+        flex: 1;
+        padding: 2rem;
+        overflow-y: auto;
+        background: var(--bg-color);
+      }
+
+      .placeholder-text {
+        text-align: center;
+        color: #666;
+        margin-top: 50px;
+        font-size: 1.2rem;
+      }
+
+      /* Detail View */
+      .header-panel {
+        background-color: var(--panel-bg);
+        padding: 1.5rem;
+        border-radius: 8px;
+        margin-bottom: 2rem;
+        border: 1px solid var(--border-color);
+      }
+
+      h1 { margin: 0 0 0.5rem 0; color: var(--accent-color); font-size: 1.8rem; }
+      
+      .meta-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 1rem;
+        margin-top: 1rem;
+      }
+
+      .meta-item { background: #333; padding: 0.8rem; border-radius: 4px; }
+      .meta-label { color: #888; font-size: 0.8rem; display: block; }
+      .meta-value { color: #fff; font-weight: bold; }
+
+      .result-block {
+        background: var(--panel-bg);
+        padding: 1.5rem;
+        border-radius: 8px;
+        border: 1px solid var(--border-color);
+        margin-top: 20px;
+      }
+
+      .code-block {
+        background-color: #151515;
+        padding: 1rem;
+        border-radius: 4px;
+        font-family: monospace;
+        white-space: pre-wrap;
+        color: #dcdcdc;
+        border: 1px solid #333;
+        max-height: 500px;
+        overflow-y: auto;
+      }
+
+      /* History List */
+      .history-item {
+        padding: 10px;
+        border-bottom: 1px solid #444;
+      }
+      .history-item a {
+        color: var(--accent-color);
+        text-decoration: none;
+        font-weight: bold;
+        display: block;
+      }
+      .history-item a:hover { text-decoration: underline; }
+      .history-meta { font-size: 0.8em; color: #aaa; margin-top: 4px; }
+
+      /* Error Display */
+      #error-display {
+        display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+        background: rgba(0,0,0,0.95); z-index: 9999; color: var(--fail-color); padding: 50px; overflow: auto;
+        box-sizing: border-box;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Main Layout -->
+    <div class="main-container">
+      <!-- Sidebar -->
+      <div class="sidebar">
+        <div class="sidebar-header">
+           <h3 class="sidebar-title">SHIGOKU Report</h3>
+           <div id="report-timestamp" style="font-size:0.8rem; color:#888; margin-top:5px;"></div>
+           <div class="tab-buttons">
+              <button class="tab-btn active" onclick="switchTab(event, 'tree')">Strategy</button>
+              <button class="tab-btn" onclick="switchTab(event, 'history')">History</button>
+           </div>
+        </div>
+        
+        <!-- Tab: Tree -->
+        <div id="tab-tree" class="tab-content active">
+           <div id="tree-root"></div>
+        </div>
+        
+        <!-- Tab: History -->
+        <div id="tab-history" class="tab-content">
+           <div id="history-list"></div>
+        </div>
+      </div>
+
+      <!-- Content Panel -->
+      <div class="content-panel">
+        <div id="detail-view">
+          <div class="placeholder-text">Select a task from the Strategy Tree to view details.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Data Injection -->
+    <script id="session-data" type="application/json">
+      BASE64_DATA_PLACEHOLDER
+    </script>
+    
+    <script id="history-data" type="application/json">
+      BASE64_HISTORY_PLACEHOLDER
+    </script>
+
+    <!-- Error Display -->
+    <div id="error-display">
+        <h1>Report Rendering Error</h1>
+        <p id="error-message"></p>
+        <pre id="error-trace" style="color:#aaa; background:#222; padding:10px;"></pre>
+        <button onclick="document.getElementById('error-display').style.display='none'" style="padding:10px; background:#333; color:#fff; border:none; cursor:pointer;">Close</button>
+    </div>
+
+    <script>
+      function showError(msg, trace) {
+          const el = document.getElementById('error-display');
+          if(el) {
+              el.style.display = 'block';
+              document.getElementById('error-message').textContent = msg;
+              document.getElementById('error-trace').textContent = trace || "";
+          } else {
+              alert("Critical Error: " + msg);
+          }
+      }
+
+      function switchTab(event, tabName) {
+          // Tabs
+          document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+          event.target.classList.add('active');
+          
+          // Content
+          document.querySelectorAll('.tab-content').forEach(c => c.style.display = 'none');
+          document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+          
+          const content = document.getElementById('tab-' + tabName);
+          if(content) {
+              content.style.display = 'block';
+              content.classList.add('active');
+          }
+      }
+
+      document.addEventListener("DOMContentLoaded", () => {
+        try {
+            // --- 1. Load Session Data ---
+            const rawDataEl = document.getElementById("session-data");
+            if (!rawDataEl) return; // Should not happen if template is correct
+            
+            const rawData = rawDataEl.textContent.trim();
+            // Split string to prevent backend replacement collision
+            if (!rawData || rawData === "BASE64_DATA_" + "PLACEHOLDER") {
+                console.warn("No session data injected.");
+                const snippet = rawData ? rawData.substring(0, 50) : "NULL";
+                document.getElementById('tree-root').innerHTML = 
+                    `<div style='color:#666; padding:20px;'>
+                        <strong>No data available.</strong><br>
+                        Raw Length: ${rawData.length}<br>
+                        Snippet: ${escapeHtml(snippet)}
+                     </div>`;
+                return;
+            }
+            
+            let sessionData;
+            try {
+                // Try Base64 Decode
+                try {
+                    const decoded = new TextDecoder().decode(
+                        Uint8Array.from(atob(rawData), c => c.charCodeAt(0))
+                    );
+                    sessionData = JSON.parse(decoded);
+                } catch (b64err) {
+                    // Fallback
+                    sessionData = JSON.parse(rawData);
+                }
+            } catch (e) {
+                showError("Failed to parse session data", e.message);
+                return;
+            }
+
+            if (sessionData && sessionData.tasks) {
+                renderTree(sessionData.tasks);
+                
+                // Render Timestamp
+                const tsEl = document.getElementById("report-timestamp");
+                if(tsEl && sessionData.timestamp) {
+                    // Start time is unix timestamp (float or int)
+                    try {
+                        let date;
+                        if (typeof sessionData.timestamp === 'number') {
+                             date = new Date(sessionData.timestamp * 1000);
+                        } else {
+                             // Assuming string is ISO or something usable
+                             date = new Date(sessionData.timestamp);
+                        }
+                        
+                        // Convert to JST string manually or use locale
+                        // We want consistent JST display regardless of browser timezone if possible?
+                        // Actually, user requested "JST execution time".
+                        // If we use toLocaleString("ja-JP", {timeZone: "Asia/Tokyo"}), it works.
+                        
+                        const timeStr = date.toLocaleString("ja-JP", {
+                            timeZone: "Asia/Tokyo",
+                            year: 'numeric', month: '2-digit', day: '2-digit',
+                            hour: '2-digit', minute: '2-digit', second: '2-digit',
+                            hour12: false
+                        });
+                        
+                        tsEl.textContent = "Executed: " + timeStr + " (JST)";
+                    } catch(e) {
+                        console.warn("Failed to format timestamp", e);
+                    }
+                }
+            }
+
+            // --- 2. Load History Data ---
+            const rawHistoryEl = document.getElementById("history-data");
+            if (rawHistoryEl) {
+                const rawHistory = rawHistoryEl.textContent.trim();
+                if (rawHistory && !rawHistory.includes("BASE64_HISTORY_" + "PLACEHOLDER")) {
+                     try {
+                        let historyData;
+                        try {
+                             const decodedH = new TextDecoder().decode(
+                                Uint8Array.from(atob(rawHistory), c => c.charCodeAt(0))
+                            );
+                            historyData = JSON.parse(decodedH);
+                        } catch(bh) {
+                            historyData = JSON.parse(rawHistory);
+                        }
+                        renderHistory(historyData);
+                     } catch(eh) {
+                         console.warn("Failed to load history", eh);
+                     }
+                }
+            }
+
+        } catch (globalErr) {
+            showError("Global Script Error", globalErr.message + "\n" + globalErr.stack);
+        }
+      });
+
+      function renderTree(tasks) {
+        const root = document.getElementById("tree-root");
+        if(!root) return;
+        root.innerHTML = ""; 
+
+        if (tasks.length === 0) {
+            root.innerHTML = "<div style='padding:10px; color:#aaa;'>No tasks recorded.</div>";
+            return;
+        }
+
+        // Parent-Child map
+        const taskMap = new Map();
+        tasks.forEach(t => taskMap.set(t.id, { ...t, children: [] }));
+
+        const topLevelTasks = [];
+        taskMap.forEach(t => {
+          if (t.parent_id && taskMap.has(t.parent_id)) {
+            taskMap.get(t.parent_id).children.push(t);
+          } else {
+            topLevelTasks.push(t);
+          }
+        });
+
+        topLevelTasks.forEach(task => {
+          root.appendChild(createTaskNode(task));
+        });
+      }
+      
+      function renderHistory(historyData) {
+          const listRoot = document.getElementById("history-list");
+          if(!listRoot) return;
+          listRoot.innerHTML = "";
+          
+          if (!historyData || (Array.isArray(historyData) && historyData.length === 0) || (typeof historyData === 'object' && Object.keys(historyData).length === 0)) {
+              listRoot.innerHTML = "<div style='padding:10px; color:#aaa;'>No history available.</div>";
+              return;
+          }
+          
+          // Legacy support: Array -> Single group
+          if (Array.isArray(historyData)) {
+              const groupDiv = createHistoryGroup("Current Project", historyData, true);
+              listRoot.appendChild(groupDiv);
+              return;
+          }
+          
+          // Dict support: Multiple groups
+          const projectNames = Object.keys(historyData).sort();
+          
+          // Try to determine "current" project better if possible, otherwise rely on 'active' flag in items
+          // Or just expand all? No, expand the one containing active item.
+          
+          projectNames.forEach(pName => {
+              const items = historyData[pName];
+              const hasActive = items.some(i => i.active);
+              const groupDiv = createHistoryGroup(pName, items, hasActive);
+              listRoot.appendChild(groupDiv);
+          });
+      }
+      
+      function createHistoryGroup(name, items, isOpen) {
+          const container = document.createElement("div");
+          container.className = "history-group";
+          
+          const header = document.createElement("div");
+          header.className = "history-group-header";
+          header.textContent = name;
+          header.style.cssText = "padding:8px; background:#333; cursor:pointer; font-weight:bold; border-bottom:1px solid #444; display:flex; justify-content:ignore;";
+          // Add simple toggle indicator
+          const indicator = document.createElement("span");
+          indicator.textContent = isOpen ? "▼" : "▶";
+          indicator.style.float = "right";
+          header.appendChild(indicator);
+          
+          const content = document.createElement("div");
+          content.className = "history-group-content";
+          content.style.display = isOpen ? "block" : "none";
+          
+          header.onclick = () => {
+              const isHidden = content.style.display === "none";
+              content.style.display = isHidden ? "block" : "none";
+              indicator.textContent = isHidden ? "▼" : "▶";
+          };
+          
+          items.forEach(h => {
+              const item = document.createElement("div");
+              item.className = "history-item";
+              if(h.active) item.style.backgroundColor = "#2d4436"; // Highlight active
+              
+              const link = document.createElement("a");
+              link.href = h.filename;
+              link.textContent = h.timestamp || h.filename;
+              
+              const meta = document.createElement("div");
+              meta.className = "history-meta";
+              meta.textContent = h.filename.split('/').pop().replace('report_', '').replace('.html', ''); 
+              
+              item.appendChild(link);
+              item.appendChild(meta);
+              content.appendChild(item);
+          });
+          
+          container.appendChild(header);
+          container.appendChild(content);
+          return container;
+      }
+
+      function createTaskNode(task) {
+        const div = document.createElement("div");
+        div.className = "tree-node"; 
+        
+        const stateClass = task.state ? `status-${task.state}` : 'status-pending';
+        
+        const dot = document.createElement("div");
+        dot.className = `status-dot ${stateClass}`;
+        div.appendChild(dot);
+
+        const name = document.createElement("span");
+        name.textContent = task.name || task.id;
+        div.appendChild(name);
+        
+        div.onclick = (e) => {
+            e.stopPropagation();
+            document.querySelectorAll(".tree-node").forEach(n => n.classList.remove("active"));
+            div.classList.add("active");
+            showDetail(task);
+        };
+
+        if (task.children && task.children.length > 0) {
+          const childrenContainer = document.createElement("div");
+          childrenContainer.className = "task-children";
+          task.children.forEach(child => {
+            childrenContainer.appendChild(createTaskNode(child));
+          });
+          div.appendChild(childrenContainer);
+        }
+
+        return div;
+      }
+
+      function showDetail(task) {
+        const detail = document.getElementById("detail-view");
+        
+        let resultHtml = "";
+        let errorHtml = "";
+        
+        if (task.error) {
+            errorHtml = `
+            <div class="result-block" style="border-color:var(--fail-color);">
+                <h3 style="color:var(--fail-color); margin-top:0;">Error</h3>
+                <pre class="code-block">${escapeHtml(task.error)}</pre>
+            </div>`;
+        }
+        
+        if (task.result) {
+            let dataContent = "";
+            let dataDisplay = "";
+            
+            if (task.result.data) {
+                // Formatting optimization
+                if (typeof task.result.data === 'string') {
+                    dataDisplay = task.result.data;
+                } else {
+                    dataDisplay = JSON.stringify(task.result.data, null, 2);
+                }
+            } else {
+                 dataDisplay = JSON.stringify(task.result, null, 2);
+            }
+            
+            resultHtml = `
+            <div class="result-block">
+                <h3 style="margin-top:0; color:#fff;">Result</h3>
+                <pre class="code-block">${escapeHtml(dataDisplay)}</pre>
+            </div>`;
+        } else if (task.state === 'pending') {
+            resultHtml = `
+            <div class="result-block" style="border-style:dashed; border-color:#555;">
+                <h3 style="margin-top:0; color:#aaa;">Result</h3>
+                <p style="color:#888;">Tasks is pending execution. No results available yet.</p>
+            </div>`;
+        } else {
+             resultHtml = `
+            <div class="result-block">
+                <h3 style="margin-top:0; color:#fff;">Result</h3>
+                <p style="color:#aaa;">No output data returned.</p>
+            </div>`;
+        }
+        
+        let paramsHtml = "";
+        if (task.params) {
+            let content = "";
+            
+            // Extract instruction for better readability
+            if (task.params.instruction) {
+                content += `<div style="margin-bottom:15px;">
+                    <strong style="color:var(--accent-color); display:block; margin-bottom:5px;">Instruction:</strong>
+                    <div style="white-space: pre-wrap; color:#ddd; background:#222; padding:10px; border-radius:4px;">${escapeHtml(task.params.instruction)}</div>
+                </div>`;
+            }
+            
+            // Show full json excluding instruction to avoid clutter? 
+            // Or just show all? Showing all is safer.
+            content += `<pre class="code-block">${escapeHtml(JSON.stringify(task.params, null, 2))}</pre>`;
+            
+            paramsHtml = `
+            <div class="result-block">
+                <h3 style="margin-top:0; color:#fff;">Parameters</h3>
+                ${content}
+            </div>`;
+        }
+
+        detail.innerHTML = `
+          <div class="header-panel">
+            <h1>${escapeHtml(task.name)}</h1>
+            <div class="meta-grid">
+               <div class="meta-item"><span class="meta-label">ID</span><span class="meta-value">${task.id}</span></div>
+               <div class="meta-item"><span class="meta-label">Status</span><span class="meta-value" style="color:${getColorForState(task.state)}">${task.state}</span></div>
+               <div class="meta-item"><span class="meta-label">Agent</span><span class="meta-value">${task.agent_type || "N/A"}</span></div>
+               <div class="meta-item"><span class="meta-label">Action</span><span class="meta-value">${task.action || "N/A"}</span></div>
+            </div>
+          </div>
+          
+          <div class="detail-body">
+            ${paramsHtml}
+            ${errorHtml}
+            ${resultHtml}
+          </div>
+        `;
+      }
+      
+      function getColorForState(state) {
+          if(state==='success') return 'var(--success-color)';
+          if(state==='failed') return 'var(--fail-color)';
+          if(state==='pending') return '#757575';
+          return '#e0e0e0';
+      }
+      
+      function escapeHtml(text) {
+          if (!text) return "";
+          return String(text)
+              .replace(/&/g, "&amp;")
+              .replace(/</g, "&lt;")
+              .replace(/>/g, "&gt;")
+              .replace(/"/g, "&quot;")
+              .replace(/'/g, "&#039;");
+      }
+    </script>
+  </body>
+</html>

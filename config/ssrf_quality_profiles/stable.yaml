@@ -1,0 +1,22 @@
+ssrf_quality:
+  enabled: true
+  confidence_threshold: 3.0
+  baseline_probe: "nonexistent_ssrf_check_404"
+  baseline_size_diff_threshold_by_type:
+    cloud_metadata: 80
+    localhost: 200
+    internal_ip: 160
+    file_protocol: 120
+    dns_rebinding: 180
+  confidence_weights:
+    indicator_hit: 2.0
+    bypass_variant_hit: 1.5
+    imdsv2_hint: 1.0
+    destination_internal: 2.0
+    metadata_endpoint: 2.0
+    baseline_diff_status: 1.0
+    baseline_diff_size: 1.0
+    open_redirect_only_penalty: -2.0
+    internal_evidence_recovery: 1.5
+    redirect_chain_internal: 1.5
+    redirect_chain_metadata: 1.5

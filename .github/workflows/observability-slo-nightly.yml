@@ -1,0 +1,32 @@
+name: observability-slo-nightly
+
+on:
+  schedule:
+    - cron: "15 15 * * *" # Daily JST 00:15
+  workflow_dispatch:
+
+jobs:
+  rollup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run observability rollup
+        run: |
+          bash scripts/run_observability_slo_nightly.sh
+
+      - name: Upload reports artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: observability-slo-reports
+          path: |
+            docs/shigoku/reports/observability_daily_*.json
+            docs/shigoku/reports/observability_weekly_*.md
+            docs/shigoku/reports/observability_weekly_review_*.json
+            docs/shigoku/reports/observability_weekly_review_*.md

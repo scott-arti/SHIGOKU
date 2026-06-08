@@ -1,0 +1,10 @@
+name: oauth_redirect_bypass
+description: "OAuth Redirect URI Bypass"
+tags: ["auth", "oauth"]
+severity: "high"
+target_condition: "tech_stack.auth == 'oauth'"
+steps:
+  - tool: "oauth_dancer"
+    action: "redirect_bypass"
+  - tool: "oauth_dancer"
+    action: "pkce_downgrade"

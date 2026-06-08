@@ -1,0 +1,117 @@
+# SHIGOKU Feature Configuration
+# Phase 3 機能のオン/オフ設定
+
+features:
+  # Phase 1-2は常時有効
+
+  # Phase 3: オン/オフ可能な機能群
+  phase3:
+    # WAF回避（プロキシローテーション拡張）
+    waf_bypass:
+      enabled: false
+      provider: "direct" # direct, brightdata, smartproxy
+      api_key: "" # 環境変数 WAF_BYPASS_API_KEY を優先
+
+    # マイクロエージェント（ローカルLLMによるツール出力解析）
+    micro_agent:
+      enabled: false
+      model: "mistral:7b"
+      ollama_url: "http://localhost:11434"
+
+    # サンドボックス（Docker内コマンド実行）
+    sandbox:
+      enabled: false
+      max_retries: 5
+      network_isolated: true
+      timeout_seconds: 60
+
+    # Exploit Verifier（PoC検証）
+    exploit_verifier:
+      enabled: false
+      risk_threshold: 7 # スコア7以上は手動確認必須
+      non_destructive_only: true
+
+    # 攻撃モジュール拡充
+    attack_modules:
+      host_header_injection: false
+      enhanced_patterns: false
+
+    # SSRF 判定品質ゲート設定
+    ssrf_quality:
+      enabled: true
+      confidence_threshold: 3.0
+      baseline_probe: "nonexistent_ssrf_check_404"
+      baseline_size_diff_threshold_by_type:
+        cloud_metadata: 80
+        localhost: 200
+        internal_ip: 160
+        file_protocol: 120
+        dns_rebinding: 180
+      confidence_weights:
+        indicator_hit: 2.0
+        bypass_variant_hit: 1.5
+        imdsv2_hint: 1.0
+        destination_internal: 2.0
+        metadata_endpoint: 2.0
+        baseline_diff_status: 1.0
+        baseline_diff_size: 1.0
+        open_redirect_only_penalty: -2.0
+        internal_evidence_recovery: 1.5
+        redirect_chain_internal: 1.5
+        redirect_chain_metadata: 1.5
+
+# 通知設定
+notifications:
+  enabled: true
+  # 即時通知する重要度レベル
+  immediate_severities:
+    - critical
+    - high
+  # バッチ通知の間隔（秒）
+  batch_interval_seconds: 300
+  # 重複排除の時間窓（秒）
+  dedup_window_seconds: 3600
+
+# リトライ/ループ制御
+retry_control:
+  # 同一タスクの最大試行回数
+  max_retries_per_task: 5
+  # 適応型閾値を使用するか
+  adaptive_threshold: true
+  # 成功率が低い場合の閾値倍率
+  low_success_multiplier: 0.5
+
+# レポートエクスポート
+export:
+  default_format: "json" # json, pdf, markdown
+  pdf_template: "default"
+  include_evidence: true
+
+# Phase E: 外部ツール統合設定
+external_tools:
+  # 新外部ツール統合基盤（BaseExternalAdapter）を使用
+  # Phase E-2移行期間中の制御用フラグ
+  use_new_adapter_framework:
+    enabled: false          # デフォルト: 旧Wrapper使用（段階的移行）
+    rollout_percentage: 0   # 0-100でロールアウト率調整
+    
+  # 個別ツールの新基盤使用設定（将来対応）
+  adapters:
+    nuclei:
+      use_new_adapter: false
+    dalfox:
+      use_new_adapter: false
+    ffuf:
+      use_new_adapter: false
+    nmap:
+      use_new_adapter: false
+    arjun:
+      use_new_adapter: false
+    gau:
+      use_new_adapter: false
+  
+  # 並行実行設定
+  concurrency:
+    max_concurrent: 5       # 環境変数 SHIGOKU_EXTERNAL_TOOL_CONCURRENCY で上書き可能
+    timeout_seconds: 300    # デフォルトタイムアウト
+    enable_semaphore: true  # セマフォ制御有効化

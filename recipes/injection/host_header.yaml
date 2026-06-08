@@ -1,0 +1,16 @@
+name: host_header_injection
+description: "Golden Recipe: Host Header Injection Detection - Direct tool execution"
+tags: ["injection", "host-header", "password-reset"]
+severity: "high"
+target_condition: null
+steps:
+  - tool: "tool_executor"
+    args:
+      tool_name: "nuclei"
+      args:
+        extra_args: "-t http/vulnerabilities/generic/host-header-injection.yaml"
+  - tool: "tool_executor"
+    args:
+      tool_name: "nuclei"
+      args:
+        extra_args: "-t http/misconfiguration/host-header-"

@@ -1,0 +1,99 @@
+# {{ finding.title }}
+
+## Summary
+
+{{ finding.description }}
+
+## Vulnerability Type
+
+- **Type**: {{ vuln_info.get('title', finding.vuln_type.value) }}
+- **Category**: {{ vuln_info.get('category', 'Other') }}
+{% if finding.cwe_id %}
+- **CWE**: [{{ finding.cwe_id }}](https://cwe.mitre.org/data/definitions/{{ finding.cwe_id.split('-')[1] }}.html)
+{% endif %}
+
+## Severity
+
+{{ finding.get_severity_icon() }} **{{ finding.severity.value.upper() }}** (CVSS: {{ cvss_range }})
+{% if finding.cvss_score %}
+- Calculated CVSS: {{ finding.cvss_score }}
+{% endif %}
+
+## Steps to Reproduce
+
+{% for step in finding.reproduction_steps %}
+{{ step }}
+{% endfor %}
+
+## Impact
+
+{{ finding.impact }}
+
+{% if finding.evidence %}
+## Proof of Concept
+
+{{ finding.evidence.to_markdown() }}
+
+### Reproduction Commands
+
+**cURL:**
+```bash
+{{ curl_cmd }}
+```
+
+**HTTPie:**
+```bash
+{{ httpie_cmd }}
+```
+
+**Python (requests):**
+```python
+{{ python_cmd }}
+```
+{% endif %}
+
+## Remediation
+
+{{ remediation }}
+
+---
+
+## Technical Details
+
+- **Target URL**: {{ finding.target_url }}
+- **Discovered**: {{ finding.discovered_at.strftime('%Y-%m-%d %H:%M:%S') }}
+- **Confidence**: {{ "%.0f"|format(finding.confidence * 100) }}%
+- **Detection Method**: {{ finding.source_agent }}
+
+{% if finding.additional_info %}
+### Additional Information
+
+{% for key, value in finding.additional_info.items() %}
+- **{{ key }}**: `{{ value }}`
+{% endfor %}
+{% endif %}
+
+{% if triage_result %}
+---
+
+## 🤖 AI Triage Assessment
+
+- **Rejection Risk**: {{ "%.0f"|format(triage_result.rejection_risk * 100) }}%
+- **Quality Score**: {{ triage_result.score }}/100
+
+{% if triage_result.issues %}
+**Identified Issues:**
+
+{% for issue in triage_result.issues %}
+- {{ "🔴" if issue.severity == "high" else "🟡" if issue.severity == "medium" else "🟢" }} {{ issue.message }} (-{{ issue.penalty }})
+{% endfor %}
+{% endif %}
+
+{% if triage_result.suggestions %}
+**Suggestions for Improvement:**
+
+{% for suggestion in triage_result.suggestions %}
+- 💡 {{ suggestion }}
+{% endfor %}
+{% endif %}
+{% endif %}

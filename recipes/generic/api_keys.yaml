@@ -1,0 +1,16 @@
+name: api_key_leak
+description: "Golden Recipe: Scan for exposed API keys and Secrets - Direct tool execution"
+tags: ["generic", "secrets", "api"]
+severity: "critical"
+target_condition: null
+steps:
+  - tool: "tool_executor"
+    args:
+      tool_name: "nuclei"
+      args:
+        extra_args: "-t /home/bbb/nuclei-templates/http/exposures/tokens/"
+  - tool: "tool_executor"
+    args:
+      tool_name: "nuclei"
+      args:
+        extra_args: "-t http/exposures/configs/ -tags key,secret,token"

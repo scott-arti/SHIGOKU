@@ -1,0 +1,67 @@
+# 外部ツール設定
+# BinaryManagerによる自動ダウンロード・バージョン管理用設定
+
+tools:
+  dalfox:
+    version: "2.9.2"
+    download_url: "https://github.com/hahwul/dalfox/releases/download/v{version}/dalfox_{version}_linux_amd64.tar.gz"
+    checksum: ""  # 実際のリリース時にSHA256ハッシュを設定
+    checksum_type: "sha256"
+    install_method: "direct_download"
+    executable_name: "dalfox"
+    timeout_seconds: 120
+    max_concurrent: 3
+    
+  nuclei:
+    version: "3.1.0"
+    download_url: ""  # go installを使用
+    checksum: ""
+    checksum_type: "sha256"
+    install_method: "go_install"
+    executable_name: "nuclei"
+    timeout_seconds: 300
+    max_concurrent: 2
+    
+  nmap:
+    version: "system"
+    download_url: ""  # システムパッケージマネージャー経由
+    checksum: ""
+    checksum_type: "sha256"
+    install_method: "system_package"
+    executable_name: "nmap"
+    timeout_seconds: 180
+    max_concurrent: 1
+    
+  httpx:
+    version: "1.6.0"
+    download_url: "https://github.com/projectdiscovery/httpx/releases/download/v{version}/httpx_{version}_linux_amd64.zip"
+    checksum: ""
+    checksum_type: "sha256"
+    install_method: "direct_download"
+    executable_name: "httpx"
+    timeout_seconds: 30
+    max_concurrent: 10
+
+# グローバル設定
+global:
+  # ダウンロード設定
+  download:
+    timeout_seconds: 60
+    retry_count: 3
+    verify_ssl: true
+    
+  # 検証設定
+  verification:
+    # チェックサム検証を強制するか
+    enforce_checksum: true
+    # 署名検証（GPG）- 現在未対応
+    gpg_verification: false
+    
+  # セキュリティ設定
+  security:
+    # 検証前の実行権限付与を禁止（絶対にTrueにすること）
+    prohibit_pre_verification_chmod: true
+    # 一時ディレクトリ使用を強制
+    use_temp_directory_for_download: true
+    # 検証済みフラグの永続化
+    persist_verification_flags: true

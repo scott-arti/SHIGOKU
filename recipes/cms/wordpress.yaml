@@ -1,0 +1,17 @@
+name: wordpress_gold
+description: "Golden Recipe: WordPress specific enumeration and checks"
+tags: ["cms", "wordpress"]
+severity: "high"
+target_condition: "'WordPress' in tech_stack"
+steps:
+  - tool: "reconbot"
+    action: "wp_user_enum"
+    args:
+      instruction: |
+        Perform user enumeration on the WordPress target.
+        Try:
+        - /?author=1
+        - /wp-json/wp/v2/users
+
+        Also check if xmlrpc.php is enabled and accessible.
+        Use 'wpscan' if available, otherwise use curl/ffuf.

@@ -1,0 +1,17 @@
+name: aws_iam_exposure
+description: "Golden Recipe: Detect AWS IAM Misconfigurations and Key Exposures"
+tags: ["cloud", "aws", "iam"]
+severity: "critical"
+target_condition: "'AWS' in tech_stack"
+steps:
+  - tool: "reconbot"
+    action: "aws_enum"
+    args:
+      instruction: |
+        Enumrate and check for AWS IAM issues.
+
+        1. If AWS keys are found (via api_key_leak recipe or header checks), verify their permissions using 'aws sts get-caller-identity'.
+        2. Check for public S3 buckets associated with the organization.
+        3. Check for exposed Metadata Service (SSRF -> 169.254.169.254).
+
+        Use 'nuclei -t cloud/aws'.

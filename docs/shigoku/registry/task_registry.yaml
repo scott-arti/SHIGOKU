@@ -1,0 +1,3073 @@
+version: 1
+updated_at: '2026-06-08'
+namespace: SGK
+id_rules:
+  core: SGK-YYYY-NNNN
+  subtask: SGK-YYYY-NNNN-SNN
+  deferred: SGK-YYYY-NNNN-DNN
+tasks:
+- provisional_id: DOC-0001
+  task_id: SGK-2026-0001
+  doc_type: manual
+  title: SHIGOKU Documentation Hub
+  primary_doc: docs/shigoku/README.md
+  status: active
+  provisional: false
+  task_summary: SHIGOKU Documentation Hub
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0002
+  task_id: SGK-2026-0002
+  doc_type: roadmap
+  title: 将来の機能拡張 (Future Functions)
+  primary_doc: docs/shigoku/roadmaps/future_functions.md
+  status: active
+  provisional: false
+  task_summary: 将来の機能拡張 (Future Functions)
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0003
+  task_id: SGK-2026-0003
+  doc_type: manual
+  title: 📖 SHIGOKU ユーザーマニュアル（日本語版）
+  primary_doc: docs/shigoku/manuals/MANUAL_JA.md
+  status: active
+  provisional: false
+  task_summary: 📖 SHIGOKU ユーザーマニュアル（日本語版）
+  parent_task_id: SGK-2026-0101
+  related_docs:
+  - docs/shigoku/specs/TECHNICAL_SPEC_JA.md
+  - docs/shigoku/roadmaps/IMPLEMENTATION_ROADMAP.md
+- provisional_id: DOC-0004
+  task_id: SGK-2026-0004
+  doc_type: manual
+  title: SHIGOKU アーキテクチャ Q&A (2025.12)
+  primary_doc: docs/shigoku/manuals/QA.md
+  status: active
+  provisional: false
+  task_summary: SHIGOKU アーキテクチャ Q&A (2025.12)
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0005
+  task_id: SGK-2026-0005
+  doc_type: manual
+  title: 🚀 SHIGOKU クイックスタートガイド
+  primary_doc: docs/shigoku/manuals/QUICK_START.md
+  status: active
+  provisional: false
+  task_summary: 🚀 SHIGOKU クイックスタートガイド
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0006
+  task_id: SGK-2026-0006
+  doc_type: manual
+  title: ⚙️ SHIGOKU リファレンスガイド
+  primary_doc: docs/shigoku/manuals/REFERENCE.md
+  status: active
+  provisional: false
+  task_summary: ⚙️ SHIGOKU リファレンスガイド
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0007
+  task_id: SGK-2026-0007
+  doc_type: manual
+  title: 📘 SHIGOKU ユーザーマニュアル
+  primary_doc: docs/shigoku/manuals/USER_MANUAL.md
+  status: active
+  provisional: false
+  task_summary: 📘 SHIGOKU ユーザーマニュアル
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0008
+  task_id: SGK-2026-0008
+  doc_type: manual
+  title: CLI-First Ops Plan (MCPなし)
+  primary_doc: docs/shigoku/manuals/manual_legacy/cli_first_ops_plan.md
+  status: active
+  provisional: false
+  task_summary: CLI-First Ops Plan (MCPなし)
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0009
+  task_id: SGK-2026-0009
+  doc_type: manual
+  title: SHIGOKU Dashboard 機能マニュアル
+  primary_doc: docs/shigoku/manuals/manual_legacy/dashboard.md
+  status: active
+  provisional: false
+  task_summary: SHIGOKU Dashboard 機能マニュアル
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0010
+  task_id: SGK-2026-0010
+  doc_type: manual
+  title: MyMethod
+  primary_doc: docs/shigoku/manuals/MyMethod.md
+  status: active
+  provisional: false
+  task_summary: MyMethod
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0011
+  task_id: SGK-2026-0011
+  doc_type: spec
+  title: コマンドラインツールの統合方法案
+  primary_doc: docs/shigoku/specs/TOOL_INTEGRATION_OPTIONS.md
+  status: active
+  provisional: false
+  task_summary: コマンドラインツールの統合方法案
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0012
+  task_id: SGK-2026-0012
+  doc_type: spec
+  title: 'ADR-0005: 強化版 FFUF (Enhanced Edition) の統合とAIエージェントへの最適化'
+  primary_doc: docs/shigoku/specs/adr/0005-enhanced-ffuf-integration.md
+  status: active
+  provisional: false
+  task_summary: 'ADR-0005: 強化版 FFUF (Enhanced Edition) の統合とAIエージェントへの最適化'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0013
+  task_id: SGK-2026-0013
+  doc_type: spec
+  title: 'ADR-001: エントリポイントの統一'
+  primary_doc: docs/shigoku/specs/adr/001-entry-point-unification.md
+  status: active
+  provisional: false
+  task_summary: 'ADR-001: エントリポイントの統一'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0014
+  task_id: SGK-2026-0014
+  doc_type: spec
+  title: 'ADR 0010: Enhanced IDOR Logic and Mass Assignment Testing'
+  primary_doc: docs/shigoku/specs/adr/0010-enhanced-idor-logic.md
+  status: active
+  provisional: false
+  task_summary: 'ADR 0010: Enhanced IDOR Logic and Mass Assignment Testing'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0015
+  task_id: SGK-2026-0015
+  doc_type: spec
+  title: 'ADR-002: エージェントインターフェースの統一'
+  primary_doc: docs/shigoku/specs/adr/002-agent-interface-protocol.md
+  status: active
+  provisional: false
+  task_summary: 'ADR-002: エージェントインターフェースの統一'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0016
+  task_id: SGK-2026-0016
+  doc_type: spec
+  title: 'ADR-003: 技術的負債解消 - FastAPI ブロッキング I/O と例外処理改善'
+  primary_doc: docs/shigoku/specs/adr/003-tech-debt-fastapi-exception-handling.md
+  status: active
+  provisional: false
+  task_summary: 'ADR-003: 技術的負債解消 - FastAPI ブロッキング I/O と例外処理改善'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0017
+  task_id: SGK-2026-0017
+  doc_type: spec
+  title: 004. セキュリティと信頼性向上のためのバグ修正設計判断
+  primary_doc: docs/shigoku/specs/adr/004-bugfix-security-reliability-improvements.md
+  status: active
+  provisional: false
+  task_summary: 004. セキュリティと信頼性向上のためのバグ修正設計判断
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0018
+  task_id: SGK-2026-0018
+  doc_type: spec
+  title: 005. エンジン信頼性向上とコスト最適化
+  primary_doc: docs/shigoku/specs/adr/005-engine-reliability-and-cost-optimization.md
+  status: active
+  provisional: false
+  task_summary: 005. エンジン信頼性向上とコスト最適化
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0019
+  task_id: SGK-2026-0019
+  doc_type: spec
+  title: 006. バグ修正と例外処理方針の改善
+  primary_doc: docs/shigoku/specs/adr/006-fix-critical-bugs-and-exception-handling.md
+  status: active
+  provisional: false
+  task_summary: 006. バグ修正と例外処理方針の改善
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0020
+  task_id: SGK-2026-0020
+  doc_type: spec
+  title: 007. プロンプトモジュールのリネームとユーティリティパッケージの導入
+  primary_doc: docs/shigoku/specs/adr/007-prompts-rename-and-utils-package.md
+  status: active
+  provisional: false
+  task_summary: 007. プロンプトモジュールのリネームとユーティリティパッケージの導入
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0021
+  task_id: SGK-2026-0021
+  doc_type: spec
+  title: 'ADR-008: Phase 1-3 技術的負債解消リファクタリング'
+  primary_doc: docs/shigoku/specs/adr/008-phase1-3-technical-debt-resolution.md
+  status: active
+  provisional: false
+  task_summary: 'ADR-008: Phase 1-3 技術的負債解消リファクタリング'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0022
+  task_id: SGK-2026-0022
+  doc_type: spec
+  title: 'ADR-009: 技術的負債解消（Phase 0-4 完了）'
+  primary_doc: docs/shigoku/specs/adr/009-tech-debt-resolution-complete.md
+  status: active
+  provisional: false
+  task_summary: 'ADR-009: 技術的負債解消（Phase 0-4 完了）'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0023
+  task_id: SGK-2026-0023
+  doc_type: spec
+  title: 'ADR: エンドポイント承認キャッシュによるガードレール競合の解決'
+  primary_doc: docs/shigoku/specs/adr/2026-02-27_RequestGuard_Implementation.md
+  status: active
+  provisional: false
+  task_summary: 'ADR: エンドポイント承認キャッシュによるガードレール競合の解決'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0024
+  task_id: SGK-2026-0024
+  doc_type: work_report
+  title: HexStrike vs SHIGOKU 比較分析
+  primary_doc: docs/shigoku/reports/analysis/hexstrike_analysis.md
+  status: done
+  provisional: false
+  task_summary: HexStrike vs SHIGOKU 比較分析
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0026
+  task_id: SGK-2026-0026
+  doc_type: work_report
+  title: Report Loop KPI Baseline (2026-05-11)
+  primary_doc: docs/shigoku/reports/analysis/report_loop_kpi_baseline_2026-05-11.md
+  status: done
+  provisional: false
+  task_summary: Report Loop KPI Baseline (2026-05-11)
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0027
+  task_id: SGK-2026-0027
+  doc_type: spec
+  title: Caido Integration & Tagging Filter 実装計画
+  primary_doc: docs/shigoku/specs/caido_integration.md
+  status: active
+  provisional: false
+  task_summary: Caido Integration & Tagging Filter 実装計画
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0028
+  task_id: SGK-2026-0028
+  doc_type: spec
+  title: SHIGOKU MCP(Model Context Protocol) 導入検討ドキュメント
+  primary_doc: docs/shigoku/specs/design/mcp_integration_candidates.md
+  status: active
+  provisional: false
+  task_summary: SHIGOKU MCP(Model Context Protocol) 導入検討ドキュメント
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0029
+  task_id: SGK-2026-0029
+  doc_type: spec
+  title: Reconnaissance Pipeline シナリオ設計書
+  primary_doc: docs/shigoku/specs/design/recon_scenario.md
+  status: active
+  provisional: false
+  task_summary: Reconnaissance Pipeline シナリオ設計書
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0030
+  task_id: SGK-2026-0030
+  doc_type: roadmap
+  title: Future Functions & Improvements
+  primary_doc: docs/shigoku/roadmaps/future_functions1.md
+  status: active
+  provisional: false
+  task_summary: Future Functions & Improvements
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0031
+  task_id: SGK-2026-0031
+  doc_type: spec
+  title: AuthNinja - 認証突破エージェント
+  primary_doc: docs/shigoku/specs/modules/AUTH_NINJA.md
+  status: active
+  provisional: false
+  task_summary: AuthNinja - 認証突破エージェント
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0032
+  task_id: SGK-2026-0032
+  doc_type: spec
+  title: AutoReporter - 脆弱性レポート自動生成エンジン
+  primary_doc: docs/shigoku/specs/modules/AUTO_REPORTER.md
+  status: active
+  provisional: false
+  task_summary: AutoReporter - 脆弱性レポート自動生成エンジン
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0033
+  task_id: SGK-2026-0033
+  doc_type: spec
+  title: BizLogicHunter - ビジネスロジック脆弱性検証エージェント
+  primary_doc: docs/shigoku/specs/modules/BIZ_LOGIC_HUNTER.md
+  status: active
+  provisional: false
+  task_summary: BizLogicHunter - ビジネスロジック脆弱性検証エージェント
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0034
+  task_id: SGK-2026-0034
+  doc_type: spec
+  title: Cartographer - サイトマッピングエンジン
+  primary_doc: docs/shigoku/specs/modules/CARTOGRAPHER.md
+  status: active
+  provisional: false
+  task_summary: Cartographer - サイトマッピングエンジン
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0035
+  task_id: SGK-2026-0035
+  doc_type: spec
+  title: CommitWatcher - Git リポジトリ監視エージェント
+  primary_doc: docs/shigoku/specs/modules/COMMIT_WATCHER.md
+  status: active
+  provisional: false
+  task_summary: CommitWatcher - Git リポジトリ監視エージェント
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0036
+  task_id: SGK-2026-0036
+  doc_type: spec
+  title: EthicsGuard - 倫理ガードレールシステム
+  primary_doc: docs/shigoku/specs/modules/ETHICS_GUARD.md
+  status: active
+  provisional: false
+  task_summary: EthicsGuard - 倫理ガードレールシステム
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0037
+  task_id: SGK-2026-0037
+  doc_type: spec
+  title: Fingerprinter - 技術スタック識別エンジン
+  primary_doc: docs/shigoku/specs/modules/FINGERPRINTER.md
+  status: active
+  provisional: false
+  task_summary: Fingerprinter - 技術スタック識別エンジン
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0038
+  task_id: SGK-2026-0038
+  doc_type: spec
+  title: GAUIntegrator - GAU 統合モジュール
+  primary_doc: docs/shigoku/specs/modules/GAU_INTEGRATOR.md
+  status: active
+  provisional: false
+  task_summary: GAUIntegrator - GAU 統合モジュール
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0039
+  task_id: SGK-2026-0039
+  doc_type: spec
+  title: HeadlessCrawler - Headless ブラウザ統合モジュール
+  primary_doc: docs/shigoku/specs/modules/HEADLESS_CRAWLER.md
+  status: active
+  provisional: false
+  task_summary: HeadlessCrawler - Headless ブラウザ統合モジュール
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0040
+  task_id: SGK-2026-0040
+  doc_type: spec
+  title: KnowledgeGraph - Neo4j ナレッジグラフ連携モジュール
+  primary_doc: docs/shigoku/specs/modules/KNOWLEDGE_GRAPH.md
+  status: active
+  provisional: false
+  task_summary: KnowledgeGraph - Neo4j ナレッジグラフ連携モジュール
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0041
+  task_id: SGK-2026-0041
+  doc_type: spec
+  title: ProgressiveScanner - 段階的スキャンモジュール
+  primary_doc: docs/shigoku/specs/modules/PROGRESSIVE_SCANNER.md
+  status: active
+  provisional: false
+  task_summary: ProgressiveScanner - 段階的スキャンモジュール
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0042
+  task_id: SGK-2026-0042
+  doc_type: spec
+  title: ProxyLogAnalyzer - プロキシログ解析エンジン
+  primary_doc: docs/shigoku/specs/modules/PROXY_LOG_ANALYZER.md
+  status: active
+  provisional: false
+  task_summary: ProxyLogAnalyzer - プロキシログ解析エンジン
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0043
+  task_id: SGK-2026-0043
+  doc_type: spec
+  title: RAGSystem - Obsidian RAG 統合モジュール
+  primary_doc: docs/shigoku/specs/modules/RAG_SYSTEM.md
+  status: active
+  provisional: false
+  task_summary: RAGSystem - Obsidian RAG 統合モジュール
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0044
+  task_id: SGK-2026-0044
+  doc_type: spec
+  title: URL Tagging Pipeline (URL タグ付けパイプライン)
+  primary_doc: docs/shigoku/specs/modules/URL_TAGGING_PIPELINE.md
+  status: active
+  provisional: false
+  task_summary: URL Tagging Pipeline (URL タグ付けパイプライン)
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0045
+  task_id: SGK-2026-0045
+  doc_type: spec
+  title: VisualFilter - 画像解析・ページ分類エンジン
+  primary_doc: docs/shigoku/specs/modules/VISUAL_FILTER.md
+  status: active
+  provisional: false
+  task_summary: VisualFilter - 画像解析・ページ分類エンジン
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0046
+  task_id: SGK-2026-0046
+  doc_type: spec
+  title: WordlistLearner - ワードリスト自動学習モジュール
+  primary_doc: docs/shigoku/specs/modules/WORDLIST_LEARNER.md
+  status: active
+  provisional: false
+  task_summary: WordlistLearner - ワードリスト自動学習モジュール
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0047
+  task_id: SGK-2026-0047
+  doc_type: spec
+  title: WordlistManager - ワードリスト管理モジュール
+  primary_doc: docs/shigoku/specs/modules/WORDLIST_MANAGER.md
+  status: active
+  provisional: false
+  task_summary: WordlistManager - ワードリスト管理モジュール
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0048
+  task_id: SGK-2026-0048
+  doc_type: spec
+  title: Reconnaissance Pipeline シナリオ設計書
+  primary_doc: docs/shigoku/specs/recon_scenario.md
+  status: active
+  provisional: false
+  task_summary: Reconnaissance Pipeline シナリオ設計書
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0049
+  task_id: SGK-2026-0049
+  doc_type: spec
+  title: 脆弱性機能実装仕様書
+  primary_doc: docs/shigoku/specs/standards/vulnerability_feature_implementation_spec.md
+  status: active
+  provisional: false
+  task_summary: 脆弱性機能実装仕様書
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0050
+  task_id: SGK-2026-0050
+  doc_type: plan
+  title: Report Loop CLI Optimization Implementation Plan
+  primary_doc: docs/shigoku/plans/superpowers/2026-05-11-report-loop-cli-optimization.md
+  status: backlog
+  provisional: false
+  task_summary: Report Loop CLI Optimization Implementation Plan
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0051
+  task_id: SGK-2026-0051
+  doc_type: plan
+  title: Raw Confirmed Stability + IDOR/Endpoint Class Recovery Implementation Plan
+  primary_doc: docs/shigoku/plans/superpowers/2026-05-13-raw-confirmed-idor-endpoint.md
+  status: backlog
+  provisional: false
+  task_summary: Raw Confirmed Stability + IDOR/Endpoint Class Recovery Implementation
+    Plan
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0052
+  task_id: SGK-2026-0052
+  doc_type: plan
+  title: Auth Triple-Target Stability Execution Implementation Plan
+  primary_doc: docs/shigoku/plans/superpowers/2026-05-14-auth-triple-target-stability-execution-plan.md
+  status: backlog
+  provisional: false
+  task_summary: Auth Triple-Target Stability Execution Implementation Plan
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0053
+  task_id: SGK-2026-0053
+  doc_type: plan
+  title: 2026-05-14 Auth Triple Target Stability Run Log
+  primary_doc: docs/shigoku/plans/superpowers/2026-05-14-auth-triple-target-stability-run-log.md
+  status: backlog
+  provisional: false
+  task_summary: 2026-05-14 Auth Triple Target Stability Run Log
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0054
+  task_id: SGK-2026-0054
+  doc_type: plan
+  title: CRAPI + JuiceShop + DVWA 安定性プラン v3 (Auth-Aware / Anti-Curve-Fit)
+  primary_doc: docs/shigoku/plans/superpowers/2026-05-14-crapi-juiceshop-dvwa-auth-stability-plan-v3.md
+  status: backlog
+  provisional: false
+  task_summary: CRAPI + JuiceShop + DVWA 安定性プラン v3 (Auth-Aware / Anti-Curve-Fit)
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0055
+  task_id: SGK-2026-0055
+  doc_type: plan
+  title: CRAPI Stability Plan v2 (Anti-Curve-Fit Revision)
+  primary_doc: docs/shigoku/plans/superpowers/2026-05-14-crapi-stability-anti-curve-fit-plan-v2.md
+  status: backlog
+  provisional: false
+  task_summary: CRAPI Stability Plan v2 (Anti-Curve-Fit Revision)
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0056
+  task_id: SGK-2026-0056
+  doc_type: plan
+  title: Required Detection Class Hybrid Gate Implementation Plan
+  primary_doc: docs/shigoku/plans/superpowers/2026-05-14-required-class-hybrid-gate.md
+  status: backlog
+  provisional: false
+  task_summary: Required Detection Class Hybrid Gate Implementation Plan
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0057
+  task_id: SGK-2026-0057
+  doc_type: plan
+  title: Ver1 SCN08/10/12 Policy Lock Implementation Plan
+  primary_doc: docs/shigoku/plans/superpowers/2026-05-14-ver1-scn08-10-12-policy-lock.md
+  status: backlog
+  provisional: false
+  task_summary: Ver1 SCN08/10/12 Policy Lock Implementation Plan
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0058
+  task_id: SGK-2026-0058
+  doc_type: plan
+  title: SSTI Detection Implementation Plan
+  primary_doc: docs/shigoku/plans/2026-05-14_ssti_implementation_plan.md
+  status: done
+  provisional: false
+  task_summary: SSTI Detection Implementation Plan
+  parent_task_id: SGK-2026-0065
+  related_docs:
+  - docs/shigoku/subtasks/phase1_tasks.md
+  - docs/shigoku/reports/REPORT_OUTPUTS.md
+  - docs/shigoku/worklogs/2026-05-14_log_codex_chat_summary.md
+- provisional_id: DOC-0059
+  task_id: SGK-2026-0059
+  doc_type: plan
+  title: A-2〜B-2 実装計画書
+  primary_doc: docs/shigoku/plans/2026-05-15_a2_b2_implementation_plan.md
+  status: backlog
+  provisional: false
+  task_summary: A-2〜B-2 実装計画書
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0060
+  task_id: SGK-2026-0060
+  doc_type: plan
+  title: 'A-3: CRLF 実実装 計画書'
+  primary_doc: docs/shigoku/plans/2026-05-16_a3_crlf_implementation_plan.md
+  status: backlog
+  provisional: false
+  task_summary: 'A-3: CRLF 実実装 計画書'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0061
+  task_id: SGK-2026-0061
+  doc_type: plan
+  title: 'B-1: GraphQL Introspection 実装計画書（アップデート版）'
+  primary_doc: docs/shigoku/plans/2026-05-16_b1_graphql_implementation_plan.md
+  status: backlog
+  provisional: false
+  task_summary: 'B-1: GraphQL Introspection 実装計画書（アップデート版）'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0062
+  task_id: SGK-2026-0062
+  doc_type: plan
+  title: 'B-1: GraphQL Introspection 実装計画書 v2.1（レビュー反映版）'
+  primary_doc: docs/shigoku/plans/2026-05-16_b1_graphql_implementation_plan_v2.1.md
+  status: backlog
+  provisional: false
+  task_summary: 'B-1: GraphQL Introspection 実装計画書 v2.1（レビュー反映版）'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0063
+  task_id: SGK-2026-0063
+  doc_type: work_report
+  title: REPORT Outputs Reference
+  primary_doc: docs/shigoku/reports/REPORT_OUTPUTS.md
+  status: done
+  provisional: false
+  task_summary: REPORT Outputs Reference
+  parent_task_id: SGK-2026-0065
+  related_docs:
+  - docs/shigoku/plans/2026-05-14_ssti_implementation_plan.md
+  - docs/shigoku/worklogs/2026-05-14_log_codex_chat_summary.md
+- provisional_id: DOC-0064
+  task_id: SGK-2026-0064
+  doc_type: work_report
+  title: Bug Report (Placeholder)
+  primary_doc: docs/shigoku/reports/bug_report.md
+  status: backlog
+  provisional: false
+  task_summary: Bug Report (Placeholder)
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0065
+  task_id: SGK-2026-0065
+  doc_type: roadmap
+  title: SHIGOKU 実装ロードマップ
+  primary_doc: docs/shigoku/roadmaps/IMPLEMENTATION_ROADMAP.md
+  status: active
+  provisional: false
+  task_summary: SHIGOKU 実装ロードマップ
+  parent_task_id: SGK-2026-0101
+  related_docs:
+  - docs/shigoku/specs/TECHNICAL_SPEC_JA.md
+  - docs/shigoku/plans/2026-05-14_ssti_implementation_plan.md
+  - docs/shigoku/subtasks/phase1_tasks.md
+  - docs/shigoku/reports/REPORT_OUTPUTS.md
+- provisional_id: DOC-0066
+  task_id: SGK-2026-0066
+  doc_type: roadmap
+  title: SHIGOKU Bug Bounty Optimization Roadmap
+  primary_doc: docs/shigoku/roadmaps/bug_bounty_enhancements_2026.md
+  status: active
+  provisional: false
+  task_summary: SHIGOKU Bug Bounty Optimization Roadmap
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0067
+  task_id: SGK-2026-0067
+  doc_type: roadmap
+  title: File Upload Vulnerability Scanner Roadmap
+  primary_doc: docs/shigoku/roadmaps/file_upload_vulnerability.md
+  status: active
+  provisional: false
+  task_summary: File Upload Vulnerability Scanner Roadmap
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0068
+  task_id: SGK-2026-0068
+  doc_type: roadmap
+  title: bigRoadmap20260226
+  primary_doc: docs/shigoku/roadmaps/legacy_roadmap_dir/bigRoadmap20260226.md
+  status: active
+  provisional: false
+  task_summary: bigRoadmap20260226
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0069
+  task_id: SGK-2026-0069
+  doc_type: roadmap
+  title: 'Roadmap: Unified Caido & Modern Web Scan Strategy'
+  primary_doc: docs/shigoku/roadmaps/legacy_roadmap_dir/caido_integration_roadmap.md
+  status: active
+  provisional: false
+  task_summary: 'Roadmap: Unified Caido & Modern Web Scan Strategy'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0070
+  task_id: SGK-2026-0070
+  doc_type: roadmap
+  title: 🗺️ SHIGOKU 統一ロードマップ — 最終確定版（外部フィードバック統合済み）
+  primary_doc: docs/shigoku/roadmaps/shigoku_unified_roadmap_20260301.md
+  status: active
+  provisional: false
+  task_summary: 🗺️ SHIGOKU 統一ロードマップ — 最終確定版（外部フィードバック統合済み）
+  parent_task_id: SGK-2026-0101
+  related_docs:
+  - docs/shigoku/roadmaps/IMPLEMENTATION_ROADMAP.md
+  - docs/shigoku/specs/FEATURE_EXPANSION_PLAN.md
+- provisional_id: DOC-0071
+  task_id: SGK-2026-0071
+  doc_type: spec
+  title: 2026-01-26_OOB_Headless.md Implementation Spec
+  primary_doc: docs/shigoku/specs/2026-01-26_OOB_Headless.md
+  status: active
+  provisional: false
+  task_summary: 2026-01-26_OOB_Headless.md Implementation Spec
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0072
+  task_id: SGK-2026-0072
+  doc_type: spec
+  title: Proxy Integration & Error Replanning Spec
+  primary_doc: docs/shigoku/specs/2026-01-26_Proxy_ErrorHandling.md
+  status: active
+  provisional: false
+  task_summary: Proxy Integration & Error Replanning Spec
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0073
+  task_id: SGK-2026-0073
+  doc_type: spec
+  title: '仕様書: Phase 1.3 Proxy Integration Completion'
+  primary_doc: docs/shigoku/specs/2026-01-26_Proxy_Integration_Complete.md
+  status: active
+  provisional: false
+  task_summary: '仕様書: Phase 1.3 Proxy Integration Completion'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0074
+  task_id: SGK-2026-0074
+  doc_type: spec
+  title: '仕様書: Phase 2 Shared Workspace & Handoff Mechanism Integration'
+  primary_doc: docs/shigoku/specs/2026-01-26_Shared_Workspace_and_Handoff.md
+  status: active
+  provisional: false
+  task_summary: '仕様書: Phase 2 Shared Workspace & Handoff Mechanism Integration'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0075
+  task_id: SGK-2026-0075
+  doc_type: spec
+  title: 'Phase 1.3 & 1.4: Infrastructure Integration Specification'
+  primary_doc: docs/shigoku/specs/2026-01-26_phase1_infrastructure_integration.md
+  status: active
+  provisional: false
+  task_summary: 'Phase 1.3 & 1.4: Infrastructure Integration Specification'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0076
+  task_id: SGK-2026-0076
+  doc_type: spec
+  title: 'Specification: Project Integration & Dashboard Enhancements'
+  primary_doc: docs/shigoku/specs/2026-01-30_project_integration.md
+  status: active
+  provisional: false
+  task_summary: 'Specification: Project Integration & Dashboard Enhancements'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0077
+  task_id: SGK-2026-0077
+  doc_type: spec
+  title: リアルタイム実行ダッシュボード仕様書
+  primary_doc: docs/shigoku/specs/2026-02-06_realtime_execution_dashboard.md
+  status: active
+  provisional: false
+  task_summary: リアルタイム実行ダッシュボード仕様書
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0078
+  task_id: SGK-2026-0078
+  doc_type: spec
+  title: 'Phase 7: Tool Executor Agent & 環境最適化'
+  primary_doc: docs/shigoku/specs/2026-02-08_RECIPE_EXECUTION_FIX.md
+  status: active
+  provisional: false
+  task_summary: 'Phase 7: Tool Executor Agent & 環境最適化'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0079
+  task_id: SGK-2026-0079
+  doc_type: spec
+  title: 'Phase 6: 検出最適化と運用品質向上'
+  primary_doc: docs/shigoku/specs/2026-02-08_phase6_detection_observability.md
+  status: active
+  provisional: false
+  task_summary: 'Phase 6: 検出最適化と運用品質向上'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0080
+  task_id: SGK-2026-0080
+  doc_type: spec
+  title: 'Specification: Fix File Storage & Findings Persistence'
+  primary_doc: docs/shigoku/specs/2026-02-09_fix_storage_and_findings.md
+  status: active
+  provisional: false
+  task_summary: 'Specification: Fix File Storage & Findings Persistence'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0081
+  task_id: SGK-2026-0081
+  doc_type: spec
+  title: 'Specification: Hybrid Intelligence Architecture Refactoring (Phase 8.1 -
+    8.2)'
+  primary_doc: docs/shigoku/specs/2026-02-09_hybrid_intelligence_arch.md
+  status: active
+  provisional: false
+  task_summary: 'Specification: Hybrid Intelligence Architecture Refactoring (Phase
+    8.1 - 8.2)'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0082
+  task_id: SGK-2026-0082
+  doc_type: spec
+  title: 'Phase 2: Hierarchical Manager Architecture Specification'
+  primary_doc: docs/shigoku/specs/2026-02-11_PHASE2_MANAGER_ARCH.md
+  status: active
+  provisional: false
+  task_summary: 'Phase 2: Hierarchical Manager Architecture Specification'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0083
+  task_id: SGK-2026-0083
+  doc_type: spec
+  title: 'Phase 1: 足場固めと構造改革 (Swarm化 & 入力正規化) 仕様書'
+  primary_doc: docs/shigoku/specs/2026-02-12_phase1_refactor.md
+  status: active
+  provisional: false
+  task_summary: 'Phase 1: 足場固めと構造改革 (Swarm化 & 入力正規化) 仕様書'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0084
+  task_id: SGK-2026-0084
+  doc_type: spec
+  title: 'Specification: Phase 2 - 頭脳のアップグレード (Brain Upgrade)'
+  primary_doc: docs/shigoku/specs/2026-02-13_phase2_brain_upgrade.md
+  status: active
+  provisional: false
+  task_summary: 'Specification: Phase 2 - 頭脳のアップグレード (Brain Upgrade)'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0085
+  task_id: SGK-2026-0085
+  doc_type: spec
+  title: 'Phase 4 仕様書: 深層攻撃の実装 (Post-Exploitation & Flag Capture)'
+  primary_doc: docs/shigoku/specs/2026-02-13_phase4_post_exploit.md
+  status: active
+  provisional: false
+  task_summary: 'Phase 4 仕様書: 深層攻撃の実装 (Post-Exploitation & Flag Capture)'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0086
+  task_id: SGK-2026-0086
+  doc_type: spec
+  title: 'Spec: データベース書き込み最適化 (Hybrid Batch Architecture)'
+  primary_doc: docs/shigoku/specs/2026-02-14_database_write_optimization.md
+  status: active
+  provisional: false
+  task_summary: 'Spec: データベース書き込み最適化 (Hybrid Batch Architecture)'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0087
+  task_id: SGK-2026-0087
+  doc_type: spec
+  title: '仕様書: Quality-First 攻撃成功強化フロー（crAPI起点・汎用運用）'
+  primary_doc: docs/shigoku/specs/2026-04-22_quality_first_execution_spec.md
+  status: active
+  provisional: false
+  task_summary: '仕様書: Quality-First 攻撃成功強化フロー（crAPI起点・汎用運用）'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0088
+  task_id: SGK-2026-0088
+  doc_type: spec
+  title: '仕様書: crAPI起点で汎用性を維持する検出強化ロードマップ'
+  primary_doc: docs/shigoku/specs/2026-04-29_generalizable_crapi_roadmap.md
+  status: active
+  provisional: false
+  task_summary: '仕様書: crAPI起点で汎用性を維持する検出強化ロードマップ'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0089
+  task_id: SGK-2026-0089
+  doc_type: spec
+  title: 高速ベンチ運用 + P0採用決定 + Confirmed増加プラン（1ページ）
+  primary_doc: docs/shigoku/specs/2026-05-11_fast_bench_p0_decision_and_confirmed_growth_plan.md
+  status: active
+  provisional: false
+  task_summary: 高速ベンチ運用 + P0採用決定 + Confirmed増加プラン（1ページ）
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0090
+  task_id: SGK-2026-0090
+  doc_type: spec
+  title: SCN01-07 測定用ベンチ計画（固定seed・固定session / 境界tightening）
+  primary_doc: docs/shigoku/specs/2026-05-11_scn01-07_benchmark_plan.md
+  status: active
+  provisional: false
+  task_summary: SCN01-07 測定用ベンチ計画（固定seed・固定session / 境界tightening）
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0091
+  task_id: SGK-2026-0091
+  doc_type: spec
+  title: Ver.1.x HITL Gate Policy (SCN08/10/12)
+  primary_doc: docs/shigoku/specs/2026-05-14_ver1x_hitl_gate_policy.md
+  status: active
+  provisional: false
+  task_summary: Ver.1.x HITL Gate Policy (SCN08/10/12)
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0092
+  task_id: SGK-2026-0092
+  doc_type: spec
+  title: SHIGOKU 統合アーキテクチャ
+  primary_doc: docs/shigoku/specs/ARCHITECTURE.md
+  status: active
+  provisional: false
+  task_summary: SHIGOKU 統合アーキテクチャ
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0093
+  task_id: SGK-2026-0093
+  doc_type: spec
+  title: 実験的機能 (Experimental Features)
+  primary_doc: docs/shigoku/specs/EXPERIMENTAL_FEATURES.md
+  status: active
+  provisional: false
+  task_summary: 実験的機能 (Experimental Features)
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0094
+  task_id: SGK-2026-0094
+  doc_type: spec
+  title: SHIGOKU 機能拡張マスタープラン
+  primary_doc: docs/shigoku/specs/FEATURE_EXPANSION_PLAN.md
+  status: active
+  provisional: false
+  task_summary: SHIGOKU 機能拡張マスタープラン
+  parent_task_id: SGK-2026-0065
+  related_docs:
+  - docs/shigoku/roadmaps/shigoku_unified_roadmap_20260301.md
+  - docs/shigoku/roadmaps/IMPLEMENTATION_ROADMAP.md
+- provisional_id: DOC-0095
+  task_id: SGK-2026-0095
+  doc_type: spec
+  title: IDOR (Insecure Direct Object Reference) / BOLA スキャナの実装課題と将来のロードマップ
+  primary_doc: docs/shigoku/specs/Kadai_idor_challenges_roadmap.md
+  status: active
+  provisional: false
+  task_summary: IDOR (Insecure Direct Object Reference) / BOLA スキャナの実装課題と将来のロードマップ
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0096
+  task_id: SGK-2026-0096
+  doc_type: spec
+  title: 'Feature Specification: Tier 4 - Master Conductor 知能の完全化'
+  primary_doc: docs/shigoku/specs/REQ_tier4_mc_intelligence.md
+  status: active
+  provisional: false
+  task_summary: 'Feature Specification: Tier 4 - Master Conductor 知能の完全化'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0097
+  task_id: SGK-2026-0097
+  doc_type: spec
+  title: 'Tier 5: EthicsGuard 強化仕様書 (REQ_tier5_ethics_guard)'
+  primary_doc: docs/shigoku/specs/REQ_tier5_ethics_guard.md
+  status: active
+  provisional: false
+  task_summary: 'Tier 5: EthicsGuard 強化仕様書 (REQ_tier5_ethics_guard)'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0098
+  task_id: SGK-2026-0098
+  doc_type: spec
+  title: 'REQ: Tier 6 高度攻撃能力 (Advanced Attacks)'
+  primary_doc: docs/shigoku/specs/REQ_tier6_advanced_attacks.md
+  status: active
+  provisional: false
+  task_summary: 'REQ: Tier 6 高度攻撃能力 (Advanced Attacks)'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0099
+  task_id: SGK-2026-0099
+  doc_type: spec
+  title: SmartCmdSSRFHunter 強化仕様書
+  primary_doc: docs/shigoku/specs/SSRF_HUNTER_ENHANCEMENT.md
+  status: active
+  provisional: false
+  task_summary: SmartCmdSSRFHunter 強化仕様書
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0100
+  task_id: SGK-2026-0100
+  doc_type: spec
+  title: 🧠 SHIGOKU 技術設計書
+  primary_doc: docs/shigoku/specs/TECHNICAL_DESIGN2026-01-26.md
+  status: active
+  provisional: false
+  task_summary: 🧠 SHIGOKU 技術設計書
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0101
+  task_id: SGK-2026-0101
+  doc_type: spec
+  title: 🏗️ SHIGOKU 技術仕様書
+  primary_doc: docs/shigoku/specs/TECHNICAL_SPEC_JA.md
+  status: active
+  provisional: false
+  task_summary: 🏗️ SHIGOKU 技術仕様書
+  parent_task_id: null
+  related_docs:
+  - docs/shigoku/roadmaps/IMPLEMENTATION_ROADMAP.md
+  - docs/shigoku/manuals/MANUAL_JA.md
+  - docs/shigoku/roadmaps/shigoku_unified_roadmap_20260301.md
+- provisional_id: DOC-0102
+  task_id: SGK-2026-0102
+  doc_type: spec
+  title: LLM Actor-Critic Fuzzing Loop 仕様書
+  primary_doc: docs/shigoku/specs/actor_critic_payload_generator.md
+  status: active
+  provisional: false
+  task_summary: LLM Actor-Critic Fuzzing Loop 仕様書
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0103
+  task_id: SGK-2026-0103
+  doc_type: spec
+  title: '仕様書: AdaptivePerformanceTuner'
+  primary_doc: docs/shigoku/specs/adaptive_performance_tuner.md
+  status: active
+  provisional: false
+  task_summary: '仕様書: AdaptivePerformanceTuner'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0104
+  task_id: SGK-2026-0104
+  doc_type: spec
+  title: Agent Hardening & Authentication Integration Specification
+  primary_doc: docs/shigoku/specs/agent_hardening_and_auth.md
+  status: active
+  provisional: false
+  task_summary: Agent Hardening & Authentication Integration Specification
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0105
+  task_id: SGK-2026-0105
+  doc_type: spec
+  title: '機能仕様書: Any-LLM (Proxy Gateway) の導入'
+  primary_doc: docs/shigoku/specs/any-llm-integration.md
+  status: active
+  provisional: false
+  task_summary: '機能仕様書: Any-LLM (Proxy Gateway) の導入'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0106
+  task_id: SGK-2026-0106
+  doc_type: spec
+  title: 'Specification: Bug Bounty Optimization'
+  primary_doc: docs/shigoku/specs/bug_bounty_enhancements.md
+  status: active
+  provisional: false
+  task_summary: 'Specification: Bug Bounty Optimization'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0107
+  task_id: SGK-2026-0107
+  doc_type: spec
+  title: 'Specification: Caido Sitemap Parser Agent'
+  primary_doc: docs/shigoku/specs/caido_sitemap_agent.md
+  status: active
+  provisional: false
+  task_summary: 'Specification: Caido Sitemap Parser Agent'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0108
+  task_id: SGK-2026-0108
+  doc_type: spec
+  title: SmartCmdSSRFHunter Phase 3 仕様書
+  primary_doc: docs/shigoku/specs/cmd_ssrf_phase3.md
+  status: active
+  provisional: false
+  task_summary: SmartCmdSSRFHunter Phase 3 仕様書
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0109
+  task_id: SGK-2026-0109
+  doc_type: spec
+  title: Command Injection & SSRF Specialist Feature Specification
+  primary_doc: docs/shigoku/specs/cmd_ssrf_specialist.md
+  status: active
+  provisional: false
+  task_summary: Command Injection & SSRF Specialist Feature Specification
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0110
+  task_id: SGK-2026-0110
+  doc_type: spec
+  title: '仕様書: 設定管理のリファクタリング (Pydantic Settings 移行)'
+  primary_doc: docs/shigoku/specs/config_refactoring.md
+  status: active
+  provisional: false
+  task_summary: '仕様書: 設定管理のリファクタリング (Pydantic Settings 移行)'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0111
+  task_id: SGK-2026-0111
+  doc_type: spec
+  title: '仕様書: CPUバウンド処理のオフロード'
+  primary_doc: docs/shigoku/specs/cpu_offloading.md
+  status: active
+  provisional: false
+  task_summary: '仕様書: CPUバウンド処理のオフロード'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0112
+  task_id: SGK-2026-0112
+  doc_type: spec
+  title: 'Spec: DVWA Medium Bypasses (Phase 1)'
+  primary_doc: docs/shigoku/specs/dvwa_medium_bypass_phase1.md
+  status: active
+  provisional: false
+  task_summary: 'Spec: DVWA Medium Bypasses (Phase 1)'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0113
+  task_id: SGK-2026-0113
+  doc_type: spec
+  title: 'Specification: Phase 2 - Opaque Session & Auth Bypass Enhancement'
+  primary_doc: docs/shigoku/specs/dvwa_medium_bypass_phase2.md
+  status: active
+  provisional: false
+  task_summary: 'Specification: Phase 2 - Opaque Session & Auth Bypass Enhancement'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0114
+  task_id: SGK-2026-0114
+  doc_type: spec
+  title: Dynamic Recon and Context Propagation Specification
+  primary_doc: docs/shigoku/specs/dynamic_recon_attack.md
+  status: active
+  provisional: false
+  task_summary: Dynamic Recon and Context Propagation Specification
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0115
+  task_id: SGK-2026-0115
+  doc_type: spec
+  title: Dynamic Resource Scaling Specification
+  primary_doc: docs/shigoku/specs/dynamic_resource_scaling.md
+  status: active
+  provisional: false
+  task_summary: Dynamic Resource Scaling Specification
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0116
+  task_id: SGK-2026-0116
+  doc_type: spec
+  title: 'Spec: エンジン・パフォーマンス最適化'
+  primary_doc: docs/shigoku/specs/engine_performance_optimization.md
+  status: active
+  provisional: false
+  task_summary: 'Spec: エンジン・パフォーマンス最適化'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0117
+  task_id: SGK-2026-0117
+  doc_type: spec
+  title: Enhance Report History & Timezone
+  primary_doc: docs/shigoku/specs/enhance_report_history.md
+  status: active
+  provisional: false
+  task_summary: Enhance Report History & Timezone
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0118
+  task_id: SGK-2026-0118
+  doc_type: spec
+  title: File Upload Vulnerability Scanner Specification
+  primary_doc: docs/shigoku/specs/file_upload_scanner.md
+  status: active
+  provisional: false
+  task_summary: File Upload Vulnerability Scanner Specification
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0119
+  task_id: SGK-2026-0119
+  doc_type: spec
+  title: 'File Upload Vulnerability Scanner v2 Specification (Revised: Context-Aware
+    Path Prediction)'
+  primary_doc: docs/shigoku/specs/file_upload_scanner_v2.md
+  status: active
+  provisional: false
+  task_summary: 'File Upload Vulnerability Scanner v2 Specification (Revised: Context-Aware
+    Path Prediction)'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0120
+  task_id: SGK-2026-0120
+  doc_type: spec
+  title: 'Spec: AsyncNetworkClient のループ耐性向上と Event loop is closed エラーの修正'
+  primary_doc: docs/shigoku/specs/fix_event_loop_closed.md
+  status: active
+  provisional: false
+  task_summary: 'Spec: AsyncNetworkClient のループ耐性向上と Event loop is closed エラーの修正'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0121
+  task_id: SGK-2026-0121
+  doc_type: spec
+  title: '仕様書: 実行時エラーとタイムアウトの修正'
+  primary_doc: docs/shigoku/specs/fix_execution_errors.md
+  status: active
+  provisional: false
+  task_summary: '仕様書: 実行時エラーとタイムアウトの修正'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0122
+  task_id: SGK-2026-0122
+  doc_type: spec
+  title: '仕様書: InjectionSwarm (InjectionManagerAgent) の正常化'
+  primary_doc: docs/shigoku/specs/fix_injection_swarm.md
+  status: active
+  provisional: false
+  task_summary: '仕様書: InjectionSwarm (InjectionManagerAgent) の正常化'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0123
+  task_id: SGK-2026-0123
+  doc_type: spec
+  title: Katana Target Generation Fix
+  primary_doc: docs/shigoku/specs/fix_katana_target_generation.md
+  status: active
+  provisional: false
+  task_summary: Katana Target Generation Fix
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0124
+  task_id: SGK-2026-0124
+  doc_type: spec
+  title: 'Spec: Recon Pipeline 空ターゲットガードの実装'
+  primary_doc: docs/shigoku/specs/fix_recon_empty_target_error.md
+  status: active
+  provisional: false
+  task_summary: 'Spec: Recon Pipeline 空ターゲットガードの実装'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0125
+  task_id: SGK-2026-0125
+  doc_type: spec
+  title: Report History & Timezone Fix Spec
+  primary_doc: docs/shigoku/specs/fix_report_history_and_timezone.md
+  status: active
+  provisional: false
+  task_summary: Report History & Timezone Fix Spec
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0126
+  task_id: SGK-2026-0126
+  doc_type: spec
+  title: 'Spec: Fix SmartXSSHunter Logic and Prompts'
+  primary_doc: docs/shigoku/specs/fix_smart_xss_logic.md
+  status: active
+  provisional: false
+  task_summary: 'Spec: Fix SmartXSSHunter Logic and Prompts'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0127
+  task_id: SGK-2026-0127
+  doc_type: spec
+  title: 'Feature Specification: GitHub Client Optimization'
+  primary_doc: docs/shigoku/specs/github_client_optimization.md
+  status: active
+  provisional: false
+  task_summary: 'Feature Specification: GitHub Client Optimization'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0128
+  task_id: SGK-2026-0128
+  doc_type: spec
+  title: GitHub MCP Integration (GitHub Dorks)
+  primary_doc: docs/shigoku/specs/github_mcp_integration.md
+  status: active
+  provisional: false
+  task_summary: GitHub MCP Integration (GitHub Dorks)
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0129
+  task_id: SGK-2026-0129
+  doc_type: spec
+  title: 'IDOR Enhancement Phase 2 & 3: Mass Assignment & Body Parsing'
+  primary_doc: docs/shigoku/specs/idor_phase2_3.md
+  status: active
+  provisional: false
+  task_summary: 'IDOR Enhancement Phase 2 & 3: Mass Assignment & Body Parsing'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0130
+  task_id: SGK-2026-0130
+  doc_type: spec
+  title: Intelligence → MasterConductor 統合仕様書
+  primary_doc: docs/shigoku/specs/intelligence_mc_integration.md
+  status: active
+  provisional: false
+  task_summary: Intelligence → MasterConductor 統合仕様書
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0131
+  task_id: SGK-2026-0131
+  doc_type: spec
+  title: 脆弱性連鎖（Vulnerability Chaining）の仕様書
+  primary_doc: docs/shigoku/specs/inter_agent_chaining.md
+  status: active
+  provisional: false
+  task_summary: 脆弱性連鎖（Vulnerability Chaining）の仕様書
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0132
+  task_id: SGK-2026-0132
+  doc_type: spec
+  title: '仕様書: I/Oパフォーマンスとディスクアクセスの最適化'
+  primary_doc: docs/shigoku/specs/io_performance_optimization.md
+  status: active
+  provisional: false
+  task_summary: '仕様書: I/Oパフォーマンスとディスクアクセスの最適化'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0133
+  task_id: SGK-2026-0133
+  doc_type: spec
+  title: 'Spec: Katana Headless Crawler Integration & Unified Caido Proxy Strategy'
+  primary_doc: docs/shigoku/specs/katana_caido_integration.md
+  status: active
+  provisional: false
+  task_summary: 'Spec: Katana Headless Crawler Integration & Unified Caido Proxy Strategy'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0134
+  task_id: SGK-2026-0134
+  doc_type: spec
+  title: LFI / Path Traversal Scanner v2 (Smart LFI Hunter) Specification
+  primary_doc: docs/shigoku/specs/lfi_scanner.md
+  status: active
+  provisional: false
+  task_summary: LFI / Path Traversal Scanner v2 (Smart LFI Hunter) Specification
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0135
+  task_id: SGK-2026-0135
+  doc_type: spec
+  title: '仕様書: LLM API呼び出しの最適化 (LLM Optimization)'
+  primary_doc: docs/shigoku/specs/llm_optimization.md
+  status: active
+  provisional: false
+  task_summary: '仕様書: LLM API呼び出しの最適化 (LLM Optimization)'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0136
+  task_id: SGK-2026-0136
+  doc_type: spec
+  title: 'Spec: BizLogicHunter Migration to Master Conductor Architecture'
+  primary_doc: docs/shigoku/specs/migrate_biz_logic_hunter.md
+  status: active
+  provisional: false
+  task_summary: 'Spec: BizLogicHunter Migration to Master Conductor Architecture'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0137
+  task_id: SGK-2026-0137
+  doc_type: spec
+  title: 'Feature Specification: Tier 3 IDOR 完全体 (MultiSessionManager & OpenAPI Privilege
+    Guesser)'
+  primary_doc: docs/shigoku/specs/multi_session_manager.md
+  status: active
+  provisional: false
+  task_summary: 'Feature Specification: Tier 3 IDOR 完全体 (MultiSessionManager & OpenAPI
+    Privilege Guesser)'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0138
+  task_id: SGK-2026-0138
+  doc_type: spec
+  title: 'Spec: AsyncNetworkClient のI/Oボトルネック解消'
+  primary_doc: docs/shigoku/specs/optimize_network_io.md
+  status: active
+  provisional: false
+  task_summary: 'Spec: AsyncNetworkClient のI/Oボトルネック解消'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0139
+  task_id: SGK-2026-0139
+  doc_type: spec
+  title: 'Spec: サブプロセス実行の最適化'
+  primary_doc: docs/shigoku/specs/optimize_subprocess_execution.md
+  status: active
+  provisional: false
+  task_summary: 'Spec: サブプロセス実行の最適化'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0140
+  task_id: SGK-2026-0140
+  doc_type: spec
+  title: 仕様書：最適化された階層型キャッシュ戦略
+  primary_doc: docs/shigoku/specs/optimized_cache_strategy.md
+  status: active
+  provisional: false
+  task_summary: 仕様書：最適化された階層型キャッシュ戦略
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0141
+  task_id: SGK-2026-0141
+  doc_type: spec
+  title: '仕様書: 統合パフォーマンス最適化 (Performance Optimization v2)'
+  primary_doc: docs/shigoku/specs/performance_optimization_v2.md
+  status: active
+  provisional: false
+  task_summary: '仕様書: 統合パフォーマンス最適化 (Performance Optimization v2)'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0142
+  task_id: SGK-2026-0142
+  doc_type: spec
+  title: 'Phase 1.1: Swarm Retry Engine 仕様書'
+  primary_doc: docs/shigoku/specs/phase1_1_swarm_retry_engine.md
+  status: active
+  provisional: false
+  task_summary: 'Phase 1.1: Swarm Retry Engine 仕様書'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0143
+  task_id: SGK-2026-0143
+  doc_type: spec
+  title: 'Phase 1.2: Dynamic Task Queue 仕様書'
+  primary_doc: docs/shigoku/specs/phase1_2_dynamic_task_queue.md
+  status: active
+  provisional: false
+  task_summary: 'Phase 1.2: Dynamic Task Queue 仕様書'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0144
+  task_id: SGK-2026-0144
+  doc_type: spec
+  title: 'Phase 1.3: Proxy Chain & Async Network Client 仕様書'
+  primary_doc: docs/shigoku/specs/phase1_3_proxy_chain.md
+  status: active
+  provisional: false
+  task_summary: 'Phase 1.3: Proxy Chain & Async Network Client 仕様書'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0145
+  task_id: SGK-2026-0145
+  doc_type: spec
+  title: 'Phase 1: 足場固めと構造改革 (Swarm化 & 入力正規化) 詳細仕様書'
+  primary_doc: docs/shigoku/specs/phase1_refactor.md
+  status: active
+  provisional: false
+  task_summary: 'Phase 1: 足場固めと構造改革 (Swarm化 & 入力正規化) 詳細仕様書'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0146
+  task_id: SGK-2026-0146
+  doc_type: spec
+  title: 'Phase 2.1: Critical Path Analysis 仕様書'
+  primary_doc: docs/shigoku/specs/phase2_1_critical_path.md
+  status: active
+  provisional: false
+  task_summary: 'Phase 2.1: Critical Path Analysis 仕様書'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0147
+  task_id: SGK-2026-0147
+  doc_type: spec
+  title: 'Phase 2.2: OOB (Out-of-Band) Detection 仕様書'
+  primary_doc: docs/shigoku/specs/phase2_2_oob_detection.md
+  status: active
+  provisional: false
+  task_summary: 'Phase 2.2: OOB (Out-of-Band) Detection 仕様書'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0148
+  task_id: SGK-2026-0148
+  doc_type: spec
+  title: 'Phase 2.3: Headless Browser Validator 仕様書'
+  primary_doc: docs/shigoku/specs/phase2_3_headless_browser.md
+  status: active
+  provisional: false
+  task_summary: 'Phase 2.3: Headless Browser Validator 仕様書'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0149
+  task_id: SGK-2026-0149
+  doc_type: spec
+  title: 'Phase 2.4: Race Condition Tester 仕様書'
+  primary_doc: docs/shigoku/specs/phase2_4_race_condition.md
+  status: active
+  provisional: false
+  task_summary: 'Phase 2.4: Race Condition Tester 仕様書'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0150
+  task_id: SGK-2026-0150
+  doc_type: spec
+  title: 'Phase 2.5: Dynamic Wordlist Generation 仕様書'
+  primary_doc: docs/shigoku/specs/phase2_5_dynamic_wordlist.md
+  status: active
+  provisional: false
+  task_summary: 'Phase 2.5: Dynamic Wordlist Generation 仕様書'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0151
+  task_id: SGK-2026-0151
+  doc_type: spec
+  title: 'Phase 3.2: Fuzzing Swarm (Active Reconnaissance)'
+  primary_doc: docs/shigoku/specs/phase3_2_fuzzing_swarm.md
+  status: active
+  provisional: false
+  task_summary: 'Phase 3.2: Fuzzing Swarm (Active Reconnaissance)'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0152
+  task_id: SGK-2026-0152
+  doc_type: spec
+  title: 'Phase 3.6: Scanner Swarm Specification'
+  primary_doc: docs/shigoku/specs/phase3_6_scanner_swarm.md
+  status: active
+  provisional: false
+  task_summary: 'Phase 3.6: Scanner Swarm Specification'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0153
+  task_id: SGK-2026-0153
+  doc_type: spec
+  title: 'Phase 3: ParamFuzzer & Intelligence Implementation'
+  primary_doc: docs/shigoku/specs/phase3_param_fuzzer_and_intelligence.md
+  status: active
+  provisional: false
+  task_summary: 'Phase 3: ParamFuzzer & Intelligence Implementation'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0154
+  task_id: SGK-2026-0154
+  doc_type: spec
+  title: Recon Pipeline 最適化評価レポート
+  primary_doc: docs/shigoku/specs/pipeline_optimization_report.md
+  status: active
+  provisional: false
+  task_summary: Recon Pipeline 最適化評価レポート
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0155
+  task_id: SGK-2026-0155
+  doc_type: spec
+  title: '仕様書: コードプロファイリングの導入'
+  primary_doc: docs/shigoku/specs/profiling_introduction.md
+  status: active
+  provisional: false
+  task_summary: '仕様書: コードプロファイリングの導入'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0156
+  task_id: SGK-2026-0156
+  doc_type: spec
+  title: 'Specification: Recipe Execution Engine Optimization'
+  primary_doc: docs/shigoku/specs/recipe_engine_optimization.md
+  status: active
+  provisional: false
+  task_summary: 'Specification: Recipe Execution Engine Optimization'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0157
+  task_id: SGK-2026-0157
+  doc_type: spec
+  title: 偵察バッチ処理の最適化仕様書 (Spec.md)
+  primary_doc: docs/shigoku/specs/recon_batch_processing.md
+  status: active
+  provisional: false
+  task_summary: 偵察バッチ処理の最適化仕様書 (Spec.md)
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0158
+  task_id: SGK-2026-0158
+  doc_type: spec
+  title: '仕様書: Recon Pipeline 並列数制御の最適化'
+  primary_doc: docs/shigoku/specs/recon_concurrency_optimization.md
+  status: active
+  provisional: false
+  task_summary: '仕様書: Recon Pipeline 並列数制御の最適化'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0159
+  task_id: SGK-2026-0159
+  doc_type: spec
+  title: 'Spec: Response Comparison Heuristics (IDOR 成立判定エンジン)'
+  primary_doc: docs/shigoku/specs/response_comparison_heuristics.md
+  status: active
+  provisional: false
+  task_summary: 'Spec: Response Comparison Heuristics (IDOR 成立判定エンジン)'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0160
+  task_id: SGK-2026-0160
+  doc_type: spec
+  title: 'Spec: Shutdown Cleanup and Resource Management Fixes'
+  primary_doc: docs/shigoku/specs/shutdown_fix.md
+  status: active
+  provisional: false
+  task_summary: 'Spec: Shutdown Cleanup and Resource Management Fixes'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0161
+  task_id: SGK-2026-0161
+  doc_type: spec
+  title: 'Spec: Tier 1 (Phase 1 Closure) - `multipart/form-data` 対応 & Swarm Semaphore'
+  primary_doc: docs/shigoku/specs/tier1_phase1_closure_20260301.md
+  status: active
+  provisional: false
+  task_summary: 'Spec: Tier 1 (Phase 1 Closure) - `multipart/form-data` 対応 & Swarm
+    Semaphore'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0162
+  task_id: SGK-2026-0162
+  doc_type: spec
+  title: 'Spec: Tier 1 (Phase 2) - `IdorHunterSpecialist` 強化 (HPP & 動的プロパティ抽出)'
+  primary_doc: docs/shigoku/specs/tier1_phase2_idor_enhancement_20260301.md
+  status: active
+  provisional: false
+  task_summary: 'Spec: Tier 1 (Phase 2) - `IdorHunterSpecialist` 強化 (HPP & 動的プロパティ抽出)'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0163
+  task_id: SGK-2026-0163
+  doc_type: spec
+  title: 'Tier 2 Phase 1: Intelligence Integration Spec'
+  primary_doc: docs/shigoku/specs/tier2_phase1_intelligence_integration.md
+  status: active
+  provisional: false
+  task_summary: 'Tier 2 Phase 1: Intelligence Integration Spec'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0164
+  task_id: SGK-2026-0164
+  doc_type: spec
+  title: 'Spec: Tier 2 Phase 2 - 学習データに基づく動的スキャン最適化'
+  primary_doc: docs/shigoku/specs/tier2_phase2_dynamic_optimization.md
+  status: active
+  provisional: false
+  task_summary: 'Spec: Tier 2 Phase 2 - 学習データに基づく動的スキャン最適化'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0165
+  task_id: SGK-2026-0165
+  doc_type: spec
+  title: 'Tier 7: プラットフォーム化実装仕様 (Platformization Spec)'
+  primary_doc: docs/shigoku/specs/tier7_platformization.md
+  status: active
+  provisional: false
+  task_summary: 'Tier 7: プラットフォーム化実装仕様 (Platformization Spec)'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0166
+  task_id: SGK-2026-0166
+  doc_type: spec
+  title: Visibility & Metrics 仕様書
+  primary_doc: docs/shigoku/specs/visibility_and_metrics.md
+  status: active
+  provisional: false
+  task_summary: Visibility & Metrics 仕様書
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0167
+  task_id: SGK-2026-0167
+  doc_type: spec
+  title: XSS Specialist (Stored & Reflected) Feature Specification
+  primary_doc: docs/shigoku/specs/xss_specialist.md
+  status: active
+  provisional: false
+  task_summary: XSS Specialist (Stored & Reflected) Feature Specification
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0168
+  task_id: SGK-2026-0168
+  doc_type: spec
+  title: 'Spec: XSS Hunter Workflow & Tool Integration Improvements'
+  primary_doc: docs/shigoku/specs/xss_workflow_improvement.md
+  status: active
+  provisional: false
+  task_summary: 'Spec: XSS Hunter Workflow & Tool Integration Improvements'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0169
+  task_id: SGK-2026-0169
+  doc_type: subtask_plan
+  title: 'IMPLEMANTATION PLAN: Phase 1 Refactor (Swarm & TargetAsset)'
+  primary_doc: docs/shigoku/subtasks/2026-02-12_phase1_implementation_plan.md
+  status: backlog
+  provisional: false
+  task_summary: 'IMPLEMANTATION PLAN: Phase 1 Refactor (Swarm & TargetAsset)'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0170
+  task_id: SGK-2026-0170
+  doc_type: subtask_plan
+  title: 'Implementation Plan: Phase 2 - 頭脳のアップグレード'
+  primary_doc: docs/shigoku/subtasks/2026-02-13_phase2_implementation_plan.md
+  status: backlog
+  provisional: false
+  task_summary: 'Implementation Plan: Phase 2 - 頭脳のアップグレード'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0171
+  task_id: SGK-2026-0171
+  doc_type: subtask_plan
+  title: 'Phase 1: 足場固めと構造改革 (Swarm化 & 入力正規化) - TODO Tasks'
+  primary_doc: docs/shigoku/subtasks/phase1_tasks.md
+  status: backlog
+  provisional: false
+  task_summary: 'Phase 1: 足場固めと構造改革 (Swarm化 & 入力正規化) - TODO Tasks'
+  parent_task_id: SGK-2026-0058
+  related_docs:
+  - docs/shigoku/plans/2026-05-14_ssti_implementation_plan.md
+- provisional_id: DOC-0172
+  task_id: SGK-2026-0172
+  doc_type: work_log
+  title: 2025-12-25_Final_Audit_Refactoring
+  primary_doc: docs/shigoku/worklogs/2025-12-25_Final_Audit_Refactoring.md
+  status: done
+  provisional: false
+  task_summary: 2025-12-25_Final_Audit_Refactoring
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0173
+  task_id: SGK-2026-0173
+  doc_type: work_log
+  title: 2025-12-25_Implement_Golden_Recipes
+  primary_doc: docs/shigoku/worklogs/2025-12-25_Implement_Golden_Recipes.md
+  status: done
+  provisional: false
+  task_summary: 2025-12-25_Implement_Golden_Recipes
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0174
+  task_id: SGK-2026-0174
+  doc_type: work_log
+  title: 2025-12-25_Implement_SHIGOKU_Recipes_Fallback
+  primary_doc: docs/shigoku/worklogs/2025-12-25_Implement_SHIGOKU_Recipes_Fallback.md
+  status: done
+  provisional: false
+  task_summary: 2025-12-25_Implement_SHIGOKU_Recipes_Fallback
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0175
+  task_id: SGK-2026-0175
+  doc_type: work_log
+  title: 2025-12-25_Integrate_Advanced_Sub_Agents
+  primary_doc: docs/shigoku/worklogs/2025-12-25_Integrate_Advanced_Sub_Agents.md
+  status: done
+  provisional: false
+  task_summary: 2025-12-25_Integrate_Advanced_Sub_Agents
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0176
+  task_id: SGK-2026-0176
+  doc_type: work_log
+  title: 2025-12-25 Agent Portfolio Optimization
+  primary_doc: docs/shigoku/worklogs/2025-12-25_Optimize_Agent_Portfolio.md
+  status: done
+  provisional: false
+  task_summary: 2025-12-25 Agent Portfolio Optimization
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0177
+  task_id: SGK-2026-0177
+  doc_type: work_log
+  title: 2025-12-25_Refine_SHIGOKU_Workflow_Gaps
+  primary_doc: docs/shigoku/worklogs/2025-12-25_Refine_SHIGOKU_Workflow_Gaps.md
+  status: done
+  provisional: false
+  task_summary: 2025-12-25_Refine_SHIGOKU_Workflow_Gaps
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0178
+  task_id: SGK-2026-0178
+  doc_type: work_log
+  title: 2025-12-25_SHIGOKU_Flow_Gap_Implementation
+  primary_doc: docs/shigoku/worklogs/2025-12-25_SHIGOKU_Flow_Gap_Implementation.md
+  status: done
+  provisional: false
+  task_summary: 2025-12-25_SHIGOKU_Flow_Gap_Implementation
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0179
+  task_id: SGK-2026-0179
+  doc_type: work_log
+  title: 2025-12-25_SHIGOKU_Gap_Implementation_Plan
+  primary_doc: docs/shigoku/worklogs/2025-12-25_SHIGOKU_Gap_Implementation_Plan.md
+  status: done
+  provisional: false
+  task_summary: 2025-12-25_SHIGOKU_Gap_Implementation_Plan
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0180
+  task_id: SGK-2026-0180
+  doc_type: work_log
+  title: 2025-12-25_Verify_SHIGOKU_Parallel_GPU
+  primary_doc: docs/shigoku/worklogs/2025-12-25_Verify_SHIGOKU_Parallel_GPU.md
+  status: done
+  provisional: false
+  task_summary: 2025-12-25_Verify_SHIGOKU_Parallel_GPU
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0181
+  task_id: SGK-2026-0181
+  doc_type: work_log
+  title: 2026-01-01_Enhance_CoT_Prompt
+  primary_doc: docs/shigoku/worklogs/2026-01-01_Enhance_CoT_Prompt.md
+  status: done
+  provisional: false
+  task_summary: 2026-01-01_Enhance_CoT_Prompt
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0182
+  task_id: SGK-2026-0182
+  doc_type: work_log
+  title: 2026-01-01_Enhance_IDOR_Detection
+  primary_doc: docs/shigoku/worklogs/2026-01-01_Enhance_IDOR_Detection.md
+  status: done
+  provisional: false
+  task_summary: 2026-01-01_Enhance_IDOR_Detection
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0183
+  task_id: SGK-2026-0183
+  doc_type: work_log
+  title: 2026-01-01_New_Security_Tool_Integration
+  primary_doc: docs/shigoku/worklogs/2026-01-01_New_Security_Tool_Integration.md
+  status: done
+  provisional: false
+  task_summary: 2026-01-01_New_Security_Tool_Integration
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0184
+  task_id: SGK-2026-0184
+  doc_type: work_log
+  title: 2026-01-01_Notification_System_Integration
+  primary_doc: docs/shigoku/worklogs/2026-01-01_Notification_System_Integration.md
+  status: done
+  provisional: false
+  task_summary: 2026-01-01_Notification_System_Integration
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0185
+  task_id: SGK-2026-0185
+  doc_type: work_log
+  title: 2026-01-01_SSTI_Scanner_Implementation
+  primary_doc: docs/shigoku/worklogs/2026-01-01_SSTI_Scanner_Implementation.md
+  status: done
+  provisional: false
+  task_summary: 2026-01-01_SSTI_Scanner_Implementation
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0186
+  task_id: SGK-2026-0186
+  doc_type: work_log
+  title: 2026-01-01_Workflow_Definitions
+  primary_doc: docs/shigoku/worklogs/2026-01-01_Workflow_Definitions.md
+  status: done
+  provisional: false
+  task_summary: 2026-01-01_Workflow_Definitions
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0187
+  task_id: SGK-2026-0187
+  doc_type: work_log
+  title: 2026-01-02_Enhance_RAG_Context
+  primary_doc: docs/shigoku/worklogs/2026-01-02_Enhance_RAG_Context.md
+  status: done
+  provisional: false
+  task_summary: 2026-01-02_Enhance_RAG_Context
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0188
+  task_id: SGK-2026-0188
+  doc_type: work_log
+  title: 2026-01-02_Project_List_Feature
+  primary_doc: docs/shigoku/worklogs/2026-01-02_Project_List_Feature.md
+  status: done
+  provisional: false
+  task_summary: 2026-01-02_Project_List_Feature
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0189
+  task_id: SGK-2026-0189
+  doc_type: work_log
+  title: '作業ログ: SHIGOKU 機能拡張マスタープラン策定'
+  primary_doc: docs/shigoku/worklogs/2026-01-03_Feature_Expansion_Plan.md
+  status: done
+  provisional: false
+  task_summary: '作業ログ: SHIGOKU 機能拡張マスタープラン策定'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0190
+  task_id: SGK-2026-0190
+  doc_type: work_log
+  title: 2026-01-03_Intelligence_Module
+  primary_doc: docs/shigoku/worklogs/2026-01-03_Intelligence_Module.md
+  status: done
+  provisional: false
+  task_summary: 2026-01-03_Intelligence_Module
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0191
+  task_id: SGK-2026-0191
+  doc_type: work_log
+  title: '作業ログ: 2026-01-03 Phase 1-3 コードレビュー＆テスト実装'
+  primary_doc: docs/shigoku/worklogs/2026-01-03_Phase1-3_Code_Review.md
+  status: done
+  provisional: false
+  task_summary: '作業ログ: 2026-01-03 Phase 1-3 コードレビュー＆テスト実装'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0192
+  task_id: SGK-2026-0192
+  doc_type: work_log
+  title: 2026-01-03_Phase1-3_Code_Review_E2E
+  primary_doc: docs/shigoku/worklogs/2026-01-03_Phase1-3_Code_Review_E2E.md
+  status: done
+  provisional: false
+  task_summary: 2026-01-03_Phase1-3_Code_Review_E2E
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0193
+  task_id: SGK-2026-0193
+  doc_type: work_log
+  title: 2026-01-03_Phase1-3_Final
+  primary_doc: docs/shigoku/worklogs/2026-01-03_Phase1-3_Final.md
+  status: done
+  provisional: false
+  task_summary: 2026-01-03_Phase1-3_Final
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0194
+  task_id: SGK-2026-0194
+  doc_type: work_log
+  title: 2026-01-03_Phase1_3_Feature_Expansion
+  primary_doc: docs/shigoku/worklogs/2026-01-03_Phase1_3_Feature_Expansion.md
+  status: done
+  provisional: false
+  task_summary: 2026-01-03_Phase1_3_Feature_Expansion
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0195
+  task_id: SGK-2026-0195
+  doc_type: work_log
+  title: 2026-01-04_Agent_Registry_Phase1
+  primary_doc: docs/shigoku/worklogs/2026-01-04_Agent_Registry_Phase1.md
+  status: done
+  provisional: false
+  task_summary: 2026-01-04_Agent_Registry_Phase1
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0196
+  task_id: SGK-2026-0196
+  doc_type: work_log
+  title: 2026-01-04_Bug_Analysis_and_Fixes
+  primary_doc: docs/shigoku/worklogs/2026-01-04_Bug_Analysis_and_Fixes.md
+  status: done
+  provisional: false
+  task_summary: 2026-01-04_Bug_Analysis_and_Fixes
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0197
+  task_id: SGK-2026-0197
+  doc_type: work_log
+  title: 2026-01-04_Bug_Fix_Investigation
+  primary_doc: docs/shigoku/worklogs/2026-01-04_Bug_Fix_Investigation.md
+  status: done
+  provisional: false
+  task_summary: 2026-01-04_Bug_Fix_Investigation
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0198
+  task_id: SGK-2026-0198
+  doc_type: work_log
+  title: 2026-01-04_Implement_Security_Guardrails
+  primary_doc: docs/shigoku/worklogs/2026-01-04_Implement_Security_Guardrails.md
+  status: done
+  provisional: false
+  task_summary: 2026-01-04_Implement_Security_Guardrails
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0199
+  task_id: SGK-2026-0199
+  doc_type: work_log
+  title: Work Log - Implementing Security Features
+  primary_doc: docs/shigoku/worklogs/2026-01-04_Implementing_Unimplemented_Features.md
+  status: done
+  provisional: false
+  task_summary: Work Log - Implementing Security Features
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0200
+  task_id: SGK-2026-0200
+  doc_type: work_log
+  title: 2026-01-04_Model_Routing
+  primary_doc: docs/shigoku/worklogs/2026-01-04_Model_Routing.md
+  status: done
+  provisional: false
+  task_summary: 2026-01-04_Model_Routing
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0201
+  task_id: SGK-2026-0201
+  doc_type: work_log
+  title: 2026-01-04_RAG_Chunking_Routing
+  primary_doc: docs/shigoku/worklogs/2026-01-04_RAG_Chunking_Routing.md
+  status: done
+  provisional: false
+  task_summary: 2026-01-04_RAG_Chunking_Routing
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0202
+  task_id: SGK-2026-0202
+  doc_type: work_log
+  title: 2026-01-04_RAG_Header_Chunking
+  primary_doc: docs/shigoku/worklogs/2026-01-04_RAG_Header_Chunking.md
+  status: done
+  provisional: false
+  task_summary: 2026-01-04_RAG_Header_Chunking
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0203
+  task_id: SGK-2026-0203
+  doc_type: work_log
+  title: 2026-01-05_Bug_Fixes_Implementation
+  primary_doc: docs/shigoku/worklogs/2026-01-05_Bug_Fixes_Implementation.md
+  status: done
+  provisional: false
+  task_summary: 2026-01-05_Bug_Fixes_Implementation
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0204
+  task_id: SGK-2026-0204
+  doc_type: work_log
+  title: 'Work Log: 双方向 PII マスキング機能実装'
+  primary_doc: docs/shigoku/worklogs/2026-01-06_pii_masking.md
+  status: done
+  provisional: false
+  task_summary: 'Work Log: 双方向 PII マスキング機能実装'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0205
+  task_id: SGK-2026-0205
+  doc_type: work_log
+  title: 'Work Log: Reconnaissance Pipeline Step 1-8 完全実装'
+  primary_doc: docs/shigoku/worklogs/2026-01-10_Recon_Pipeline_Step1-8.md
+  status: done
+  provisional: false
+  task_summary: 'Work Log: Reconnaissance Pipeline Step 1-8 完全実装'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0206
+  task_id: SGK-2026-0206
+  doc_type: work_log
+  title: 'Work Log: Recon Pipeline Step 6 完全実装'
+  primary_doc: docs/shigoku/worklogs/2026-01-12_Recon_Pipeline_Step6_Implementation.md
+  status: done
+  provisional: false
+  task_summary: 'Work Log: Recon Pipeline Step 6 完全実装'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0207
+  task_id: SGK-2026-0207
+  doc_type: work_log
+  title: 'Work Log: MasterConductor 統合とセッション永続化'
+  primary_doc: docs/shigoku/worklogs/2026-01-14_MasterConductor_Session_Persistence.md
+  status: done
+  provisional: false
+  task_summary: 'Work Log: MasterConductor 統合とセッション永続化'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0208
+  task_id: SGK-2026-0208
+  doc_type: work_log
+  title: 'Work Log: URL タグ付けパイプライン E2E テスト'
+  primary_doc: docs/shigoku/worklogs/2026-01-19_URL_Tagging_Pipeline_E2E.md
+  status: done
+  provisional: false
+  task_summary: 'Work Log: URL タグ付けパイプライン E2E テスト'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0209
+  task_id: SGK-2026-0209
+  doc_type: work_log
+  title: 2026-01-21 作業ログ
+  primary_doc: docs/shigoku/worklogs/2026-01-21_Swarm_LLM_Specialists.md
+  status: done
+  provisional: false
+  task_summary: 2026-01-21 作業ログ
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0210
+  task_id: SGK-2026-0210
+  doc_type: work_log
+  title: 2026-01-22 作業ログ
+  primary_doc: docs/shigoku/worklogs/2026-01-22_Context_Aware_MC_with_Neo4j.md
+  status: done
+  provisional: false
+  task_summary: 2026-01-22 作業ログ
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0211
+  task_id: SGK-2026-0211
+  doc_type: work_log
+  title: Codex 引き継ぎ書 (Ver.1) - 2026-05-11
+  primary_doc: docs/shigoku/worklogs/2026-05-11_log_codex_handover_v1.md
+  status: done
+  provisional: false
+  task_summary: Codex 引き継ぎ書 (Ver.1) - 2026-05-11
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0212
+  task_id: SGK-2026-0212
+  doc_type: work_log
+  title: '2026-05-11 作業ログ: SCN07-12 Discord Notification Ver.1'
+  primary_doc: docs/shigoku/worklogs/2026-05-11_log_scn07-12_discord_notification_v1.md
+  status: done
+  provisional: false
+  task_summary: '2026-05-11 作業ログ: SCN07-12 Discord Notification Ver.1'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0213
+  task_id: SGK-2026-0213
+  doc_type: work_log
+  title: '2026-05-12 Codex Handover v2 (SCN01-07: 品質優先 + 速度/コスト最適化)'
+  primary_doc: docs/shigoku/worklogs/2026-05-12_log_codex_handover_v2.md
+  status: done
+  provisional: false
+  task_summary: '2026-05-12 Codex Handover v2 (SCN01-07: 品質優先 + 速度/コスト最適化)'
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0214
+  task_id: SGK-2026-0214
+  doc_type: work_log
+  title: 2026-05-14 Codex Chat Work Summary
+  primary_doc: docs/shigoku/worklogs/2026-05-14_log_codex_chat_summary.md
+  status: done
+  provisional: false
+  task_summary: 2026-05-14 Codex Chat Work Summary
+  parent_task_id: SGK-2026-0058
+  related_docs:
+  - docs/shigoku/plans/2026-05-14_ssti_implementation_plan.md
+  - docs/shigoku/reports/REPORT_OUTPUTS.md
+- provisional_id: DOC-0215
+  task_id: SGK-2026-0215
+  doc_type: plan
+  title: Remaining Bugs Plan (Legacy Root)
+  primary_doc: docs/shigoku/plans/remaining_bugs_plan.md
+  status: done
+  provisional: false
+  task_summary: Remaining Bugs Plan (Legacy Root)
+  parent_task_id: null
+  related_docs:
+  - docs/shigoku/specs/2026-05-22_should_observe_observation_policy_spec.md
+  - docs/shigoku/reports/2026-05-22_sgk-2026-0232_remaining-bugs-plan_closure_work_report.md
+  - docs/shigoku/worklogs/2026-05-22_sgk-2026-0233_remaining-bugs-plan_closure_worklog.md
+- provisional_id: DOC-0216
+  task_id: SGK-2026-0216
+  doc_type: plan
+  title: File Upload Implementation Plan (Legacy Root)
+  primary_doc: docs/shigoku/plans/file_upload_implementation_plan_legacy.md
+  status: backlog
+  provisional: false
+  task_summary: File Upload Implementation Plan (Legacy Root)
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0217
+  task_id: SGK-2026-0217
+  doc_type: work_log
+  title: Caido Log Integration Task Checklist (Legacy Root)
+  primary_doc: docs/shigoku/worklogs/caido_log_integration_task_checklist.md
+  status: done
+  provisional: false
+  task_summary: Caido Log Integration Task Checklist (Legacy Root)
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0219
+  task_id: SGK-2026-0219
+  doc_type: plan
+  title: Non-SCN Vulnerability Discovery Evaluation Plan (Juice Shop/DVWA/CRAPI)
+  primary_doc: docs/shigoku/plans/2026-05-19_non-scn-vulnerability-discovery-evaluation-plan-juice-shop-dvwa-crapi_plan.md
+  status: done
+  provisional: false
+  task_summary: Non-SCN Vulnerability Discovery Evaluation Plan (Juice Shop/DVWA/CRAPI)
+  parent_task_id: null
+  related_docs:
+  - docs/shigoku/roadmaps/IMPLEMENTATION_ROADMAP.md
+- provisional_id: DOC-0220
+  task_id: SGK-2026-0220
+  doc_type: plan
+  title: 'B-2: SSRF 単体 Tester 実実装'
+  primary_doc: docs/shigoku/plans/2026-05-19_b-2-ssrf-tester_plan.md
+  status: done
+  provisional: false
+  task_summary: 'B-2: SSRF 単体 Tester 実実装'
+  parent_task_id: null
+  related_docs:
+  - docs/shigoku/plans/2026-05-15_a2_b2_implementation_plan.md
+  - docs/shigoku/specs/standards/vulnerability_feature_implementation_spec.md
+- provisional_id: DOC-0221
+  task_id: SGK-2026-0221
+  doc_type: plan
+  title: 'Mock除去優先: OptimizedRecipeRunner と Discovery GraphQL 本実装接続'
+  primary_doc: docs/shigoku/plans/2026-05-19_mock-optimizedreciperunner-discovery-graphql_plan.md
+  status: done
+  provisional: false
+  task_summary: 'Mock除去優先: OptimizedRecipeRunner と Discovery GraphQL 本実装接続'
+  parent_task_id: SGK-2026-0065
+  related_docs:
+  - docs/shigoku/specs/bug_bounty_enhancements.md
+  - docs/shigoku/roadmaps/bug_bounty_enhancements_2026.md
+  - docs/shigoku/specs/2026-02-11_PHASE2_MANAGER_ARCH.md
+  - docs/shigoku/subtasks/2026-05-20_sgk-2026-0221-s01_groupa_execution-path_subtask_plan.md
+  - docs/shigoku/subtasks/2026-05-20_sgk-2026-0221-s02_groupb_discovery-graphql_subtask_plan.md
+  - docs/shigoku/subtasks/2026-05-20_sgk-2026-0221-s03_groupc_regression-observability_subtask_plan.md
+  - docs/shigoku/subtasks/2026-05-31_sgk-2026-0221-graphql-slo_subtask_plan.md
+- provisional_id: DOC-0222
+  task_id: SGK-2026-0221-S01
+  doc_type: subtask_plan
+  title: 'GroupA: 実行経路のモック除去（OptimizedRecipeRunner / run_recipe）'
+  primary_doc: docs/shigoku/subtasks/2026-05-20_sgk-2026-0221-s01_groupa_execution-path_subtask_plan.md
+  status: done
+  provisional: false
+  task_summary: 'GroupA: 実行経路のモック除去（OptimizedRecipeRunner / run_recipe）'
+  parent_task_id: SGK-2026-0221
+  related_docs:
+  - docs/shigoku/plans/2026-05-19_mock-optimizedreciperunner-discovery-graphql_plan.md
+  - docs/shigoku/specs/bug_bounty_enhancements.md
+  - docs/shigoku/specs/2026-02-11_PHASE2_MANAGER_ARCH.md
+  - docs/shigoku/reports/2026-05-21_sgk-2026-0221-s01_groupa_work_report.md
+- provisional_id: DOC-0223
+  task_id: SGK-2026-0221-S02
+  doc_type: subtask_plan
+  title: 'GroupB: Discovery GraphQL 本実装接続（graphql.py / manager.py）'
+  primary_doc: docs/shigoku/subtasks/2026-05-20_sgk-2026-0221-s02_groupb_discovery-graphql_subtask_plan.md
+  status: done
+  provisional: false
+  task_summary: 'GroupB: Discovery GraphQL 本実装接続（graphql.py / manager.py）'
+  parent_task_id: SGK-2026-0221
+  related_docs:
+  - docs/shigoku/plans/2026-05-19_mock-optimizedreciperunner-discovery-graphql_plan.md
+  - docs/shigoku/specs/bug_bounty_enhancements.md
+  - docs/shigoku/specs/2026-02-11_PHASE2_MANAGER_ARCH.md
+  - docs/shigoku/reports/2026-05-21_sgk-2026-0221-s02_groupb_work_report.md
+  - docs/shigoku/worklogs/2026-05-21_log_sgk-2026-0221-s02_groupb.md
+- provisional_id: DOC-0224
+  task_id: SGK-2026-0221-S03
+  doc_type: subtask_plan
+  title: 'GroupC: 回帰防止テストと可観測性・ドキュメント整備'
+  primary_doc: docs/shigoku/subtasks/2026-05-20_sgk-2026-0221-s03_groupc_regression-observability_subtask_plan.md
+  status: done
+  provisional: false
+  task_summary: 'GroupC: 回帰防止テストと可観測性・ドキュメント整備'
+  parent_task_id: SGK-2026-0221
+  related_docs:
+  - docs/shigoku/plans/2026-05-19_mock-optimizedreciperunner-discovery-graphql_plan.md
+  - docs/shigoku/specs/bug_bounty_enhancements.md
+  - docs/shigoku/reports/2026-05-21_sgk-2026-0221-s03_phase3_work_report.md
+  - docs/shigoku/worklogs/2026-05-21_log_sgk-2026-0221-s03_phase3.md
+- provisional_id: DOC-0225
+  task_id: SGK-2026-0222
+  doc_type: plan
+  title: 'SHIGOKU全体: 分散ランタイム制御共通基盤化（QPS/隔離/回復）'
+  primary_doc: docs/shigoku/plans/2026-05-21_sgk-2026-0222_distributed-runtime-control_plan.md
+  status: done
+  provisional: false
+  task_summary: 'SHIGOKU全体: 分散ランタイム制御共通基盤化（QPS/隔離/回復）'
+  parent_task_id: null
+  related_docs:
+  - docs/shigoku/subtasks/2026-05-20_sgk-2026-0221-s02_groupb_discovery-graphql_subtask_plan.md
+  - docs/shigoku/specs/2026-02-11_PHASE2_MANAGER_ARCH.md
+  - docs/shigoku/specs/bug_bounty_enhancements.md
+- provisional_id: DOC-0226
+  task_id: SGK-2026-0223
+  doc_type: plan
+  title: GraphQL Runtime 長時間回帰テスト計画（連続実行/状態リーク/劣化監視）
+  primary_doc: docs/shigoku/plans/2026-05-21_sgk-2026-0223_graphql-longrun-regression-test_plan.md
+  status: done
+  provisional: false
+  task_summary: GraphQL Runtime 長時間回帰テスト計画（連続実行/状態リーク/劣化監視）
+  parent_task_id: SGK-2026-0221
+  related_docs:
+  - docs/shigoku/subtasks/2026-05-20_sgk-2026-0221-s02_groupb_discovery-graphql_subtask_plan.md
+  - docs/shigoku/plans/2026-05-21_sgk-2026-0222_distributed-runtime-control_plan.md
+  - docs/shigoku/reports/2026-05-26_sgk-2026-0223_graphql-longrun-regression-test_work_report.md
+  - docs/shigoku/worklogs/2026-05-26_sgk-2026-0223_graphql-longrun-regression-test_work_log.md
+- provisional_id: DOC-0227
+  task_id: SGK-2026-0224
+  doc_type: plan
+  title: 'Operational Hardening Backlog: Alert/Contract/Auth/Learning/Tenant Isolation'
+  primary_doc: docs/shigoku/plans/2026-05-21_sgk-2026-0224_operational-hardening-backlog_plan.md
+  status: done
+  provisional: false
+  task_summary: 'Operational Hardening Backlog: Alert/Contract/Auth/Learning/Tenant
+    Isolation'
+  parent_task_id: SGK-2026-0221
+  related_docs:
+  - docs/shigoku/subtasks/2026-05-20_sgk-2026-0221-s02_groupb_discovery-graphql_subtask_plan.md
+  - docs/shigoku/plans/2026-05-21_sgk-2026-0222_distributed-runtime-control_plan.md
+  - docs/shigoku/plans/2026-05-21_sgk-2026-0223_graphql-longrun-regression-test_plan.md
+  - docs/shigoku/reports/2026-05-22_sgk-2026-0224_operational-hardening-backlog_work_report.md
+  - docs/shigoku/worklogs/2026-05-22_sgk-2026-0224_operational-hardening-backlog_worklog.md
+- provisional_id: DOC-0228
+  task_id: SGK-2026-0225
+  doc_type: spec
+  title: 'Specification: _should_observe Observation Policy'
+  primary_doc: docs/shigoku/specs/2026-05-22_should_observe_observation_policy_spec.md
+  status: active
+  provisional: false
+  task_summary: 'Specification: _should_observe Observation Policy'
+  parent_task_id: SGK-2026-0215
+  related_docs:
+  - docs/shigoku/plans/remaining_bugs_plan.md
+- provisional_id: DOC-0234
+  task_id: SGK-2026-0231
+  doc_type: plan
+  title: 'Juice Shop Phase D: 継続的改善計画'
+  primary_doc: docs/shigoku/plans/2026-05-22_juice-shop-phase-d-continuous-improvement_plan.md
+  status: done
+  provisional: false
+  task_summary: SmartHunter特化チューニング、追加カテゴリ対応
+  parent_task_id: null
+  related_docs:
+  - docs/shigoku/subtasks/2026-05-22_sgk-2026-0231-s01_external-tool-organization_subtask_plan.md
+- provisional_id: DOC-0235
+  task_id: SGK-2026-0231-S01
+  doc_type: subtask_plan
+  title: 外部ツール配置整理
+  primary_doc: docs/shigoku/subtasks/2026-05-22_sgk-2026-0231-s01_external-tool-organization_subtask_plan.md
+  status: done
+  provisional: false
+  task_summary: 外部ツール配置の整理とDalFox統合準備
+  parent_task_id: SGK-2026-0231
+  related_docs:
+  - docs/shigoku/plans/2026-05-22_juice-shop-phase-d-continuous-improvement_plan.md
+- provisional_id: DOC-0236
+  task_id: SGK-2026-0232
+  doc_type: work_report
+  title: SGK-2026-0215 クローズ作業報告
+  primary_doc: docs/shigoku/reports/2026-05-22_sgk-2026-0232_remaining-bugs-plan_closure_work_report.md
+  status: done
+  provisional: false
+  task_summary: Remaining Bugs Plan の実装/計画同期と未実装項目整理の完了報告
+  parent_task_id: SGK-2026-0215
+  related_docs:
+  - docs/shigoku/plans/remaining_bugs_plan.md
+  - docs/shigoku/specs/2026-05-22_should_observe_observation_policy_spec.md
+- provisional_id: DOC-0237
+  task_id: SGK-2026-0233
+  doc_type: work_log
+  title: 'Worklog: Remaining Bugs Plan Closure'
+  primary_doc: docs/shigoku/worklogs/2026-05-22_sgk-2026-0233_remaining-bugs-plan_closure_worklog.md
+  status: done
+  provisional: false
+  task_summary: Remaining Bugs Plan クローズ作業ログ
+  parent_task_id: SGK-2026-0215
+  related_docs:
+  - docs/shigoku/plans/remaining_bugs_plan.md
+  - docs/shigoku/reports/2026-05-22_sgk-2026-0232_remaining-bugs-plan_closure_work_report.md
+- provisional_id: DOC-0238
+  task_id: SGK-2026-0238
+  doc_type: plan
+  title: 外部ツール重複実装分析と統合計画
+  primary_doc: docs/shigoku/plans/external_tool_duplication_analysis.md
+  status: done
+  provisional: false
+  task_summary: 外部ツールの重複実装分析と統合優先順位の整理
+  parent_task_id: SGK-2026-0231
+  related_docs:
+  - docs/shigoku/plans/external_tool_migration_plan.md
+- provisional_id: DOC-0239
+  task_id: SGK-2026-0239
+  doc_type: plan
+  title: 'Phase E: 外部ツール統合移行計画'
+  primary_doc: docs/shigoku/plans/external_tool_migration_plan.md
+  status: done
+  provisional: false
+  task_summary: 外部ツール統合の段階移行計画
+  parent_task_id: SGK-2026-0231
+  related_docs:
+  - docs/shigoku/plans/external_tool_duplication_analysis.md
+  - docs/shigoku/reports/2026-05-25_sgk-2026-0239_external-tool-final-migration_work_report.md
+  - docs/shigoku/worklogs/2026-05-25_sgk-2026-0239_external-tool-final-migration_work_log.md
+  - docs/shigoku/reports/2026-05-26_sgk-2026-0239_async-gau-and-arjun-metrics_work_report.md
+  - docs/shigoku/worklogs/2026-05-26_sgk-2026-0239_async-gau-and-arjun-metrics_work_log.md
+- provisional_id: DOC-0240
+  task_id: SGK-2026-0231-S02
+  doc_type: subtask_plan
+  title: 'Phase E-2: 外部ツールAI統合とAdapter拡張'
+  primary_doc: docs/shigoku/subtasks/2026-05-23_sgk-2026-0231-s02_ai-integration-and-adapter-expansion.md
+  status: done
+  provisional: false
+  task_summary: AIToolBridge統合検証、残Adapter実装、後方互換性整備、運用監視構築
+  parent_task_id: SGK-2026-0231
+  related_docs:
+  - docs/shigoku/plans/phase_e2_next_action_plan.md
+  - docs/shigoku/reports/phase_e2_cto_review.md
+  - docs/shigoku/worklogs/sgk-2026-0231-s02_work_log.md
+- provisional_id: DOC-0241
+  task_id: SGK-2026-0240
+  doc_type: plan
+  title: SSRF P0 判定品質強化（ベースライン差分・信頼度重み付け・最終到達判定・FP抑制検証）
+  primary_doc: docs/shigoku/plans/2026-05-23_ssrf-p0-fp_plan.md
+  status: done
+  provisional: false
+  task_summary: SSRF P0 判定品質強化（ベースライン差分・信頼度重み付け・最終到達判定・FP抑制検証）
+  parent_task_id: SGK-2026-0220
+  related_docs:
+  - docs/shigoku/plans/2026-05-19_b-2-ssrf-tester_plan.md
+  - docs/shigoku/reports/2026-05-23_sgk-2026-0240_ssrf-quality-gate_work_report.md
+  - docs/shigoku/worklogs/2026-05-23_sgk-2026-0240_ssrf-quality-gate_work_log.md
+- provisional_id: DOC-0242
+  task_id: SGK-2026-0241
+  doc_type: plan
+  title: ToolRegistry統合と技術的負債解消 (Phase E-3)
+  primary_doc: docs/shigoku/plans/2026-05-23_toolregistry-phase-e-3_plan.md
+  status: done
+  provisional: false
+  task_summary: ToolRegistry統合と技術的負債解消 (Phase E-3)
+  parent_task_id: null
+  related_docs:
+  - docs/shigoku/reports/sgk-2026-0241_work_report.md
+  - docs/shigoku/worklogs/sgk-2026-0241_work_log.md
+- provisional_id: DOC-0243
+  task_id: SGK-2026-0242
+  doc_type: plan
+  title: Phase D Bug Bounty Improvement Implementation
+  primary_doc: docs/shigoku/plans/2026-05-24_phase-d-bug-bounty-improvement-implementation_plan.md
+  status: done
+  provisional: false
+  task_summary: Phase D Bug Bounty Improvement Implementation
+  parent_task_id: SGK-2026-0231
+  related_docs:
+  - docs/shigoku/plans/2026-05-22_juice-shop-phase-d-continuous-improvement_plan.md
+  - docs/shigoku/reports/2026-05-27_sgk-2026-0247_phase-d-plan-template-closure_work_report.md
+  - docs/shigoku/worklogs/2026-05-27_sgk-2026-0248_phase-d-plan-template-closure_work_log.md
+- provisional_id: DOC-0244
+  task_id: SGK-2026-0243
+  doc_type: plan
+  title: Phase D Bug Bounty Improvement Implementation
+  primary_doc: docs/shigoku/plans/2026-05-24_phase-d-bug-bounty-improvement-implementation_plan_v2.md
+  status: done
+  provisional: false
+  task_summary: Phase D Bug Bounty Improvement Implementation
+  parent_task_id: SGK-2026-0231
+  related_docs:
+  - docs/shigoku/plans/2026-05-22_juice-shop-phase-d-continuous-improvement_plan.md
+  - docs/shigoku/reports/2026-05-27_sgk-2026-0247_phase-d-plan-template-closure_work_report.md
+  - docs/shigoku/worklogs/2026-05-27_sgk-2026-0248_phase-d-plan-template-closure_work_log.md
+- provisional_id: DOC-0245
+  task_id: SGK-2026-0244
+  doc_type: plan
+  title: 'XSS Hunter強化計画: DalFox統合と検出精度向上'
+  primary_doc: docs/shigoku/plans/2026-05-24_xss-hunter-enhancement_plan.md
+  status: done
+  provisional: false
+  task_summary: XSS HunterのDalFox統合、DOM/Stored/Reflected XSS検出強化、Browser Pool実装
+  parent_task_id: SGK-2026-0231
+  related_docs:
+  - docs/shigoku/plans/2026-05-22_juice-shop-phase-d-continuous-improvement_plan.md
+  - docs/shigoku/subtasks/2026-05-22_sgk-2026-0231-s01_external-tool-organization_subtask_plan.md
+  - docs/shigoku/specs/xss_specialist.md
+  - docs/shigoku/specs/xss_workflow_improvement.md
+- provisional_id: DOC-0246
+  task_id: SGK-2026-0245
+  doc_type: plan
+  title: Arjun/GAU 運用KPI・ガバナンス充足化実装計画
+  primary_doc: docs/shigoku/plans/2026-05-26_arjun-gau-kpi_plan.md
+  status: done
+  provisional: false
+  task_summary: Arjun/GAU 運用KPI・ガバナンス充足化実装計画
+  parent_task_id: SGK-2026-0239
+  related_docs:
+  - docs/shigoku/plans/external_tool_migration_plan.md
+  - docs/shigoku/manuals/2026-05-26_arjun-gau-threshold-recalibration_runbook.md
+  - docs/shigoku/manuals/2026-05-26_arjun-gau-failure-drill_runbook.md
+  - docs/shigoku/worklogs/2026-05-26_sgk-2026-0245_kpi-threshold-and-drill-kickoff_work_log.md
+  - docs/shigoku/reports/2026-05-26_sgk-2026-0245_kpi-threshold-and-drill-kickoff_work_report.md
+- provisional_id: DOC-0247
+  task_id: SGK-2026-0245
+  doc_type: work_report
+  title: SGK-2026-0245 作業完了報告（区切り）
+  primary_doc: docs/shigoku/reports/2026-05-26_sgk-2026-0245_kpi-threshold-and-drill-kickoff_work_report.md
+  status: done
+  provisional: false
+  task_summary: Arjun/GAU KPIしきい値運用と障害ドリル証跡の区切り完了報告
+  parent_task_id: SGK-2026-0239
+  related_docs:
+  - docs/shigoku/plans/2026-05-26_arjun-gau-kpi_plan.md
+  - docs/shigoku/manuals/2026-05-26_arjun-gau-threshold-recalibration_runbook.md
+  - docs/shigoku/manuals/2026-05-26_arjun-gau-failure-drill_runbook.md
+  - docs/shigoku/worklogs/2026-05-26_sgk-2026-0245_kpi-threshold-and-drill-kickoff_work_log.md
+- provisional_id: DOC-0248
+  task_id: SGK-2026-0246
+  doc_type: work_log
+  title: 'SGK-2026-0246 作業ログ（不要タスク整理: task_217_missing_file）'
+  primary_doc: docs/shigoku/worklogs/2026-05-26_sgk-2026-0246_registry-cleanup_task217_work_log.md
+  status: done
+  provisional: false
+  task_summary: 台帳不整合 task_217_missing_file の原因特定と不要タスク参照の除去
+  parent_task_id: SGK-2026-0222
+  related_docs:
+  - docs/shigoku/plans/2026-05-21_sgk-2026-0222_distributed-runtime-control_plan.md
+  - docs/shigoku/registry/task_registry.yaml
+  - docs/shigoku/registry/task_ledger.md
+  - docs/shigoku/registry/task_ledger.csv
+- provisional_id: DOC-0249
+  task_id: SGK-2026-0222
+  doc_type: work_log
+  title: SGK-2026-0222 作業ログ（Runtime Control Backend 実装）
+  primary_doc: docs/shigoku/worklogs/2026-05-26_sgk-2026-0222_runtime-control-backend-implementation_work_log.md
+  status: done
+  provisional: false
+  task_summary: RuntimeControlBackend抽象化とDiscovery GraphQLへの段階導入
+  parent_task_id: null
+  related_docs:
+  - docs/shigoku/plans/2026-05-21_sgk-2026-0222_distributed-runtime-control_plan.md
+  - src/core/agents/swarm/runtime_control_backend.py
+  - src/core/agents/swarm/discovery/graphql.py
+  - tests/core/agents/swarm/test_discovery_graphql_contract.py
+- provisional_id: DOC-0250
+  task_id: SGK-2026-0222
+  doc_type: manual
+  title: Runtime Control fail_open 運用ガード Runbook
+  primary_doc: docs/shigoku/manuals/2026-05-26_runtime-control-fail-open-guard_runbook.md
+  status: active
+  provisional: false
+  task_summary: fail_open 例外運用の承認者・条件・有効時間を固定化
+  parent_task_id: null
+  related_docs:
+  - docs/shigoku/plans/2026-05-21_sgk-2026-0222_distributed-runtime-control_plan.md
+  - src/core/agents/swarm/discovery/graphql.py
+  - src/core/agents/swarm/runtime_control_backend.py
+- provisional_id: DOC-0251
+  task_id: SGK-2026-0247
+  doc_type: work_report
+  title: SGK-2026-0247 作業報告（Phase D 子Plan整理）
+  primary_doc: docs/shigoku/reports/2026-05-27_sgk-2026-0247_phase-d-plan-template-closure_work_report.md
+  status: done
+  provisional: false
+  task_summary: 0242/0243の重複・空テンプレ状態を記録し、台帳クローズ判断の証跡を残す
+  parent_task_id: SGK-2026-0243
+  related_docs:
+  - docs/shigoku/plans/2026-05-24_phase-d-bug-bounty-improvement-implementation_plan.md
+  - docs/shigoku/plans/2026-05-24_phase-d-bug-bounty-improvement-implementation_plan_v2.md
+  - docs/shigoku/worklogs/2026-05-27_sgk-2026-0248_phase-d-plan-template-closure_work_log.md
+- provisional_id: DOC-0252
+  task_id: SGK-2026-0248
+  doc_type: work_log
+  title: SGK-2026-0248 作業ログ（Phase D 子Plan整理）
+  primary_doc: docs/shigoku/worklogs/2026-05-27_sgk-2026-0248_phase-d-plan-template-closure_work_log.md
+  status: done
+  provisional: false
+  task_summary: 0242/0243の差分確認とstatus更新、追跡用証跡の追加ログ
+  parent_task_id: SGK-2026-0243
+  related_docs:
+  - docs/shigoku/plans/2026-05-24_phase-d-bug-bounty-improvement-implementation_plan.md
+  - docs/shigoku/plans/2026-05-24_phase-d-bug-bounty-improvement-implementation_plan_v2.md
+  - docs/shigoku/reports/2026-05-27_sgk-2026-0247_phase-d-plan-template-closure_work_report.md
+- provisional_id: DOC-0253
+  task_id: SGK-2026-0222
+  doc_type: work_report
+  title: SGK-2026-0222 作業報告（Distributed Runtime Control）
+  primary_doc: docs/shigoku/reports/2026-05-27_sgk-2026-0222_distributed-runtime-control_work_report.md
+  status: done
+  provisional: false
+  task_summary: 分散runtime control基盤・release governance・承認正本照合実装の完了報告
+  parent_task_id: null
+  related_docs:
+  - docs/shigoku/plans/2026-05-21_sgk-2026-0222_distributed-runtime-control_plan.md
+  - docs/shigoku/worklogs/2026-05-26_sgk-2026-0222_runtime-control-backend-implementation_work_log.md
+  - docs/shigoku/manuals/2026-05-26_runtime-control-fail-open-guard_runbook.md
+- provisional_id: DOC-0254
+  task_id: SGK-2026-0244-S01
+  doc_type: subtask_plan
+  title: XSS Hunter未実装項目の完了計画（Stored XSS本実装・BrowserPool統合）
+  primary_doc: docs/shigoku/subtasks/2026-05-27_sgk-2026-0244-s01_xss-hunter-remaining-implementation_subtask_plan.md
+  status: active
+  provisional: false
+  task_summary: SGK-2026-0244 の未実装項目（Stored XSS保存フェーズ、SmartXSSHunterのBrowserPool統合）を完了する子計画
+  parent_task_id: SGK-2026-0244
+  related_docs:
+  - docs/shigoku/plans/2026-05-24_xss-hunter-enhancement_plan.md
+  - src/core/detection/xss_detector.py
+  - src/core/agents/swarm/injection/smart_xss.py
+  - src/core/detection/browser_pool.py
+  - src/core/detection/xss_pipeline.py
+- provisional_id: DOC-0255
+  task_id: SGK-2026-0244
+  doc_type: work_report
+  title: SGK-2026-0244 X2/X3/X4 対応状況報告
+  primary_doc: docs/shigoku/reports/2026-05-29_sgk-2026-0244_x2-x4-status_work_report.md
+  status: done
+  provisional: false
+  task_summary: X2/X3/X4 の実装済み項目を再評価し、計画書ステータス更新と未完了項目を明確化した状況報告
+  parent_task_id: SGK-2026-0244
+  related_docs:
+  - docs/shigoku/plans/2026-05-24_xss-hunter-enhancement_plan.md
+  - docs/shigoku/subtasks/2026-05-27_sgk-2026-0244-s01_xss-hunter-remaining-implementation_subtask_plan.md
+  - src/core/agents/swarm/injection/stored_xss_detector.py
+  - src/core/detection/browser_pool.py
+  - src/core/detection/xss_pipeline.py
+  - src/core/payloads/xss_waf_evasion.py
+- provisional_id: DOC-0256
+  task_id: SGK-2026-0219
+  doc_type: work_report
+  title: SGK-2026-0219 非SCN評価 Step1-7 作業報告
+  primary_doc: docs/shigoku/reports/2026-05-31_sgk-2026-0219_non-scn-eval_work_report.md
+  status: done
+  provisional: false
+  task_summary: Non-SCN評価 Step1-7 実施結果と再判定（Conditional継続）
+  parent_task_id: null
+  related_docs:
+  - docs/shigoku/plans/2026-05-19_non-scn-vulnerability-discovery-evaluation-plan-juice-shop-dvwa-crapi_plan.md
+  - docs/shigoku/specs/2026-05-31_sgk-2026-0219_non-scn-evaluation-spec.md
+  - docs/shigoku/worklogs/sgk-2026-0219_baseline_manifest_20260531_0121.md
+  - docs/shigoku/worklogs/2026-05-31_sgk-2026-0219_non-scn-eval_work_log.md
+- provisional_id: DOC-0257
+  task_id: SGK-2026-0219
+  doc_type: work_log
+  title: SGK-2026-0219 非SCN評価 Step1-7 作業ログ
+  primary_doc: docs/shigoku/worklogs/2026-05-31_sgk-2026-0219_non-scn-eval_work_log.md
+  status: done
+  provisional: false
+  task_summary: Non-SCN評価 Step1-7 実行ログ（baseline固定・再現性・再判定）
+  parent_task_id: null
+  related_docs:
+  - docs/shigoku/plans/2026-05-19_non-scn-vulnerability-discovery-evaluation-plan-juice-shop-dvwa-crapi_plan.md
+  - docs/shigoku/specs/2026-05-31_sgk-2026-0219_non-scn-evaluation-spec.md
+  - docs/shigoku/worklogs/sgk-2026-0219_baseline_manifest_20260531_0121.md
+  - docs/shigoku/reports/2026-05-31_sgk-2026-0219_non-scn-eval_work_report.md
+- provisional_id: DOC-0258
+  task_id: SGK-2026-0249
+  doc_type: subtask_plan
+  title: SGK-2026-0219 継続監視（Non-SCN評価の経過観察）
+  primary_doc: docs/shigoku/subtasks/2026-05-31_sgk-2026-0219-non-scn_subtask_plan.md
+  status: active
+  provisional: false
+  task_summary: SGK-2026-0219 継続監視（Non-SCN評価の経過観察）
+  parent_task_id: SGK-2026-0219
+  related_docs:
+  - docs/shigoku/plans/2026-05-19_non-scn-vulnerability-discovery-evaluation-plan-juice-shop-dvwa-crapi_plan.md
+  - docs/shigoku/reports/2026-05-31_sgk-2026-0219_non-scn-eval_work_report.md
+- provisional_id: DOC-0259
+  task_id: SGK-2026-0250
+  doc_type: subtask_plan
+  title: SGK-2026-0221 継続監視（GraphQL運用SLO/観測）
+  primary_doc: docs/shigoku/subtasks/2026-05-31_sgk-2026-0221-graphql-slo_subtask_plan.md
+  status: active
+  provisional: false
+  task_summary: SGK-2026-0221 継続監視（GraphQL運用SLO/観測）
+  parent_task_id: SGK-2026-0221
+  related_docs:
+  - docs/shigoku/plans/2026-05-19_mock-optimizedreciperunner-discovery-graphql_plan.md
+  - docs/shigoku/reports/2026-05-21_sgk-2026-0221-s03_phase3_work_report.md
+  - docs/shigoku/reports/2026-05-31_sgk-2026-0221_plan-closure_work_report.md
+- provisional_id: DOC-0260
+  task_id: SGK-2026-0221
+  doc_type: work_report
+  title: SGK-2026-0221 Plan Closure Work Report
+  primary_doc: docs/shigoku/reports/2026-05-31_sgk-2026-0221_plan-closure_work_report.md
+  status: done
+  provisional: false
+  task_summary: SGK-2026-0221 親計画クローズと継続監視分離の完了報告
+  parent_task_id: SGK-2026-0065
+  related_docs:
+  - docs/shigoku/plans/2026-05-19_mock-optimizedreciperunner-discovery-graphql_plan.md
+  - docs/shigoku/subtasks/2026-05-31_sgk-2026-0221-graphql-slo_subtask_plan.md
+  - docs/shigoku/worklogs/2026-05-31_sgk-2026-0221_plan-closure_work_log.md
+- provisional_id: DOC-0261
+  task_id: SGK-2026-0221
+  doc_type: work_log
+  title: SGK-2026-0221 Plan Closure Work Log
+  primary_doc: docs/shigoku/worklogs/2026-05-31_sgk-2026-0221_plan-closure_work_log.md
+  status: done
+  provisional: false
+  task_summary: SGK-2026-0221 親計画クローズ作業ログ
+  parent_task_id: SGK-2026-0065
+  related_docs:
+  - docs/shigoku/plans/2026-05-19_mock-optimizedreciperunner-discovery-graphql_plan.md
+  - docs/shigoku/reports/2026-05-31_sgk-2026-0221_plan-closure_work_report.md
+  - docs/shigoku/subtasks/2026-05-31_sgk-2026-0221-graphql-slo_subtask_plan.md
+- provisional_id: DOC-0262
+  task_id: SGK-2026-0251
+  doc_type: plan
+  title: 脆弱性チェーン高精度化実装計画
+  primary_doc: docs/shigoku/plans/2026-06-01_task_plan.md
+  status: active
+  provisional: false
+  task_summary: 脆弱性チェーン高精度化実装計画
+  parent_task_id: SGK-2026-0131
+  related_docs:
+  - docs/shigoku/specs/inter_agent_chaining.md
+  - docs/shigoku/specs/REQ_tier6_advanced_attacks.md
+- provisional_id: DOC-0263
+  task_id: SGK-2026-0251
+  doc_type: work_report
+  title: SGK-2026-0251 Phase1 完了報告
+  primary_doc: docs/shigoku/reports/2026-06-02_sgk-2026-0251_phase1-completion_work_report.md
+  status: done
+  provisional: false
+  task_summary: SGK-2026-0251 Phase1 の実装完了と残課題整理
+  parent_task_id: SGK-2026-0131
+  related_docs:
+  - docs/shigoku/plans/2026-06-01_task_plan.md
+  - docs/shigoku/worklogs/2026-06-02_sgk-2026-0251_phase1-completion_work_log.md
+- provisional_id: DOC-0264
+  task_id: SGK-2026-0251
+  doc_type: work_log
+  title: SGK-2026-0251 Phase1 完了作業ログ
+  primary_doc: docs/shigoku/worklogs/2026-06-02_sgk-2026-0251_phase1-completion_work_log.md
+  status: done
+  provisional: false
+  task_summary: SGK-2026-0251 Phase1 完了の計画書反映と台帳更新ログ
+  parent_task_id: SGK-2026-0131
+  related_docs:
+  - docs/shigoku/plans/2026-06-01_task_plan.md
+  - docs/shigoku/reports/2026-06-02_sgk-2026-0251_phase1-completion_work_report.md
+- provisional_id: DOC-0265
+  task_id: SGK-2026-0252
+  doc_type: subtask_plan
+  title: 脆弱性チェーン基盤分割と feasibility solver 実装
+  primary_doc: docs/shigoku/subtasks/2026-06-02_feasibility-solver_subtask_plan.md
+  status: done
+  provisional: false
+  task_summary: 脆弱性チェーン基盤分割と feasibility solver 実装
+  parent_task_id: SGK-2026-0251
+  related_docs:
+  - docs/shigoku/plans/2026-06-01_task_plan.md
+  - docs/shigoku/reports/2026-06-02_sgk-2026-0252_feasibility-solver_work_report.md
+  - docs/shigoku/worklogs/2026-06-02_sgk-2026-0252_feasibility-solver_work_log.md
+- provisional_id: DOC-0266
+  task_id: SGK-2026-0253
+  doc_type: subtask_plan
+  title: 脆弱性チェーンルール拡張と program overrides 整備
+  primary_doc: docs/shigoku/subtasks/2026-06-02_program-overrides_subtask_plan.md
+  status: done
+  provisional: false
+  task_summary: 脆弱性チェーンルール拡張と program overrides 整備
+  parent_task_id: SGK-2026-0251
+  related_docs:
+  - docs/shigoku/plans/2026-06-01_task_plan.md
+  - docs/shigoku/reports/2026-06-03_sgk-2026-0253_program-overrides_work_report.md
+  - docs/shigoku/worklogs/2026-06-03_sgk-2026-0253_program-overrides_work_log.md
+- provisional_id: DOC-0269
+  task_id: SGK-2026-0253
+  doc_type: work_report
+  title: SGK-2026-0253 program overrides 実装完了報告
+  primary_doc: docs/shigoku/reports/2026-06-03_sgk-2026-0253_program-overrides_work_report.md
+  status: done
+  provisional: false
+  task_summary: precedence matrix、audit 観測項目、統合一致結果、切り戻し条件の完了報告
+  parent_task_id: SGK-2026-0251
+  related_docs:
+  - docs/shigoku/subtasks/2026-06-02_program-overrides_subtask_plan.md
+  - docs/shigoku/plans/2026-06-01_task_plan.md
+  - docs/shigoku/worklogs/2026-06-03_sgk-2026-0253_program-overrides_work_log.md
+- provisional_id: DOC-0270
+  task_id: SGK-2026-0253
+  doc_type: work_log
+  title: SGK-2026-0253 program overrides 実装作業ログ
+  primary_doc: docs/shigoku/worklogs/2026-06-03_sgk-2026-0253_program-overrides_work_log.md
+  status: done
+  provisional: false
+  task_summary: SGK-2026-0253 の報告反映と台帳更新ログ
+  parent_task_id: SGK-2026-0251
+  related_docs:
+  - docs/shigoku/subtasks/2026-06-02_program-overrides_subtask_plan.md
+  - docs/shigoku/reports/2026-06-03_sgk-2026-0253_program-overrides_work_report.md
+- provisional_id: DOC-0267
+  task_id: SGK-2026-0254
+  doc_type: subtask_plan
+  title: 脆弱性チェーン時間軸制約とセッション世代追跡
+  primary_doc: docs/shigoku/subtasks/2026-06-02_task_subtask_plan.md
+  status: done
+  provisional: false
+  task_summary: 脆弱性チェーン時間軸制約とセッション世代追跡
+  parent_task_id: SGK-2026-0251
+  related_docs:
+  - docs/shigoku/plans/2026-06-01_task_plan.md
+  - docs/shigoku/reports/2026-06-03_sgk-2026-0254_temporal-state_work_report.md
+  - docs/shigoku/worklogs/2026-06-03_sgk-2026-0254_temporal-state_work_log.md
+  - docs/shigoku/subtasks/2026-06-03_sgk-2026-0258-temporal-followup_subtask_plan.md
+- provisional_id: DOC-0268
+  task_id: SGK-2026-0255
+  doc_type: subtask_plan
+  title: 脆弱性チェーン degrade 設計と運用Runbook 整備
+  primary_doc: docs/shigoku/subtasks/2026-06-02_degrade-runbook_subtask_plan.md
+  status: done
+  provisional: false
+  task_summary: 脆弱性チェーン degrade 設計と運用Runbook 整備
+  parent_task_id: SGK-2026-0251
+  related_docs:
+  - docs/shigoku/plans/2026-06-01_task_plan.md
+  - docs/shigoku/manuals/2026-06-03_degrade-operations_runbook.md
+  - docs/shigoku/manuals/2026-06-03_degrade-drill-evidence_template.md
+  - docs/shigoku/reports/2026-06-03_sgk-2026-0255_degrade-runbook_work_report.md
+  - docs/shigoku/worklogs/2026-06-03_sgk-2026-0255_degrade-runbook_work_log.md
+- provisional_id: DOC-0271
+  task_id: SGK-2026-0256
+  doc_type: subtask_plan
+  title: SGK-2026-0256 継続監視（program overrides 運用観測）
+  primary_doc: docs/shigoku/subtasks/2026-06-03_sgk-2026-0253-program-overrides_subtask_plan.md
+  status: active
+  provisional: false
+  task_summary: SGK-2026-0256 継続監視（program overrides 運用観測）
+  parent_task_id: SGK-2026-0253
+  related_docs:
+  - docs/shigoku/subtasks/2026-06-02_program-overrides_subtask_plan.md
+  - docs/shigoku/reports/2026-06-03_sgk-2026-0253_program-overrides_work_report.md
+- provisional_id: DOC-0272
+  task_id: SGK-2026-0257
+  doc_type: subtask_plan
+  title: SGK-2026-0253 技術的負債追跡（sample rules / schema test）
+  primary_doc: docs/shigoku/subtasks/2026-06-03_sgk-2026-0253-sample-rules-schema-test_subtask_plan.md
+  status: active
+  provisional: false
+  task_summary: SGK-2026-0253 技術的負債追跡（sample rules / schema test）
+  parent_task_id: SGK-2026-0253
+  related_docs:
+  - docs/shigoku/subtasks/2026-06-02_program-overrides_subtask_plan.md
+  - docs/shigoku/reports/2026-06-03_sgk-2026-0253_program-overrides_work_report.md
+- provisional_id: DOC-0273
+  task_id: SGK-2026-0254
+  doc_type: work_report
+  title: SGK-2026-0254 temporal state 実装完了報告
+  primary_doc: docs/shigoku/reports/2026-06-03_sgk-2026-0254_temporal-state_work_report.md
+  status: done
+  provisional: false
+  task_summary: temporal constraint、audit/shadow 指標、representative 回帰確認の完了報告
+  parent_task_id: SGK-2026-0251
+  related_docs:
+  - docs/shigoku/subtasks/2026-06-02_task_subtask_plan.md
+  - docs/shigoku/plans/2026-06-01_task_plan.md
+  - docs/shigoku/subtasks/2026-06-03_sgk-2026-0258-temporal-followup_subtask_plan.md
+  - docs/shigoku/worklogs/2026-06-03_sgk-2026-0254_temporal-state_work_log.md
+- provisional_id: DOC-0274
+  task_id: SGK-2026-0254
+  doc_type: work_log
+  title: SGK-2026-0254 temporal state 実装作業ログ
+  primary_doc: docs/shigoku/worklogs/2026-06-03_sgk-2026-0254_temporal-state_work_log.md
+  status: done
+  provisional: false
+  task_summary: SGK-2026-0254 の報告反映と継続監視分離ログ
+  parent_task_id: SGK-2026-0251
+  related_docs:
+  - docs/shigoku/subtasks/2026-06-02_task_subtask_plan.md
+  - docs/shigoku/reports/2026-06-03_sgk-2026-0254_temporal-state_work_report.md
+- provisional_id: DOC-0275
+  task_id: SGK-2026-0258
+  doc_type: subtask_plan
+  title: SGK-2026-0258 継続監視（temporal metadata / benchmark / reason code 安定化）
+  primary_doc: docs/shigoku/subtasks/2026-06-03_sgk-2026-0258-temporal-followup_subtask_plan.md
+  status: active
+  provisional: false
+  task_summary: temporal metadata 欠損率、representative session 回帰、reason code 安定性の継続監視
+  parent_task_id: SGK-2026-0254
+  related_docs:
+  - docs/shigoku/subtasks/2026-06-02_task_subtask_plan.md
+  - docs/shigoku/reports/2026-06-03_sgk-2026-0254_temporal-state_work_report.md
+- provisional_id: DOC-0276
+  task_id: SGK-2026-0259
+  doc_type: subtask_plan
+  title: 'Recipe高度化: 単一セッション高額Auth/JWT/OAuth検出強化'
+  primary_doc: docs/shigoku/subtasks/2026-06-03_recipe-auth-jwt-oauth_subtask_plan.md
+  status: active
+  provisional: false
+  task_summary: 'Recipe高度化: 単一セッション高額Auth/JWT/OAuth検出強化'
+  parent_task_id: SGK-2026-0221
+  related_docs:
+  - docs/shigoku/plans/2026-05-19_mock-optimizedreciperunner-discovery-graphql_plan.md
+  - docs/shigoku/subtasks/2026-05-20_sgk-2026-0221-s01_groupa_execution-path_subtask_plan.md
+  - docs/shigoku/roadmaps/IMPLEMENTATION_ROADMAP.md
+  - docs/shigoku/roadmaps/future_functions1.md
+- provisional_id: DOC-0277
+  task_id: SGK-2026-0260
+  doc_type: subtask_plan
+  title: 'Recipe運用フロー改善: Recon起点の選抜・実行・Swarm連携'
+  primary_doc: docs/shigoku/subtasks/2026-06-03_recipe-recon-swarm_subtask_plan.md
+  status: active
+  provisional: false
+  task_summary: 'Recipe運用フロー改善: Recon起点の選抜・実行・Swarm連携'
+  parent_task_id: SGK-2026-0221
+  related_docs:
+  - docs/shigoku/subtasks/2026-06-03_recipe-auth-jwt-oauth_subtask_plan.md
+  - docs/shigoku/plans/2026-05-19_mock-optimizedreciperunner-discovery-graphql_plan.md
+  - docs/shigoku/subtasks/2026-05-20_sgk-2026-0221-s01_groupa_execution-path_subtask_plan.md
+  - docs/shigoku/roadmaps/IMPLEMENTATION_ROADMAP.md
+  - docs/shigoku/roadmaps/future_functions1.md
+- provisional_id: DOC-0278
+  task_id: SGK-2026-0261
+  doc_type: subtask_plan
+  title: 'Recon運用フロー改善: 攻撃面分類・Signal正規化・MC/Swarm受け渡し'
+  primary_doc: docs/shigoku/subtasks/2026-06-03_recon-signal-mc-swarm_subtask_plan.md
+  status: active
+  provisional: false
+  task_summary: 'Recon運用フロー改善: 攻撃面分類・Signal正規化・MC/Swarm受け渡し'
+  parent_task_id: SGK-2026-0221
+  related_docs:
+  - docs/shigoku/subtasks/2026-06-03_recipe-recon-swarm_subtask_plan.md
+  - docs/shigoku/subtasks/2026-06-03_recipe-auth-jwt-oauth_subtask_plan.md
+  - docs/shigoku/plans/2026-05-19_mock-optimizedreciperunner-discovery-graphql_plan.md
+  - docs/shigoku/subtasks/2026-05-20_sgk-2026-0221-s01_groupa_execution-path_subtask_plan.md
+  - docs/shigoku/specs/design/recon_scenario.md
+  - docs/shigoku/roadmaps/IMPLEMENTATION_ROADMAP.md
+  - docs/shigoku/roadmaps/future_functions1.md
+- provisional_id: DOC-0279
+  task_id: SGK-2026-0262
+  doc_type: subtask_plan
+  title: '継続学習運用改善: Obsidian/RAG・KG・Recipe連携の再設計'
+  primary_doc: docs/shigoku/subtasks/2026-06-03_obsidian-rag-kg-recipe_subtask_plan.md
+  status: active
+  provisional: false
+  task_summary: '継続学習運用改善: Obsidian/RAG・KG・Recipe連携の再設計'
+  parent_task_id: SGK-2026-0221
+  related_docs:
+  - docs/shigoku/subtasks/2026-06-03_recon-signal-mc-swarm_subtask_plan.md
+  - docs/shigoku/subtasks/2026-06-03_recipe-recon-swarm_subtask_plan.md
+  - docs/shigoku/specs/modules/RAG_SYSTEM.md
+  - docs/shigoku/specs/modules/KNOWLEDGE_GRAPH.md
+  - docs/shigoku/roadmaps/future_functions.md
+- provisional_id: DOC-0280
+  task_id: SGK-2026-0263
+  doc_type: roadmap
+  title: '継続学習リファレンス: KG・RAG・MC・Recipe・Recon の理想アーキテクチャ'
+  primary_doc: docs/shigoku/roadmaps/2026-06-03_continuous-learning-architecture-reference.md
+  status: active
+  provisional: false
+  task_summary: '継続学習リファレンス: KG・RAG・MC・Recipe・Recon の理想アーキテクチャ'
+  parent_task_id: null
+  related_docs:
+  - docs/shigoku/subtasks/2026-06-03_recon-signal-mc-swarm_subtask_plan.md
+  - docs/shigoku/subtasks/2026-06-03_recipe-recon-swarm_subtask_plan.md
+  - docs/shigoku/subtasks/2026-06-03_obsidian-rag-kg-recipe_subtask_plan.md
+  - docs/shigoku/specs/modules/KNOWLEDGE_GRAPH.md
+  - docs/shigoku/specs/modules/RAG_SYSTEM.md
+  - docs/shigoku/roadmaps/future_functions.md
+- provisional_id: DOC-0281
+  task_id: SGK-2026-0264
+  doc_type: plan
+  title: '巨大ファイル分割計画 1/4: MasterConductor 分割'
+  primary_doc: docs/shigoku/plans/2026-06-05_master-conductor-split-plan_plan.md
+  status: active
+  provisional: false
+  task_summary: '巨大ファイル分割計画 1/4: MasterConductor 分割'
+  parent_task_id: SGK-2026-0065
+  related_docs:
+  - docs/shigoku/roadmaps/IMPLEMENTATION_ROADMAP.md
+  - docs/shigoku/specs/ARCHITECTURE.md
+  - docs/shigoku/specs/REQ_tier4_mc_intelligence.md
+- provisional_id: DOC-0282
+  task_id: SGK-2026-0265
+  doc_type: plan
+  title: '巨大ファイル分割計画 2/4: InjectionManager 分割'
+  primary_doc: docs/shigoku/plans/2026-06-05_injection-manager-split-plan_plan.md
+  status: done
+  provisional: false
+  task_summary: '巨大ファイル分割計画 2/4: InjectionManager 分割'
+  parent_task_id: SGK-2026-0065
+  related_docs:
+  - docs/shigoku/roadmaps/IMPLEMENTATION_ROADMAP.md
+  - docs/shigoku/specs/ARCHITECTURE.md
+  - docs/shigoku/specs/fix_injection_swarm.md
+  - docs/shigoku/worklogs/2026-06-08_sgk-2026-0265_injection-manager-split_work_log.md
+- provisional_id: DOC-0283
+  task_id: SGK-2026-0266
+  doc_type: plan
+  title: '巨大ファイル分割計画 3/4: CLI Entrypoint 分割'
+  primary_doc: docs/shigoku/plans/2026-06-05_cli-entrypoint-split-plan_plan.md
+  status: active
+  provisional: false
+  task_summary: '巨大ファイル分割計画 3/4: CLI Entrypoint 分割'
+  parent_task_id: SGK-2026-0065
+  related_docs:
+  - docs/shigoku/roadmaps/IMPLEMENTATION_ROADMAP.md
+  - docs/shigoku/specs/ARCHITECTURE.md
+  - docs/shigoku/specs/adr/001-entry-point-unification.md
+- provisional_id: DOC-0284
+  task_id: SGK-2026-0267
+  doc_type: plan
+  title: '巨大ファイル分割計画 4/4: ReconPipeline 分割'
+  primary_doc: docs/shigoku/plans/2026-06-05_recon-pipeline-split-plan_plan.md
+  status: active
+  provisional: false
+  task_summary: '巨大ファイル分割計画 4/4: ReconPipeline 分割'
+  parent_task_id: SGK-2026-0065
+  related_docs:
+  - docs/shigoku/roadmaps/IMPLEMENTATION_ROADMAP.md
+  - docs/shigoku/specs/ARCHITECTURE.md
+  - docs/shigoku/specs/dynamic_recon_attack.md
+- provisional_id: DOC-0285
+  task_id: SGK-2026-0268
+  doc_type: plan
+  title: Haddix report payout-readiness output improvements
+  primary_doc: docs/shigoku/plans/2026-06-08_haddix-report-payout-readiness-output-improvements_plan.md
+  status: done
+  provisional: false
+  task_summary: Haddix report payout-readiness output improvements
+  parent_task_id: SGK-2026-0065
+  related_docs:
+  - docs/shigoku/roadmaps/bug_bounty_enhancements_2026.md
+  - docs/shigoku/reports/REPORT_OUTPUTS.md
+- provisional_id: DOC-0286
+  task_id: SGK-2026-0269
+  doc_type: plan
+  title: Git ignore cleanup for fresh GitHub repository
+  primary_doc: docs/shigoku/plans/2026-06-08_git-ignore-cleanup-for-fresh-github-repository_plan.md
+  status: done
+  provisional: false
+  task_summary: Git ignore cleanup for fresh GitHub repository
+  parent_task_id: SGK-2026-0065
+  related_docs:
+  - docs/shigoku/roadmaps/IMPLEMENTATION_ROADMAP.md
+- provisional_id: DOC-0287
+  task_id: SGK-2026-0270
+  doc_type: plan
+  title: Remove unused Caveman skill artifacts
+  primary_doc: docs/shigoku/plans/2026-06-08_remove-unused-caveman-skill-artifacts_plan.md
+  status: done
+  provisional: false
+  task_summary: Remove unused Caveman skill artifacts
+  parent_task_id: SGK-2026-0065
+  related_docs:
+  - docs/shigoku/roadmaps/IMPLEMENTATION_ROADMAP.md
+- provisional_id: DOC-0288
+  task_id: SGK-2026-0271
+  doc_type: plan
+  title: Remove secret-like test fixtures blocking GitHub push
+  primary_doc: docs/shigoku/plans/2026-06-08_remove-secret-like-test-fixtures-blocking-github-push_plan.md
+  status: done
+  provisional: false
+  task_summary: Remove secret-like test fixtures blocking GitHub push
+  parent_task_id: SGK-2026-0065
+  related_docs:
+  - docs/shigoku/roadmaps/IMPLEMENTATION_ROADMAP.md
+doc_type_allowed_values:
+- spec
+- roadmap
+- plan
+- subtask_plan
+- work_report
+- work_log
+- manual
+status_allowed_values:
+- backlog
+- active
+- done
+- deferred
+- archived

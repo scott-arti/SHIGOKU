@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "dsl_version": 1,
+  "rules": [
+    {
+      "id": "account_takeover_xss_csrf",
+      "name": "Account Takeover via XSS + CSRF",
+      "description": "XSS enables unauthorized actions and CSRF gaps allow state-changing requests without user intent.",
+      "severity": "critical",
+      "required_signals": [
+        "xss",
+        "csrf"
+      ],
+      "min_components": 2,
+      "same_target_only": false,
+      "recommended_followup": "report"
+    },
+    {
+      "id": "data_exfil_idor_redirect",
+      "name": "Data Exfiltration via IDOR + Open Redirect",
+      "description": "IDOR and redirect flow abuse can be chained to expand unauthorized data access.",
+      "severity": "high",
+      "required_signals": [
+        "idor",
+        "open_redirect"
+      ],
+      "min_components": 2,
+      "same_target_only": false,
+      "recommended_followup": "escalate"
+    },
+    {
+      "id": "priv_esc_mass_assignment_csrf",
+      "name": "Privilege Escalation via Mass Assignment + CSRF",
+      "description": "Mass assignment combined with CSRF weaknesses may elevate privileges silently.",
+      "severity": "critical",
+      "required_signals": [
+        "mass_assignment",
+        "csrf"
+      ],
+      "min_components": 2,
+      "same_target_only": false,
+      "recommended_followup": "report"
+    },
+    {
+      "id": "upload_to_rce",
+      "name": "RCE via File Upload + Command Injection",
+      "description": "Unrestricted upload with command execution indicators suggests code execution chain.",
+      "severity": "critical",
+      "required_signals": [
+        "file_upload",
+        "os_command_injection"
+      ],
+      "min_components": 2,
+      "same_target_only": false,
+      "recommended_followup": "report"
+    },
+    {
+      "id": "ssrf_to_secret_leak",
+      "name": "Internal Secret Exposure via SSRF + Secret Leak",
+      "description": "SSRF foothold combined with leaked secrets can expose internal resources.",
+      "severity": "high",
+      "required_signals": [
+        "ssrf",
+        "secret_leak"
+      ],
+      "min_components": 2,
+      "same_target_only": false,
+      "recommended_followup": "escalate"
+    },
+    {
+      "id": "fintech_account_takeover_xss_csrf",
+      "name": "Fintech Account Takeover via XSS + CSRF",
+      "description": "Fintech programs prioritize XSS plus CSRF combinations that can trigger authenticated transfer or beneficiary changes.",
+      "severity": "critical",
+      "required_signals": [
+        "xss",
+        "csrf"
+      ],
+      "min_components": 2,
+      "same_target_only": false,
+      "recommended_followup": "report",
+      "industry": "fintech"
+    }
+  ],
+  "workflow_templates": {
+    "common": {
+      "template_id": "wf-common",
+      "steps": [
+        "probe-common"
+      ],
+      "source": "common"
+    },
+    "fintech": {
+      "template_id": "wf-fintech",
+      "steps": [
+        "probe-fintech"
+      ],
+      "source": "fintech"
+    }
+  },
+  "program_overrides": {
+    "fintech": {
+      "allow": [
+        "scenario_probe"
+      ],
+      "deny": [],
+      "per_asset_qps_cap": 1,
+      "global_probe_budget": 2
+    }
+  }
+}

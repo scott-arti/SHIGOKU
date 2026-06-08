@@ -1,0 +1,19 @@
+name: sensitive_headers
+description: "Golden Recipe: Detect Sensitive Information in HTTP Headers"
+tags: ["info", "headers", "exposure"]
+severity: "medium"
+target_condition: null
+steps:
+  - tool: "reconbot"
+    action: "check_headers"
+    args:
+      instruction: |
+        Check HTTP response headers for sensitive information.
+
+        1. Inspect headers for:
+           - Server versions (Server: Apache/2.4.49)
+           - Framework versions (X-Powered-By: PHP/7.2)
+           - Internal IPs
+           - Debug information
+
+        2. Report if specific versions with known vulnerabilities are exposed.

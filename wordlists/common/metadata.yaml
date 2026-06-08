@@ -1,0 +1,21 @@
+# 汎用ワードリスト メタデータ
+
+files:
+  # ここにワードリスト情報を追加
+  # - name: common.txt
+  #   source: custom
+  #   lines: 5000
+  #   size: small
+  #   strength: [general]
+  #   best_for: [any]
+
+selection_rules:
+  mode_defaults:
+    bugbounty: [seclists]
+    vulntest: [seclists]
+    ctf: [seclists]
+
+  strategy:
+    quick: small
+    standard: medium
+    deep: high

@@ -1,0 +1,16 @@
+name: http_request_smuggling
+description: "Golden Recipe: HTTP Request Smuggling Detection - Direct tool execution"
+tags: ["injection", "smuggling", "desync"]
+severity: "critical"
+target_condition: null
+steps:
+  - tool: "tool_executor"
+    args:
+      tool_name: "nuclei"
+      args:
+        extra_args: "-t http/vulnerabilities/smuggling/"
+  - tool: "tool_executor"
+    args:
+      tool_name: "nuclei"
+      args:
+        extra_args: "-t http/cves/ -tags smuggling"

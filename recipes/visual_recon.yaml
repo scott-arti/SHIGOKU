@@ -1,0 +1,24 @@
+name: visual_recon
+description: スクリーンショット取得と視覚的偵察
+version: "1.0"
+
+conditions:
+  - tech_stack contains "WordPress"
+  - tech_stack contains "Drupal"
+  - flag:manual_recon = true
+
+tasks:
+  - name: capture_screenshot
+    agent: CommandAgent
+    command: "chromium --headless --screenshot={workspace}/screenshot.png --window-size=1920,1080 {target}"
+    timeout: 30
+
+  - name: analyze_screenshot
+    description: "スクリーンショットを目視確認し、ログインフォーム、エラーメッセージ、デバッグ情報を探してください"
+    agent: human
+    requires: capture_screenshot
+
+metadata:
+  category: recon
+  priority: 2
+  note: "旧VisualReconAgentの代替Recipe"

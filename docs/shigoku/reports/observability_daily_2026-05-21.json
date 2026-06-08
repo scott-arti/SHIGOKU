@@ -1,0 +1,61 @@
+{
+  "generated_at": "2026-05-21T23:46:28.832950+09:00",
+  "window_days": 7,
+  "daily": [
+    {
+      "date": "2026-05-16",
+      "sessions": 18,
+      "failed_tasks": 0,
+      "unknown_failures": 0,
+      "unknown_rate": 0.0,
+      "schema_severity_counts": {},
+      "findings_total": 178,
+      "schema_severity_missing": 178,
+      "pr_execution_time_slo": {
+        "observed_p95_seconds": 0.0,
+        "observed_p99_seconds": 0.0,
+        "sample_count": 0,
+        "insufficient_samples": true,
+        "target_p95_seconds": 900.0,
+        "target_p99_seconds": 1200.0
+      }
+    },
+    {
+      "date": "2026-05-17",
+      "sessions": 24,
+      "failed_tasks": 0,
+      "unknown_failures": 0,
+      "unknown_rate": 0.0,
+      "schema_severity_counts": {},
+      "findings_total": 190,
+      "schema_severity_missing": 190,
+      "pr_execution_time_slo": {
+        "observed_p95_seconds": 0.0,
+        "observed_p99_seconds": 0.0,
+        "sample_count": 0,
+        "insufficient_samples": true,
+        "target_p95_seconds": 900.0,
+        "target_p99_seconds": 1200.0
+      }
+    },
+    {
+      "date": "2026-05-18",
+      "sessions": 18,
+      "failed_tasks": 0,
+      "unknown_failures": 0,
+      "unknown_rate": 0.0,
+      "schema_severity_counts": {},
+      "findings_total": 260,
+      "schema_severity_missing": 260,
+      "pr_execution_time_slo": {
+        "observed_p95_seconds": 0.0,
+        "observed_p99_seconds": 0.0,
+        "sample_count": 0,
+        "insufficient_samples": true,
+        "target_p95_seconds": 900.0,
+        "target_p99_seconds": 1200.0
+      }
+    }
+  ],
+  "weekly_min_sample_count": 100
+}

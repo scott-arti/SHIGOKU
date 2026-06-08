@@ -1,0 +1,19 @@
+name: oauth_token_leak
+description: "Golden Recipe: Detect leaked OAuth Tokens"
+tags: ["auth", "oauth", "token-leak"]
+severity: "high"
+target_condition: "'OAuth' in tech_stack"
+steps:
+  - tool: "reconbot"
+    action: "check_token_leak"
+    args:
+      instruction: |
+        Check for monitoring/logging of OAuth tokens in unexpected places.
+
+        1. Check functionality that receives OAuth tokens (redirect_uri).
+        2. Verify if the token is leaked in:
+           - Referer headers to external analytics/ads.
+           - Server access logs (via transparent GET parameters).
+           - Browser history/cache (if GET is used).
+
+        Report if sensitive tokens are transmitted insecurely.

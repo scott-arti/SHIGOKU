@@ -1,0 +1,123 @@
+# 脆弱性タイプ定義
+# auto_reporter.py の VULN_TYPE_INFO を外部化
+
+vuln_types:
+  JWT_ALG_NONE:
+    title: "JWT Algorithm Confusion (alg=none)"
+    cwe: "CWE-347"
+    category: "Broken Authentication"
+    remediation: |
+      1. **Explicitly specify the algorithm** when verifying JWT tokens.
+      2. Never accept the algorithm from the token header.
+      3. Use a JWT library that requires algorithm specification.
+      4. Reject tokens with 'alg=none' at the validation layer.
+
+  JWT_RS256_HS256:
+    title: "JWT Key Confusion Attack"
+    cwe: "CWE-327"
+    category: "Broken Authentication"
+    remediation: |
+      1. Use asymmetric algorithms (RS256, ES256) with proper key management.
+      2. Never use the public key as HMAC secret.
+      3. Specify the algorithm explicitly when verifying tokens.
+      4. Store and validate keys separately for each algorithm type.
+
+  JWT_WEAK_SECRET:
+    title: "JWT Weak Secret Key"
+    cwe: "CWE-521"
+    category: "Broken Authentication"
+    remediation: |
+      1. Use strong, randomly generated secrets (minimum 256 bits for HS256).
+      2. Rotate secrets regularly.
+      3. Store secrets securely (environment variables, secret manager).
+      4. Never commit secrets to version control.
+
+  JWT_KID_INJECTION:
+    title: "JWT Header Injection (kid/jku)"
+    cwe: "CWE-94"
+    category: "Injection"
+    remediation: |
+      1. Validate and sanitize 'kid' parameter before using it.
+      2. Use a whitelist of allowed key IDs.
+      3. Never allow arbitrary URLs in 'jku' parameter.
+      4. Implement strict input validation for all JWT headers.
+
+  OAUTH_REDIRECT_BYPASS:
+    title: "OAuth Redirect URI Bypass"
+    cwe: "CWE-601"
+    category: "Broken Authentication"
+    remediation: |
+      1. Implement strict redirect_uri validation using exact string matching.
+      2. Use a whitelist of allowed redirect URIs.
+      3. Never use regex or substring matching for redirect_uri validation.
+      4. Validate redirect_uri on both authorization and token endpoints.
+
+  OAUTH_PKCE_BYPASS:
+    title: "OAuth PKCE Downgrade"
+    cwe: "CWE-287"
+    category: "Broken Authentication"
+    remediation: |
+      1. Require PKCE for all authorization code flows.
+      2. Reject flows that don't include code_challenge.
+      3. Validate code_verifier against code_challenge using SHA-256.
+      4. Use S256 method, not 'plain'.
+
+  MFA_BYPASS:
+    title: "Multi-Factor Authentication Bypass"
+    cwe: "CWE-287"
+    category: "Broken Authentication"
+    remediation: |
+      1. Enforce MFA at the session level, not just login.
+      2. Validate MFA status before sensitive operations.
+      3. Implement rate limiting on MFA endpoints.
+      4. Use secure, time-based OTP algorithms (TOTP).
+
+  SECRET_LEAK:
+    title: "Sensitive Information Exposure"
+    cwe: "CWE-200"
+    category: "Information Disclosure"
+    remediation: |
+      1. Never expose sensitive data in error messages or logs.
+      2. Use proper access controls for sensitive endpoints.
+      3. Implement data masking for sensitive fields.
+      4. Review all API responses for information leakage.
+
+  API_KEY_EXPOSURE:
+    title: "API Key Exposure"
+    cwe: "CWE-798"
+    category: "Information Disclosure"
+    remediation: |
+      1. Never embed API keys in client-side code or URLs.
+      2. Use environment variables or secret managers.
+      3. Implement key rotation policies.
+      4. Monitor for leaked credentials using services like GitHub secret scanning.
+
+  XSS:
+    title: "Cross-Site Scripting (XSS)"
+    cwe: "CWE-79"
+    category: "Injection"
+    remediation: |
+      1. Sanitize all user input before rendering in HTML.
+      2. Use Content Security Policy (CSP) headers.
+      3. Encode output based on context (HTML, JavaScript, URL).
+      4. Use modern frameworks with automatic escaping.
+
+  SQLI:
+    title: "SQL Injection"
+    cwe: "CWE-89"
+    category: "Injection"
+    remediation: |
+      1. Use parameterized queries (prepared statements).
+      2. Never concatenate user input into SQL queries.
+      3. Use ORM frameworks with built-in protection.
+      4. Implement least privilege for database users.
+
+  IDOR:
+    title: "Insecure Direct Object Reference"
+    cwe: "CWE-639"
+    category: "Broken Access Control"
+    remediation: |
+      1. Implement proper authorization checks before accessing objects.
+      2. Use indirect references (UUIDs instead of sequential IDs).
+      3. Validate user ownership of resources on every request.
+      4. Implement role-based access control (RBAC).

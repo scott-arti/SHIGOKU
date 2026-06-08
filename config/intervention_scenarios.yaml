@@ -1,0 +1,230 @@
+version: 2
+
+# Execution route:
+# - shigoku_only: fully automated
+# - shigoku_hitl: human approval checkpoint is recommended
+# - human_preferred: human-led is recommended (or required when gate mode enforces)
+defaults:
+  route: shigoku_only
+
+category_routes:
+  # categories are generic and intentionally target-agnostic
+  id_param: shigoku_only
+  redirect_param: shigoku_only
+  file_param: shigoku_only
+  api_data: shigoku_only
+  api_candidate: shigoku_only
+  xss_candidate: shigoku_only
+  product_search: shigoku_only
+  feedback_review: shigoku_only
+  client_route_dom: shigoku_only
+  meta_observability: shigoku_only
+
+  # likely to require state-aware validation or safer checkpointing
+  csrf_candidate: shigoku_hitl
+  auth: shigoku_hitl
+  basket_order: shigoku_hitl
+  realtime: shigoku_hitl
+
+scenarios:
+  # SCN-01: IDOR/BOLA style direct object reference tampering
+  - id: scn_01_idor_bola_object_access
+    route: shigoku_only
+    priority: 70
+    signals_any:
+      - "idor"
+      - "bola"
+      - "object level authorization"
+      - "id tampering"
+      - "authz probe"
+      - "cross-session"
+      - "weak_id"
+
+  # SCN-02: mass assignment / unsafe object binding
+  - id: scn_02_mass_assignment_object_update
+    route: shigoku_only
+    priority: 66
+    signals_any:
+      - "mass assignment"
+      - "overposting"
+      - "object pollution"
+      - "hidden field"
+      - "role="
+      - "is_admin"
+      - "permission"
+
+  # SCN-03: injection families (query/input tampering)
+  - id: scn_03_injection_input_tampering
+    route: shigoku_only
+    priority: 68
+    signals_any:
+      - "sql injection"
+      - "nosql injection"
+      - "xss"
+      - "command injection"
+      - "lfi"
+      - "ssrf"
+      - "open redirect"
+      - "payload fuzz"
+
+  # SCN-04: endpoint and access surface discovery
+  - id: scn_04_endpoint_enumeration_bfla
+    route: shigoku_only
+    priority: 64
+    signals_any:
+      - "endpoint discovery"
+      - "improper asset management"
+      - "hidden api"
+      - "internal api"
+      - "/internal"
+      - "/v2"
+      - "ffuf"
+      - "wordlist"
+
+  # SCN-05: automated traffic-pattern checks
+  - id: scn_05_rate_limit_resilience
+    route: shigoku_only
+    priority: 58
+    signals_any:
+      - "rate limit"
+      - "throttle"
+      - "burst request"
+      - "request frequency"
+      - "brute force"
+
+  # SCN-06: response/schema diff and exposure checks
+  - id: scn_06_data_exposure_diff
+    route: shigoku_only
+    priority: 62
+    signals_any:
+      - "data exposure"
+      - "sensitive field"
+      - "hidden attribute"
+      - "response diff"
+      - "schema diff"
+
+  # SCN-07: token trust-boundary attacks generally benefit from a checkpoint
+  - id: scn_07_token_trust_boundary
+    route: shigoku_hitl
+    priority: 82
+    signals_any:
+      - "jwt"
+      - "alg:none"
+      - "algorithm confusion"
+      - "kid injection"
+      - "jwks"
+      - "token forgery"
+
+  # SCN-08: out-of-band channels almost always require human/external handling
+  - id: scn_08_oob_external_channel_flow
+    route: human_preferred
+    priority: 110
+    signals_any:
+      - "password reset"
+      - "reset token"
+      - "email verification"
+      - "verification code"
+      - "magic link"
+      - "invite acceptance"
+      - "oob"
+      - "out-of-band"
+      - "mailbox"
+      - "sms otp"
+      - "invite acceptance"
+      - "account activation"
+      - "confirmation code"
+
+  # SCN-09: multi-step state transitions are often better with human checkpoint
+  - id: scn_09_multi_step_state_machine
+    route: shigoku_hitl
+    priority: 88
+    signals_any:
+      - "state machine"
+      - "multi-step flow"
+      - "workflow abuse"
+      - "state transition"
+      - "precondition"
+      - "chain"
+      - "chaining"
+
+  # SCN-10: high semantic business abuse is human-efficient
+  - id: scn_10_semantic_business_logic
+    route: human_preferred
+    priority: 98
+    signals_any:
+      - "business logic"
+      - "semantic abuse"
+      - "approval flow"
+      - "policy bypass"
+      - "intent abuse"
+
+  # SCN-11: vulnerability chaining to account takeover/escalation
+  - id: scn_11_multi_vector_chain
+    route: human_preferred
+    priority: 96
+    signals_any:
+      - "api chaining"
+      - "attack chain"
+      - "privilege escalation chain"
+      - "takeover chain"
+      - "multi vector"
+
+  # SCN-12: internal topology / cloud metadata SSRF validation
+  - id: scn_12_advanced_ssrf_internal_topology
+    route: human_preferred
+    priority: 94
+    signals_any:
+      - "metadata endpoint"
+      - "169.254.169.254"
+      - "internal network map"
+      - "cloud metadata"
+      - "gopher://"
+      - "dns rebinding"
+
+  # legacy compatibility aliases kept for existing signal names
+  - id: authz_and_identity_tampering
+    route: shigoku_only
+    priority: 40
+    signals_any:
+      - "access control"
+      - "authz"
+      - "idor"
+      - "bola"
+
+  - id: injection_and_input_tampering
+    route: shigoku_only
+    priority: 40
+    signals_any:
+      - "sql injection"
+      - "nosql injection"
+      - "xss"
+      - "mass assignment"
+      - "open redirect"
+      - "ssrf"
+
+  - id: endpoint_surface_enumeration
+    route: shigoku_only
+    priority: 35
+    signals_any:
+      - "endpoint discovery"
+      - "hidden api"
+      - "/internal"
+      - "/v2"
+      - "ffuf"
+
+  - id: rate_limit_and_resilience
+    route: shigoku_only
+    priority: 35
+    signals_any:
+      - "rate limit"
+      - "throttle"
+      - "burst request"
+
+  - id: high_semantic_business_logic
+    route: shigoku_hitl
+    priority: 30
+    signals_any:
+      - "business logic"
+      - "race condition"
+      - "double spend"
+      - "coupon reuse"

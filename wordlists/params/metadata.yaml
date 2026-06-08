@@ -1,0 +1,30 @@
+# パラメータ用ワードリスト メタデータ
+
+base_path: /home/bbb/Documents/tools/wordlists
+
+files:
+  - name: httparchive_parameters_top_1m_2025_11_27.txt
+    path: AssetNote/httparchive_parameters_top_1m_2025_11_27.txt
+    source: AssetNote
+    lines: 375500
+    size: high
+    strength: [params, query, modern, latest_2025]
+    best_for: [param_discovery, arjun, query_params]
+
+selection_rules:
+  mode_defaults:
+    bugbounty:
+      quick: httparchive_parameters_top_1m_2025_11_27.txt
+      standard: httparchive_parameters_top_1m_2025_11_27.txt
+      deep: httparchive_parameters_top_1m_2025_11_27.txt
+    vulntest:
+      quick: httparchive_parameters_top_1m_2025_11_27.txt
+      standard: httparchive_parameters_top_1m_2025_11_27.txt
+      deep: httparchive_parameters_top_1m_2025_11_27.txt
+    ctf:
+      quick: httparchive_parameters_top_1m_2025_11_27.txt
+      standard: httparchive_parameters_top_1m_2025_11_27.txt
+      deep: httparchive_parameters_top_1m_2025_11_27.txt
+
+  tech_stack:
+    default: httparchive_parameters_top_1m_2025_11_27.txt

@@ -1,0 +1,18 @@
+name: generic_exposure
+description: "Golden Recipe: Check for common sensitive file exposures - Direct tool execution"
+tags: ["generic", "exposure", "recon"]
+severity: "high"
+target_condition: null
+steps:
+  - tool: "tool_executor"
+    args:
+      tool_name: "nuclei"
+      args:
+        extra_args: "-t http/exposures/"
+  - tool: "tool_executor"
+    args:
+      tool_name: "ffuf"
+      args:
+        wordlist: "/home/bbb/Documents/tools/wordlists/SecLists/Discovery/Web-Content/common.txt"
+        match_code: "200"
+        extensions: "env,git,json,xml,txt,yml,yaml,config"

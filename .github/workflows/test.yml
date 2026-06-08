@@ -1,0 +1,170 @@
+name: Tests
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  runtime-control-governance:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install pytest
+
+      - name: Verify branch protection required checks include runtime-control-governance
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHIGOKU_RUNTIME_CONTROL_REQUIRED_CHECKS: ${{ github.job }}
+        run: |
+          python3 scripts/check_runtime_control_required_check.py \
+            --event-path "$GITHUB_EVENT_PATH" \
+            --repo "${{ github.repository }}" \
+            --runbook-url "https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/docs/shigoku/manuals/2026-05-26_runtime-control-fail-open-guard_runbook.md"
+
+      - name: Generate approval evidence from GitHub API
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 scripts/generate_runtime_control_approval_evidence.py \
+            --event-path "$GITHUB_EVENT_PATH" \
+            --repo "${{ github.repository }}" \
+            --output /tmp/runtime_control_approval_evidence.json \
+            --retries 2 \
+            --initial-backoff-seconds 2
+
+      - name: Generate runtime control gate evidence
+        run: |
+          python3 scripts/generate_runtime_control_gate_evidence.py \
+            --approval-evidence /tmp/runtime_control_approval_evidence.json \
+            --gate-evidence-out /tmp/runtime_control_gate_evidence.json \
+            --integrity-manifest-out /tmp/runtime_control_integrity_manifest.json
+
+      - name: Validate runtime control governance gate
+        run: |
+          python3 scripts/shigoku_ops_cli.py --json runtime-control gate \
+            --evidence-file /tmp/runtime_control_gate_evidence.json \
+            --integrity-manifest /tmp/runtime_control_integrity_manifest.json \
+            --approval-evidence-file /tmp/runtime_control_approval_evidence.json \
+            --require-code-owner-reviews
+
+      - name: Run runtime control CLI tests
+        run: |
+          pytest tests/unit/reporting/test_runtime_control_release_gate.py tests/unit/scripts/test_shigoku_ops_cli.py -q
+
+  ssrf-pr-policy:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate SSRF PR policy
+        run: |
+          python scripts/check_ssrf_pr_policy.py \
+            --event-path "$GITHUB_EVENT_PATH" \
+            --base "${{ github.event.pull_request.base.sha }}" \
+            --head "${{ github.event.pull_request.head.sha }}"
+
+  ssrf-quality-gate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install pytest pytest-asyncio
+
+      - name: Run SSRF quality gate tests
+        run: |
+          pytest tests/core/attack/test_ssrf_tester.py tests/integration/test_ssrf_quality_gate.py -q
+
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install pytest pytest-cov pytest-asyncio
+
+      - name: Run unit tests
+        run: |
+          pytest tests/ \
+            --cov=src \
+            --cov-report=term-missing \
+            --cov-report=xml \
+            -v \
+            --tb=short \
+            -m "not slow and not requires_api"
+
+      - name: Upload coverage report
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage.xml
+          fail_ci_if_error: false
+          verbose: true
+        continue-on-error: true
+
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install linters
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff
+
+      - name: Run Ruff linter
+        run: ruff check src/ --output-format=github
+        continue-on-error: true

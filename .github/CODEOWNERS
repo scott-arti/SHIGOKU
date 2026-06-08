@@ -1,0 +1,4 @@
+# SSRF quality policy critical paths
+/config/features.yaml @bbb
+/src/core/attack/ssrf_tester.py @bbb
+/tests/integration/test_ssrf_quality_gate.py @bbb

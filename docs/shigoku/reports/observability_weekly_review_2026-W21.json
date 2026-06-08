@@ -1,0 +1,33 @@
+{
+  "generated_at": "2026-05-21T23:46:28.932894+09:00",
+  "status": "provisional",
+  "decision": "thresholds_fixed_but_not_enforced_for_slo",
+  "policy": {
+    "unknown_rate_max": 0.05,
+    "p95_max_seconds": 900.0,
+    "p99_max_seconds": 1200.0,
+    "min_sample_count": 100,
+    "min_eligible_days": 3,
+    "schema_severity_required": true,
+    "schema_severity_warn_only": true
+  },
+  "window": {
+    "days": 3,
+    "eligible_days": 0,
+    "reference_days": 3
+  },
+  "metrics": {
+    "unknown_rate_week": 0.0,
+    "failed_tasks_week": 0,
+    "unknown_failures_week": 0,
+    "p95_max_observed_seconds": 0.0,
+    "p99_max_observed_seconds": 0.0
+  },
+  "violations": [],
+  "warnings": [
+    "2026-05-16:schema_severity_missing(178/178)",
+    "2026-05-17:schema_severity_missing(190/190)",
+    "2026-05-18:schema_severity_missing(260/260)"
+  ],
+  "source_daily_json": "/home/bbb/Documents/App/Shigoku/docs/shigoku/reports/observability_daily_2026-05-21.json"
+}

@@ -1,0 +1,39 @@
+# SHIGOKU 統合設定ファイル
+# 環境変数は ${VAR_NAME} 形式で展開されます
+
+# モード設定
+mode: bugbounty # bugbounty | vulntest | ctf
+
+# プロジェクト設定
+project_name: "Shigoku"
+project_path: "/home/bbb/Documents/App/Shigoku"
+
+# 通知設定
+notification:
+  slack_webhook: ${SLACK_WEBHOOK}
+  discord_webhook: ${DISCORD_WEBHOOK}
+  notify_on_critical: true
+  notify_on_high: true
+
+# ツール設定
+tools:
+  nuclei: true
+  nuclei_path: nuclei
+  gau: true
+  katana: true
+
+# スキャン設定
+scan:
+  rate_limit: 50
+  timeout: 30
+  threads: 10
+  max_concurrent_tasks: 4
+  max_depth: 3
+  follow_redirects: true
+  user_agent: "SHIGOKU/1.0"
+  # Proxy Configuration (Caido/Burp) - leave empty to run without mandatory proxy
+  proxy: ""
+
+# 外部API設定
+api:
+  shodan_api_key: ${SHODAN_API_KEY}

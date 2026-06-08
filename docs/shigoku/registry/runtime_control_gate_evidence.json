@@ -1,0 +1,67 @@
+{
+  "gate_evidence_records": [
+    {
+      "gate_name": "compatibility",
+      "status": "pass",
+      "date": "2026-05-26",
+      "evidence_source": "ci:runtime-control-gate",
+      "evidence_summary": "schema+contract compatibility verified",
+      "risk_if_failed": "legacy path breakage",
+      "decision": "proceed",
+      "approver": "cto",
+      "review_id": "shigoku/shigoku#2222:10001"
+    },
+    {
+      "gate_name": "distributed_control",
+      "status": "pass",
+      "date": "2026-05-26",
+      "evidence_source": "ci:runtime-control-gate",
+      "evidence_summary": "backend policy and failover checks passed",
+      "risk_if_failed": "cross-process control divergence",
+      "decision": "proceed",
+      "approver": "cto",
+      "review_id": "shigoku/shigoku#2222:10002"
+    },
+    {
+      "gate_name": "fault_injection",
+      "status": "pass",
+      "date": "2026-05-26",
+      "evidence_source": "ci:runtime-control-gate",
+      "evidence_summary": "fault injection scenarios passed",
+      "risk_if_failed": "silent degradation in incidents",
+      "decision": "proceed",
+      "approver": "cto",
+      "review_id": "shigoku/shigoku#2222:10003"
+    },
+    {
+      "gate_name": "shadow_mode",
+      "status": "pass",
+      "date": "2026-05-26",
+      "evidence_source": "ci:runtime-control-gate",
+      "evidence_summary": "shadow diff classification stable",
+      "risk_if_failed": "regression hidden by shadow mismatch",
+      "decision": "proceed",
+      "approver": "cto"
+    },
+    {
+      "gate_name": "kpi",
+      "status": "pass",
+      "date": "2026-05-26",
+      "evidence_source": "ci:runtime-control-gate",
+      "evidence_summary": "baseline KPI thresholds satisfied",
+      "risk_if_failed": "operational instability",
+      "decision": "proceed",
+      "approver": "cto"
+    },
+    {
+      "gate_name": "rollback_drill",
+      "status": "pass",
+      "date": "2026-05-26",
+      "evidence_source": "ci:runtime-control-gate",
+      "evidence_summary": "rollback drill verified",
+      "risk_if_failed": "slow recovery path",
+      "decision": "proceed",
+      "approver": "cto"
+    }
+  ]
+}

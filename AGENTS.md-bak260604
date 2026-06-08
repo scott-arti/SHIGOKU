@@ -1,0 +1,122 @@
+# AGENTS.md
+
+This file contains repository-level instructions for Codex and other coding agents.
+Keep this file short. Put task-specific rules in `rules/`.
+
+## Core workflow
+
+For code changes:
+
+1. Understand scope
+   - Restate the objective briefly.
+   - Locate relevant files, symbols, or artifacts before editing.
+   - Follow repository rules such as AGENTS.md, CONTRIBUTING, and relevant files under `rules/`.
+
+2. Plan before editing
+   - For non-trivial changes, make a short 3-6 step plan.
+   - Keep exactly one step in progress.
+   - Update status as steps finish.
+
+3. Explore safely
+   - Search broadly, then narrow.
+   - Read only files needed for the task.
+   - Do not assume behavior; verify with code or artifact references.
+
+4. Edit surgically
+   - Keep diffs minimal and focused.
+   - Avoid unrelated refactors.
+   - Preserve existing style, naming, and public behavior unless the task asks otherwise.
+   - Never revert unrelated local changes.
+
+5. Validate changes
+   - Run the most targeted relevant check first.
+   - Run broader checks only when needed for confidence.
+   - Do not claim success without the exact command and observed result.
+
+6. Report clearly
+   - Report changed files, why they changed, validation commands, observed results, and remaining risks.
+   - Include relevant file paths and key lines when useful.
+   - If blocked, state the exact blocker and proposed options.
+
+7. Follow guardrails
+   - Do not run destructive git commands unless explicitly requested.
+   - Do not commit, branch, reset, rebase, or force-push unless explicitly requested.
+   - Ask before network, elevated, destructive, or broad formatting actions.
+
+## Additional guardrails
+
+- Do not use `git add .` or `git add -A`; stage explicit files only.
+- Do not expose API keys, tokens, or secret values in logs, output, commits, or shell history.
+- If public behavior changes, update relevant tests and documentation.
+
+## KETHOS
+
+Use KETHOS as the default decision policy for code changes:
+
+- Do not stop at writing code. Do not shortcut edge-case handling, error handling, or unit tests. Always deliver complete, production-quality changes.
+- Before implementing new features or logic, search and inspect existing code in the repository and the built-in capabilities of the language or framework. Do not create redundant custom logic when an existing or built-in path is available.
+- Even during autonomous execution, do not secretly make changes outside the agreed plan or design scope. Do not remove or change existing behavior on your own. If an unclear decision arises outside the plan, stop and ask the user.
+- When multiple changes are required, do not rewrite all files at once. Implement the task list one item at a time. Move to the next task only after the current task is fully working and verified with the relevant build or tests.
+
+## Search before building
+
+Before implementing unfamiliar infrastructure, concurrency, runtime behavior, or framework behavior:
+
+1. Check whether the runtime or framework already provides the feature.
+2. Check current official documentation.
+3. Prefer the built-in or documented path unless there is a concrete reason not to.
+
+## Commit rules
+
+Only when explicitly asked to commit:
+
+- Keep each commit to one logical change.
+- Separate renames, generated-file regeneration, test infrastructure, and behavior changes.
+- Before committing, review the staged diff and ensure generated files match their sources.
+
+## Rule loading
+Before editing, choose and read the relevant rule files.
+
+Always read for non-trivial code changes:
+
+- `rules/lessons.md`
+
+Read conditionally:
+- General implementation, refactoring, code quality, error handling, file operations, subprocesses, async, typing, or secrets: `rules/codingrules.md`
+- Report/session consistency, `haddix_report_*.md`, `session_*.json`, re-run recommendations, report comparisons, or gate verdicts derived from reports: `rules/report-session-consistency.md`
+- Report formatting, report summaries, report/gate implementation, quality-policy changes, or detection/reporting pipeline changes: `rules/reporting.md`
+- Report, session, validate, gate, or SHIGOKU operational commands: `rules/cli-ops-routing.md`
+- SHIGOKU documentation-only changes: `rules/shigoku-docs.md`
+- Implementation or feature work that requires task tracking, task IDs, plans, work reports, or work logs: `rules/task-ledger.md` and `rules/shigoku-docs.md`
+- Codebase navigation, architecture questions, dependency questions, or `/graphify`: `rules/graphify.md`
+- Python execution, tests, validation, or project command work: `rules/python-tests.md`
+
+If a listed rule file is relevant, treat it as part of these instructions.
+Before finishing, report which rule files were consulted.
+
+## Project map
+
+- Reports: `workspace/projects/<target>/reports/`
+- Sessions: `workspace/projects/<target>/sessions/`
+- Validation and gate scripts: `scripts/`
+- Reporting logic: `src/reporting/`
+- Orchestration logic: `src/core/engine/`
+- Detection / swarm logic: `src/core/agents/swarm/`
+
+## Default commands
+
+- Prefer `.venv/bin/python` and `.venv/bin/pytest` for project code, imports, and tests.
+- Use host `python3` only for lightweight repository scripts that do not depend on project venv state.
+- Run targeted checks first, then broader checks only when needed.
+
+## Command Output
+Protect context usage. Any command with unknown or potentially large output must be byte-capped.
+Default pattern: COMMAND 2>&1 | head -c 4000
+
+## Response style
+
+- Keep reasoning summaries simple, concrete, and action-oriented.
+- Use short sentences.
+- Prefer exact file paths, commands, observed results, and blockers.
+- Do not claim "fixed", "verified", or "works" without evidence.
+

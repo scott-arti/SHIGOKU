@@ -1,0 +1,16 @@
+name: subdomain_takeover
+description: "Golden Recipe: Check for Subdomain Takeover vulnerabilities"
+tags: ["recon", "takeover", "dns"]
+severity: "critical"
+target_condition: null # Applicable after finding subdomains, or always run to check main domain CNAME
+steps:
+  - tool: "reconbot"
+    action: "check_takeover"
+    args:
+      instruction: |
+        Check the target (and its subdomains if known) for Subdomain Takeover vulnerabilities.
+        1. Identify CNAME records pointing to external services (AWS S3, GitHub Pages, Heroku, etc.).
+        2. Verify if the pointed resource is unclaimed.
+
+        Use 'subjack' or 'nuclei -t takeovers' if available.
+        Verify any findings manually with curl to check for 404/NoSuchBucket errors.

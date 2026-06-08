@@ -1,0 +1,65 @@
+---
+task_id: SGK-2026-0171
+doc_type: subtask_plan
+status: backlog
+parent_task_id: SGK-2026-0058
+related_docs:
+- docs/shigoku/plans/2026-05-14_ssti_docs/shigoku/plans/file_upload_implementation_plan_legacy.md
+created_at: '2026-05-19'
+updated_at: '2026-05-19'
+---
+
+# Phase 1: 足場固めと構造改革 (Swarm化 & 入力正規化) - TODO Tasks
+
+## 1. Domain Object & Core Logic
+
+- [ ] **TargetAsset Implementation**
+  - [ ] Create `src/core/domain/model/target.py` with `TargetType` and `TargetAsset` dataclass.
+  - [ ] Implement `TargetAsset.create` factory method with `_classify` logic.
+  - [ ] Implement `TargetAsset._is_internal` helper.
+  - [ ] Unit Test: `test_target_asset.py` (URL parsing, internal checking).
+- [ ] **ScopeManager Refactor**
+  - [ ] Modify `src/core/domain/scope/scope_manager.py` to use `TargetAsset`.
+  - [ ] Implement file loading and parsing logic to produce `List[TargetAsset]`.
+
+## 2. Worker Base Infrastructure
+
+- [ ] **BaseWorker Implementation**
+  - [ ] Create `src/core/swarm/worker/base.py` (Abstract class).
+  - [ ] Define `execute(task: Task) -> TaskResult` signature.
+- [ ] **ProceduralWorker Implementation**
+  - [ ] Create `src/core/swarm/worker/procedural.py`.
+  - [ ] Implement `run_command` (subprocess wrapper) and `parse_output`.
+  - [ ] Integrate/Wrap `NetworkClient` functionality for easy HTTP requests.
+- [ ] **LLMWorker Implementation**
+  - [ ] Create `src/core/swarm/worker/llm_worker.py`.
+  - [ ] Implement `think` and `verify` methods with LLM integration.
+
+## 3. Worker Migration (Independent Agents -> Swarm Workers)
+
+- [ ] **InjectionSwarm**
+  - [ ] **TaintAnalysisWorker**: Migrate from `TaintAnalysisAgent`. (Procedural)
+  - [ ] **GraphQLWorker**: Migrate from `GraphQLNavigator`. (Hybrid/LLM)
+- [ ] **DiscoverySwarm**
+  - [ ] **JSMineWorker**: Migrate from `JSMineAgent`. (Procedural)
+  - [ ] **APISpecWorker**: Migrate from `APISpecReconstructor`. (LLM)
+- [ ] **LogicSwarm**
+  - [ ] **RaceConditionWorker**: Migrate from `RaceConditionAgent`. (Procedural)
+- [ ] **IntelligenceSwarm**
+  - [ ] **VisualReconWorker**: Migrate from `VisualReconAgent`. (LLM)
+- [ ] **InfrastructureSwarm (New)**
+  - [ ] Create directory structure `src/core/swarm/infrastructure/`.
+  - [ ] **PortScanWorker**: Wrapper for `nmap`/`naabu`. (Procedural)
+  - [ ] **ServiceIdentifyWorker**: Banner grabbing & identification. (LLM)
+- [ ] **Cleanup**:
+  - [ ] Delete old agent files in `src/agents/` after confirming migration.
+  - [ ] Remove `GeneralAgent`.
+
+## 4. Master Conductor Integration
+
+- [ ] **ActionDispatcher Cleanup**
+  - [ ] Refactor `dispatch_task` in `src/core/engine/action_dispatcher.py`.
+  - [ ] Remove legacy `if agent_name == ...` branches.
+  - [ ] Ensure `SwarmManager` is the sole entry point for task assignment.
+- [ ] **Integration Test**
+  - [ ] Verify tasks are correctly routed to new Workers via Swarms.

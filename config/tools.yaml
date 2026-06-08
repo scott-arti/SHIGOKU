@@ -1,0 +1,176 @@
+# ツールプロファイル定義
+# 各ツールのデフォルト引数を外部化
+
+nuclei:
+  binary_path: "nuclei"
+  timeout: 3600
+  profiles:
+    quick:
+      args: ["-tags", "cve,misconfig,exposure", "-rate-limit", "50"]
+      description: "高速スキャン（主要な脆弱性のみ）"
+    standard:
+      args: ["-rate-limit", "150"]
+      description: "標準スキャン（推奨）"
+    deep:
+      args: ["-rate-limit", "100", "-dast"]
+      description: "詳細スキャン（低速）"
+    critical:
+      args: ["-severity", "critical,high"]
+      description: "高深刻度のみ"
+
+httpx:
+  binary_path: "httpx"
+  timeout: 300
+  default_args: ["-silent", "-json"]
+
+ffuf:
+  binary_path: "ffuf"
+  timeout: 1800
+  default_args: ["-mc", "200,204,301,302,307,401,403,405", "-fc", "404"]
+
+subfinder:
+  binary_path: "subfinder"
+  timeout: 600
+  default_args: ["-silent", "-all"]
+
+katana:
+  binary_path: "katana"
+  timeout: 900
+  default_args: ["-silent", "-depth", "3"]
+
+naabu:
+  binary_path: "naabu"
+  timeout: 1200
+  default_args: ["-silent", "-top-ports", "1000"]
+
+# Phase D Detection Engines
+sqlmap:
+  binary_path: "sqlmap"
+  timeout: 300
+  default_args: ["--batch", "--level=1", "--risk=1", "--format=json"]
+  parser: SQLMapParser
+  profiles:
+    quick:
+      args: ["--level=1", "--risk=1"]
+      description: "Quick SQLi scan"
+    standard:
+      args: ["--level=2", "--risk=1", "--tamper=space2comment"]
+      description: "Standard SQLi scan with basic tamper"
+    deep:
+      args: ["--level=5", "--risk=3", "--tamper=space2comment,charencode"]
+      description: "Deep SQLi scan with all tampers"
+
+dalfox:
+  binary_path: "dalfox"
+  timeout: 300
+  default_args: ["--silence", "--format=json", "--only-poc"]
+  parser: DalfoxParser
+  profiles:
+    quick:
+      args: ["--only-discovery"]
+      description: "Quick XSS discovery only"
+    standard:
+      args: []
+      description: "Standard XSS scan with verification"
+    deep:
+      args: ["--deep-dom"]
+      description: "Deep DOM XSS analysis"
+
+# Phase D Configuration
+detection:
+  time_based:
+    consensus_thresholds:
+      mannwhitney_p: 0.05
+      effect_size: 0.5
+      posterior: 0.9
+      variance_ratio: 2.0
+      consensus_required: 3  # 4 methods, need 3 to agree
+    adaptive_sampling:
+      min_samples: 5
+      max_samples: 30
+      confidence_high: 0.95
+      confidence_medium: 0.7
+
+waf_evasion:
+  ucb1:
+    exploration_constant: 2.0
+    strategies:
+      - name: "base64_encoded"
+        description: "Base64 encode payload"
+        priority: 1
+      - name: "comment_obfuscation"
+        description: "Insert SQL comments"
+        priority: 2
+      - name: "case_randomization"
+        description: "Randomize keyword case"
+        priority: 3
+      - name: "unicode_encoded"
+        description: "Unicode escape sequences"
+        priority: 4
+
+xss_detection:
+  browser_pool:
+    size: 5
+    max_requests_per_browser: 100
+    headless: true
+  timeouts:
+    page_load: 30
+    script_execution: 5
+
+oob_detection:
+  providers:
+    - name: "interactsh"
+      server: "interact.sh"
+      default_ttl: 60
+    - name: "local"
+      host: "localhost"
+      http_port: 8080
+      dns_port: 5353
+
+evidence_collection:
+  scope_levels:
+    - presence_only  # Safe, always allowed
+    - version_info   # Requires low HITL confidence
+    - sample_data    # Requires medium HITL confidence
+    - full_extraction  # Requires high HITL confidence + approval
+  default_scope: "presence_only"
+  max_response_evidence_length: 2000
+
+platform_integration:
+  hackerone:
+    api_version: "v1"
+    base_url: "https://api.hackerone.com/v1"
+    severity_mapping:
+      critical: 4
+      high: 3
+      medium: 2
+      low: 1
+      informational: 0
+  bugcrowd:
+    api_version: "v4"
+    base_url: "https://api.bugcrowd.com"
+    severity_mapping:
+      critical: 5
+      high: 4
+      medium: 3
+      low: 2
+      informational: 1
+
+second_order:
+  monitoring:
+    interval_seconds: 30
+    duration_seconds: 300  # 5 minutes
+    max_endpoints_to_check: 5
+  confidence_thresholds:
+    high: 5
+    medium: 3
+    low: 1
+
+distributed_sqli:
+  headers_to_test:
+    - "X-Request-ID"
+    - "X-Correlation-ID"
+    - "X-Trace-ID"
+    - "X-Session-ID"
+    - "X-User-ID"
+  max_targets_per_endpoint: 5

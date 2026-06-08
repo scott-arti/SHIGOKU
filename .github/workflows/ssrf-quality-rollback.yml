@@ -1,0 +1,78 @@
+name: SSRF Quality Rollback
+
+on:
+  workflow_run:
+    workflows: ["Tests"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run only"
+        required: true
+        default: "true"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  rollback:
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'failure')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyyaml
+
+      - name: Run rollback
+        id: rollback
+        run: |
+          DRY_RUN="true"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            DRY_RUN="${{ github.event.inputs.dry_run }}"
+          fi
+
+          EXTRA=""
+          if [ "$DRY_RUN" = "true" ]; then
+            EXTRA="--dry-run"
+          fi
+
+          python scripts/ssrf_quality_rollback.py \
+            $EXTRA \
+            --summary /tmp/ssrf_rollback_summary.json
+
+          echo "dry_run=$DRY_RUN" >> "$GITHUB_OUTPUT"
+          cat /tmp/ssrf_rollback_summary.json
+
+      - name: Create rollback PR (non-dry-run only)
+        if: steps.rollback.outputs.dry_run == 'false'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: "chore: rollback ssrf quality config to stable profile"
+          title: "chore: rollback SSRF quality config to stable profile"
+          body: |
+            Auto-generated rollback after SSRF quality gate failure.
+
+            Source workflow run:
+            - ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          branch: chore/ssrf-quality-rollback
+          delete-branch: true
+
+      - name: Upload rollback summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ssrf-rollback-summary
+          path: /tmp/ssrf_rollback_summary.json

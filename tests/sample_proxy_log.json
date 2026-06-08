@@ -1,0 +1,118 @@
+[
+  {
+    "request": {
+      "method": "GET",
+      "url": "https://api.example.com/users/123/profile",
+      "host": "api.example.com",
+      "path": "/users/123/profile",
+      "headers": {
+        "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjMiLCJyb2xlIjoidXNlciJ9.abc123",
+        "Content-Type": "application/json"
+      },
+      "body": ""
+    },
+    "response": {
+      "statusCode": 200,
+      "headers": { "Content-Type": "application/json" },
+      "body": "{\"id\": 123, \"name\": \"Test User\", \"email\": \"test@example.com\"}"
+    }
+  },
+  {
+    "request": {
+      "method": "POST",
+      "url": "https://api.example.com/api/v1/orders?user_id=456&admin=false",
+      "host": "api.example.com",
+      "path": "/api/v1/orders",
+      "headers": {
+        "Cookie": "session=abc123xyz",
+        "Content-Type": "application/json"
+      },
+      "body": "{\"amount\": 100, \"role\": \"user\"}"
+    },
+    "response": {
+      "statusCode": 201,
+      "headers": {},
+      "body": "{\"order_id\": 789}"
+    }
+  },
+  {
+    "request": {
+      "method": "GET",
+      "url": "https://auth.example.com/oauth/authorize?client_id=app123&redirect_uri=https://app.example.com/callback&response_type=code",
+      "host": "auth.example.com",
+      "path": "/oauth/authorize",
+      "headers": {},
+      "body": ""
+    },
+    "response": {
+      "statusCode": 302,
+      "headers": { "Location": "https://app.example.com/callback?code=xyz" },
+      "body": ""
+    }
+  },
+  {
+    "request": {
+      "method": "POST",
+      "url": "https://api.example.com/mfa/verify",
+      "host": "api.example.com",
+      "path": "/mfa/verify",
+      "headers": {
+        "Authorization": "Bearer temp_token_xyz",
+        "Content-Type": "application/json"
+      },
+      "body": "{\"code\": \"123456\"}"
+    },
+    "response": {
+      "statusCode": 200,
+      "headers": {},
+      "body": "{\"access_token\": \"final_token\"}"
+    }
+  },
+  {
+    "request": {
+      "method": "GET",
+      "url": "https://api.example.com/admin/dashboard",
+      "host": "api.example.com",
+      "path": "/admin/dashboard",
+      "headers": {
+        "Authorization": "Bearer admin_token"
+      },
+      "body": ""
+    },
+    "response": {
+      "statusCode": 200,
+      "headers": {},
+      "body": "{\"stats\": {}}"
+    }
+  },
+  {
+    "request": {
+      "method": "GET",
+      "url": "https://cdn.example.com/assets/logo.png",
+      "host": "cdn.example.com",
+      "path": "/assets/logo.png",
+      "headers": {},
+      "body": ""
+    },
+    "response": {
+      "statusCode": 200,
+      "headers": {},
+      "body": ""
+    }
+  },
+  {
+    "request": {
+      "method": "GET",
+      "url": "https://google-analytics.com/collect",
+      "host": "google-analytics.com",
+      "path": "/collect",
+      "headers": {},
+      "body": ""
+    },
+    "response": {
+      "statusCode": 200,
+      "headers": {},
+      "body": ""
+    }
+  }
+]

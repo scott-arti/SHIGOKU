@@ -1,0 +1,506 @@
+#!/usr/bin/env python3
+import logging
+import asyncio
+import re
+import json
+from typing import Dict, Any, Tuple, Optional, List
+from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+
+from src.core.agents.swarm.thought_loop import ThoughtLoop, ThoughtStep
+from src.core.agents.swarm.base import Specialist, Task
+from src.core.models.finding import Finding, VulnType, Severity, Evidence
+from src.core.models.llm import LLMClient
+from src.core.infra.network_client import AsyncNetworkClient
+from src.core.infra.smart_request import SmartRequest
+
+logger = logging.getLogger(__name__)
+
+async def _fetch_and_parse_form(url: str, auth_headers: Dict[str, str]) -> List[Dict[str, Any]]:
+    """
+    HTML を取得して BeautifulSoup でフォームを解析（高速・第一選択）
+    
+    Args:
+        url: 対象 URL
+        auth_headers: 認証ヘッダー
+        
+    Returns:
+        フォーム情報のリスト
+    """
+    from bs4 import BeautifulSoup
+
+    forms = []
+    try:
+        client = AsyncNetworkClient()
+        resp = await client.request("GET", url, headers=auth_headers)
+        # resp は辞書：{"status": 200, "body": "...", "headers": {...}}
+        body = resp.get("body", "") if isinstance(resp, dict) else getattr(resp, "text", "")
+        soup = BeautifulSoup(body, "html.parser")
+        
+        for form in soup.find_all("form"):
+            action = form.get("action", "")
+            method = form.get("method", "GET").upper()
+            
+            inputs = []
+            for input_elem in form.find_all(["input", "select", "textarea"]):
+                name = input_elem.get("name")
+                if name:
+                    input_type = input_elem.get("type", "text")
+                    value = input_elem.get("value", "1")
+                    inputs.append({"name": name, "type": input_type, "value": value})
+            
+            forms.append({
+                "action": action,
+                "method": method,
+                "inputs": inputs
+            })
+        
+        await client.close()
+    except Exception as e:
+        logger.debug(f"[SmartSQLiHunter] HTML form parsing failed for {url}: {e}")
+    
+    return forms
+
+class SmartSQLiHunter(Specialist, ThoughtLoop):
+    """
+    Stateful Loop-based Agent for SQL Injection (The Brain).
+
+    Strategies:
+    1. Probe: Check parameter reflections and error messages.
+    2. Hypothesize: Determine DB type (MySQL, Postgres, etc.) and error type.
+    3. Exploit: Craft payloads (UNION, Error-based, Time-based) based on hypothesis.
+    4. Verify: Confirm vulnerability.
+
+    MEDIUM/HIGH SECURITY AWARENESS:
+    - If input characters like ' or \" are filtered, use numeric injections (e.g., id=1 OR 1=1).
+    - If the target is a POST form with dropdowns/radio buttons, manipulate the raw POST values.
+    - Test for blind SQLi using conditional timing (SLEEP/BENCHMARK) if no errors are visible.
+    """
+
+    name = "SmartSQLiHunter"
+    description = "Stateful reasoning agent for deep SQLi detection."
+
+    SYSTEM_PROMPT = """You are an expert SQL Injection Penetration Tester.
+You must work in a thought loop to detect SQL injection vulnerabilities.
+
+Commands:
+- ACTION: request
+  INPUT: [The payload]
+
+- ACTION: finish
+  INPUT: [vulnerable|safe|unknown]
+
+CRITICAL FORMAT RULES (VIOLATION = IMMEDIATE RETRY):
+1. You MUST use EXACTLY this format for EVERY turn:
+   THOUGHT: [Your reasoning]
+   ACTION: [request|finish]
+   INPUT: [payload or vulnerable/safe/unknown]
+
+2. NEVER write "Observation:" or "observation" - this is PROVIDED BY THE TOOL after your Action.
+3. NEVER write "Final Answer:" or "Conclusion:" - use "ACTION: finish" instead.
+4. NEVER fabricate tool outputs or observations.
+5. If you write invalid format, the system will FORCE RETRY.
+
+Guidelines:
+1. If basic quotes (' or ") are escaped (e.g. Medium level security), try numeric payloads that don't require quotes (e.g. 1 OR 1=1).
+2. For dropdowns or numeric IDs, test for Boolean-based differences using arithmetic or conditional logic (e.g. id=1+0 vs id=1+1).
+3. If a WAF is suspected, use encoding (URL, hex, unicode) or whitespace manipulation (e.g. /**/, %0a).
+4. Use standard SQL error messages to identify the database type (MySQL, PostgreSQL, etc.).
+5. Test for time-based blind SQLi if no immediate differences are found (e.g. ' OR SLEEP(5)--).
+6. Support for POST forms and JSON bodies is available. If methodology involves POST, payloads will be placed in the body.
+
+Refinement:
+Always analyze the 'Observation' which contains status, diff, and a snippet of the response body.
+If you see SQL error messages, focus on error-based exploitation.
+If the response length or status changes slightly, focus on boolean-based blind exploitation.
+
+Format:
+THOUGHT: [Reasoning about the next payload strategy based on previous observations]
+ACTION: [Command]
+INPUT: [Input]
+"""
+
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        Specialist.__init__(self, config)
+        ThoughtLoop.__init__(self, max_turns=8)
+
+        mode = "bugbounty"
+        model = "gemini/gemini-2.5-flash"
+        if config and isinstance(config, dict):
+             mode = config.get("mode", mode)
+             model = config.get("model", model) if isinstance(config, dict) else getattr(config, "model", model)
+
+        self.llm = LLMClient(model=model, use_local=False)
+
+        # Network Setup
+        proxy_manager = None
+        try:
+            from src.core.infra.proxy_manager import get_proxy_manager
+            proxy_manager = get_proxy_manager()
+        except ImportError:
+            pass
+
+        from src.core.security.request_guard import get_request_guard
+
+        base_client = AsyncNetworkClient(proxy_manager=proxy_manager, mode=mode)
+        self.smart_client = SmartRequest(base_client, request_guard=get_request_guard(mode=mode))
+
+        # State for loop
+        self.vulnerable = False
+        self.evidence = ""
+        self.used_payloads = []
+        self.history_messages = []
+
+    async def close(self):
+        """リソース解放"""
+        if self.smart_client and hasattr(self.smart_client, "client"):
+            await self.smart_client.client.close()
+
+    async def execute(self, task: Task, quick_mode: bool = False) -> List[Finding]:
+        """
+        Specialist としてのエントリーポイント
+        
+        Args:
+            task: タスク情報
+            quick_mode: True の場合、ThoughtLoop のターン数を制限して高速化
+        """
+        logger.info(f"[{self.name}] Starting ThoughtLoop for {task.target} (quick_mode={quick_mode})")
+
+        # quick_mode の場合、ターン数を制限（デフォルト 8→8、変更なし）
+        original_max_turns = self.max_turns
+        if quick_mode:
+            self.max_turns = 8  # 3 ターンでは不十分なため 8 ターンに
+
+        # タイムアウト制御付きで実行（Layer 2 リトライを考慮して延長）
+        # quick_mode: 120 秒→300 秒、通常：240 秒→600 秒
+        timeout = 300 if quick_mode else 600
+        try:
+            result = await asyncio.wait_for(
+                self.run_as_tool(task.target, task.params),
+                timeout=timeout
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"[{self.name}] Timeout after {timeout}s for {task.target}")
+            return []
+        finally:
+            # max_turns を元に戻す
+            self.max_turns = original_max_turns
+
+        findings = []
+        if result.get("vulnerable"):
+            finding = Finding(
+                vuln_type=VulnType.SQLI,
+                severity=Severity.HIGH,
+                title=f"SQL Injection in parameter '{result.get('param', 'unknown')}'",
+                description=result.get("description", "Detected by SmartSQLiHunter."),
+                target_url=task.target,
+                evidence=Evidence(
+                    request_url=task.target,
+                    response_body=str(result.get("evidence", ""))
+                ),
+                source_agent=self.name,
+                confidence=0.9,
+                tags=["sqli", "smart_agent"]
+            )
+            findings.append(finding)
+
+        return findings
+
+    async def run_as_tool(self, url: str, params: Dict[str, Any] = None) -> Dict[str, Any]:
+        """
+        Manager から呼び出し可能な Tool メソッド。
+        フォーム情報が含まれる場合、POST パラメータとして抽出する。
+        """
+        params = params or {}
+        _auth = params.get("_auth", {})
+        auth_headers = _auth.get("auth_headers", {})
+        cookies_str = _auth.get("cookies", "")
+
+        method = params.get("method", "GET").upper()
+        target = url
+
+        META_KEYS = {
+            "_auth", "method", "content_type", "task_id",
+            "targets", "targets_file", "source_file", "cookies",
+            "tags", "category", "_context", "extra_targets",
+            "auth_headers", "headers", "count", "forms",
+        }
+        payload_params = {k: v for k, v in params.items() if k not in META_KEYS}
+
+        parsed = urlparse(target)
+        url_params = parse_qs(parsed.query)
+        url_params_flat = {k: v[0] if v else "" for k, v in url_params.items()}
+
+        if not payload_params:
+            # フォーム情報が提供されている場合、それを優先
+            forms = params.get("forms", [])
+            if forms:
+                for form in forms:
+                    form_method = form.get("method", "GET").upper()
+                    if form_method == "POST":
+                        method = "POST"
+                    for input_field in form.get("inputs", []):
+                        param_name = input_field.get("name", "")
+                        if param_name:
+                            # 初期値を設定（SQLi テスト用）
+                            payload_params[param_name] = input_field.get("value", "1")
+                logger.info("[%s] Extracted %d params from provided forms: %s",
+                           self.name, len(payload_params), list(payload_params.keys()))
+
+        # フォーム情報が提供されていない、または追加のフォームパラメータがある場合、HTML パースでフォームを検出（常に実行）
+        forms_from_html = await _fetch_and_parse_form(target, auth_headers)
+        if forms_from_html:
+            for form in forms_from_html:
+                form_method = form.get("method", "GET").upper()
+                if form_method == "POST":
+                    method = "POST"
+                for input_field in form.get("inputs", []):
+                    param_name = input_field.get("name", "")
+                    # 既存のパラメータを上書きしない（LLM の推測を優先）
+                    if param_name and param_name not in payload_params:
+                        payload_params[param_name] = input_field.get("value", "1")
+            if forms_from_html:
+                logger.info("[%s] Extracted %d additional params from HTML forms: %s",
+                           self.name, len(payload_params), list(payload_params.keys()))
+        
+        forms = forms or forms_from_html  # forms 変数を更新
+
+        # HTML パースでもフォームがない場合、URL クエリから取得
+        if not payload_params and url_params_flat:
+            payload_params = url_params_flat
+
+        # 全てダメな場合、Playwright でフォームを検出（最終フォールバック）
+        if not payload_params:
+            try:
+                from src.tools.browser.playwright_validator import PlaywrightValidator
+                pw_forms = await PlaywrightValidator().extract_forms(
+                    target,
+                    timeout=10.0,
+                    cookies=[{"name": c.split("=")[0].strip(), "value": c.split("=")[1].strip(), "domain": urlparse(target).hostname}] if cookies_str else None
+                )
+                if pw_forms:
+                    for form in pw_forms:
+                        if form.get("method", "get").upper() == "POST":
+                            method = "POST"
+                        for input_field in form.get("inputs", []):
+                            param_name = input_field.get("name", "")
+                            if param_name:
+                                payload_params[param_name] = "1"
+                    logger.info("[%s] Extracted %d params from Playwright forms: %s",
+                               self.name, len(payload_params), list(payload_params.keys()))
+            except Exception as e:
+                logger.debug("[%s] Playwright form extraction failed: %s", self.name, e)
+
+        if cookies_str and "Cookie" not in auth_headers:
+            auth_headers["Cookie"] = cookies_str
+
+        # forms 変数を常に初期化
+        if 'forms' not in locals():
+            forms = []
+
+        # ThoughtLoop コンテキスト設定
+        self.context = {
+            "target": target,
+            "param": list(payload_params.keys())[0] if payload_params else None,
+            "method": method,
+            "params": payload_params,
+            "auth_headers": auth_headers,
+            "cookies": cookies_str,
+            "forms": forms if forms else [],
+        }
+
+        # State 初期化
+        self.vulnerable = False
+        self.evidence = ""
+        self.used_payloads = []
+        self.history_messages = []
+        self.history_messages.append({"role": "system", "content": self.SYSTEM_PROMPT})
+
+        initial_prompt = f"""Target URL: {target}
+Method: {method}
+Parameter: {self.context['param']}
+Original Value: {payload_params.get(self.context['param'], '') if payload_params else ''}
+
+Start your SQL injection testing.
+"""
+        self.history_messages.append({"role": "user", "content": initial_prompt})
+
+        # ThoughtLoop を実行（親クラスの run_loop を使用）
+        try:
+            loop_result = await self.run_loop(self.context)
+        except Exception as e:
+            logger.error(f"[{self.name}] ThoughtLoop failed: {e}")
+            loop_result = {"status": "failed", "error": str(e)}
+
+        return {
+            "vulnerable": self.vulnerable,
+            "evidence": self.evidence,
+            "param": self.context.get("param"),
+            "payloads_used": self.used_payloads,
+            "description": f"SQL Injection detected." if self.vulnerable else "No SQL Injection detected.",
+            "loop_result": loop_result
+        }
+
+    async def decide(self, turn: int) -> Tuple[str, str, Any]:
+        """
+        LLM decides the next move (ThoughtLoop abstract method).
+        
+        LLM の出力を検証し、不正な形式（Observation の自己生成など）を検出したらリトライ。
+        """
+        history_text = "\n".join([
+            f"Turn {s.turn}: Act={s.action}({s.action_input}) -> {s.observation}"
+            for s in self.history
+        ])
+
+        prompt = f"""Target: {self.context['target']}
+Testing Parameter: {self.context['param']}
+Method: {self.context['method']}
+Current Turn: {turn}
+
+History:
+{history_text if history_text else 'No previous actions'}
+
+Decide next step for SQL injection testing.
+"""
+        response = await self.llm.agenerate([
+            {"role": "system", "content": self.SYSTEM_PROMPT},
+            {"role": "user", "content": prompt}
+        ])
+
+        content = response.choices[0].message.content if response and response.choices else ""
+
+        # フォールバック
+        if not content:
+            logger.warning(f"Turn {turn}: LLM returned empty content. Forcing finish.")
+            return "Analysis complete (LLM empty)", "finish", "safe"
+
+        # Layer 2: LLM 出力の厳密な検証
+        # Observation を含んでいたらエラー（再試行）
+        if "Observation:" in content or "observation" in content.lower():
+            logger.warning(f"Turn {turn}: LLM wrote 'Observation:'! This is invalid. Forcing retry...")
+            # 履歴にエラーメッセージを追加して再試行
+            self.history.append({
+                "role": "user",
+                "content": "ERROR: You wrote 'Observation:' in your output. This is INVALID. "
+                          "Do NOT write 'Observation:' yourself. Observation is PROVIDED BY THE TOOL after your Action. "
+                          "Your output should ONLY contain THOUGHT, ACTION, and INPUT. Please retry."
+            })
+            # 再帰的に呼び出してリトライ（最大 3 回まで）
+            if turn < self.max_turns:
+                return await self.decide(turn)
+            else:
+                return "Analysis complete (LLM wrote invalid Observation)", "finish", "safe"
+
+        # Final Answer など、不正な形式も検出
+        if "Final Answer:" in content or "final answer" in content.lower():
+            logger.warning(f"Turn {turn}: LLM wrote 'Final Answer:'! This should be 'ACTION: finish'. Forcing retry...")
+            self.history.append({
+                "role": "user",
+                "content": "ERROR: You wrote 'Final Answer:' in your output. This is INVALID. "
+                          "Use 'ACTION: finish' instead of 'Final Answer:'. Please retry."
+            })
+            if turn < self.max_turns:
+                return await self.decide(turn)
+            else:
+                return "Analysis complete (LLM wrote invalid format)", "finish", "safe"
+
+        # Parse
+        thought = "Analyzing..."
+        action = "finish"
+        action_input = "safe"
+
+        thought_match = re.search(r'THOUGHT:\s*(.+?)(?=\nACTION:|$)', content, re.DOTALL | re.IGNORECASE)
+        action_match = re.search(r'ACTION:\s*([a-zA-Z_]+)', content, re.IGNORECASE)
+        input_match = re.search(r'INPUT:\s*(.+)', content, re.IGNORECASE)
+
+        if thought_match:
+            thought = thought_match.group(1).strip()
+        if action_match:
+            action = action_match.group(1).strip().lower()
+        if input_match:
+            action_input = input_match.group(1).strip()
+
+        return thought, action, action_input
+
+    async def act(self, action: str, action_input: Any) -> str:
+        """Execute action (ThoughtLoop abstract method)."""
+        # 複数の終了アクション形式を許可
+        if action in ["finish", "final", "final_answer", "conclusion"]:
+            action_input_lower = str(action_input).lower()
+            # 脆弱性検出の複数の表現を許可
+            if any(kw in action_input_lower for kw in ["vulnerable", "found", "confirmed", "detected", "success"]):
+                self.vulnerable = True
+                self.evidence = str(action_input)
+            return f"Finished: {action_input}"
+
+        if action == "request":
+            payload = str(action_input)
+            self.used_payloads.append(payload)
+
+            # リクエスト送信
+            obs = await self._send_request(payload)
+            return f"Observation: Status={obs['status']}, Diff={obs['diff']}, Body={obs['body_snippet']}"
+
+        return f"Unknown action: {action}"
+
+    async def should_stop(self, step: ThoughtStep) -> bool:
+        """Check if we should stop."""
+        if step.action == "finish":
+            return True
+        return False
+
+    def get_result(self) -> Dict[str, Any]:
+        """Override to return SQLi-specific result."""
+        return {
+            "status": self.status.value,
+            "turns": len(self.history),
+            "vulnerable": self.vulnerable,
+            "evidence": self.evidence,
+            "payloads_used": self.used_payloads
+        }
+
+    async def _send_request(self, payload: str) -> Dict[str, Any]:
+        """実際のリクエストを送信し、結果を返す"""
+        param = self.context.get("param")
+        target = self.context.get("target")
+        method = self.context.get("method", "GET")
+        auth_headers = self.context.get("auth_headers", {})
+        params = self.context.get("params", {}).copy()
+
+        if param and param in params:
+            params[param] = payload
+
+        try:
+            if method == "POST":
+                resp = await self.smart_client.request(
+                    "POST",
+                    target,
+                    data=params,
+                    headers=auth_headers,
+                    timeout=60
+                )
+            else:
+                parsed = urlparse(target)
+                new_query = urlencode(params)
+                new_url = urlunparse(parsed._replace(query=new_query))
+
+                resp = await self.smart_client.request(
+                    "GET",
+                    new_url,
+                    headers=auth_headers,
+                    timeout=60
+                )
+
+            body = resp.text[:500] if resp.text else ""
+            status = resp.status_code
+
+            sql_errors = [
+                "SQL syntax", "mysql_fetch", "ORA-", "PostgreSQL", "SQLite",
+                "ODBC", "JDBC", "unclosed quotation mark", "syntax error"
+            ]
+            diff = "error" if any(err.lower() in body.lower() for err in sql_errors) else "normal"
+
+            return {"status": status, "diff": diff, "body_snippet": body[:200]}
+
+        except Exception as e:
+            logger.error(f"[{self.name}] Request failed: {e}")
+            return {"status": 0, "diff": "error", "body_snippet": str(e)}

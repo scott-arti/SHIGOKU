@@ -1,0 +1,23 @@
+name: path_traversal
+description: "Golden Recipe: Path Traversal / LFI Detection - Direct tool execution"
+tags: ["injection", "lfi", "traversal"]
+severity: "high"
+target_condition: null
+steps:
+  - tool: "tool_executor"
+    args:
+      tool_name: "nuclei"
+      args:
+        extra_args: "-t /home/bbb/nuclei-templates/http/fuzzing/linux-lfi-fuzzing.yaml"
+  - tool: "tool_executor"
+    args:
+      tool_name: "nuclei"
+      args:
+        extra_args: "-t http/cves/ -tags lfi"
+  - tool: "tool_executor"
+    args:
+      tool_name: "ffuf"
+      args:
+        wordlist: "/home/bbb/Documents/tools/wordlists/SecLists/Fuzzing/LFI/LFI-Jhaddix.txt"
+        match_code: "200"
+        extra_args: "-ms >1000"

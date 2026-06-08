@@ -1,0 +1,6 @@
+{
+  "generated_at": "2026-05-26T00:00:00Z",
+  "generator": "runtime-control-ci",
+  "gate_evidence_path": "docs/shigoku/registry/runtime_control_gate_evidence.json",
+  "gate_evidence_sha256": "d983e3b7902e24e989d7af34bb720a55f2c0646c6c4b166e4517d3c8521cb971"
+}

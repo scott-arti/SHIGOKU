@@ -1,0 +1,256 @@
+# Tagging Rules Configuration
+#
+# TaggingFilter がリクエスト/レスポンスをタグ付けするためのルール定義
+# このファイルは必須です。存在しない場合はエラーになります。
+#
+# フィールド説明:
+#   name: ルール識別子（ログ出力用）
+#   tag: 付与するタグ名（SwarmDispatcher でルーティングに使用）
+#   match_on: マッチ対象（path, query, body, response_body, headers, response_headers, metadata）
+#   pattern: Python 正規表現パターン（IGNORECASE で適用）、metadata時はキーが存在するかで判定
+#   status: (オプション) マッチ条件となる HTTP ステータスコードリスト
+#   param_extract: (オプション) パラメータ名を抽出するグループ番号
+
+rules:
+  # ========================================
+  # Metadata Patterns
+  # ========================================
+  - name: form_present_meta
+    tag: xss_candidate
+    match_on: metadata
+    pattern: "forms"
+  # ========================================
+  # Path Patterns
+  # ========================================
+  - name: auth_path
+    tag: auth
+    match_on: path
+    pattern: "(login|signin|sign-in|auth|oauth|sso|session|logout|register)"
+
+  - name: admin_accessible
+    tag: admin
+    match_on: path
+    pattern: "(admin|dashboard|panel|console|manage|administrator)"
+    status: [200, 201, 204]
+
+  - name: admin_blocked
+    tag: admin_blocked
+    match_on: path
+    pattern: "(admin|dashboard|panel|console|manage|administrator)"
+    status: [401, 403]
+
+  - name: upload_path
+    tag: upload
+    match_on: path
+    pattern: "(upload|import|restore|backup|attach)"
+
+  - name: open_redirect_path
+    tag: redirect_param
+    match_on: path
+    pattern: "(redirect|forward|goto|return|navigate)"
+
+  # ========================================
+  # Body Patterns
+  # ========================================
+  - name: auth_body
+    tag: auth
+    match_on: body
+    pattern: "(password|passwd|pwd|token|api[_-]?key|secret|credential)"
+
+  # ========================================
+  # Query Parameter Patterns
+  # ========================================
+  - name: id_param_query
+    tag: id_param
+    match_on: query
+    pattern: "(^|[?&])(id|user_id|account_id|order_id|item_id|uid|pid|name|q|search|query|msg|message|text|desc|description|title|comment)="
+    param_extract: 2
+
+  - name: redirect_param_query
+    tag: redirect_param
+    match_on: query
+    pattern: "(^|[?&])(url|next|redirect|target|dest|goto|return|callback)="
+    param_extract: 2
+
+  - name: file_param_query
+    tag: file_param
+    match_on: query
+    pattern: "(^|[?&])(file|path|doc|document|include|page)="
+    param_extract: 2
+
+  # ========================================
+  # Body Parameter Patterns
+  # ========================================
+  - name: id_param_body
+    tag: id_param
+    match_on: body
+    pattern: "(^|&)(id|user_id|account_id|order_id|item_id|uid|pid|name|q|search|query|msg|message|text|desc|description|title|comment)="
+    param_extract: 2
+
+  # ========================================
+  # Path Patterns (Heuristics)
+  # ========================================
+  - name: sqli_path_hint
+    tag: id_param
+    match_on: path
+    pattern: "(sql|inject|query|database)"
+
+  - name: xss_path_hint
+    tag: xss_candidate
+    match_on: path
+    pattern: "(xss|script|reflect|stored|dom)"
+
+  - name: cmd_path_hint
+    tag: id_param
+    match_on: path
+    pattern: "(exec|cmd|command|ping|rce)"
+
+  - name: csrf_path_hint
+    tag: csrf_candidate
+    match_on: path
+    pattern: "(csrf|cross[-_]?site)"
+
+  - name: api_path_hint
+    tag: api_candidate
+    match_on: path
+    pattern: "(/api/|graphql|openapi|swagger)"
+
+  - name: fi_path_hint
+    tag: file_param
+    match_on: path
+    pattern: "(/fi/|file[_-]?inclusion|inclusion)"
+
+  - name: weak_session_path_hint
+    tag: auth
+    match_on: path
+    pattern: "(weak_id|session)"
+
+  - name: ssti_path_hint
+    tag: ssti_candidate
+    match_on: path
+    pattern: "(tpl|render|template_engine|jinja|freemarker|thymeleaf|velocity|smarty|mako|blade_tpl)"
+
+  - name: ssti_param_hint
+    tag: ssti_candidate
+    match_on: query
+    pattern: "(^|[?&])(template|tpl|view_name|layout|theme|engine)="
+    param_extract: 2
+
+  - name: ssti_body_hint
+    tag: ssti_candidate
+    match_on: body
+    pattern: "(^|&)(template|tpl|view_name|layout|theme|engine)="
+    param_extract: 2
+
+  # ========================================
+  # Response Body Patterns
+  # ========================================
+  - name: debug_info_response
+    tag: debug_info
+    match_on: response_body
+    pattern: "(stack\\s*trace|exception|syntax\\s*error|unexpected\\s*error|debug|traceback|error\\s*at\\s*line)"
+    max_search_length: 1000
+
+  # ========================================
+  # Request Header Patterns
+  # ========================================
+  - name: auth_header
+    tag: auth
+    match_on: headers
+    header_name: "(Authorization|X-Auth-Token|X-API-Key)"
+    pattern: ".*" # ヘッダー名がマッチすれば値は何でもOK
+
+  - name: jwt_header
+    tag: jwt_detected
+    match_on: headers
+    header_name: "Authorization"
+    pattern: "^Bearer\\s+eyJ"
+
+  # ========================================
+  # Response Header Patterns
+  # ========================================
+  - name: set_cookie_auth
+    tag: auth
+    match_on: response_headers
+    header_name: "Set-Cookie"
+    pattern: "(session|auth|token|jwt)"
+
+  # ========================================
+  # CORS Patterns
+  # ========================================
+  - name: cors_response_header_hint
+    tag: cors_candidate
+    match_on: response_headers
+    header_name: "Access-Control-Allow-Origin"
+    pattern: ".*"
+
+  - name: cors_path_hint
+    tag: cors_candidate
+    match_on: path
+    pattern: "(api|graphql|v[0-9]+|endpoint|service|resource|rest)"
+
+  # ========================================
+  # CRLF Patterns
+  # ========================================
+  - name: crlf_path_hint
+    tag: crlf_candidate
+    match_on: path
+    pattern: "(redirect|location|forward|continue|return|next|redir)"
+
+  - name: crlf_param_hint
+    tag: crlf_candidate
+    match_on: query
+    pattern: "(^|[?&])(url|redirect|return_url|next|location|forward|continue|redir|dest|target|goto)="
+    param_extract: 2
+
+  - name: crlf_response_splitting_param
+    tag: crlf_candidate
+    match_on: query
+    pattern: "(^|[?&])(lang|locale|charset|encoding|header|name|title|filename|page|view|format|type|output)="
+    param_extract: 2
+
+  # ========================================
+  # GraphQL Patterns
+  # ========================================
+  - name: graphql_path_hint
+    tag: graphql_candidate
+    match_on: path
+    pattern: "(graphql|gql|/graph)"
+
+  - name: graphql_param_hint
+    tag: graphql_candidate
+    match_on: query
+    pattern: "(^|[?&])(query|mutation|operationName|variables)="
+    param_extract: 2
+
+  - name: graphql_content_type_hint
+    tag: graphql_candidate
+    match_on: response_headers
+    header_name: "Content-Type"
+    pattern: "application/graphql"
+
+  # ========================================
+  # SSRF Patterns
+  # ========================================
+  - name: ssrf_param_hint
+    tag: ssrf_candidate
+    match_on: query
+    pattern: "(^|[?&])(url|uri|endpoint|host|target|dest|destination|src|source|path|fetch|load|remote|request|webhook|callback)="
+    param_extract: 2
+
+  - name: ssrf_body_hint
+    tag: ssrf_candidate
+    match_on: body
+    pattern: "(^|&)(url|uri|endpoint|host|target|dest|destination|src|source|path|fetch|load|remote|request|webhook|callback)="
+    param_extract: 2
+
+  - name: ssrf_graphql_variables_hint
+    tag: ssrf_candidate
+    match_on: body
+    pattern: "\"variables\"\\s*:\\s*\\{[^\\}]{0,2048}(url|uri|endpoint|host|target|dest|destination|src|source|fetch|remote|webhook|callback)\\s*\"\\s*:"
+
+  - name: ssrf_header_context_hint
+    tag: ssrf_candidate
+    match_on: response_headers
+    header_name: "X-Forwarded-Host"
+    pattern: ".+"

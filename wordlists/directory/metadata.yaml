@@ -1,0 +1,73 @@
+# ディレクトリ/パス探索用ワードリスト メタデータ
+
+base_path: /home/bbb/Documents/tools/wordlists
+
+files:
+  # ========== SecLists 基本 ==========
+  - name: common.txt
+    path: SecLists/Discovery/Web-Content/common.txt
+    source: SecLists
+    lines: 4749
+    size: small
+    strength: [general, stable, fast]
+    best_for: [first_scan, quick, any_target]
+
+  - name: directory-list-2.3-small.txt
+    path: SecLists/Discovery/Web-Content/DirBuster-2007_directory-list-2.3-small.txt
+    source: DirBuster
+    lines: 87664
+    size: medium
+    strength: [general, stable, proven]
+    best_for: [standard_scan, bugbounty_mode]
+
+  - name: directory-list-2.3-medium.txt
+    path: SecLists/Discovery/Web-Content/DirBuster-2007_directory-list-2.3-medium.txt
+    source: DirBuster
+    lines: 220559
+    size: high
+    strength: [general, comprehensive]
+    best_for: [deep_scan, thorough]
+
+  - name: directory-list-2.3-big.txt
+    path: SecLists/Discovery/Web-Content/DirBuster-2007_directory-list-2.3-big.txt
+    source: DirBuster
+    lines: 1273832
+    size: massive
+    strength: [exhaustive]
+    best_for: [exhaustive_scan]
+
+  - name: directory-list-lowercase-2.3-small.txt
+    path: SecLists/Discovery/Web-Content/DirBuster-2007_directory-list-lowercase-2.3-small.txt
+    source: DirBuster
+    lines: 81643
+    size: medium
+    strength: [general, lowercase]
+    best_for: [linux_target, case_sensitive]
+
+  # ========== AssetNote (最新) ==========
+  - name: httparchive_directories_1m_2025_11_27.txt
+    path: AssetNote/httparchive_directories_1m_2025_11_27.txt
+    source: AssetNote
+    lines: 704723
+    size: high
+    strength: [modern, real_world, latest_2025]
+    best_for: [modern_target, real_world_data]
+
+selection_rules:
+  mode_defaults:
+    bugbounty:
+      quick: common.txt
+      standard: directory-list-2.3-small.txt
+      deep: httparchive_directories_1m_2025_11_27.txt
+    vulntest:
+      quick: common.txt
+      standard: directory-list-2.3-small.txt
+      deep: directory-list-2.3-medium.txt
+    ctf:
+      quick: common.txt
+      standard: common.txt
+      deep: directory-list-2.3-small.txt
+
+  tech_stack:
+    modern: httparchive_directories_1m_2025_11_27.txt
+    default: directory-list-2.3-small.txt

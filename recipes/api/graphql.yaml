@@ -1,0 +1,20 @@
+name: graphql_introspection
+description: "Golden Recipe: GraphQL Introspection and Security Checks"
+tags: ["api", "graphql"]
+severity: "high"
+target_condition: "'GraphQL' in tech_stack"
+steps:
+  - tool: "reconbot"
+    action: "graphql_scan"
+    args:
+      instruction: |
+        Scan for GraphQL security issues.
+
+        1. Find GraphQL endpoints: /graphql, /graphiql, /api/graphql, /v1/graphql
+        2. Check introspection:
+           POST with query: { __schema { types { name } } }
+        3. If introspection enabled, extract full schema.
+        4. Look for sensitive queries/mutations.
+        5. Check for rate limiting bypass via query batching.
+
+        Use 'graphw00f' for fingerprinting and 'InQL' for enumeration.

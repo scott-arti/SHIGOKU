@@ -1,0 +1,238 @@
+"""
+PhaseGate: フェーズベースのタスク生成許可制御
+
+フェーズは「ゲート」として機能し、タスク生成の許可条件を管理する。
+- アンロック/ロック状態の管理
+- フェーズごとのデータ蓄積
+- タスク生成の許可判定
+"""
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Dict, List, Optional
+import time
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+class Phase(str, Enum):
+    """実行フェーズ"""
+    INIT = "init"
+    RECON = "recon"
+    ATTACK = "attack"
+    REPORT = "report"
+
+
+@dataclass
+class PhaseData:
+    """フェーズごとのデータ"""
+    unlocked_at: Optional[float] = None
+    discovered_assets: List[str] = field(default_factory=list)
+    tech_stack: List[str] = field(default_factory=list)
+    findings: List[str] = field(default_factory=list)
+    classified_files: Dict[str, Dict] = field(default_factory=dict)
+    
+    @property
+    def is_unlocked(self) -> bool:
+        """アンロックされているか"""
+        return self.unlocked_at is not None
+
+
+class PhaseGate:
+    """
+    フェーズゲート: タスク生成の許可条件を管理
+    
+    - フェーズのアンロック/ロック
+    - フェーズごとのデータ蓄積
+    - タスク生成の許可判定
+    
+    使用例:
+        gate = PhaseGate()
+        gate.unlock(Phase.ATTACK)
+        can_create, reason = gate.can_create_task(Phase.ATTACK)
+        if can_create:
+            # タスク生成
+    """
+    
+    # フェーズ → 許可されるタグのマッピング
+    PHASE_TAGS: Dict[Phase, List[str]] = {
+        Phase.INIT: ["all", "utils"],
+        Phase.RECON: ["recon", "scope", "visual", "network"],
+        Phase.ATTACK: ["attack", "auth", "exploit", "web", "network"],
+        Phase.REPORT: ["report", "utils"],
+    }
+    
+    def __init__(self):
+        self._phases: Dict[Phase, PhaseData] = {
+            phase: PhaseData() for phase in Phase
+        }
+        # INIT と RECON は最初からアンロック
+        self._phases[Phase.INIT].unlocked_at = time.time()
+        self._phases[Phase.RECON].unlocked_at = time.time()
+        logger.debug("PhaseGate initialized. INIT and RECON unlocked.")
+    
+    def unlock(self, phase: Phase) -> None:
+        """
+        フェーズをアンロック
+        
+        Args:
+            phase: アンロックするフェーズ
+        """
+        if not self._phases[phase].is_unlocked:
+            self._phases[phase].unlocked_at = time.time()
+            logger.info(f"Phase {phase.value} unlocked")
+    
+    def is_unlocked(self, phase: Phase) -> bool:
+        """
+        フェーズがアンロックされているか
+        
+        Args:
+            phase: チェックするフェーズ
+            
+        Returns:
+            アンロックされていれば True
+        """
+        return self._phases[phase].is_unlocked
+    
+    def can_create_task(self, phase: Phase) -> tuple[bool, str]:
+        """
+        タスク生成が許可されているか
+        
+        Args:
+            phase: チェックするフェーズ
+            
+        Returns:
+            (許可されているか, 理由)
+        """
+        if not self.is_unlocked(phase):
+            return False, f"Phase {phase.value} is locked"
+        return True, "OK"
+    
+    def get_allowed_tags(self, phase: Phase) -> List[str]:
+        """
+        フェーズで許可されているタグを取得
+        
+        Args:
+            phase: 対象フェーズ
+            
+        Returns:
+            許可されているタグのリスト
+        """
+        return self.PHASE_TAGS.get(phase, ["all"])
+    
+    def add_asset(self, phase: Phase, asset: str) -> None:
+        """
+        アセットを追加
+        
+        Args:
+            phase: 対象フェーズ
+            asset: アセット (URL, サブドメインなど)
+        """
+        data = self._phases[phase]
+        if asset not in data.discovered_assets:
+            data.discovered_assets.append(asset)
+            logger.debug(f"Added asset to {phase.value}: {asset}")
+    
+    def add_tech(self, phase: Phase, tech: str) -> None:
+        """
+        技術スタックを追加
+        
+        Args:
+            phase: 対象フェーズ
+            tech: 技術名 (例: "WordPress", "nginx")
+        """
+        data = self._phases[phase]
+        if tech not in data.tech_stack:
+            data.tech_stack.append(tech)
+            logger.debug(f"Added tech to {phase.value}: {tech}")
+    
+    def add_finding(self, phase: Phase, finding_id: str) -> None:
+        """
+        Finding を追加
+        
+        Args:
+            phase: 対象フェーズ
+            finding_id: Finding の ID
+        """
+        data = self._phases[phase]
+        if finding_id not in data.findings:
+            data.findings.append(finding_id)
+            logger.info(f"Added finding to {phase.value}: {finding_id}")
+    
+    def set_classified_files(self, phase: Phase, files: Dict[str, Dict]) -> None:
+        """
+        分類ファイルを設定
+        
+        Args:
+            phase: 対象フェーズ
+            files: 分類ファイルの辞書 (例: {"with_auth": {"file": "...", "count": 5}})
+        """
+        self._phases[phase].classified_files = files
+        logger.debug(f"Set classified files for {phase.value}: {len(files)} categories")
+    
+    def get_phase_data(self, phase: Phase) -> PhaseData:
+        """
+        フェーズデータを取得
+        
+        Args:
+            phase: 対象フェーズ
+            
+        Returns:
+            PhaseData
+        """
+        return self._phases[phase]
+    
+    def get_all_assets(self) -> List[str]:
+        """
+        全フェーズのアセットを取得
+        
+        Returns:
+            全アセットのリスト (重複排除済み)
+        """
+        assets = []
+        for data in self._phases.values():
+            assets.extend(data.discovered_assets)
+        return list(set(assets))
+    
+    def get_all_tech_stack(self) -> List[str]:
+        """
+        全フェーズの技術スタックを取得
+        
+        Returns:
+            全技術のリスト (重複排除済み)
+        """
+        techs = []
+        for data in self._phases.values():
+            techs.extend(data.tech_stack)
+        return list(set(techs))
+    
+    def get_summary(self) -> Dict:
+        """
+        全フェーズのサマリーを取得
+        
+        Returns:
+            サマリー辞書
+        """
+        return {
+            "unlocked_phases": [p.value for p, d in self._phases.items() if d.is_unlocked],
+            "total_assets": len(self.get_all_assets()),
+            "total_tech_stack": len(self.get_all_tech_stack()),
+            "total_findings": sum(len(d.findings) for d in self._phases.values()),
+        }
+
+
+# シングルトン
+_gate_instance: Optional[PhaseGate] = None
+
+
+def get_phase_gate() -> PhaseGate:
+    """
+    PhaseGate のシングルトンインスタンスを取得
+    
+    Returns:
+        PhaseGate インスタンス
+    """
+    global _gate_instance
+    if _gate_instance is None:
+        _gate_instance = PhaseGate()
+    return _gate_instance

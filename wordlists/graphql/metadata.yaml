@@ -1,0 +1,59 @@
+# GraphQL用ワードリスト メタデータ
+
+base_path: /home/bbb/Documents/tools/wordlists/graphql-wordlist
+
+files:
+  - name: overallWordlist.txt
+    path: overallWordlist.txt
+    source: graphql-wordlist
+    lines: 800000 # 約19MB
+    size: massive
+    strength: [graphql, comprehensive]
+    best_for: [graphql_scan, introspection]
+
+  - name: fieldWordlist.txt
+    path: fieldWordlist.txt
+    source: graphql-wordlist
+    lines: 700000 # 約16MB
+    size: massive
+    strength: [graphql, fields]
+    best_for: [graphql_field_enum]
+
+  - name: queryFieldWordlist.txt
+    path: queryFieldWordlist.txt
+    source: graphql-wordlist
+    lines: 300000 # 約7.5MB
+    size: high
+    strength: [graphql, query]
+    best_for: [graphql_query]
+
+  - name: mutationFieldWordlist.txt
+    path: mutationFieldWordlist.txt
+    source: graphql-wordlist
+    lines: 350000 # 約8.8MB
+    size: high
+    strength: [graphql, mutation]
+    best_for: [graphql_mutation]
+
+  - name: argumentWordlist.txt
+    path: argumentWordlist.txt
+    source: graphql-wordlist
+    lines: 120000 # 約3MB
+    size: medium
+    strength: [graphql, arguments]
+    best_for: [graphql_args]
+
+selection_rules:
+  mode_defaults:
+    bugbounty:
+      quick: argumentWordlist.txt
+      standard: fieldWordlist.txt
+      deep: overallWordlist.txt
+    vulntest:
+      quick: argumentWordlist.txt
+      standard: queryFieldWordlist.txt
+      deep: fieldWordlist.txt
+    ctf:
+      quick: argumentWordlist.txt
+      standard: argumentWordlist.txt
+      deep: queryFieldWordlist.txt

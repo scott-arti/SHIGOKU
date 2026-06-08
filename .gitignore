@@ -1,0 +1,47 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment variables
+.env
+.env.*
+!.env.example
+session_state.json
+opencode.json.bak
+workspace/
+graphify-out/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+*.log
+
+# Build
+node_modules/
+dist/
+build/
+*.egg-info/
+
+# Sessions (M-4: sensitive credentials)
+sessions.json
+sessions.yaml
+sessions*.json
+
+# 一時
+tmp/
+logs/
+md/

@@ -1,0 +1,28 @@
+name: triage_simulate
+description: 脆弱性トリアージシミュレーション
+version: "1.0"
+
+conditions:
+  - findings_count > 3
+  - flag:auto_triage = true
+
+tasks:
+  - name: sort_findings_by_severity
+    description: |
+      発見された脆弱性を以下の基準で優先度付けします:
+      1. Critical: RCE, SQLi (認証済み), SSRF (クラウドメタデータ取得)
+      2. High: IDOR (個人情報), 認証バイパス, XSS (ストアド)
+      3. Medium: IDOR (公開情報), XSS (リフレクト), 情報漏洩
+      4. Low: 設定ミス, バージョン露出
+    agent: ReportRefinerAgent
+    auto: true
+
+  - name: generate_priority_report
+    description: "優先度順にレポートを生成"
+    agent: ReportRefinerAgent
+    requires: sort_findings_by_severity
+
+metadata:
+  category: report
+  priority: 1
+  note: "旧TriageSimulatorの代替Recipe"

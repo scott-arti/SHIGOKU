@@ -1,0 +1,16 @@
+name: csrf_token_missing
+description: "Golden Recipe: Detect Missing CSRF Tokens in Forms - Direct tool execution"
+tags: ["web", "csrf", "forms"]
+severity: "medium"
+target_condition: null
+steps:
+  - tool: "tool_executor"
+    args:
+      tool_name: "nuclei"
+      args:
+        extra_args: "-tags csrf"
+  - tool: "tool_executor"
+    args:
+      tool_name: "nuclei"
+      args:
+        extra_args: "-t http/misconfiguration/ -tags csrf"

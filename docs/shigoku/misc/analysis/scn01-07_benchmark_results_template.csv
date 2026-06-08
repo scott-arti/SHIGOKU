@@ -1,0 +1,2 @@
+run_id,profile_id,seed_set_id,target_url,started_at,ended_at,report_path,session_path,consistency_status,consistency_reason_codes,scn_01_detected,scn_02_detected,scn_03_detected,scn_04_detected,scn_05_detected,scn_06_detected,scn_07_detected,confirmed_count,candidate_count,fn_count,fp_count,gate_status,gate_reason_codes,scan_exit,report_exit,consistency_exit,findings_exit,gate_exit,notes
+P0_run01,P0,scn01-07_seed_v1,http://127.0.0.1:8888,,,,,consistent,,false,false,false,false,false,false,false,,,,,PASS,,0,0,0,0,0,

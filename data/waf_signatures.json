@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "signatures": {
+    "cloudflare": {
+      "header_contains": [
+        "cf-ray",
+        "cf-cache-status",
+        "cloudflare"
+      ],
+      "body_contains": [
+        "attention required",
+        "cloudflare"
+      ],
+      "status_codes": [
+        403,
+        429
+      ]
+    },
+    "aws_waf": {
+      "header_contains": [
+        "x-amzn-requestid",
+        "x-amz-cf-id",
+        "awswaf"
+      ],
+      "body_contains": [
+        "aws waf",
+        "request blocked"
+      ],
+      "status_codes": [
+        403,
+        406
+      ]
+    },
+    "akamai": {
+      "header_contains": [
+        "akamai",
+        "x-akamai"
+      ],
+      "body_contains": [
+        "akamai ghost"
+      ],
+      "status_codes": [
+        403
+      ]
+    },
+    "imperva": {
+      "header_contains": [
+        "incap_ses",
+        "visid_incap",
+        "imperva"
+      ],
+      "body_contains": [
+        "incapsula",
+        "imperva"
+      ],
+      "status_codes": [
+        403
+      ]
+    },
+    "modsecurity": {
+      "header_contains": [
+        "mod_security",
+        "modsec",
+        "owasp"
+      ],
+      "body_contains": [
+        "modsecurity",
+        "access denied"
+      ],
+      "status_codes": [
+        403,
+        406
+      ]
+    }
+  }
+}
+

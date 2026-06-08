@@ -1,0 +1,90 @@
+[project]
+name = "shigoku"
+version = "0.2.0"
+description = "SHIGOKU - Autonomous Bug Bounty Hunting AI"
+requires-python = ">=3.12"
+dependencies = [
+    "litellm==1.81.9",
+    "pydantic==2.12.5",
+    "pydantic-core==2.41.5",
+    "pydantic-settings==2.12.0",
+    "python-dotenv>=1.0.0",
+    "rich>=13.0.0",  # For CLI output
+    "typer>=0.9.0",  # For CLI
+    # ===== SHIGOKU Dependencies =====
+    "neo4j>=5.0.0",           # Knowledge Graph
+    "chromadb>=0.4.0",        # RAG Vector DB
+    "boto3>=1.28.0",          # AWS Lambda (ProxyRotation)
+    "PyGithub>=2.0.0",        # GitHub API (CommitWatcher)
+    "imagehash>=4.3.0",       # Visual Recon Filtering
+    "pyyaml>=6.0.0",          # Recipe Loader
+    "httpx>=0.27.0",        # Async HTTP Client
+    "jinja2>=3.0.0",          # Prompt Template Engine
+    "beautifulsoup4>=4.12.0", # HTML Parsing (Web Pentest)
+    "lxml>=4.9.0",            # XML Wrapper for BS4
+    "aiohttp>=3.9.0",         # Optimized Async Client
+    "aiofiles>=23.2.0",       # Async File I/O
+    "networkx>=3.0",          # DAG for Recipe Execution
+    "psutil>=5.9.0",          # System Resource Monitoring
+    "fastapi>=0.100.0",       # Dashboard API
+    "uvicorn>=0.20.0",        # ASGI Server
+    # ===== Phase D Dependencies =====
+    "redis>=5.0.0",           # Checkpoint persistence
+    "scipy>=1.11.0",          # Statistical detection (Mann-Whitney U)
+    "playwright>=1.40.0",   # XSS detection (optional)
+]
+
+[project.scripts]
+shigoku = "src.__main__:main"
+shigoku-ops = "scripts.shigoku_ops_cli:main"
+
+
+[project.optional-dependencies]
+performance = ["orjson>=3.10"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "."]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "d1: Phase D-1 Infrastructure tests",
+    "d2: Phase D-2 Detection Engine tests",
+    "d3: Phase D-3 Advanced Feature tests",
+    "integration: Integration tests",
+    "unit: Unit tests",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::pytest.PytestUnknownMarkWarning",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+# カバレッジ設定
+[tool.coverage.run]
+source = ["src"]
+omit = [
+    "*/__pycache__/*",
+    "*/tests/*",
+    "*/.venv/*",
+    "*/venv/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+]
+show_missing = true
+
+[dependency-groups]
+dev = [
+    "flask>=3.1.3",
+]

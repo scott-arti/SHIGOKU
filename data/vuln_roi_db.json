@@ -1,0 +1,157 @@
+{
+  "version": 1,
+  "arms": {
+    "exploit::generic": {
+      "alpha": 1.0,
+      "beta": 51.0,
+      "pulls": 50,
+      "total_reward": 0.0,
+      "successes": 0,
+      "failures": 50
+    },
+    "scanner::generic": {
+      "alpha": 1.0,
+      "beta": 50.0,
+      "pulls": 49,
+      "total_reward": 0.0,
+      "successes": 0,
+      "failures": 49
+    },
+    "discovery::generic": {
+      "alpha": 30.400000000000027,
+      "beta": 20.599999999999994,
+      "pulls": 49,
+      "total_reward": 29.400000000000027,
+      "successes": 49,
+      "failures": 0
+    },
+    "recon::generic": {
+      "alpha": 30.400000000000027,
+      "beta": 20.599999999999994,
+      "pulls": 49,
+      "total_reward": 29.400000000000027,
+      "successes": 49,
+      "failures": 0
+    },
+    "injectionswarm::csrf_candidate": {
+      "alpha": 5.799999999999999,
+      "beta": 4.199999999999999,
+      "pulls": 8,
+      "total_reward": 4.8,
+      "successes": 8,
+      "failures": 0
+    },
+    "injectionswarm::xss_candidate": {
+      "alpha": 5.199999999999999,
+      "beta": 3.7999999999999994,
+      "pulls": 7,
+      "total_reward": 4.2,
+      "successes": 7,
+      "failures": 0
+    },
+    "scope_parser::generic": {
+      "alpha": 4.6,
+      "beta": 3.3999999999999995,
+      "pulls": 6,
+      "total_reward": 3.6,
+      "successes": 6,
+      "failures": 0
+    },
+    "recon_master::generic": {
+      "alpha": 1.6,
+      "beta": 6.4,
+      "pulls": 6,
+      "total_reward": 0.6,
+      "successes": 1,
+      "failures": 5
+    },
+    "bizlogic::admin": {
+      "alpha": 4.0,
+      "beta": 2.9999999999999996,
+      "pulls": 5,
+      "total_reward": 3.0,
+      "successes": 5,
+      "failures": 0
+    },
+    "injectionswarm::api_data": {
+      "alpha": 4.0,
+      "beta": 1.0,
+      "pulls": 3,
+      "total_reward": 3.0,
+      "successes": 3,
+      "failures": 0
+    },
+    "injectionmanageragent::api_data": {
+      "alpha": 2.0,
+      "beta": 1.0,
+      "pulls": 1,
+      "total_reward": 1.0,
+      "successes": 1,
+      "failures": 0
+    },
+    "injectionswarm::api_candidate": {
+      "alpha": 3.0,
+      "beta": 1.0,
+      "pulls": 2,
+      "total_reward": 2.0,
+      "successes": 2,
+      "failures": 0
+    },
+    "injectionswarm::auth": {
+      "alpha": 4.6,
+      "beta": 3.3999999999999995,
+      "pulls": 6,
+      "total_reward": 3.6,
+      "successes": 6,
+      "failures": 0
+    },
+    "injectionswarm::basket_order": {
+      "alpha": 1.6,
+      "beta": 1.4,
+      "pulls": 1,
+      "total_reward": 0.6,
+      "successes": 1,
+      "failures": 0
+    },
+    "injectionswarm::redirect_param": {
+      "alpha": 1.6,
+      "beta": 1.4,
+      "pulls": 1,
+      "total_reward": 0.6,
+      "successes": 1,
+      "failures": 0
+    },
+    "authninja::auth": {
+      "alpha": 2.2,
+      "beta": 1.7999999999999998,
+      "pulls": 2,
+      "total_reward": 1.2,
+      "successes": 2,
+      "failures": 0
+    },
+    "web_scanner::generic": {
+      "alpha": 1.6,
+      "beta": 1.4,
+      "pulls": 1,
+      "total_reward": 0.6,
+      "successes": 1,
+      "failures": 0
+    },
+    "<magicmock name='mock.contextdesigner().enrich_task().agent_type' id='128599710138928'>::generic": {
+      "alpha": 2.2,
+      "beta": 3.8,
+      "pulls": 4,
+      "total_reward": 1.2,
+      "successes": 2,
+      "failures": 2
+    },
+    "<magicmock name='mock.contextdesigner().enrich_task().agent_type' id='136754589403376'>::generic": {
+      "alpha": 2.2,
+      "beta": 3.8,
+      "pulls": 4,
+      "total_reward": 1.2,
+      "successes": 2,
+      "failures": 2
+    }
+  }
+}

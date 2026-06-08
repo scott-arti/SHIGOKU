@@ -1,0 +1,82 @@
+version: "3.8"
+
+services:
+  shigoku:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: shigoku:latest
+    container_name: shigoku-agent
+    volumes:
+      # Mount source code for development
+      - .:/app
+      # Persistent workspace
+      - ./workspace:/workspace
+      # Wordlists from host (for fuzzing tools)
+      - /home/bbb/Documents/tools/wordlists:/wordlists:ro
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - SHIGOKU_CAIDO__TOKEN
+      - SHIGOKU_CAIDO__URL
+      - OLLAMA_API_BASE=${OLLAMA_API_BASE:-http://host.docker.internal:11434}
+      - SHIGOKU_MODEL=${SHIGOKU_MODEL:-deepseek/deepseek-chat}
+      - SHIGOKU_MODEL_OUTPUT=${SHIGOKU_MODEL_OUTPUT:-deepseek/deepseek-chat}
+      - SHIGOKU_MODEL_LIGHTWEIGHT=${SHIGOKU_MODEL_LIGHTWEIGHT:-deepseek/deepseek-chat}
+      # - SHIGOKU_MODEL_LIGHTWEIGHT=${SHIGOKU_MODEL_LIGHTWEIGHT:-ollama/qwen3.5:latest}
+      - SHIGOKU_LOCAL_LLM_MODEL=${SHIGOKU_LOCAL_LLM_MODEL:-qwen3.5:latest}
+      - SHIGOKU_GUARDRAILS=${SHIGOKU_GUARDRAILS:-true}
+      - SHIGOKU_TRACING=${SHIGOKU_TRACING:-false}
+      - SHIGOKU_NEO4J_PASSWORD=${SHIGOKU_NEO4J_PASSWORD:-password}
+      - SHIGOKU_DEV_MODE=${SHIGOKU_DEV_MODE:-false}
+    stdin_open: true
+    tty: true
+    # Network mode for accessing host services (e.g., Ollama)
+    network_mode: host
+    # DNS settings for stable name resolution
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    # Security options
+    security_opt:
+      - seccomp:unconfined
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    depends_on:
+      - neo4j
+      - chromadb
+    command: shigoku
+
+  # ===== SHIGOKU Knowledge Layer =====
+  neo4j:
+    image: neo4j:5-community
+    container_name: shigoku-neo4j
+    ports:
+      - "7474:7474" # HTTP Browser
+      - "7687:7687" # Bolt Protocol
+    environment:
+      - NEO4J_AUTH=neo4j/shigoku_k3y_7bA9vF2xR5w
+      - NEO4J_PLUGINS=["apoc"]
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    restart: unless-stopped
+
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: shigoku-chromadb
+    ports:
+      - "8003:8000"
+    volumes:
+      - chroma_data:/chroma/chroma
+    environment:
+      - ANONYMIZED_TELEMETRY=False
+    restart: unless-stopped
+
+volumes:
+  neo4j_data:
+  neo4j_logs:
+  chroma_data:

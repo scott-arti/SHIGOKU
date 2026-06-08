@@ -1,0 +1,71 @@
+# SHIGOKU 統合設定ファイル
+# 環境変数は ${VAR_NAME} 形式で展開されます
+
+# モード設定
+mode: bugbounty  # bugbounty | vulntest | ctf
+
+# プロジェクト設定
+project_name: ""
+project_path: ""
+
+# スコープファイル
+scope_file: ""
+
+# 通知設定
+notification:
+  slack_webhook: ${SLACK_WEBHOOK}
+  discord_webhook: ${DISCORD_WEBHOOK}
+  notify_on_critical: true
+  notify_on_high: true
+
+# ワードリスト設定
+wordlist:
+  base_path: /home/bbb/Documents/tools/wordlists
+  subdomain: subdomain/subdomains-top1million-5000.txt
+  directory: directory/dicc.txt
+  api: api/httparchive_apiroutes.txt
+  params: params/params-list.txt
+
+# ツール設定
+tools:
+  nuclei: true
+  nuclei_path: nuclei
+  nuclei_templates: ${HOME}/nuclei-templates
+  ffuf: true
+  ffuf_path: ffuf
+  subfinder: true
+  amass: true
+  gau: true
+  
+  # カスタムツール
+  custom_tools:
+    meg:
+      path: /home/bbb/Documents/tools/meg-enhanced
+      command: "meg -c 50 -v"
+      output_format: text
+    secretfinder:
+      path: /home/bbb/Documents/tools/secretfinder-v2
+      command: "secretfinder --json"
+      output_format: json
+
+# スキャン設定
+scan:
+  rate_limit: 50
+  timeout: 30
+  threads: 10
+  max_depth: 3
+  follow_redirects: true
+  user_agent: "SHIGOKU/1.0"
+
+# 外部API設定
+api:
+  shodan_api_key: ${SHODAN_API_KEY}
+  censys_api_id: ${CENSYS_API_ID}
+  censys_api_secret: ${CENSYS_API_SECRET}
+  hunter_api_key: ${HUNTER_API_KEY}
+  virustotal_api_key: ${VIRUSTOTAL_API_KEY}
+
+# RAG設定
+rag_enabled: true
+obsidian_vault_path: ${HOME}/Documents/Obsidian/Security
+chromadb_path: ${HOME}/.shigoku/chromadb
