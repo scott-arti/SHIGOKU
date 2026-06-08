@@ -103,6 +103,8 @@ from src.core.agents.swarm.injection.manager_internal.phase1_results import (
 )
 from src.core.agents.swarm.injection.manager_internal.tool_runners import (
     build_hunter_task,
+    format_cors_hunter_result,
+    format_simple_hunter_result,
 )
 from src.core.agents.swarm.injection.manager_internal.unknown_hypotheses import (
     build_unknown_hypotheses,
@@ -2993,42 +2995,14 @@ class InjectionManagerAgent(BaseManagerAgent):
         self.current_context["findings"].extend(findings)
         tested_params_from_url = sanitize_tested_params(list(parse_qs(urlparse(url).query).keys()), excluded_params=self.EXCLUDED_TESTED_PARAMS)
         normalize_findings_additional_info(findings, tested_params_from_url, detection_mode, excluded_params=self.EXCLUDED_TESTED_PARAMS)
-
-        if findings:
-            finding = findings[0]
-            tested_params: List[str] = []
-            payloads_used: List[str] = []
-            if hasattr(finding, "additional_info") and isinstance(finding.additional_info, dict):
-                tested_params = finding.additional_info.get("tested_params", []) or []
-                payloads_used = finding.additional_info.get("payloads_used", []) or []
-                if not tested_params:
-                    param = finding.additional_info.get("parameter")
-                    if param:
-                        tested_params = [param]
-                if not payloads_used:
-                    payload = finding.additional_info.get("payload")
-                    if payload:
-                        payloads_used = [payload]
-            return {
-                "findings_count": len(findings),
-                "success": True,
-                "vulnerability": "Open Redirect",
-                "parameter": finding.additional_info.get("parameter", "") if hasattr(finding, 'additional_info') else "",
-                "payload": finding.additional_info.get("payload", "") if hasattr(finding, 'additional_info') else "",
-                "payloads_used": payloads_used,
-                "tested_params": sanitize_tested_params(tested_params, excluded_params=self.EXCLUDED_TESTED_PARAMS),
-                "evidence": finding.description if hasattr(finding, 'description') else str(finding),
-                "severity": finding.severity.name if hasattr(finding, 'severity') else "MEDIUM",
-                "info": f"Open Redirect vulnerability confirmed in parameter '{finding.additional_info.get('parameter', 'unknown')}'"
-            }
-        else:
-            fallback_tested_params = sanitize_tested_params(list(parse_qs(urlparse(url).query).keys()), excluded_params=self.EXCLUDED_TESTED_PARAMS)
-            return {
-                "findings_count": 0,
-                "success": False,
-                "tested_params": fallback_tested_params,
-                "message": "No Open Redirect vulnerabilities found"
-            }
+        return format_simple_hunter_result(
+            findings=findings,
+            url=url,
+            excluded_params=self.EXCLUDED_TESTED_PARAMS,
+            vuln_name="Open Redirect",
+            severity="MEDIUM",
+            not_found_message="No Open Redirect vulnerabilities found",
+        )
 
     async def run_lfi_check(self, url: str, params: Dict[str, Any] = None, quick_mode: bool = False, **_kwargs) -> Dict[str, Any]:
         if "lfi" not in self.specialists:
@@ -3056,28 +3030,14 @@ class InjectionManagerAgent(BaseManagerAgent):
         if findings and hasattr(findings[0], "additional_info"):
             tested_params = findings[0].additional_info.get("tested_params", []) or []
         normalize_findings_additional_info(findings, tested_params, detection_mode, excluded_params=self.EXCLUDED_TESTED_PARAMS)
-
-        if findings:
-            finding = findings[0]
-            return {
-                "findings_count": len(findings),
-                "success": True,
-                "vulnerability": "LFI/Path Traversal",
-                "parameter": finding.additional_info.get("parameter", "") if hasattr(finding, 'additional_info') else "",
-                "payload": finding.additional_info.get("payload", "") if hasattr(finding, 'additional_info') else "",
-                "evidence": finding.description if hasattr(finding, 'description') else str(finding),
-                "severity": finding.severity.name if hasattr(finding, 'severity') else "HIGH",
-                "tested_params": sanitize_tested_params(tested_params, excluded_params=self.EXCLUDED_TESTED_PARAMS),
-                "info": f"LFI vulnerability confirmed in parameter '{finding.additional_info.get('parameter', 'unknown')}'"
-            }
-        else:
-            fallback_tested_params = sanitize_tested_params(list(parse_qs(urlparse(url).query).keys()), excluded_params=self.EXCLUDED_TESTED_PARAMS)
-            return {
-                "findings_count": 0,
-                "success": False,
-                "tested_params": fallback_tested_params,
-                "message": "No LFI vulnerabilities found"
-            }
+        return format_simple_hunter_result(
+            findings=findings,
+            url=url,
+            excluded_params=self.EXCLUDED_TESTED_PARAMS,
+            vuln_name="LFI/Path Traversal",
+            severity="HIGH",
+            not_found_message="No LFI vulnerabilities found",
+        )
 
     async def run_ssti_hunter(self, url: str, params: Dict[str, Any] = None, quick_mode: bool = False, **_kwargs) -> Dict[str, Any]:
         if "ssti" not in self.specialists:
@@ -3166,29 +3126,7 @@ class InjectionManagerAgent(BaseManagerAgent):
 
         findings = await self.specialists["cors"].execute(target_task, quick_mode=quick_mode) or []
         self.current_context["findings"].extend(findings)
-
-        if findings:
-            finding = findings[0]
-            return {
-                "findings_count": len(findings),
-                "success": True,
-                "vulnerability": "CORS_MISCONFIGURATION",
-                "misconfiguration": finding.additional_info.get("misconfiguration", "") if hasattr(finding, "additional_info") else "",
-                "test_origin": finding.additional_info.get("test_origin", "") if hasattr(finding, "additional_info") else "",
-                "poc_html": finding.additional_info.get("poc_html", "") if hasattr(finding, "additional_info") else "",
-                "evidence": finding.description if hasattr(finding, "description") else str(finding),
-                "severity": finding.severity.name if hasattr(finding, "severity") else "MEDIUM",
-                "tested_params": [],
-                "vulnerable": True,
-            }
-        else:
-            return {
-                "findings_count": 0,
-                "success": False,
-                "vulnerable": False,
-                "tested_params": [],
-                "message": "No CORS misconfiguration found",
-            }
+        return format_cors_hunter_result(findings=findings)
 
     async def run_crlf_hunter(self, url: str, params: Dict[str, Any] = None, quick_mode: bool = False, **_kwargs) -> Dict[str, Any]:
         """
