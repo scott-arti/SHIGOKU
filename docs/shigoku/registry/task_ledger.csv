@@ -280,8 +280,9 @@ SGK-2026-0268,Haddix report payout-readiness output improvements,done,plan,SGK-2
 SGK-2026-0269,Git ignore cleanup for fresh GitHub repository,done,plan,SGK-2026-0065,docs/shigoku/plans/2026-06-08_git-ignore-cleanup-for-fresh-github-repository_plan.md
 SGK-2026-0270,Remove unused Caveman skill artifacts,done,plan,SGK-2026-0065,docs/shigoku/plans/2026-06-08_remove-unused-caveman-skill-artifacts_plan.md
 SGK-2026-0271,Remove secret-like test fixtures blocking GitHub push,done,plan,SGK-2026-0065,docs/shigoku/plans/2026-06-08_remove-secret-like-test-fixtures-blocking-github-push_plan.md
-SGK-2026-0272,InjectionManager thin compatibility wrapper 群の段階削除,active,subtask_plan,SGK-2026-0265,docs/shigoku/subtasks/2026-06-09_injectionmanager-thin-compatibility-wrapper_subtask_plan.md
-SGK-2026-0273,API probe 純粋 helper の追加抽出 (4関数),active,subtask_plan,SGK-2026-0265,docs/shigoku/subtasks/2026-06-09_api-probe-helper-4_subtask_plan.md
-SGK-2026-0274,tool runner 結果整形の manager_internal 抽出,active,subtask_plan,SGK-2026-0265,docs/shigoku/subtasks/2026-06-09_tool-runner-manager-internal_subtask_plan.md
-SGK-2026-0275,_process_single_url branch単位分割,active,subtask_plan,SGK-2026-0265,docs/shigoku/subtasks/2026-06-09_process-single-url-branch_subtask_plan.md
-SGK-2026-0276,純粋判定/ログヘルパーの execution_policy/phase1_results への追加移動,active,subtask_plan,SGK-2026-0265,docs/shigoku/subtasks/2026-06-09_execution-policy-phase1-results_subtask_plan.md
+SGK-2026-0272,InjectionManager thin compatibility wrapper 群の段階削除,done,subtask_plan,SGK-2026-0265,docs/shigoku/subtasks/2026-06-09_injectionmanager-thin-compatibility-wrapper_subtask_plan.md
+SGK-2026-0273,API probe 純粋 helper の追加抽出 (4関数),done,subtask_plan,SGK-2026-0265,docs/shigoku/subtasks/2026-06-09_api-probe-helper-4_subtask_plan.md
+SGK-2026-0274,tool runner 結果整形の manager_internal 抽出,done,subtask_plan,SGK-2026-0265,docs/shigoku/subtasks/2026-06-09_tool-runner-manager-internal_subtask_plan.md
+SGK-2026-0275,_process_single_url branch単位分割,done,subtask_plan,SGK-2026-0265,docs/shigoku/subtasks/2026-06-09_process-single-url-branch_subtask_plan.md
+SGK-2026-0276,純粋判定/ログヘルパーの execution_policy/phase1_results への追加移動,done,subtask_plan,SGK-2026-0265,docs/shigoku/subtasks/2026-06-09_execution-policy-phase1-results_subtask_plan.md
+SGK-2026-0277,InjectionManager API minimal check service 化による大規模分割,done,subtask_plan,SGK-2026-0265,docs/shigoku/subtasks/2026-06-09_injectionmanager-api-minimal-service-extraction_subtask_plan.md

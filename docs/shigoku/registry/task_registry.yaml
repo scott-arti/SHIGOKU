@@ -3112,7 +3112,7 @@ tasks:
   parent_task_id: SGK-2026-0265
   related_docs:
   - docs/shigoku/plans/2026-06-05_injection-manager-split-plan_plan.md
-- provisional_id: DOC-0279
+- provisional_id: DOC-0294
   task_id: SGK-2026-0277
   doc_type: subtask_plan
   title: InjectionManager API minimal check service 化による大規模分割

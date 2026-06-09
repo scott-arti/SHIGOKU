@@ -152,6 +152,54 @@
       "total_reward": 1.2,
       "successes": 2,
       "failures": 2
+    },
+    "<magicmock name='mock.contextdesigner().enrich_task().agent_type' id='136757862199040'>::generic": {
+      "alpha": 2.2,
+      "beta": 3.8,
+      "pulls": 4,
+      "total_reward": 1.2,
+      "successes": 2,
+      "failures": 2
+    },
+    "<magicmock name='mock.contextdesigner().enrich_task().agent_type' id='134211667889808'>::generic": {
+      "alpha": 2.2,
+      "beta": 3.8,
+      "pulls": 4,
+      "total_reward": 1.2,
+      "successes": 2,
+      "failures": 2
+    },
+    "<magicmock name='mock.contextdesigner().enrich_task().agent_type' id='135639010505984'>::generic": {
+      "alpha": 2.2,
+      "beta": 3.8,
+      "pulls": 4,
+      "total_reward": 1.2,
+      "successes": 2,
+      "failures": 2
+    },
+    "<magicmock name='mock.contextdesigner().enrich_task().agent_type' id='133677428307968'>::generic": {
+      "alpha": 2.2,
+      "beta": 3.8,
+      "pulls": 4,
+      "total_reward": 1.2,
+      "successes": 2,
+      "failures": 2
+    },
+    "<magicmock name='mock.contextdesigner().enrich_task().agent_type' id='137307460511712'>::generic": {
+      "alpha": 2.2,
+      "beta": 3.8,
+      "pulls": 4,
+      "total_reward": 1.2,
+      "successes": 2,
+      "failures": 2
+    },
+    "<magicmock name='mock.contextdesigner().enrich_task().agent_type' id='137834401681808'>::generic": {
+      "alpha": 2.2,
+      "beta": 3.8,
+      "pulls": 4,
+      "total_reward": 1.2,
+      "successes": 2,
+      "failures": 2
     }
   }
 }
