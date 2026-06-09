@@ -77,3 +77,19 @@ class NormalizationInput(TypedDict, total=False):
     detection_mode: str
     blind_correlation: Dict[str, Any]
     url_results: List[Dict[str, Any]]
+
+
+class ApiProbeDependencies(TypedDict, total=False):
+    """_run_api_minimal_check / run_api_minimal_check への依存注入束。
+
+    runner が self や InjectionManagerAgent 全体を受け取ることを防ぎ、
+    引数肥大化を抑制する。
+    """
+
+    request_client: Any
+    findings_sink: List[Any]
+    source_agent_name: str
+    excluded_params: frozenset
+    looks_like_login_page: Any
+    resolve_detection_mode: Any
+    current_context: Dict[str, Any]

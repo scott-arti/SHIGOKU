@@ -30,6 +30,7 @@ from src.core.agents.swarm.injection.manager_internal.unknown_hypotheses import 
     build_unknown_idor_candidate_finding,
 )
 from src.core.agents.swarm.injection.manager_internal.models import (
+    ApiProbeDependencies,
     DispatchContext,
     NormalizationInput,
     UrlExecutionRequest,
@@ -94,6 +95,7 @@ from src.core.agents.swarm.injection.manager_internal.result_normalizer import (
 )
 
 __all__ = [
+    "ApiProbeDependencies",
     "classify_target_url",
     "extract_form_field_names",
     "prioritize_targets",
