@@ -1,7 +1,7 @@
 ---
 task_id: SGK-2026-0264
 doc_type: plan
-status: active
+status: done
 parent_task_id: SGK-2026-0065
 related_docs:
 - docs/shigoku/roadmaps/IMPLEMENTATION_ROADMAP.md
@@ -9,7 +9,7 @@ related_docs:
 - docs/shigoku/specs/REQ_tier4_mc_intelligence.md
 title: '巨大ファイル分割計画 1/4: MasterConductor 分割'
 created_at: '2026-06-05'
-updated_at: '2026-06-08'
+updated_at: '2026-06-09'
 tags:
 - shigoku
 target: src/core/engine/master_conductor.py
@@ -20,18 +20,19 @@ target: src/core/engine/master_conductor.py
 ## 1. 達成したいゴール（ユーザー視点）
 - [ ] この文書が「4件中の1件目」であることが明確であり、`src/core/engine/master_conductor.py` の分割境界を先に固定できること。
 - [ ] `MasterConductor` の公開挙動を維持したまま、司令塔責務だけに絞る分割順序が定義されていること。
-- [ ] 再計画、dispatch、session/HITL、recon後タスク生成の4領域を別モジュールへ切り出す判断基準が共有されていること。
+- [ ] 分割効果が高く、既存テストで守りやすい領域から優先して切り出す順序が共有されていること。
 
 ## 2. 全体像とアーキテクチャ
 - **対象コンポーネント/ファイル一覧:**
   - `src/core/engine/master_conductor.py`: （修正）司令塔本体。最終的に orchestration facade のみに縮小する対象。
-  - `src/core/engine/master_conductor/dependencies.py`: （新規）facade から各 service へ渡す依存束ね用 dataclass / protocol を保持する候補。
-  - `src/core/engine/master_conductor/state_snapshot.py`: （新規）session / checkpoint / pending HITL の serialize・restore 境界を保持する候補。
-  - `src/core/engine/master_conductor/dispatch_service.py`: （新規）`_dispatch` と agent ルーティングを保持する分割先候補。
-  - `src/core/engine/master_conductor/session_service.py`: （新規）session save/load、checkpoint、resume を保持する分割先候補。
-  - `src/core/engine/master_conductor/hitl_service.py`: （新規）pending HITL ticket と intervention 関連処理を保持する分割先候補。
-  - `src/core/engine/master_conductor/recon_execution_service.py`: （新規）`ReconPipeline` 実行と `PhaseGate` 反映を保持する分割先候補。
-  - `src/core/engine/master_conductor/recon_attack_task_planner.py`: （新規）recon 結果から attack task を展開する分割先候補。
+  - `src/core/engine/master_conductor_state_snapshot.py`: （既存）session / checkpoint / pending HITL の serialize・restore 境界。
+  - `src/core/engine/master_conductor_session_service.py`: （既存）session save/load/checkpoint/resume の helper 境界。
+  - `src/core/engine/master_conductor_hitl_snapshot.py`: （既存）pending HITL 用 task snapshot helper。
+  - `src/core/engine/master_conductor_hitl_ticket.py`: （既存）pending HITL ticket schema builder。
+  - `src/core/engine/master_conductor_recon_attack_task_planner.py`: （新規）recon 結果から attack task を展開する分割先候補。
+  - `src/core/engine/master_conductor_hitl_service.py`: （新規）pending HITL ticket 管理と承認済み task enqueue の分割先候補。
+  - `src/core/engine/master_conductor_dispatch_service.py`: （新規）`_dispatch` と agent routing の分割先候補。ただし safety / scope guard を保護してから着手する。
+  - `src/core/engine/master_conductor_recon_execution_service.py`: （新規）`ReconPipeline` 実行と `PhaseGate` 反映の分割先候補。
 - **データの流れ / 依存関係:**
   - CLI / interactive bridge -> `MasterConductor` facade -> dependencies / service modules -> task queue / persistence / notification
 
@@ -47,24 +48,25 @@ target: src/core/engine/master_conductor.py
 - **分割の最優先原則:**
   - `MasterConductor` 自体は最後まで `state owner + orchestration facade` として残し、shared state の所有権は移譲しない。
   - 分割先モジュールは `self` 全体を握らず、必要な依存だけを明示的に受け取る。
-  - 機能別分割より先に、責務の種類別分割（dispatch / session persistence / HITL / recon-to-attack planning）を優先する。
+  - 分割効果、既存テストの厚さ、公開挙動リスクの順で優先度を決める。
+  - 現時点では `src.core.engine.master_conductor` がファイルモジュールとして解決されるため、同名サブパッケージ `src/core/engine/master_conductor/` は作らない。パッケージ化は import 互換設計が必要な別タスクに分離する。
 - **推奨配置:**
   - `src/core/engine/master_conductor.py`: 外部公開APIを保持する facade。本計画中は import path の互換レイヤとして維持する。
-  - `src/core/engine/master_conductor/`: `MasterConductor` 専用の分割先サブパッケージ。engine 直下へ `conductor_*.py` を増やし続けず、責務を局所化する。
-  - `src/core/engine/master_conductor/dependencies.py`: facade から各サービスへ渡す依存束ね用 dataclass / protocol 群を置く候補。
-  - `src/core/engine/master_conductor/state_snapshot.py`: session / checkpoint / pending HITL の serialize・restore 境界をまとめる候補。
+  - `src/core/engine/master_conductor_*.py`: 現行 import 互換を保つ平置き helper/service 群。本計画ではこの配置を標準とする。
+  - `src/core/engine/master_conductor_dependencies.py`: facade から各 service へ渡す依存束ね用 dataclass / protocol 群を置く候補。
+  - `src/core/engine/master_conductor_state_snapshot.py`: session / checkpoint / pending HITL の serialize・restore 境界をまとめる既存 helper。
 - **推奨ファイル命名:**
-  - `dispatch_service.py`: `_dispatch` と agent routing を保持する。
-  - `session_service.py`: `save_session` / `load_session` / `start_session` / `_checkpoint` / `resume_session` を保持する。
-  - `hitl_service.py`: intervention 判定、pending HITL ticket、承認済み task enqueue を保持する。
-  - `recon_execution_service.py`: `ReconPipeline` 実行と `PhaseGate` 反映を保持する。
-  - `recon_attack_task_planner.py`: recon classified results から attack task を組み立てる純粋ロジックを保持する。
+  - `master_conductor_recon_attack_task_planner.py`: recon classified results から attack task を組み立てるロジックを保持する。
+  - `master_conductor_hitl_service.py`: intervention 判定、pending HITL ticket、承認済み task enqueue を保持する。
+  - `master_conductor_dispatch_service.py`: `_dispatch` と agent routing を保持する。
+  - `master_conductor_recon_execution_service.py`: `ReconPipeline` 実行と `PhaseGate` 反映を保持する。
+  - `master_conductor_session_service.py`: session save/load/checkpoint/resume helper を保持する既存ファイルを継続利用する。
 - **命名規則:**
   - ファイル名は `snake_case`、クラス名は `ConductorDispatchService` のように `対象 + 役割` を明示する。
   - `helper` や `utils` のような曖昧な命名は避け、責務がファイル名だけで判別できるようにする。
 - **保守性の判断基準:**
   - shared state の所有者は facade のみとし、分割先は副作用境界ごとにテスト可能にする。
-  - recon task 生成は `PhaseGate` 更新などの副作用から切り離し、 task 構築ロジックを優先して純粋化する。
+  - recon task 生成は最大行数の削減候補であり、`PhaseGate` 更新や queue mutation から切り離し、 task 構築ロジックを優先して純粋化する。
   - session / HITL は CLI と dashboard の双方が読むため、 schema 互換維持を優先し、 serializer 層へ閉じ込める。
   - facade の完了条件は `state owner / public API / thin wrapper / orchestration coordination` のみを残し、domain logic を service 側へ移し終えることとする。
 
@@ -79,25 +81,37 @@ target: src/core/engine/master_conductor.py
   - `ReconPipeline` の isolated thread / event loop 実行方式は互換維持を優先し、 main loop starvation と false timeout cascade を再発させない。
   - 分割後も `pending_hitl_count`、checkpoint 所要時間、`execute_with_replan` の total duration を比較可能に保つ。
 
+## 3.2.1 分割優先順位
+現行 `src/core/engine/master_conductor.py` の method 行数実測では、主な削減候補は `_create_attack_tasks_from_recon` 約1327行、`_dispatch` 約561行、`_execute_single_task_full_flow` 約406行、`execute_with_replan` 約303行である。
+
+| 優先 | 対象 | 主目的 | 理由 | 主な検証 |
+|---|---|---|---|---|
+| P0 | 配置・依存方針固定 | import 互換維持 | 同名サブパッケージ化は既存 `from src.core.engine.master_conductor import MasterConductor` を壊し得る | import smoke / 既存 master_conductor import 系 |
+| P1 | recon attack task planner | 最大行数の削減 | `_create_attack_tasks_from_recon` が最大で、既存の routing / scenario probe テストが厚い | `test_master_conductor_api_candidate_routing.py`, `test_master_conductor_scenario_probes.py` |
+| P2 | HITL service | 状態遷移の局所化 | pending/approved/queued/done の ticket 操作を閉じ込めやすい | `test_master_conductor_hitl_pending.py`, `test_master_conductor_hitl_priority.py` |
+| P3 | dispatch service | routing 境界の明確化 | 効果は高いが scope guard / worker / swarm / recon / AgentFactory を含むため安全境界テストを先に厚くする | dispatch 専用 character tests, recon nonblocking |
+| P4 | execution loop | facade の薄化 | 並列実行、checkpoint、precheck、summary が絡むため最後に寄せる | scenario / timeout / checkpoint 回帰 |
+| P5 | session 残り | 既存 helper の仕上げ | 既に helper 化済みで追加削減効果は小さい | session service / persistence / resume 回帰 |
+
 ## 3.3 依存方向・所有権ルール
 - facade が所有する shared state は `task_queue`、`context`、`phase_gate`、`event_bus`、`_state_lock`、`pending_hitl`、`project_manager` とする。
-- service は `self` 全体を保持せず、必要な依存だけを `dependencies.py` 経由で受け取る。
-- 依存方向は `master_conductor.py -> service -> helper / serializer` の一方向のみを許可し、 service 間の循環 import を禁止する。
-- `recon_attack_task_planner.py` は queue mutation を持たず `list[Task]` を返す純粋ロジックとして保つ。
-- `recon_execution_service.py` は `PhaseGate` 更新完了後のみ planner を呼び出し、 planner から facade 全体を逆参照させない。
+- service は `self` 全体を保持せず、必要な依存だけを `master_conductor_dependencies.py` または明示引数で受け取る。
+- 依存方向は `master_conductor.py -> master_conductor_* service/helper -> serializer/helper` の一方向のみを許可し、 service 間の循環 import を禁止する。
+- `master_conductor_recon_attack_task_planner.py` は queue mutation を持たず `list[Task]` を返す。`PhaseGate.can_create_task()`、recon file resolve、history replay など既存 `self` 依存は callable / context object として明示的に渡す。
+- `master_conductor_recon_execution_service.py` は `PhaseGate` 更新完了後のみ planner を呼び出し、 planner から facade 全体を逆参照させない。
 
 ## 4. 実装ステップ（AIに指示する手順）
-- [ ] 手順1/8: `__init__` の shared state を棚卸しし、`task_queue` / `context` / `phase_gate` / `event_bus` / `_state_lock` / `pending_hitl` / `project_manager` の所有権を `MasterConductor` facade に固定する。合わせて `src/core/engine/master_conductor/` サブパッケージと `dependencies.py` / `state_snapshot.py` の責務境界を文書化する。
-- [ ] 手順2/8: facade から service へ渡す依存を dataclass または protocol で定義し、`master_conductor.py -> service -> helper / serializer` の依存方向を固定する。 service が `self` 全体へ依存しない受け口を先に作り、禁止依存（shared state の直接所有）も明文化する。
-- [ ] 手順3/8: observability / runtime 契約を先に固定する。各 service が受け取る `correlation id` / `task id` / `session id`、開始・終了・失敗の log/event 形式、 facade 側の task state / execution log 一元反映ルールを定義し、分割前後で比較する観測項目（`pending_hitl_count`、checkpoint 所要時間、`execute_with_replan` duration）を決める。
-- [ ] 手順4/8: `_dispatch` とその周辺 helper を `dispatch_service.py` へ移し、`MasterConductor` からは thin wrapper として呼び出す。agent routing と worker / swarm / recon 分岐の回帰を `tests/core/engine/test_master_conductor_api_candidate_routing.py` で確認し、既存ログキーが維持されることも点検する。
-- [ ] 手順5/8: `save_session` / `load_session` / `start_session` / `_checkpoint` / `resume_session` を `session_service.py` と `state_snapshot.py` へ移し、 session schema と pending HITL restore 挙動の互換を維持する。`tests/unit/test_shared_session.py` を優先実行し、 missing field / invalid state / fail-soft 保存の回復系も確認する。
-- [ ] 手順6/8: intervention 判定、pending HITL ticket 管理、承認済み task enqueue を `hitl_service.py` へ移す。`pending_hitl` の所有は facade に残しつつ、decision / ticket / approval のロジックだけを分離し、`tests/core/engine/test_master_conductor_hitl_pending.py` と `tests/core/engine/test_master_conductor_hitl_priority.py` で pending / approved / rejected の回帰を確認する。
-- [ ] 手順7/8: `ReconPipeline` 実行を `recon_execution_service.py` へ、 recon classified results から attack task を生成する純粋ロジックを `recon_attack_task_planner.py` へ分割する。`PhaseGate` 更新完了後のみ planner を呼ぶ順序を固定し、`tests/core/engine/test_master_conductor_recon_nonblocking.py` と `tests/core/engine/test_master_conductor_recon_step_range.py` で isolated thread/loop と step 範囲の互換を確認する。
-- [ ] 手順8/8: `execute_with_replan` の統合動線を点検し、`tests/core/engine/test_master_conductor_scenario_probes.py` と関連回帰を通して facade 化後の挙動差分を確認する。最後に旧ロジックの二重実装が残っていないこと、 compatibility wrapper の削除候補が work_report に列挙できること、観測項目の劣化が許容範囲内であることを exit criteria として確認する。
+- [ ] 手順1/8: import 互換と配置を固定する。`src.core.engine.master_conductor` はファイルモジュールのまま維持し、新規分割先は `src/core/engine/master_conductor_*.py` の平置きに統一する。`__init__` の shared state を棚卸しし、`task_queue` / `context` / `phase_gate` / `event_bus` / `_state_lock` / `pending_hitl` / `project_manager` の所有権を `MasterConductor` facade に固定する。
+- [ ] 手順2/8: session 残りを小さく閉じる。既存 `master_conductor_session_service.py` / `master_conductor_state_snapshot.py` を継続利用し、`resume_session` の外側 orchestration と workspace 初期化境界だけを整理する。`tests/core/engine/test_master_conductor_session_service.py`、`tests/core/engine/test_master_conductor_state_snapshot.py`、`tests/core/engine/test_master_conductor_session_payload_builder.py`、`tests/test_session_persistence.py`、`tests/test_session_resume.py`、`tests/unit/test_shared_session.py` を段階的に確認する。
+- [ ] 手順3/8: 最大効果の `_create_attack_tasks_from_recon` を `master_conductor_recon_attack_task_planner.py` へ優先分割する。まず category map、low-value target filter、targets file 読み込み、task params builder、scenario probe 追加を小さな純粋 helper へ切る。`PhaseGate` 判定、recon file resolve、history replay、context auth/cookie は callable または依存 object として渡し、planner が facade 全体を保持しないようにする。
+- [ ] 手順4/8: recon planner 分割後の routing / scenario probe 回帰を固定する。`tests/core/engine/test_master_conductor_api_candidate_routing.py` と `tests/core/engine/test_master_conductor_scenario_probes.py` を優先し、必要に応じて planner helper 単体テストを追加する。queue mutation は facade の `_add_tasks` 側に残す。
+- [ ] 手順5/8: pending HITL の残りを `master_conductor_hitl_service.py` へ分割する。`pending_hitl` の所有は facade に残しつつ、`_build_task_from_hitl_snapshot`、status 更新、approved ticket enqueue、done marking の状態遷移を helper/service に寄せる。`tests/core/engine/test_master_conductor_hitl_pending.py` と `tests/core/engine/test_master_conductor_hitl_priority.py` で pending / approved / rejected / queued / done を確認する。
+- [ ] 手順6/8: `_dispatch` 分割前の safety character tests を追加・固定する。post-exploit scope guard、worker route、swarm fallback、recon duplicate skip、AgentFactory fallback、recipe dispatch の公開挙動を確認してから `master_conductor_dispatch_service.py` へ移す。`tests/core/engine/test_master_conductor_recon_nonblocking.py` で isolated thread/loop 互換を守る。
+- [ ] 手順7/8: `ReconPipeline` 実行を `master_conductor_recon_execution_service.py` へ分ける。`PhaseGate` 更新完了後のみ planner を呼ぶ順序、`_recon_executed` の重複実行防止、start/end step の扱いを固定し、`tests/core/engine/test_master_conductor_recon_nonblocking.py` と `tests/core/engine/test_master_conductor_recon_step_range.py` を確認する。
+- [ ] 手順8/8: `execute_with_replan` と `_execute_single_task_full_flow` の統合動線を最後に点検する。parallel batch timeout、HITL precheck、checkpoint、summary、execution log の差分を確認し、旧ロジックの二重実装が残っていないこと、compatibility wrapper の削除候補が work_report に列挙できること、観測項目の劣化が許容範囲内であることを exit criteria とする。
 
 ### 4.1 現在の進捗メモ
-- 手順5/8 は着手済み。
+- 旧手順5/8（session persistence）は着手済み。新手順2/8として小さく閉じ、以後は分割効果の高い recon planner へ移る。
 - 完了済み slice:
   - `state_snapshot.py` へ `pending_hitl` / `context` / `completed_tasks` / `task_queue` の restore ロジックを分離した。
   - `session_service.py` へ RUNNING task 再実行ポリシー判定、session file 読み込み、save payload builder を分離した。
@@ -109,7 +123,7 @@ target: src/core/engine/master_conductor.py
   - `resume_session()` の context / pending HITL / task queue 復元を `restore_legacy_resume_session_state()` へ切り出し、 legacy Session からの in-memory state 組み立てを helper 化した。
   - `start_session()` の session create 引数構築を `build_start_session_payload()` へ、`save_session()` の Future 待機ポリシーを `await_session_save_future()` へ切り出した。
   - HITL は `build_pending_hitl_ticket()` を追加し、 pending ticket schema の組み立てを `MasterConductor` から切り離し始めた。
-- 手順5/8 の残り:
+- session persistence の残り:
   - `resume_session` の外側 orchestration を service へさらに寄せる。
   - `resume_session` では workspace 初期化境界をどう扱うかを小さく整理する。
   - `tests/unit/test_shared_session.py` を含む、より広い session 関連回帰を段階的に追加確認する。
@@ -126,18 +140,18 @@ target: src/core/engine/master_conductor.py
   - 対策: 手順3と手順8で `pending_hitl_count`、checkpoint 所要時間、`execute_with_replan` duration の比較を exit criteria に組み込む。
 
 ### 5.2 ソフトウェアアーキテクト視点
-- [ ] [発生確率:高][影響度:中] 旧 `conductor_*.py` 案とサブパッケージ案が混在すると、配置方針がぶれて保守性が落ちる。
-  - 対策: `## 2. 全体像` をサブパッケージ構成へ統一し、 service 配置を `src/core/engine/master_conductor/` 配下に固定する。
+- [ ] [発生確率:高][影響度:大] `master_conductor.py` と同名の `src/core/engine/master_conductor/` サブパッケージを作ると、既存 import path の互換を壊す可能性がある。
+  - 対策: 本計画では平置き `src/core/engine/master_conductor_*.py` に統一し、パッケージ化は import re-export 設計と移行テストを含む別タスクに分離する。
 - [ ] [発生確率:高][影響度:大] facade が保持すべき shared state と service が扱える依存の境界が曖昧だと、再び god object と循環参照を生む。
   - 対策: `## 3.3 依存方向・所有権ルール` と手順1-2で shared state の所有者と禁止依存を明記する。
-- [ ] [発生確率:中][影響度:大] recon execution と recon task planning の副作用境界が曖昧だと、 `PhaseGate` 順序や queue mutation が壊れやすい。
-  - 対策: `## 3.3` と手順7で planner の純粋性、 `PhaseGate` 更新後のみ planner 実行の順序契約を明記する。
+- [ ] [発生確率:中][影響度:大] recon task planner は行数削減効果が最大だが、現状は `PhaseGate`、recon file resolve、history replay、context auth/cookie などの facade 依存を多く持つ。
+  - 対策: 手順3で callable / context object として依存を明示し、planner から facade 全体を逆参照させない。queue mutation は facade に残す。
 - [ ] [発生確率:中][影響度:中] facade 化の完了条件が弱いと、分割後も domain logic が facade に残る。
   - 対策: `## 3.1` と手順8で facade の完了条件と exit criteria を追加する。
 
 ### 5.3 デバッガー視点
-- [ ] [発生確率:高][影響度:大] 現行計画の回帰確認範囲が狭く、 dispatch 以外の破壊を見逃しやすい。
-  - 対策: 手順5-8に session / HITL / recon の具体テストファイルを追加し、手順ごとに対象テストを明確化する。
+- [ ] [発生確率:高][影響度:大] dispatch 分割を先に進めると、scope guard / worker / swarm / recon / AgentFactory fallback の破壊を見逃しやすい。
+  - 対策: 手順6で dispatch 専用 character tests を先に追加し、`test_master_conductor_api_candidate_routing.py` は recon task planner 側の回帰として扱う。
 - [ ] [発生確率:中][影響度:中] 不具合発生時の切り分け順序がないため、調査時間が伸びやすい。
   - 対策: 本節で切り分け順序を `dependency injection境界 -> serializer境界 -> queue mutation -> phase gate -> external side effects` と定義し、 work_report にも残せるようにする。
 - [ ] [発生確率:中][影響度:大] session/HITL の schema 互換は方針だけで、 missing field や未知 state の回復挙動が計画にない。

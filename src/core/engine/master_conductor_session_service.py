@@ -209,3 +209,27 @@ def deserialize_legacy_session_task_queue(serialized: list[str]) -> tuple[list[T
 
 def safe_json_dumps(payload) -> str:
     return json.dumps(payload, ensure_ascii=False)
+
+
+def apply_restored_session_state(
+    restored: dict,
+    context,
+    pending_hitl: list,
+    task_queue,
+) -> list[str]:
+    context.target_info = restored["context_target_info"]
+    context._total_attempts = restored["total_attempts"]
+    context._successful_attempts = restored["successful_attempts"]
+    context.discovered_assets = restored["discovered_assets"]
+    context.bypass_methods = restored["bypass_methods"]
+    context.current_attack_chain = restored["attack_chain"]
+    pending_hitl.clear()
+    pending_hitl.extend(restored["pending_hitl"])
+    task_queue.clear()
+    from src.core.engine.task_queue import DynamicTaskQueue
+    if hasattr(task_queue, "add_batch") and isinstance(task_queue, DynamicTaskQueue):
+        task_queue.add_batch(restored["task_queue"], source="resume_session")
+    else:
+        for task in restored["task_queue"]:
+            task_queue.append(task)
+    return restored.get("failed_task_deserializations", [])
