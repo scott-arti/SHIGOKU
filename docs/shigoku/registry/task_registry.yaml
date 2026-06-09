@@ -3112,6 +3112,18 @@ tasks:
   parent_task_id: SGK-2026-0265
   related_docs:
   - docs/shigoku/plans/2026-06-05_injection-manager-split-plan_plan.md
+- provisional_id: DOC-0294
+  task_id: SGK-2026-0277
+  doc_type: subtask_plan
+  title: InjectionManager API minimal check service 化による大規模分割
+  primary_doc: docs/shigoku/subtasks/2026-06-09_injectionmanager-api-minimal-service-extraction_subtask_plan.md
+  status: active
+  provisional: false
+  task_summary: InjectionManager API minimal check service 化による大規模分割
+  parent_task_id: SGK-2026-0265
+  related_docs:
+  - docs/shigoku/plans/2026-06-05_injection-manager-split-plan_plan.md
+  - docs/shigoku/subtasks/2026-06-09_api-probe-helper-4_subtask_plan.md
 doc_type_allowed_values:
 - spec
 - roadmap
