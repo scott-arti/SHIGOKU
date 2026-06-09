@@ -35,12 +35,15 @@ from src.core.agents.swarm.injection.manager_internal.target_selection import (
     prioritize_targets,
 )
 from src.core.agents.swarm.injection.manager_internal.execution_policy import (
+    build_timeout_cause_key,
     cap_phase2_budget,
+    is_high_risk_endpoint,
     is_lane2_score_eligible,
     resolve_per_url_timeout,
     resolve_risk_force_allowlist,
     should_auto_early_return,
     should_force_phase2_by_risk,
+    ssrf_reachability_gate,
 )
 from src.core.agents.swarm.injection.manager_internal.builtin_probes import (
     run_csrf_minimal_check,
@@ -374,55 +377,6 @@ class InjectionManagerAgent(BaseManagerAgent):
 
     @staticmethod
     @staticmethod
-    def _ssrf_reachability_gate(url: str, base_params: Dict[str, Any]) -> tuple[bool, str]:
-        """
-        SSRF が成立しうる注入ポイントがあるかを判定する。
-        Wave B の即効改善: 到達性が低い対象を Lane-1 から除外。
-        """
-        parsed = urlparse(str(url or ""))
-        query_keys = {k.lower() for k in parse_qs(parsed.query, keep_blank_values=True).keys()}
-        forms = base_params.get("forms", []) if isinstance(base_params, dict) else []
-        url_evidence = base_params.get("url_evidence", {}) if isinstance(base_params, dict) else {}
-        if not isinstance(url_evidence, dict):
-            url_evidence = {}
-
-        url_like_keys = {
-            "url", "uri", "endpoint", "host", "target", "dest", "destination",
-            "src", "source", "fetch", "load", "remote", "request", "webhook", "callback",
-        }
-        if query_keys & url_like_keys:
-            return True, "query_param"
-
-        form_field_names: set[str] = set()
-        for form in forms if isinstance(forms, list) else []:
-            if not isinstance(form, dict):
-                continue
-            for bucket in ("fields", "inputs"):
-                fields = form.get(bucket, [])
-                if not isinstance(fields, list):
-                    continue
-                for field in fields:
-                    name = ""
-                    if isinstance(field, dict):
-                        name = str(field.get("name", "") or "").strip().lower()
-                    else:
-                        name = str(field or "").strip().lower()
-                    if name:
-                        form_field_names.add(name)
-        if form_field_names & url_like_keys:
-            return True, "form_field"
-
-        score = int(url_evidence.get("ssrf_score", 0) or 0)
-        if score >= 40:
-            return True, "score_threshold"
-
-        breakdown = url_evidence.get("score_breakdown", {})
-        if isinstance(breakdown, dict) and int(breakdown.get("graphql_variables", 0) or 0) >= 10:
-            return True, "graphql_variables"
-
-        return False, "no_ssrf_injection_point"
-
-    @staticmethod
     def _dedupe_preserve_order(items: List[str]) -> List[str]:
         """順序を維持して重複を除去する。"""
         deduped: List[str] = []
@@ -672,7 +626,7 @@ class InjectionManagerAgent(BaseManagerAgent):
 
     def _should_bypass_cache(self, url: str, vuln_type: str, params: Dict[str, Any]) -> bool:
         """高リスク対象はキャッシュ再利用を避ける（0件再利用による取りこぼし防止）。"""
-        if self._is_high_risk_endpoint(url):
+        if is_high_risk_endpoint(url):
             return True
         if vuln_type in {"cmd_ssrf", "ssrf", "sqli", "redirect", "lfi", "csrf", "api"}:
             return True
@@ -813,30 +767,6 @@ class InjectionManagerAgent(BaseManagerAgent):
             remaining,
         )
 
-    def _is_high_risk_endpoint(self, url: str) -> bool:
-        if not url:
-            return False
-
-        parsed = urlparse(url)
-        path = (parsed.path or "").lower()
-        query_keys = [k.lower() for k in parse_qs(parsed.query).keys()]
-
-        # Core+Coverage 方針: 高リスク対象のみを明示し、不要な Phase2 強制を避ける
-        high_risk_tokens = (
-            "exec", "cmd",
-            "sqli", "sqli_blind", "blind",
-            "fi", "file_inclusion", "inclusion", "page",
-            "csrf",
-            "api", "/api/", "graphql",
-            "open_redirect", "redirect",
-            "authbypass", "weak_id",
-        )
-
-        if any(token in path for token in high_risk_tokens):
-            return True
-
-        return any(any(token in key for token in high_risk_tokens) for key in query_keys)
-
     def _summarize_phase1_signals(self, phase1_url_results: List[Dict[str, Any]], primary_target: str) -> Dict[str, bool]:
         tool_error = False
         weak_signal = False
@@ -864,7 +794,7 @@ class InjectionManagerAgent(BaseManagerAgent):
             if url:
                 urls_to_evaluate.append(url)
 
-        high_risk_endpoint = any(self._is_high_risk_endpoint(url) for url in urls_to_evaluate)
+        high_risk_endpoint = any(is_high_risk_endpoint(url) for url in urls_to_evaluate)
 
         return {
             "tool_error": tool_error,
@@ -2085,7 +2015,7 @@ class InjectionManagerAgent(BaseManagerAgent):
                         })
                         continue
 
-                    reachable, gate_reason = self._ssrf_reachability_gate(target_url, base_params)
+                    reachable, gate_reason = ssrf_reachability_gate(target_url, base_params)
                     if not reachable:
                         self.current_context["url_results"].append({
                             "url": target_url,
@@ -2155,7 +2085,7 @@ class InjectionManagerAgent(BaseManagerAgent):
                     effective_timeout_retries = max(effective_timeout_retries, 2)
                 if scan_profile == "bbpt" and vuln_type in {"xss", "sqli"}:
                     effective_timeout_retries = max(effective_timeout_retries, 1)
-                timeout_cause_key = self._build_timeout_cause_key(target_url, vuln_type)
+                timeout_cause_key = build_timeout_cause_key(target_url, vuln_type)
                 previous_timeout_failures = int(timeout_cause_failures.get(timeout_cause_key, 0))
                 if (
                     previous_timeout_failures >= self.TIMEOUT_CIRCUIT_BREAKER_THRESHOLD

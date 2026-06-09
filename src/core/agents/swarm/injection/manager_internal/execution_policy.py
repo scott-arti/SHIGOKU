@@ -1,5 +1,5 @@
 from typing import Any, Callable, Dict, List
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 
 def resolve_per_url_timeout(
@@ -126,3 +126,87 @@ def should_auto_early_return(
         return True
 
     return False
+
+
+def ssrf_reachability_gate(url: str, base_params: Dict[str, Any]) -> tuple:
+    """
+    SSRF が成立しうる注入ポイントがあるかを判定する。
+    Wave B の即効改善: 到達性が低い対象を Lane-1 から除外。
+    """
+    parsed = urlparse(str(url or ""))
+    query_keys = {k.lower() for k in parse_qs(parsed.query, keep_blank_values=True).keys()}
+    forms = base_params.get("forms", []) if isinstance(base_params, dict) else []
+    url_evidence = base_params.get("url_evidence", {}) if isinstance(base_params, dict) else {}
+    if not isinstance(url_evidence, dict):
+        url_evidence = {}
+
+    url_like_keys = {
+        "url", "uri", "endpoint", "host", "target", "dest", "destination",
+        "src", "source", "fetch", "load", "remote", "request", "webhook", "callback",
+    }
+    if query_keys & url_like_keys:
+        return True, "query_param"
+
+    form_field_names: set[str] = set()
+    for form in forms if isinstance(forms, list) else []:
+        if not isinstance(form, dict):
+            continue
+        for bucket in ("fields", "inputs"):
+            fields = form.get(bucket, [])
+            if not isinstance(fields, list):
+                continue
+            for field in fields:
+                name = ""
+                if isinstance(field, dict):
+                    name = str(field.get("name", "") or "").strip().lower()
+                else:
+                    name = str(field or "").strip().lower()
+                if name:
+                    form_field_names.add(name)
+    if form_field_names & url_like_keys:
+        return True, "form_field"
+
+    score = int(url_evidence.get("ssrf_score", 0) or 0)
+    if score >= 40:
+        return True, "score_threshold"
+
+    breakdown = url_evidence.get("score_breakdown", {})
+    if isinstance(breakdown, dict) and int(breakdown.get("graphql_variables", 0) or 0) >= 10:
+        return True, "graphql_variables"
+
+    return False, "no_ssrf_injection_point"
+
+
+def build_timeout_cause_key(url: str, vuln_type: str) -> str:
+    import re
+    parsed = urlparse(str(url or ""))
+    path = str(parsed.path or "").lower()
+    path = re.sub(r"/\d+(?=/|$)", "/:num", path)
+    path = re.sub(r"/[0-9a-f]{8,}(?=/|$)", "/:hex", path)
+    path = re.sub(r"/{2,}", "/", path)
+    query_keys = sorted(parse_qs(parsed.query, keep_blank_values=True).keys())[:3]
+    return f"{str(vuln_type or '').lower()}:{path}?{','.join(query_keys)}"
+
+
+def is_high_risk_endpoint(url: str) -> bool:
+    if not url:
+        return False
+
+    parsed = urlparse(url)
+    path = (parsed.path or "").lower()
+    query_keys = [k.lower() for k in parse_qs(parsed.query).keys()]
+
+    high_risk_tokens = (
+        "exec", "cmd",
+        "sqli", "sqli_blind", "blind",
+        "fi", "file_inclusion", "inclusion", "page",
+        "csrf",
+        "api", "/api/", "graphql",
+        "open_redirect", "redirect",
+        "authbypass", "weak_id",
+    )
+
+    if any(token in path for token in high_risk_tokens):
+        return True
+
+    return any(any(token in key for token in high_risk_tokens) for key in query_keys)
