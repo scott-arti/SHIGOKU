@@ -3062,7 +3062,7 @@ tasks:
   doc_type: subtask_plan
   title: InjectionManager thin compatibility wrapper 群の段階削除
   primary_doc: docs/shigoku/subtasks/2026-06-09_injectionmanager-thin-compatibility-wrapper_subtask_plan.md
-  status: active
+  status: done
   provisional: false
   task_summary: InjectionManager thin compatibility wrapper 群の段階削除
   parent_task_id: SGK-2026-0265
@@ -3073,7 +3073,7 @@ tasks:
   doc_type: subtask_plan
   title: API probe 純粋 helper の追加抽出 (4関数)
   primary_doc: docs/shigoku/subtasks/2026-06-09_api-probe-helper-4_subtask_plan.md
-  status: active
+  status: done
   provisional: false
   task_summary: API probe 純粋 helper の追加抽出 (4関数)
   parent_task_id: SGK-2026-0265
@@ -3084,7 +3084,7 @@ tasks:
   doc_type: subtask_plan
   title: tool runner 結果整形の manager_internal 抽出
   primary_doc: docs/shigoku/subtasks/2026-06-09_tool-runner-manager-internal_subtask_plan.md
-  status: active
+  status: done
   provisional: false
   task_summary: tool runner 結果整形の manager_internal 抽出
   parent_task_id: SGK-2026-0265
@@ -3095,7 +3095,7 @@ tasks:
   doc_type: subtask_plan
   title: _process_single_url branch単位分割
   primary_doc: docs/shigoku/subtasks/2026-06-09_process-single-url-branch_subtask_plan.md
-  status: active
+  status: done
   provisional: false
   task_summary: _process_single_url branch単位分割
   parent_task_id: SGK-2026-0265
@@ -3106,7 +3106,7 @@ tasks:
   doc_type: subtask_plan
   title: 純粋判定/ログヘルパーの execution_policy/phase1_results への追加移動
   primary_doc: docs/shigoku/subtasks/2026-06-09_execution-policy-phase1-results_subtask_plan.md
-  status: active
+  status: done
   provisional: false
   task_summary: 純粋判定/ログヘルパーの execution_policy/phase1_results への追加移動
   parent_task_id: SGK-2026-0265

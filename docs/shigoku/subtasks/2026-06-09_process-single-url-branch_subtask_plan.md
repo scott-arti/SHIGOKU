@@ -1,7 +1,7 @@
 ---
 task_id: SGK-2026-0275
 doc_type: subtask_plan
-status: active
+status: done
 parent_task_id: SGK-2026-0265
 related_docs:
 - docs/shigoku/plans/2026-06-05_injection-manager-split-plan_plan.md
