@@ -9,7 +9,7 @@ related_docs:
   - docs/shigoku/subtasks/2026-06-09_api-probe-helper-4_subtask_plan.md
   - docs/shigoku/worklogs/2026-06-09_sgk-2026-0277_api-probe-runner-extraction_work_log.md
 created_at: '2026-06-09'
-updated_at: '2026-06-09'
+updated_at: '2026-06-11'
 ---
 
 # Work Report: SGK-2026-0277 InjectionManager API minimal check service 化
@@ -39,6 +39,7 @@ updated_at: '2026-06-09'
 - `src/core/workspace/__init__.py`（新規）
 - `src/core/workspace/shared_workspace.py`（新規）
   - 既存の import エラー（`ModuleNotFoundError: No module named 'src.core.workspace'`) を緩和する最小限の stub
+  - ID pool / approval flow 互換の不足は `SGK-2026-0278` で別タスクとして追跡
 
 ## テスト結果
 
@@ -47,6 +48,7 @@ updated_at: '2026-06-09'
 | `test_injection_manager.py -k api_minimal_check` | **9/9 pass** | wrapper 経由の character test 維持 |
 | `test_manager_api_probe_character.py` | **1/1 pass** | landing page discovery 回帰確認 |
 | `test_manager_api_probe_mass_assignment_character.py` | **2/2 pass** | mass-assignment recheck 回帰確認 |
+| `test_api_probe_runner.py` | **6/6 pass** | runner 単体、exception path、request call sequence、final evidence raw を確認 |
 | `test_api_probe_object_ab/auth_matrix/read_probe/payload` | **7/7 pass** | helper 単体 test 影響なし |
 | `test_injection_manager.py + injection/` 全件 | **464 pass, 2 fail, 18 error** | 2 fail は pre-existing（`blind_correlation` 正規化）、18 error は live integration test 由来 |
 
@@ -70,7 +72,11 @@ updated_at: '2026-06-09'
 
 ### 既知のリスク
 - runner が 1007 行級であり、内部分解は未実施（計画書で「二次分割候補」として deferred）
-- `request_client.request()` の call sequence は文字列一致ではなく、targeted tests の pass で担保している
+- `SharedWorkspace` stub は import error 緩和のみで、ID pool / approval flow 互換が不足している（`SGK-2026-0278` で追跡）
+
+### 追加確認済み
+- `request_client.request()` の method/url/timeout/use_cache/allow_redirects と final `probe_request_raw` / `probe_response_raw` を runner 単体 test で固定
+- fallback read probe の例外 path で `probe_skipped_reason == "write_method_not_discovered_and_read_probe_failed"` になることを runner 単体 test で固定
 
 ### deferred_tasks
 
@@ -106,4 +112,11 @@ deferred_tasks:
     impact: medium
     tracking_task_id: SGK-2026-0265
     recommended_next_action: "実セッションまたは代表 fixture で unauth API / mass-assignment / auth context / read probe の evidence を比較する"
+
+  - deferred_id: SGK-2026-0277-D06
+    title: "SharedWorkspace stub解消とID pool互換復旧"
+    reason: "SGK-2026-0277ではimport error緩和のみを行ったが、既存IDOR系テストが期待するID pool / approval flow APIは未復旧"
+    impact: high
+    tracking_task_id: SGK-2026-0278
+    recommended_next_action: "tests/core/security/test_idor_enhancement_phase1.py をbaselineに、SharedWorkspaceの最小互換APIを復旧する"
 ```

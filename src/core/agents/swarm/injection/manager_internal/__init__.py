@@ -32,6 +32,7 @@ from src.core.agents.swarm.injection.manager_internal.unknown_hypotheses import 
 from src.core.agents.swarm.injection.manager_internal.models import (
     ApiProbeDependencies,
     DispatchContext,
+    HunterRunnerDependencies,
     NormalizationInput,
     UrlExecutionRequest,
     UrlExecutionResult,

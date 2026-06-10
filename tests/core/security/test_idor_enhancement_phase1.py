@@ -51,6 +51,95 @@ class TestIDPoolCore:
         assert count == 1
         assert "vulnerable-id-1" in workspace.get_pool_ids("/api/data/{id}")
 
+    def test_staging_preserves_owner_for_exclude_owner(self, workspace):
+        workspace.stage_ids_for_approval(
+            "/api/orders/{id}", ["1001", "1002"], reason="bugbounty", owner="user-A"
+        )
+        workspace.approve_staged_ids("/api/orders/{id}")
+
+        all_ids = workspace.get_pool_ids("/api/orders/{id}")
+        assert "1001" in all_ids
+        assert "1002" in all_ids
+
+        filtered = workspace.get_pool_ids(
+            "/api/orders/{id}", exclude_owner="user-A"
+        )
+        assert "1001" not in filtered
+        assert "1002" not in filtered
+
+    def test_normalize_url_uuid_before_numeric(self):
+        ws = SharedWorkspace()
+        pattern = ws._normalize_url_pattern(
+            "https://example.com/api/orders/123e4567-e89b-12d3-a456-426614174000"
+        )
+        assert "/{uuid}" in pattern
+        assert "{id}" not in pattern
+
+    def test_extract_ids_includes_uuids(self):
+        ws = SharedWorkspace()
+        ids = ws._extract_ids_from_text(
+            '{"order_id": "123e4567-e89b-12d3-a456-426614174000", "count": 42}'
+        )
+        assert "123e4567-e89b-12d3-a456-426614174000" in ids
+        assert "42" in ids
+
+    def test_ingest_response_stores_uuid_in_pool(self, workspace):
+        workspace.ingest_response(
+            "https://example.com/api/orders/123e4567-e89b-12d3-a456-426614174000",
+            '{"order_id": "123e4567-e89b-12d3-a456-426614174000"}',
+        )
+        keys = workspace.id_pool.keys()
+        uuid_key = [k for k in keys if "{uuid}" in k]
+        assert len(uuid_key) == 1
+        pool_ids = workspace.get_pool_ids(uuid_key[0])
+        assert "123e4567-e89b-12d3-a456-426614174000" in pool_ids
+
+    def test_uuid_only_body_no_numeric_suffix_in_pool(self, workspace):
+        workspace.ingest_response(
+            "https://example.com/api/orders/123e4567-e89b-12d3-a456-426614174000",
+            '{"order_id": "123e4567-e89b-12d3-a456-426614174000"}',
+        )
+        keys = workspace.id_pool.keys()
+        uuid_key = [k for k in keys if "{uuid}" in k]
+        assert len(uuid_key) == 1
+        pool_ids = workspace.get_pool_ids(uuid_key[0])
+        assert len(pool_ids) == 1
+        assert pool_ids[0] == "123e4567-e89b-12d3-a456-426614174000"
+
+    def test_uuid_extraction_masks_numeric_fragments(self):
+        ws = SharedWorkspace()
+        ids = ws._extract_ids_from_text(
+            '{"uuid": "123e4567-e89b-12d3-a456-426614174000"}'
+        )
+        assert len(ids) == 1
+        assert ids[0] == "123e4567-e89b-12d3-a456-426614174000"
+
+    def test_get_pool_ids_deterministic_order(self, workspace):
+        workspace.register_ids("/api/x/{id}", ["c", "b", "a"])
+        workspace.register_ids("/api/x/{id}", ["b"])
+        result1 = workspace.get_pool_ids("/api/x/{id}")
+        result2 = workspace.get_pool_ids("/api/x/{id}")
+        assert result1 == result2
+        assert result1 == ["a", "b", "c"]
+
+    def test_get_pool_ids_exclude_owner_partial_key(self, workspace):
+        workspace.register_ids(
+            "https://example.com/api/items/{id}", ["1001"], owner="user-A"
+        )
+        workspace.register_ids(
+            "https://example.com/api/items/{id}", ["2002"], owner="user-B"
+        )
+        filtered = workspace.get_pool_ids(
+            "api/items/{id}", exclude_owner="user-A"
+        )
+        assert "1001" not in filtered
+        assert "2002" in filtered
+
+    def test_get_pool_ids_limit_stable(self, workspace):
+        workspace.register_ids("/api/x/{id}", ["d", "a", "c", "b"])
+        for _ in range(5):
+            assert workspace.get_pool_ids("/api/x/{id}", limit=2) == ["a", "b"]
+
 class TestIdorHunterIntegration:
     """IdorHunterSpecialistとの統合テスト"""
     

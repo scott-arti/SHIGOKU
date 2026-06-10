@@ -1,14 +1,14 @@
 ---
 task_id: SGK-2026-0280
 doc_type: subtask_plan
-status: active
+status: done
 parent_task_id: SGK-2026-0264
 related_docs:
 - docs/shigoku/plans/2026-06-05_master-conductor-split-plan_plan.md
 - docs/shigoku/reports/2026-06-09_master-conductor-split_work_report.md
 title: 'MasterConductor 追加分割計画: seed/path helper 優先抽出'
 created_at: '2026-06-09'
-updated_at: '2026-06-09'
+updated_at: '2026-06-11'
 tags:
 - shigoku
 target: src/core/engine/master_conductor.py
@@ -103,20 +103,20 @@ AST 実測時点の `src/core/engine/master_conductor.py` は 8,317 行、`Maste
   - 行数削減は成功条件の一部にすぎない。output parity、wrapper 互換、mutation 禁止、import 互換を同時に満たすことを完了条件にする。
 
 ## 4. 実装ステップ（AIに指示する手順）
-- [ ] ステップ1: character baseline と出力一致 fixture を固定する。対象 method の現行行数、wrapper 呼び出し、`__new__` 生成インスタンスでの呼び出し、monkeypatch 互換、代表 `recon_results` での selected URLs / evidence map を記録する。
-- [ ] ステップ2: failure fixture を追加する。壊れた JSONL 行、存在しない tagged file、読み込み失敗、URL parse 失敗、`context/workspace/project_manager` 欠損時の wrapper 呼び出しを、現行挙動維持の character tests として固定する。
-- [ ] ステップ3: 観測性・境界契約を実装前に固定する。`seed_source`, `category`, `candidate_count`, `selected_count`, `skip_reason_count`, `scope_filtered_count` の記録方針、secret redaction、service が `MasterConductor` instance を受け取らないことをテストまたは明示チェックで確認する。
-- [ ] ステップ4: `master_conductor_recon_seed_target_service.py` を追加し、`ReconSeedTargetService` の内部に `UrlScopeResolver` 相当と `SeedTargetSelector` 相当の境界を設ける。新規 dependency は追加せず、既存 callable / context snapshot / settings を使う。
-- [ ] ステップ5: stateless URL/scope helper を移す。対象は `_normalize_url_candidate`, `_extract_host_candidate`, `_is_target_url_in_scope`, `_resolve_task_target`。facade 側は同名 wrapper を残し、移動直後に py_compile と scope/target 系 character tests を実行する。
-- [ ] ステップ6: context/workspace 依存の path helper を移す。対象は `_resolve_recon_file_path`, `_resolve_project_tagged_dir`, `_resolve_in_scope_hosts`, `_get_context_auth_headers`, `_get_context_cookie_string`。`__new__` インスタンスで欠損し得る属性は `getattr` default を維持し、auth 値はログへ出さない。
-- [ ] ステップ7: seed scorer を移す。対象は `_score_csrf_seed_candidate`, `_score_xss_seed_candidate`, `_is_low_value_backfill_target`, `_should_enable_phase2_on_empty_for_backfill`, `_apply_phase2_on_empty_policy`。移動後に score / reasons の output parity を確認する。
-- [ ] ステップ8: seed collector / refiner を移す。対象は `_collect_csrf_seed_targets`, `_collect_xss_seed_targets`, `_collect_history_replay_targets`, `_refine_backfill_seed_targets`。JSONL skip 件数と selected evidence map の一致を確認する。
-- [ ] ステップ9: scenario seed helper を移す。対象は `_collect_scenario_probe_seed_targets`, `_select_targets_for_scenario_probe`。`_create_missing_core_scenario_probe_tasks()` は今回そのままにし、scenario seed helper だけ service 経由にする。
-- [ ] ステップ10: `ReconAttackTaskPlanner` の dependency injection を確認する。基本は facade wrapper 経由を維持し、planner へ service method を直接渡す場合は wrapper monkeypatch 互換テストを追加してから切り替える。
-- [ ] ステップ11: targeted tests を実行する。targeted tests が失敗した場合は related tests、`graphify update .`、docs validation へ進まず、失敗した移行単位を特定して修正する。
-- [ ] ステップ12: related tests を実行する。`test_master_conductor_vuln_family_gate.py`, `test_master_conductor_recon_nonblocking.py`, `test_master_conductor_realtime_budget.py` で routing / scenario / recon 非ブロッキングの副作用がないことを確認する。
-- [ ] ステップ13: broad validation と graph 更新を実行する。コード変更後は `graphify update .` を実行し、SHIGOKU docs は `sync_shigoku_updated_at.py` 後に `validate_shigoku_docs.py` を通す。
-- [ ] ステップ14: work_report に残課題を構造化する。wrapper 削除候補、dispatch service 本格実装、execution loop 分割、global guard task 生成分離を deferred_tasks に列挙し、別 tracking task へつなげる。
+- [x] ステップ1: character baseline と出力一致 fixture を固定する。対象 method の現行行数、wrapper 呼び出し、`__new__` 生成インスタンスでの呼び出し、monkeypatch 互換、代表 `recon_results` での selected URLs / evidence map を記録する。
+- [x] ステップ2: failure fixture を追加する。壊れた JSONL 行、存在しない tagged file、読み込み失敗、URL parse 失敗、`context/workspace/project_manager` 欠損時の wrapper 呼び出しを、現行挙動維持の character tests として固定する。
+- [x] ステップ3: 観測性・境界契約を実装前に固定する。`seed_source`, `category`, `candidate_count`, `selected_count`, `skip_reason_count`, `scope_filtered_count` の記録方針、secret redaction、service が `MasterConductor` instance を受け取らないことをテストまたは明示チェックで確認する。
+- [x] ステップ4: `master_conductor_recon_seed_target_service.py` を追加し、`ReconSeedTargetService` の内部に `UrlScopeResolver` 相当と `SeedTargetSelector` 相当の境界を設ける。新規 dependency は追加せず、既存 callable / context snapshot / settings を使う。
+- [x] ステップ5: stateless URL/scope helper を移す。対象は `_normalize_url_candidate`, `_extract_host_candidate`, `_is_target_url_in_scope`, `_resolve_task_target`。facade 側は同名 wrapper を残し、移動直後に py_compile と scope/target 系 character tests を実行する。
+- [x] ステップ6: context/workspace 依存の path helper を移す。対象は `_resolve_recon_file_path`, `_resolve_project_tagged_dir`, `_resolve_in_scope_hosts`, `_get_context_auth_headers`, `_get_context_cookie_string`。`__new__` インスタンスで欠損し得る属性は `getattr` default を維持し、auth 値はログへ出さない。
+- [x] ステップ7: seed scorer を移す。対象は `_score_csrf_seed_candidate`, `_score_xss_seed_candidate`, `_is_low_value_backfill_target`, `_should_enable_phase2_on_empty_for_backfill`, `_apply_phase2_on_empty_policy`。移動後に score / reasons の output parity を確認する。
+- [x] ステップ8: seed collector / refiner を移す。対象は `_collect_csrf_seed_targets`, `_collect_xss_seed_targets`, `_collect_history_replay_targets`, `_refine_backfill_seed_targets`。JSONL skip 件数と selected evidence map の一致を確認する。
+- [x] ステップ9: scenario seed helper を移す。対象は `_collect_scenario_probe_seed_targets`, `_select_targets_for_scenario_probe`。`_create_missing_core_scenario_probe_tasks()` は今回そのままにし、scenario seed helper だけ service 経由にする。
+- [x] ステップ10: `ReconAttackTaskPlanner` の dependency injection を確認する。基本は facade wrapper 経由を維持し、planner へ service method を直接渡す場合は wrapper monkeypatch 互換テストを追加してから切り替える。
+- [x] ステップ11: targeted tests を実行する。targeted tests が失敗した場合は related tests、`graphify update .`、docs validation へ進まず、失敗した移行単位を特定して修正する。
+- [x] ステップ12: related tests を実行する。`test_master_conductor_vuln_family_gate.py`, `test_master_conductor_recon_nonblocking.py`, `test_master_conductor_realtime_budget.py` で routing / scenario / recon 非ブロッキングの副作用がないことを確認する。
+- [x] ステップ13: broad validation と graph 更新を実行する。コード変更後は `graphify update .` を実行し、SHIGOKU docs は `sync_shigoku_updated_at.py` 後に `validate_shigoku_docs.py` を通す。
+- [x] ステップ14: work_report に残課題を構造化する。wrapper 削除候補、dispatch service 本格実装、execution loop 分割、global guard task 生成分離を deferred_tasks に列挙し、別 tracking task へつなげる。
 
 ## 4.1 検証コマンド
 targeted:

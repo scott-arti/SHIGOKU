@@ -93,3 +93,32 @@ class ApiProbeDependencies(TypedDict, total=False):
     looks_like_login_page: Any
     resolve_detection_mode: Any
     current_context: Dict[str, Any]
+
+
+class HunterRunnerDependencies(TypedDict, total=False):
+    """run_*_hunter 群の共通依存注入束。
+
+    manager.py 側から明示的に inject し、runner が self や
+    InjectionManagerAgent 全体を受け取らないようにする。
+    """
+
+    specialists: Dict[str, Any]
+    current_context: Dict[str, Any]
+    phase2_detection_mode: str
+    excluded_params: frozenset
+    normalize_tool_supplied_params: Any
+    resolve_detection_mode: Any
+    agent_name: str
+
+
+class ProcessUrlDependencies(TypedDict, total=False):
+    """_process_single_url branch 実行の依存注入束（8フィールド以内）。"""
+
+    specialists: Dict[str, Any]
+    current_context: Dict[str, Any]
+    excluded_params: frozenset
+    agent_name: str
+    run_sqli_hunter: Any
+    run_xss_hunter: Any
+    run_lfi_check: Any
+    run_ssti_hunter: Any

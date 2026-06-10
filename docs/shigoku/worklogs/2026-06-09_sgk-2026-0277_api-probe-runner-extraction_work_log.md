@@ -7,7 +7,7 @@ related_docs:
   - docs/shigoku/subtasks/2026-06-09_injectionmanager-api-minimal-service-extraction_subtask_plan.md
   - docs/shigoku/reports/2026-06-09_sgk-2026-0277_api-probe-runner-extraction_work_report.md
 created_at: '2026-06-09'
-updated_at: '2026-06-09'
+updated_at: '2026-06-11'
 ---
 
 # Work Log: SGK-2026-0277
@@ -35,6 +35,7 @@ updated_at: '2026-06-09'
 ### Verification
 - targeted tests: `api_minimal_check` 9/9 pass
 - probe character tests: `test_manager_api_probe_character.py` + `test_manager_api_probe_mass_assignment_character.py` 3/3 pass
+- runner unit tests: `test_api_probe_runner.py` 6/6 pass（exception path と request call sequence / final evidence raw を追加確認）
 - helper unit tests: `test_api_probe_*` 7/7 pass
 - broad tests: 464 pass, 2 pre-existing failures, 18 pre-existing errors
 - AST checks: `manager.py`, `api_probe_runner.py`, `models.py` parse OK
@@ -48,4 +49,5 @@ updated_at: '2026-06-09'
 
 ## Next Actions
 - 二次分割（deferred_tasks D01-D05）を後続 subtask として起票（SGK-2026-0265 配下）
+- `SharedWorkspace` stub の ID pool / approval flow 互換不足は `SGK-2026-0278` で別タスクとして追跡
 - `graphify update .` の実行結果を別途記録

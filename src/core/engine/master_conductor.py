@@ -70,6 +70,7 @@ from src.core.engine.master_conductor_state_snapshot import (
     restore_task_queue_from_session_payload,
 )
 from src.core.waf.bypasser import WAFBypasser
+from src.core.engine.master_conductor_recon_seed_target_service import ReconSeedTargetService
 
 _SCN_CATALOG_DEFAULTS: tuple[tuple[str, str], ...] = (
     ("scn_01_idor_bola_object_access", "IDOR/BOLA Object Access"),
@@ -172,6 +173,24 @@ from src.core.observability.flaky_quarantine import (
     FlakyQuarantinePolicy,
     FlakyQuarantineTracker,
     resolve_flaky_policy_from_settings,
+)
+from src.core.engine.master_conductor_scenario_coverage_service import (
+    create_missing_core_scenario_probe_tasks as _service_create_missing_core_scenario_probe_tasks,
+    evaluate_intervention_scenario_coverage as _service_evaluate_intervention_scenario_coverage,
+    has_scenario_in_queue_or_history as _service_has_scenario_in_queue_or_history,
+    normalize_scenario_id_for_coverage as _service_normalize_scenario_id_for_coverage,
+    resolve_intervention_scenario_catalog as _service_resolve_intervention_scenario_catalog,
+    task_matches_scenario as _service_task_matches_scenario,
+)
+from src.core.engine.master_conductor_global_guard_task_service import (
+    build_csrf_guard_payload,
+    build_oob_guard_payload,
+    build_xss_guard_payload,
+    ensure_global_csrf_guard_decision,
+    ensure_global_oob_guard_decision,
+    ensure_global_xss_guard_decision,
+    resolve_global_csrf_guard_target as _service_resolve_global_csrf_guard_target,
+    resolve_global_oob_guard_target as _service_resolve_global_oob_guard_target,
 )
 
 class MasterConductor:
@@ -449,6 +468,15 @@ class MasterConductor:
         # Use shared loop to support synchronous instantiation
         loop = self._get_loop()
         asyncio.run_coroutine_threadsafe(self.event_bus.start(), loop)
+
+    @property
+    def _seed_service(self) -> ReconSeedTargetService:
+        return ReconSeedTargetService(
+            context=getattr(self, 'context', None),
+            workspace=getattr(self, 'workspace', None),
+            project_manager=getattr(self, 'project_manager', None),
+            target=getattr(self, 'target', ''),
+        )
 
     async def _handle_vuln_found(self, event: Event) -> None:
         """
@@ -1180,361 +1208,34 @@ class MasterConductor:
         scenario_id: str,
         route: str,
     ) -> tuple[str, str, Optional[str]]:
-        """Coverage算出用に category_route 等を SCN ID へ正規化する。"""
-        sid = str(scenario_id or "").strip().lower().replace("-", "_")
-        normalized_route = str(route or "").strip().lower()
-        if sid.startswith("scn_"):
-            return sid, normalized_route, None
-
-        category = str(params.get("category", "") or "").strip().lower()
-
-        alias_by_scenario: dict[str, str] = {
-            "category_route:admin": "scn_01_idor_bola_object_access",
-            "category_route:auth": "scn_07_token_trust_boundary",
-            "category_route:jwt_detected": "scn_07_token_trust_boundary",
-            "category_route:basket_order": "scn_09_multi_step_state_machine",
-            "category_route:realtime": "scn_09_multi_step_state_machine",
-            "category_route:csrf_candidate": "scn_09_multi_step_state_machine",
-            "category_route:id_param": "scn_03_injection_input_tampering",
-            "category_route:redirect_param": "scn_03_injection_input_tampering",
-            "category_route:file_param": "scn_03_injection_input_tampering",
-            "category_route:product_search": "scn_03_injection_input_tampering",
-            "category_route:feedback_review": "scn_03_injection_input_tampering",
-            "category_route:api_data": "scn_03_injection_input_tampering",
-            "category_route:client_route_dom": "scn_03_injection_input_tampering",
-            "category_route:api_candidate": "scn_03_injection_input_tampering",
-            "category_route:api_endpoint": "scn_03_injection_input_tampering",
-            "category_route:xss_candidate": "scn_03_injection_input_tampering",
-            "category_route:file_exposure_upload": "scn_06_data_exposure_diff",
-            "category_route:meta_observability": "scn_06_data_exposure_diff",
-            "category_route:debug_info": "scn_06_data_exposure_diff",
-        }
-        alias_by_category: dict[str, str] = {
-            "admin": "scn_01_idor_bola_object_access",
-            "auth": "scn_07_token_trust_boundary",
-            "jwt_detected": "scn_07_token_trust_boundary",
-            "basket_order": "scn_09_multi_step_state_machine",
-            "realtime": "scn_09_multi_step_state_machine",
-            "csrf_candidate": "scn_09_multi_step_state_machine",
-            "id_param": "scn_03_injection_input_tampering",
-            "redirect_param": "scn_03_injection_input_tampering",
-            "file_param": "scn_03_injection_input_tampering",
-            "product_search": "scn_03_injection_input_tampering",
-            "feedback_review": "scn_03_injection_input_tampering",
-            "api_data": "scn_03_injection_input_tampering",
-            "client_route_dom": "scn_03_injection_input_tampering",
-            "api_candidate": "scn_03_injection_input_tampering",
-            "api_endpoint": "scn_03_injection_input_tampering",
-            "xss_candidate": "scn_03_injection_input_tampering",
-            "file_exposure_upload": "scn_06_data_exposure_diff",
-            "meta_observability": "scn_06_data_exposure_diff",
-            "debug_info": "scn_06_data_exposure_diff",
-        }
-        if sid in alias_by_scenario:
-            return alias_by_scenario[sid], normalized_route or "shigoku_hitl", "normalized_category_route"
-        if category in alias_by_category:
-            return alias_by_category[category], normalized_route or "shigoku_hitl", "normalized_category_alias"
-
-        # 既存データ互換: category_route:* 以外でも task 文脈から最小推定する
-        signal_chunks: list[str] = [
-            str(getattr(task, "name", "") or ""),
-            str(getattr(task, "action", "") or ""),
-            str(getattr(task, "agent_type", "") or ""),
-            str(params.get("scenario", "") or ""),
-            str(params.get("attack_type", "") or ""),
-            str(params.get("description", "") or ""),
-            str(category or ""),
-        ]
-        tags = params.get("tags", [])
-        if isinstance(tags, list):
-            signal_chunks.extend(str(t or "") for t in tags)
-        signal_text = " ".join(signal_chunks).lower()
-
-        token_trust_markers = (
-            "jwt",
-            "alg:none",
-            "algorithm confusion",
-            "kid injection",
-            "jwks",
-            "token forgery",
-            "token trust boundary",
-        )
-        if any(marker in signal_text for marker in token_trust_markers):
-            return "scn_07_token_trust_boundary", normalized_route or "shigoku_hitl", "normalized_signal_alias"
-
-        state_machine_markers = (
-            "state machine",
-            "multi-step flow",
-            "workflow abuse",
-            "state transition",
-            "precondition",
-            "chaining",
-            "basket",
-            "order flow",
-            "csrf",
-        )
-        if any(marker in signal_text for marker in state_machine_markers):
-            return "scn_09_multi_step_state_machine", normalized_route or "shigoku_hitl", "normalized_signal_alias"
-
-        injection_markers = (
-            "sqli",
-            "sql injection",
-            "xss",
-            "payload",
-            "input tampering",
-            "parameter tampering",
-            "mass assignment",
-            "overposting",
-            "prototype pollution",
-        )
-        if any(marker in signal_text for marker in injection_markers):
-            return "scn_03_injection_input_tampering", normalized_route or "shigoku_only", "normalized_signal_alias"
-
-        data_exposure_markers = (
-            "data exposure",
-            "sensitive field",
-            "response diff",
-            "schema diff",
-            "debug info",
-            "observability",
-        )
-        if any(marker in signal_text for marker in data_exposure_markers):
-            return "scn_06_data_exposure_diff", normalized_route or "shigoku_only", "normalized_signal_alias"
-
-        return sid, normalized_route, None
+        return _service_normalize_scenario_id_for_coverage(task, params, scenario_id, route)
 
     def _resolve_intervention_scenario_catalog(self) -> list[dict[str, Any]]:
-        catalog: list[dict[str, Any]] = []
-        seen: set[str] = set()
-        policy = getattr(self, "intervention_policy", None)
-        if policy is None:
-            try:
-                policy = InterventionPolicy(settings.get_intervention_scenarios())
-                self.intervention_policy = policy
-            except Exception:
-                policy = None
-
-        if policy is not None:
-            for scenario in getattr(policy, "scenarios", []):
-                if not isinstance(scenario, dict):
-                    continue
-                sid = str(scenario.get("id", "") or "").strip().lower().replace("-", "_")
-                number = self._extract_scn_number(sid)
-                if number < 1 or number > 12 or sid in seen:
-                    continue
-                route = str(scenario.get("route", "shigoku_only") or "shigoku_only").strip().lower()
-                title = str(scenario.get("title") or scenario.get("name") or sid).strip()
-                catalog.append({"id": sid, "number": number, "route": route, "title": title})
-                seen.add(sid)
-
-        if not catalog:
-            for sid, title in _SCN_CATALOG_DEFAULTS:
-                catalog.append(
-                    {
-                        "id": sid,
-                        "number": self._extract_scn_number(sid),
-                        "route": "shigoku_only",
-                        "title": title,
-                    }
-                )
-            return catalog
-
-        fallback_titles = {sid: title for sid, title in _SCN_CATALOG_DEFAULTS}
-        catalog_by_number = {int(item["number"]): dict(item) for item in catalog}
-        for fallback_sid, fallback_title in _SCN_CATALOG_DEFAULTS:
-            number = self._extract_scn_number(fallback_sid)
-            if number < 1 or number > 12:
-                continue
-            if number in catalog_by_number:
-                if not str(catalog_by_number[number].get("title", "")).strip():
-                    catalog_by_number[number]["title"] = fallback_title
-                continue
-            catalog_by_number[number] = {
-                "id": fallback_sid,
-                "number": number,
-                "route": "shigoku_only",
-                "title": fallback_title,
-            }
-
-        sorted_catalog: list[dict[str, Any]] = []
-        for number in sorted(catalog_by_number.keys()):
-            item = dict(catalog_by_number[number])
-            sid = str(item.get("id", "") or "").strip().lower().replace("-", "_")
-            item["id"] = sid
-            item["number"] = number
-            item["title"] = str(item.get("title") or fallback_titles.get(sid, sid)).strip()
-            item["route"] = str(item.get("route", "shigoku_only") or "shigoku_only").strip().lower()
-            sorted_catalog.append(item)
-        return sorted_catalog
+        return _service_resolve_intervention_scenario_catalog(
+            intervention_policy=getattr(self, "intervention_policy", None),
+            extract_scn_number=self._extract_scn_number,
+        )
 
     def _evaluate_intervention_scenario_coverage(
         self,
         tasks: Optional[list[Task]] = None,
         infer_if_missing: bool = True,
     ) -> dict[str, Any]:
-        catalog = self._resolve_intervention_scenario_catalog()
-        required_scenarios = [str(item.get("id", "")).strip().lower() for item in catalog if str(item.get("id", "")).strip()]
-        metadata_by_id = {
-            str(item.get("id", "")).strip().lower(): {
-                "number": int(item.get("number", 0) or 0),
-                "title": str(item.get("title", "") or "").strip(),
-                "route": str(item.get("route", "shigoku_only") or "shigoku_only").strip().lower(),
-            }
-            for item in catalog
-            if str(item.get("id", "")).strip()
-        }
-
-        scenario_counts: dict[str, int] = {}
-        route_counts: dict[str, int] = {}
-        route_by_scenario: dict[str, str] = {}
-        source_by_scenario: dict[str, str] = {}
-        evaluated = tasks if tasks is not None else list(getattr(self, "completed_tasks", []) or [])
-
-        for task in evaluated:
-            task_state = getattr(task, "state", TaskState.PENDING)
-            if isinstance(task_state, TaskState):
-                task_state_str = task_state.value
-            else:
-                task_state_str = str(task_state or "").strip().lower()
-            if task_state_str == TaskState.SKIPPED.value:
-                # HITL待ちスキップを含め、未実行タスクはシナリオ到達として扱わない
-                continue
-
-            params = task.params if isinstance(getattr(task, "params", None), dict) else {}
-            intervention = params.get("_intervention", {})
-            decision = intervention.get("decision", {}) if isinstance(intervention, dict) else {}
-            scenario_id = str(decision.get("scenario_id", "") or "").strip().lower().replace("-", "_")
-            route = str(decision.get("route", "") or "").strip().lower()
-            source = "task_decision"
-
-            if not scenario_id:
-                scenario_id = str(params.get("scenario_id", "") or params.get("scenario_probe", "")).strip().lower().replace("-", "_")
-                source = "task_params" if scenario_id else source
-
-            if not scenario_id and infer_if_missing:
-                inferred = self._get_intervention_decision(task)
-                scenario_id = str(inferred.get("scenario_id", "") or "").strip().lower().replace("-", "_")
-                route = str(inferred.get("route", route) or route).strip().lower()
-                source = "inferred_by_policy" if scenario_id else source
-
-            scenario_id, route, normalized_source = self._normalize_scenario_id_for_coverage(
-                task=task,
-                params=params,
-                scenario_id=scenario_id,
-                route=route,
-            )
-            if normalized_source:
-                source = normalized_source
-
-            if not scenario_id.startswith("scn_"):
-                continue
-
-            scenario_counts[scenario_id] = scenario_counts.get(scenario_id, 0) + 1
-            if route:
-                route_counts[route] = route_counts.get(route, 0) + 1
-                route_by_scenario.setdefault(scenario_id, route)
-            source_by_scenario.setdefault(scenario_id, source)
-
-        covered_scenarios = sorted(
-            scenario_counts.keys(),
-            key=lambda sid: (self._extract_scn_number(sid), sid),
+        return _service_evaluate_intervention_scenario_coverage(
+            tasks=tasks,
+            infer_if_missing=infer_if_missing,
+            completed_tasks=list(getattr(self, "completed_tasks", []) or []),
+            get_intervention_decision=self._get_intervention_decision,
+            extract_scn_number=self._extract_scn_number,
+            intervention_policy=getattr(self, "intervention_policy", None),
         )
-        missing_scenarios = [sid for sid in required_scenarios if sid not in scenario_counts]
-        required_count = len(required_scenarios)
-        covered_count = len([sid for sid in required_scenarios if sid in scenario_counts])
-        coverage_rate = (covered_count / required_count) if required_count > 0 else 1.0
-
-        coverage_items: list[dict[str, Any]] = []
-        for sid in required_scenarios:
-            meta = metadata_by_id.get(sid, {})
-            coverage_items.append(
-                {
-                    "scenario_id": sid,
-                    "number": int(meta.get("number", self._extract_scn_number(sid)) or 0),
-                    "title": str(meta.get("title", sid) or sid),
-                    "route": str(route_by_scenario.get(sid, meta.get("route", "shigoku_only")) or "shigoku_only"),
-                    "covered": sid in scenario_counts,
-                    "count": int(scenario_counts.get(sid, 0)),
-                    "source": str(source_by_scenario.get(sid, "none") or "none"),
-                }
-            )
-
-        return {
-            "required_scenarios": required_scenarios,
-            "covered_scenarios": covered_scenarios,
-            "missing_scenarios": missing_scenarios,
-            "required_count": required_count,
-            "covered_count": covered_count,
-            "coverage_rate": coverage_rate,
-            "gate_passed": len(missing_scenarios) == 0,
-            "coverage_items": coverage_items,
-            "route_counts": dict(sorted(route_counts.items())),
-        }
 
     def _collect_scenario_probe_seed_targets(
         self,
         recon_results: dict[str, dict],
         budget: int = 2,
     ) -> tuple[list[str], dict[str, dict[str, Any]]]:
-        budget = max(1, int(budget or 2))
-        seeds, evidence = self._collect_csrf_seed_targets(
-            recon_results=recon_results,
-            budget=max(3, budget),
-        )
-        seeds, evidence = self._refine_backfill_seed_targets(
-            targets=seeds,
-            evidence_by_url=evidence,
-            budget=budget,
-        )
-
-        normalized_targets: list[str] = []
-        for raw in seeds:
-            candidate = str(raw or "").strip()
-            if not candidate or candidate in normalized_targets:
-                continue
-            normalized_targets.append(candidate)
-
-        if len(normalized_targets) < budget:
-            for raw in list(getattr(self.context, "discovered_assets", []) or []):
-                candidate = str(raw or "").strip()
-                if not candidate.startswith(("http://", "https://")):
-                    continue
-                if candidate in normalized_targets:
-                    continue
-                normalized_targets.append(candidate)
-                evidence.setdefault(
-                    candidate,
-                    {
-                        "score": -1,
-                        "reasons": ["discovered_asset_fallback"],
-                        "category": "scenario_probe",
-                        "method": "GET",
-                        "has_form_tag": False,
-                    },
-                )
-                if len(normalized_targets) >= budget:
-                    break
-
-        if not normalized_targets:
-            fallback_target = ""
-            if isinstance(getattr(self.context, "target_info", {}), dict):
-                fallback_target = str(self.context.target_info.get("target", "") or "")
-            if not fallback_target:
-                fallback_target = str(getattr(self, "target", "") or "")
-            fallback_target = fallback_target.strip()
-            if fallback_target:
-                normalized_targets = [fallback_target]
-                evidence = {
-                    fallback_target: {
-                        "score": -1,
-                        "reasons": ["target_fallback_only"],
-                        "category": "scenario_probe",
-                        "method": "GET",
-                        "has_form_tag": False,
-                    }
-                }
-
-        return normalized_targets[:budget], evidence
+        return self._seed_service.collect_scenario_probe_seed_targets(recon_results, budget)
 
     def _select_targets_for_scenario_probe(
         self,
@@ -1544,406 +1245,40 @@ class MasterConductor:
         evidence_by_url: dict[str, dict[str, Any]],
         budget: int,
     ) -> tuple[list[str], dict[str, dict[str, Any]]]:
-        normalized_scenario_id = str(scenario_id or "").strip().lower().replace("-", "_")
-        max_targets = max(1, int(budget or 1))
-        normalized_targets = [str(url or "").strip() for url in targets if str(url or "").strip()]
-        if normalized_scenario_id != "scn_10_semantic_business_logic":
-            selected_targets = normalized_targets[:max_targets]
-        else:
-            from urllib.parse import urlparse
-
-            workflow_categories = {"basket_order", "feedback_review", "product_search", "csrf_candidate"}
-            workflow_keywords = (
-                "checkout",
-                "cart",
-                "basket",
-                "order",
-                "payment",
-                "refund",
-                "invoice",
-                "purchase",
-                "subscription",
-                "plan",
-                "billing",
-                "review",
-                "feedback",
-                "coupon",
-                "discount",
-            )
-
-            workflow_targets: list[str] = []
-            non_auth_targets: list[str] = []
-            for url in normalized_targets:
-                evidence = evidence_by_url.get(url, {}) if isinstance(evidence_by_url, dict) else {}
-                if not isinstance(evidence, dict):
-                    evidence = {}
-                category = str(evidence.get("category", "") or "").strip().lower()
-                path = (urlparse(url).path or "").strip().lower()
-                is_workflow_like = category in workflow_categories or any(keyword in path for keyword in workflow_keywords)
-                is_auth_like = category == "auth" or any(token in path for token in ("/account", "/password", "/login", "/register"))
-                if is_workflow_like and url not in workflow_targets:
-                    workflow_targets.append(url)
-                if not is_auth_like and url not in non_auth_targets:
-                    non_auth_targets.append(url)
-
-            if workflow_targets:
-                selected_targets = workflow_targets[:max_targets]
-            elif non_auth_targets:
-                selected_targets = non_auth_targets[:max_targets]
-            else:
-                selected_targets = normalized_targets[:1]
-
-        selected_evidence = {
-            url: (
-                evidence_by_url.get(url, {})
-                if isinstance(evidence_by_url, dict) and isinstance(evidence_by_url.get(url, {}), dict)
-                else {
-                    "score": -1,
-                    "reasons": ["scenario_probe_default_target"],
-                    "category": "scenario_probe",
-                    "method": "GET",
-                    "has_form_tag": False,
-                }
-            )
-            for url in selected_targets
-        }
-        return selected_targets, selected_evidence
+        return self._seed_service.select_targets_for_scenario_probe(
+            scenario_id=scenario_id,
+            targets=targets,
+            evidence_by_url=evidence_by_url,
+            budget=budget,
+        )
 
     def _create_missing_core_scenario_probe_tasks(
         self,
         existing_tasks: list[Task],
         recon_results: dict[str, dict],
     ) -> list[Task]:
-        actionable_categories = {
-            "admin",
-            "auth",
-            "id_param",
-            "redirect_param",
-            "file_param",
-            "upload",
-            "product_search",
-            "basket_order",
-            "feedback_review",
-            "file_exposure_upload",
-            "api_data",
-            "client_route_dom",
-            "api_candidate",
-            "api_endpoint",
-            "csrf_candidate",
-            "xss_candidate",
-        }
-        has_actionable_seed = any(
-            str((getattr(task, "params", {}) or {}).get("category", "")).strip().lower() in actionable_categories
-            for task in existing_tasks
-        )
-        if not has_actionable_seed:
-            return []
-
-        scenario_coverage = self._evaluate_intervention_scenario_coverage(
-            tasks=existing_tasks,
-            infer_if_missing=True,
-        )
-        target_scenario_numbers = {1, 2, 3, 4, 5, 6, 8, 10, 11, 12}
-        missing_probe_ids = [
-            sid
-            for sid in scenario_coverage.get("missing_scenarios", [])
-            if self._extract_scn_number(sid) in target_scenario_numbers
-        ]
-        if not missing_probe_ids:
-            return []
-
-        probe_specs_by_number: dict[int, dict[str, Any]] = {
-            1: {
-                "name": "SCN01 IDOR/BOLA Object Access Probe",
-                "agent_type": "InjectionSwarm",
-                "category": "id_param",
-                "tags": ["idor_candidate", "api_endpoint"],
-                "scenario": "idor bola object level authorization authz probe cross-session weak_id",
-                "attack_type": "id tampering",
-                "description": "IDOR/BOLA object access probe via direct object reference tampering.",
-                "priority": 86,
-            },
-            2: {
-                "name": "SCN02 Mass Assignment Probe",
-                "agent_type": "InjectionSwarm",
-                "category": "api_data",
-                "tags": ["api_endpoint", "has_params"],
-                "scenario": "mass assignment overposting hidden field role= is_admin permission",
-                "attack_type": "mass assignment",
-                "description": "Object update probe focusing on unsafe object binding and hidden fields.",
-                "priority": 85,
-            },
-            3: {
-                "name": "SCN03 Injection Tampering Probe",
-                "agent_type": "InjectionSwarm",
-                "category": "xss_candidate",
-                "tags": ["xss_candidate", "sqli_candidate"],
-                "scenario": "sql injection nosql injection xss command injection lfi ssrf open redirect payload fuzz",
-                "attack_type": "payload fuzz",
-                "description": "Input tampering probe across injection families.",
-                "priority": 84,
-            },
-            4: {
-                "name": "SCN04 Endpoint Enumeration Probe",
-                "agent_type": "InjectionSwarm",
-                "category": "api_candidate",
-                "tags": ["api_endpoint", "has_params"],
-                "scenario": "endpoint discovery improper asset management hidden api internal api /internal /v2 ffuf wordlist",
-                "attack_type": "endpoint discovery",
-                "description": "Hidden/internal API surface enumeration probe.",
-                "priority": 83,
-            },
-            5: {
-                "name": "SCN05 Rate Limit Resilience Probe",
-                "agent_type": "InjectionSwarm",
-                "category": "api_candidate",
-                "tags": ["api_endpoint", "auth_endpoint"],
-                "scenario": "rate limit throttle burst request brute force request frequency",
-                "attack_type": "rate limit",
-                "description": "Traffic-pattern probe for throttling and brute-force resilience.",
-                "priority": 82,
-            },
-            6: {
-                "name": "SCN06 Data Exposure Diff Probe",
-                "agent_type": "InjectionSwarm",
-                "category": "api_data",
-                "tags": ["api_endpoint", "has_params", "sensitive_data_exposure"],
-                "scenario": "data exposure sensitive field hidden attribute response diff schema diff",
-                "attack_type": "response diff",
-                "description": "Schema/response differential probe for sensitive field exposure.",
-                "priority": 81,
-            },
-            8: {
-                "name": "SCN08 OOB External Channel Surface Probe",
-                "agent_type": "InjectionSwarm",
-                "category": "auth",
-                "tags": ["auth_endpoint", "oob_candidate", "manual_verify"],
-                "scenario": "password reset reset token email verification verification code magic link invite acceptance account activation confirmation code oob out-of-band mailbox sms otp",
-                "attack_type": "oob surface mapping",
-                "description": "Non-destructive mapping of OOB token issuance and verification surfaces before HITL/human validation.",
-                "priority": 80,
-                "phase2_on_empty_phase1": False,
-                "phase2_max_seconds": 45,
-            },
-            10: {
-                "name": "SCN10 Semantic Business Logic Probe",
-                "agent_type": "InjectionSwarm",
-                "category": "basket_order",
-                "tags": ["workflow_candidate", "business_logic_candidate", "manual_verify"],
-                "scenario": "business logic semantic abuse approval flow policy bypass intent abuse pricing workflow checkout refund",
-                "attack_type": "workflow value tampering",
-                "description": "Low-impact workflow transition/value tampering probe for business-logic abuse candidates.",
-                "priority": 79,
-                "phase2_on_empty_phase1": False,
-                "phase2_max_seconds": 45,
-            },
-            11: {
-                "name": "SCN11 Multi-Vector Chain Probe",
-                "agent_type": "InjectionSwarm",
-                "category": "api_data",
-                "tags": ["api_endpoint", "auth_endpoint", "multi_vector_candidate", "manual_verify"],
-                "scenario": "api chaining attack chain privilege escalation chain takeover chain multi vector trust transition authz data mutation",
-                "attack_type": "cross-endpoint trust chaining",
-                "description": "Cross-endpoint trust-transition probe to identify escalation chain footholds.",
-                "priority": 78,
-                "phase2_on_empty_phase1": False,
-                "phase2_max_seconds": 45,
-            },
-            12: {
-                "name": "SCN12 Advanced SSRF Internal Topology Probe",
-                "agent_type": "InjectionSwarm",
-                "category": "redirect_param",
-                "tags": ["ssrf_candidate", "redirect_candidate", "internal_topology_candidate", "manual_verify"],
-                "scenario": "metadata endpoint 169.254.169.254 internal network map cloud metadata gopher:// dns rebinding callback url webhook",
-                "attack_type": "internal topology ssrf",
-                "description": "Controlled SSRF topology probe focused on internal callback and metadata exposure surfaces.",
-                "priority": 77,
-                "phase2_on_empty_phase1": False,
-                "phase2_max_seconds": 45,
-            },
-        }
-
-        probe_budget = int(getattr(settings, "scenario_probe_target_budget", 2) or 2)
-        probe_targets, probe_evidence = self._collect_scenario_probe_seed_targets(
+        return _service_create_missing_core_scenario_probe_tasks(
+            existing_tasks=existing_tasks,
             recon_results=recon_results,
-            budget=probe_budget,
+            evaluate_scenario_coverage=self._evaluate_intervention_scenario_coverage,
+            extract_scn_number=self._extract_scn_number,
+            collect_seed_targets=self._collect_scenario_probe_seed_targets,
+            get_context_cookie_string=self._get_context_cookie_string,
+            get_context_auth_headers=self._get_context_auth_headers,
+            resolve_active_probe_policy=self._resolve_active_probe_policy_for_program,
+            select_targets_for_scenario_probe=self._select_targets_for_scenario_probe,
+            apply_phase2_on_empty_policy=self._apply_phase2_on_empty_policy,
+            evaluate_active_probe_policy=self.evaluate_active_probe_policy,
+            target_info=getattr(self.context, "target_info", {}),
+            discovered_assets=list(getattr(self.context, "discovered_assets", []) or []),
+            scenario_probe_target_budget=int(getattr(settings, "scenario_probe_target_budget", 2) or 2),
         )
-        if not probe_targets:
-            return []
-
-        raw_cookies = self._get_context_cookie_string()
-        task_auth_headers = self._get_context_auth_headers()
-        auth_tokens = (
-            self.context.target_info.get("auth_tokens", {})
-            if isinstance(getattr(self.context, "target_info", {}), dict)
-            else {}
-        )
-        tech_stack = (
-            list(self.context.target_info.get("tech_stack", []))
-            if isinstance(getattr(self.context, "target_info", {}), dict)
-            else []
-        )
-
-        generated: list[Task] = []
-        active_probe_policy = self._resolve_active_probe_policy_for_program()
-        for scenario_id in missing_probe_ids:
-            number = self._extract_scn_number(scenario_id)
-            spec = probe_specs_by_number.get(number)
-            if not spec:
-                continue
-            selected_targets, per_target_evidence = self._select_targets_for_scenario_probe(
-                scenario_id=scenario_id,
-                targets=probe_targets,
-                evidence_by_url=probe_evidence,
-                budget=probe_budget,
-            )
-            if not selected_targets:
-                continue
-
-            selected_target = selected_targets[0]
-
-            params: dict[str, Any] = {
-                "category": spec["category"],
-                "source_category": "scenario_probe_planner",
-                "scenario_probe": scenario_id,
-                "scenario": spec["scenario"],
-                "attack_type": spec["attack_type"],
-                "description": spec["description"],
-                "count": len(selected_targets),
-                "tags": list(spec["tags"]),
-                "targets": selected_targets,
-                "target": selected_target,
-                "_context": {
-                    "discovered_endpoints": self.context.discovered_assets[:10],
-                    "auth_tokens": auth_tokens,
-                    "discovered_params": [],
-                    "tech_stack": tech_stack,
-                    "waf_info": {},
-                    "critical_findings": [],
-                    "scenario_probe_evidence_by_url": per_target_evidence,
-                },
-                "headers": {},
-                "cookies": raw_cookies,
-                "unknown_classification_only": bool(spec.get("unknown_classification_only", False)),
-                "phase2_on_empty_phase1": self._apply_phase2_on_empty_policy(
-                    bool(spec.get("phase2_on_empty_phase1", True))
-                ),
-                "phase2_risk_force_vuln_types": [],
-                "phase2_max_seconds_risk_forced": int(spec.get("phase2_max_seconds_risk_forced", 30) or 30),
-                "phase2_max_seconds": int(spec.get("phase2_max_seconds", 90) or 90),
-            }
-
-            policy_decision = self.evaluate_active_probe_policy(
-                probe={
-                    "asset": selected_target,
-                    "strategy": "scenario_probe",
-                    "qps": 1,
-                },
-                policy=active_probe_policy,
-            )
-            if not policy_decision.get("allowed", False):
-                logger.info(
-                    "Skipped scenario probe task for %s due to active probe policy: %s",
-                    scenario_id,
-                    policy_decision.get("reason", "unknown"),
-                )
-                continue
-            if task_auth_headers:
-                params["auth_headers"] = task_auth_headers
-
-            generated.append(
-                Task(
-                    id=f"scenario_probe_{number:02d}_{uuid.uuid4().hex[:8]}",
-                    name=f"{spec['name']} ({len(selected_targets)} targets)",
-                    agent_type=spec["agent_type"],
-                    action="scan",
-                    phase="attack",
-                    params=params,
-                    target=selected_target,
-                    tags=list(spec["tags"]),
-                    priority=int(spec["priority"]),
-                )
-            )
-
-        if generated:
-            logger.info(
-                "Created %d scenario probe task(s) for missing scenarios: %s",
-                len(generated),
-                ", ".join(missing_probe_ids),
-            )
-        return generated
 
     def _resolve_recon_file_path(self, file_path: str) -> Optional[Any]:
-        from pathlib import Path
-
-        candidate = str(file_path or "").strip()
-        if not candidate:
-            return None
-
-        direct = Path(candidate)
-        if direct.exists():
-            return direct
-
-        tried: list[Path] = []
-
-        def _append(path: Path) -> None:
-            if path in tried:
-                return
-            tried.append(path)
-
-        _append(direct)
-
-        if not direct.is_absolute():
-            # 共通ケース: CWD が repo root で、保存パスが projects/... のとき
-            _append(Path("workspace") / candidate)
-
-            if self.project_manager and hasattr(self.project_manager, "project_dir"):
-                project_dir = Path(self.project_manager.project_dir)
-                _append(project_dir / candidate)
-                _append(project_dir.parent / candidate)
-                _append(project_dir.parent.parent / candidate)
-
-            # workspace オブジェクトからも推定する（SharedWorkspace.root）
-            workspace_obj = getattr(self, "workspace", None)
-            workspace_root = getattr(workspace_obj, "root", None)
-            if workspace_root:
-                root_path = Path(workspace_root)
-                _append(root_path / candidate)
-                _append(root_path.parent / candidate)
-
-        for path in tried:
-            if path.exists():
-                return path
-        return None
+        return self._seed_service.resolve_recon_file_path(file_path)
 
     def _resolve_project_tagged_dir(self) -> Optional[Any]:
-        from pathlib import Path
-        from urllib.parse import urlparse
-
-        candidates: list[Path] = []
-
-        if self.project_manager and hasattr(self.project_manager, "project_dir"):
-            project_dir = Path(self.project_manager.project_dir)
-            candidates.append(project_dir / "tagged_urls")
-            candidates.append(project_dir / "scans" / "tagged_urls")
-
-        target_info = self.context.target_info if isinstance(getattr(self.context, "target_info", {}), dict) else {}
-        target_url = str(target_info.get("target", "") or "")
-        workspace_obj = getattr(self, "workspace", None)
-        workspace_root = getattr(workspace_obj, "root", None)
-        if workspace_root and target_url:
-            try:
-                project_name = urlparse(target_url).netloc
-            except Exception:
-                project_name = ""
-            if project_name:
-                root_path = Path(workspace_root)
-                candidates.append(root_path / "projects" / project_name / "tagged_urls")
-
-        for candidate in candidates:
-            if candidate.exists() and candidate.is_dir():
-                return candidate
-        return None
+        return self._seed_service.resolve_project_tagged_dir()
 
     def _collect_history_replay_targets(
         self,
@@ -1953,480 +1288,25 @@ class MasterConductor:
         file_window: int,
         exclude_urls: Optional[set[str]] = None,
     ) -> list[str]:
-        from pathlib import Path
-        import json
-        from urllib.parse import parse_qs, unquote, urlparse
-
-        normalized_category = str(category or "").strip().lower()
-        if not normalized_category:
-            return []
-        max_targets = max(0, int(limit or 0))
-        if max_targets <= 0:
-            return []
-
-        tagged_dir = self._resolve_project_tagged_dir()
-        if tagged_dir is None:
-            return []
-
-        file_limit = max(1, int(file_window or 1))
-        scope_hosts = self._resolve_in_scope_hosts()
-        excluded = {str(url or "").strip() for url in (exclude_urls or set()) if str(url or "").strip()}
-        collected: list[str] = []
-        seen: set[str] = set(excluded)
-
-        def _is_history_replay_candidate_compatible(url: str, item: dict[str, Any]) -> bool:
-            try:
-                response_status = int(item.get("response_status", 0) or 0)
-            except Exception:
-                response_status = 0
-            if response_status >= 400:
-                return False
-
-            parsed = urlparse(str(url or "").strip())
-            decoded_path = unquote(parsed.path or "")
-            path_tokens = {token for token in decoded_path.lower().strip("/").split("/") if token}
-            query_keys = {k.lower() for k in parse_qs(parsed.query, keep_blank_values=True).keys()}
-
-            if normalized_category == "auth":
-                auth_tokens = {
-                    "auth", "login", "signin", "session", "token", "account",
-                    "profile", "settings", "security", "password", "mfa", "2fa", "me",
-                }
-                auth_query_tokens = {"token", "session", "otp", "code", "mfa", "next", "redirect", "return"}
-                api_tokens = {
-                    "api", "rest", "graphql", "rpc", "chatbot", "genai", "assistant",
-                    "prompt", "completion", "message", "messages", "history", "state",
-                }
-                api_query_tokens = {"format", "fields", "include", "expand", "limit", "offset"}
-
-                auth_hits = len(path_tokens & auth_tokens) + len(query_keys & auth_query_tokens)
-                api_hits = len(path_tokens & api_tokens) + len(query_keys & api_query_tokens)
-
-                # authカテゴリの履歴復元では、API文脈に偏ったURL混入を除外する。
-                if api_hits >= 2 and auth_hits <= 1:
-                    return False
-
-            if normalized_category == "admin":
-                admin_tokens = {
-                    "admin", "manage", "management", "moderator", "staff", "role",
-                    "permission", "tenant", "organization", "org", "account",
-                    "security", "settings", "user", "users",
-                }
-                admin_query_tokens = {
-                    "role", "permission", "user", "account", "tenant", "org", "id",
-                }
-                if not ((path_tokens & admin_tokens) or (query_keys & admin_query_tokens)):
-                    return False
-
-            return True
-
-        replay_source_categories: list[str] = [normalized_category]
-        replay_aliases: dict[str, list[str]] = {
-            # endpoint系は隣接カテゴリの履歴も再利用して短縮ランの取りこぼしを抑える
-            "api_endpoint": ["api_candidate", "api_data"],
-            "api_candidate": ["api_data", "api_endpoint"],
-            # adminは専用タグが薄いケースがあるため、auth/API境界カテゴリを補助ソースとして利用
-            "admin": ["auth", "api_candidate", "api_endpoint"],
-        }
-        for alias_category in replay_aliases.get(normalized_category, []):
-            alias_norm = str(alias_category or "").strip().lower()
-            if alias_norm and alias_norm not in replay_source_categories:
-                replay_source_categories.append(alias_norm)
-
-        files: list[Path] = []
-        for source_category in replay_source_categories:
-            patterns = [
-                f"*tagged_{source_category}.jsonl",
-                f"*tagged_uncategorized_promoted_{source_category}.jsonl",
-            ]
-            for pattern in patterns:
-                for path in tagged_dir.glob(pattern):
-                    if path not in files:
-                        files.append(path)
-
-        files = sorted(
-            files,
-            key=lambda p: (p.name, float(p.stat().st_mtime) if p.exists() else 0.0),
-            reverse=True,
-        )[:file_limit]
-
-        for path in files:
-            try:
-                for raw_line in path.read_text(encoding="utf-8").splitlines():
-                    line = raw_line.strip()
-                    if not line:
-                        continue
-                    try:
-                        obj = json.loads(line)
-                    except Exception:
-                        continue
-                    raw_url = str(obj.get("url", obj.get("target", "")) or "").strip()
-                    url = self._normalize_url_candidate(raw_url)
-                    if not url or not url.startswith(("http://", "https://")):
-                        continue
-                    if scope_hosts and not self._is_target_url_in_scope(url, scope_hosts):
-                        continue
-                    if not _is_history_replay_candidate_compatible(url, obj if isinstance(obj, dict) else {}):
-                        continue
-                    if url in seen:
-                        continue
-                    seen.add(url)
-                    collected.append(url)
-                    if len(collected) >= max_targets:
-                        return collected
-            except Exception:
-                continue
-
-        return collected
+        return self._seed_service.collect_history_replay_targets(
+            category, limit=limit, file_window=file_window, exclude_urls=exclude_urls,
+        )
 
     def _score_csrf_seed_candidate(self, url: str, category: str, item: dict[str, Any]) -> tuple[int, list[str]]:
-        from urllib.parse import parse_qs, unquote, urlparse
-
-        parsed = urlparse(str(url or "").strip())
-        if parsed.scheme not in {"http", "https"}:
-            return -9999, ["unsupported_scheme"]
-
-        path = str(parsed.path or "")
-        path_lower = path.lower()
-        query_keys = {k.lower() for k in parse_qs(parsed.query, keep_blank_values=True).keys()}
-        try:
-            response_status = int(item.get("response_status", 0) or 0)
-        except Exception:
-            response_status = 0
-        if response_status >= 404:
-            return -9999, [f"http_status:{response_status}"]
-        if "/socket.io/" in path_lower:
-            return -9999, ["realtime_transport"]
-        if "transport=websocket" in str(parsed.query or "").lower():
-            return -9999, ["websocket_transport"]
-
-        static_path_tokens = ("/_next/", "/static/", "/assets/", "/dist/", "/chunks/")
-        interaction_keys = {"q", "query", "search", "id", "redirect", "url", "next", "file", "path", "page", "token"}
-        candidate_lower = str(url or "").lower()
-        malformed_js_fragment = (
-            "%27%29,d=f%28%27%3cscript%20type=" in candidate_lower
-            or ("%27%29" in candidate_lower and "script%20type=" in candidate_lower and "/static/js/" in path_lower)
-        )
-        if malformed_js_fragment:
-            return -9999, ["malformed_static_payload_url"]
-        if any(token in path_lower for token in static_path_tokens) and not (query_keys & interaction_keys):
-            return -9999, ["static_asset_path"]
-        decoded_path_tokens = [token for token in unquote(path).split("/") if token]
-        if decoded_path_tokens and all(not any(ch.isalnum() for ch in token) for token in decoded_path_tokens):
-            return -9999, ["non_alnum_path_token"]
-
-        static_ext = (
-            ".js", ".css", ".map", ".png", ".jpg", ".jpeg", ".gif", ".svg",
-            ".ico", ".woff", ".woff2", ".ttf", ".eot", ".json",
-        )
-        if any(path_lower.endswith(ext) for ext in static_ext):
-            return -9999, ["static_asset"]
-
-        category_weight = {
-            "auth": 48,
-            "basket_order": 44,
-            "feedback_review": 40,
-            "api_data": 34,
-            "api_candidate": 30,
-            "id_param": 26,
-            "admin": 24,
-            "client_route_dom": 18,
-            "product_search": 12,
-        }
-        stateful_tokens = {
-            "change", "update", "delete", "remove", "edit", "save", "submit",
-            "password", "profile", "address", "email", "account", "user",
-            "checkout", "order", "basket", "cart", "payment", "coupon",
-            "redeem", "feedback", "complaint", "review",
-        }
-        sensitive_surface_tokens = {
-            "account", "profile", "user", "basket", "order", "checkout", "payment", "admin",
-        }
-
-        path_tokens = {token for token in unquote(path_lower).split("/") if token}
-
-        method = str(item.get("method", "GET") or "GET").upper()
-        forms = item.get("forms", [])
-        form_fields: set[str] = set()
-        if isinstance(forms, list):
-            for form in forms:
-                if not isinstance(form, dict):
-                    continue
-                for field in form.get("fields", []) or []:
-                    if isinstance(field, dict):
-                        name = str(field.get("name", "")).strip().lower()
-                        if name:
-                            form_fields.add(name)
-        has_form_tag = bool(item.get("has_form_tag", False) or form_fields)
-        body_snippet = str(item.get("response_body_snippet", "") or "").lower()
-
-        score = int(category_weight.get(str(category or "").strip().lower(), 10))
-        reasons: list[str] = [f"category:{category}"]
-
-        if method in {"POST", "PUT", "PATCH", "DELETE"}:
-            score += 40
-            reasons.append(f"method:{method}")
-        if has_form_tag:
-            score += 24
-            reasons.append("form_surface")
-        if form_fields & stateful_tokens:
-            score += 18
-            reasons.append("stateful_form_field")
-        if path_tokens & stateful_tokens:
-            score += 26
-            reasons.append("stateful_path_token")
-        if query_keys & stateful_tokens:
-            score += 14
-            reasons.append("stateful_query_key")
-        if any(token in body_snippet for token in stateful_tokens):
-            score += 10
-            reasons.append("stateful_response_snippet")
-        if path_tokens & sensitive_surface_tokens:
-            score += 10
-            reasons.append("sensitive_surface")
-        if "/api/" in path_lower or "/rest/" in path_lower:
-            score += 6
-            reasons.append("api_surface")
-
-        normalized_path = path_lower.strip()
-        if normalized_path in {"", "/"}:
-            score -= 80
-            reasons.append("root_penalty")
-        else:
-            score += min(8, len(path_tokens))
-
-        return score, reasons
+        return self._seed_service.score_csrf_seed_candidate(url, category, item)
 
     def _score_xss_seed_candidate(self, url: str, category: str, item: dict[str, Any]) -> tuple[int, list[str]]:
-        from urllib.parse import parse_qs, unquote, urlparse
-
-        parsed = urlparse(str(url or "").strip())
-        if parsed.scheme not in {"http", "https"}:
-            return -9999, ["unsupported_scheme"]
-
-        path = str(parsed.path or "")
-        path_lower = path.lower()
-        query_keys = {k.lower() for k in parse_qs(parsed.query, keep_blank_values=True).keys()}
-        try:
-            response_status = int(item.get("response_status", 0) or 0)
-        except Exception:
-            response_status = 0
-        if response_status >= 404:
-            return -9999, [f"http_status:{response_status}"]
-
-        static_path_tokens = ("/_next/", "/static/", "/assets/", "/dist/", "/chunks/")
-        static_ext = (
-            ".js", ".css", ".map", ".png", ".jpg", ".jpeg", ".gif", ".svg",
-            ".ico", ".webp", ".woff", ".woff2", ".ttf", ".eot", ".json",
-        )
-        candidate_lower = str(url or "").lower()
-        malformed_js_fragment = (
-            "%27%29,d=f%28%27%3cscript%20type=" in candidate_lower
-            or ("%27%29" in candidate_lower and "script%20type=" in candidate_lower and "/static/js/" in path_lower)
-        )
-        if malformed_js_fragment:
-            return -9999, ["malformed_static_payload_url"]
-        if any(token in path_lower for token in static_path_tokens) and not query_keys:
-            return -9999, ["static_asset_path"]
-        if any(path_lower.endswith(ext) for ext in static_ext):
-            return -9999, ["static_asset"]
-
-        decoded_path_tokens = {token for token in unquote(path_lower).split("/") if token}
-        xss_surface_tokens = {
-            "search", "query", "q", "comment", "feedback", "review", "message",
-            "profile", "chat", "post", "title", "content", "name",
-        }
-        context_tokens = {"profile", "account", "comment", "review", "chat", "message", "search"}
-        query_signal_keys = {"q", "query", "search", "keyword", "term", "name", "comment", "message", "content", "title"}
-
-        method = str(item.get("method", "GET") or "GET").upper()
-        forms = item.get("forms", [])
-        form_fields: set[str] = set()
-        if isinstance(forms, list):
-            for form in forms:
-                if not isinstance(form, dict):
-                    continue
-                for field in form.get("fields", []) or []:
-                    if isinstance(field, dict):
-                        name = str(field.get("name", "")).strip().lower()
-                        if name:
-                            form_fields.add(name)
-        has_form_tag = bool(item.get("has_form_tag", False) or form_fields)
-        body_snippet = str(item.get("response_body_snippet", "") or "").lower()
-
-        category_weight = {
-            "xss_candidate": 56,
-            "feedback_review": 50,
-            "product_search": 44,
-            "client_route_dom": 40,
-            "id_param": 32,
-            "api_data": 24,
-            "api_candidate": 20,
-            "auth": 16,
-        }
-
-        score = int(category_weight.get(str(category or "").strip().lower(), 12))
-        reasons: list[str] = [f"category:{category}"]
-
-        if query_keys & query_signal_keys:
-            score += 26
-            reasons.append("query_signal_key")
-        if has_form_tag:
-            score += 24
-            reasons.append("form_surface")
-        if form_fields & query_signal_keys:
-            score += 18
-            reasons.append("xss_form_field")
-        if decoded_path_tokens & xss_surface_tokens:
-            score += 16
-            reasons.append("xss_path_token")
-        if decoded_path_tokens & context_tokens:
-            score += 10
-            reasons.append("context_surface")
-        if method in {"POST", "PUT", "PATCH"}:
-            score += 8
-            reasons.append(f"method:{method}")
-        if any(token in body_snippet for token in ("<form", "textarea", "comment", "review", "feedback", "search")):
-            score += 8
-            reasons.append("response_interaction_hint")
-        if any(token in path_lower for token in ("/api/", "/rest/")):
-            score += 3
-            reasons.append("api_surface")
-
-        normalized_path = path_lower.strip()
-        if normalized_path in {"", "/"} and not (query_keys & query_signal_keys):
-            score -= 70
-            reasons.append("root_penalty")
-        else:
-            score += min(8, len(decoded_path_tokens))
-
-        return score, reasons
+        return self._seed_service.score_xss_seed_candidate(url, category, item)
 
     def _collect_xss_seed_targets(
         self,
         recon_results: dict[str, dict],
         budget: int,
     ) -> tuple[list[str], dict[str, dict[str, Any]]]:
-        from urllib.parse import urlparse
-        import json
-
-        seed_categories = [
-            "xss_candidate",
-            "feedback_review",
-            "product_search",
-            "client_route_dom",
-            "id_param",
-            "api_data",
-            "api_candidate",
-            "auth",
-            "uncategorized",
-        ]
-        minimum_score = 18
-        ranked: dict[str, dict[str, Any]] = {}
-
-        for seed_category in seed_categories:
-            entry = recon_results.get(f"tagged_{seed_category}") or recon_results.get(seed_category) or {}
-            seed_file = str(entry.get("file", "") or "").strip()
-            if not seed_file:
-                continue
-            tf = self._resolve_recon_file_path(seed_file)
-            if tf is None:
-                continue
-            try:
-                for raw_line in tf.read_text(encoding="utf-8").splitlines():
-                    line = raw_line.strip()
-                    if not line:
-                        continue
-                    try:
-                        obj = json.loads(line)
-                    except Exception:
-                        continue
-                    candidate_url = str(obj.get("url", obj.get("target", "")) or "").strip()
-                    if not candidate_url:
-                        continue
-                    score, reasons = self._score_xss_seed_candidate(
-                        candidate_url,
-                        seed_category,
-                        obj if isinstance(obj, dict) else {},
-                    )
-                    if score <= -999:
-                        continue
-                    existing = ranked.get(candidate_url)
-                    if existing is None or score > int(existing.get("score", -10_000)):
-                        ranked[candidate_url] = {
-                            "score": score,
-                            "reasons": reasons,
-                            "category": seed_category,
-                            "method": str(obj.get("method", "GET") or "GET").upper(),
-                            "has_form_tag": bool(obj.get("has_form_tag", False) or obj.get("forms")),
-                        }
-            except Exception:
-                continue
-
-        ranked_items = sorted(
-            ranked.items(),
-            key=lambda kv: (
-                int(kv[1].get("score", 0)),
-                len(urlparse(str(kv[0])).path or ""),
-            ),
-            reverse=True,
-        )
-        strong = [item for item in ranked_items if int(item[1].get("score", 0)) >= minimum_score]
-        selected = strong[: max(1, budget)]
-
-        if not selected and ranked_items:
-            non_root = [item for item in ranked_items if (urlparse(str(item[0])).path or "").strip("/") != ""]
-            selected = (non_root or ranked_items)[:1]
-
-        selected_urls = [url for url, _ in selected][: max(1, budget)]
-        selected_evidence = {url: evidence for url, evidence in selected}
-
-        if selected_urls:
-            logger.info(
-                "[MC] XSS backfill selected %d target(s) (budget=%d, min_score=%d): %s",
-                len(selected_urls),
-                budget,
-                minimum_score,
-                ", ".join(
-                    f"{u} [score={selected_evidence[u].get('score', 0)}]"
-                    for u in selected_urls
-                ),
-            )
-
-        return selected_urls, selected_evidence
+        return self._seed_service.collect_xss_seed_targets(recon_results, budget)
 
     def _is_low_value_backfill_target(self, url: str) -> bool:
-        from urllib.parse import parse_qs, urlparse
-
-        candidate = str(url or "").strip()
-        if not candidate:
-            return True
-        try:
-            parsed = urlparse(candidate)
-        except Exception:
-            return True
-
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            return True
-
-        path_lower = str(parsed.path or "").lower()
-        query_keys = {k.lower() for k in parse_qs(parsed.query, keep_blank_values=True).keys()}
-
-        static_path_tokens = ("/_next/", "/static/", "/assets/", "/dist/", "/chunks/")
-        static_extensions = (
-            ".js", ".css", ".map", ".png", ".jpg", ".jpeg", ".gif", ".svg",
-            ".ico", ".webp", ".woff", ".woff2", ".ttf", ".eot",
-        )
-        interaction_keys = {"q", "query", "search", "id", "redirect", "url", "next", "file", "path", "page", "token"}
-
-        is_static_asset = any(token in path_lower for token in static_path_tokens) or path_lower.endswith(static_extensions)
-        is_root = (parsed.path or "/").strip("/") == ""
-
-        if is_static_asset and not (query_keys & interaction_keys):
-            return True
-        if is_root and not (query_keys & interaction_keys):
-            return True
-        return False
+        return self._seed_service.is_low_value_backfill_target(url)
 
     def _refine_backfill_seed_targets(
         self,
@@ -2434,210 +1314,24 @@ class MasterConductor:
         evidence_by_url: dict[str, dict[str, Any]],
         budget: int,
     ) -> tuple[list[str], dict[str, dict[str, Any]]]:
-        max_targets = max(1, int(budget or 1))
-        normalized_evidence: dict[str, dict[str, Any]] = {}
-        if isinstance(evidence_by_url, dict):
-            for url, evidence in evidence_by_url.items():
-                key = str(url or "").strip()
-                if not key:
-                    continue
-                if isinstance(evidence, dict):
-                    normalized_evidence[key] = evidence
-                else:
-                    normalized_evidence[key] = {}
-
-        deduped_targets: list[str] = []
-        seen: set[str] = set()
-        for raw in targets:
-            candidate = str(raw or "").strip()
-            if not candidate or candidate in seen:
-                continue
-            seen.add(candidate)
-            deduped_targets.append(candidate)
-
-        refined: list[str] = [url for url in deduped_targets if not self._is_low_value_backfill_target(url)][:max_targets]
-
-        if len(refined) < max_targets:
-            for asset in list(getattr(self.context, "discovered_assets", []) or []):
-                candidate = str(asset or "").strip()
-                if not candidate or candidate in seen:
-                    continue
-                if self._is_low_value_backfill_target(candidate):
-                    continue
-                seen.add(candidate)
-                refined.append(candidate)
-                normalized_evidence.setdefault(
-                    candidate,
-                    {
-                        "score": -1,
-                        "reasons": ["discovered_asset_topup"],
-                        "category": "coverage_backfill",
-                        "method": "GET",
-                        "has_form_tag": False,
-                    },
-                )
-                if len(refined) >= max_targets:
-                    break
-
-        if not refined:
-            fallback_target = ""
-            if isinstance(getattr(self.context, "target_info", {}), dict):
-                fallback_target = str(self.context.target_info.get("target", "") or "")
-            if not fallback_target:
-                fallback_target = str(getattr(self, "target", "") or "")
-            fallback_target = fallback_target.strip()
-            if fallback_target:
-                refined = [fallback_target]
-                normalized_evidence.setdefault(
-                    fallback_target,
-                    {
-                        "score": -1,
-                        "reasons": ["target_fallback_only"],
-                        "category": "coverage_backfill",
-                        "method": "GET",
-                        "has_form_tag": False,
-                    },
-                )
-            elif deduped_targets:
-                refined = deduped_targets[:1]
-
-        refined_evidence: dict[str, dict[str, Any]] = {}
-        for url in refined:
-            refined_evidence[url] = normalized_evidence.get(
-                url,
-                {
-                    "score": -1,
-                    "reasons": ["target_fallback_only"],
-                    "category": "coverage_backfill",
-                    "method": "GET",
-                    "has_form_tag": False,
-                },
-            )
-
-        return refined, refined_evidence
+        return self._seed_service.refine_backfill_seed_targets(targets, evidence_by_url, budget)
 
     def _should_enable_phase2_on_empty_for_backfill(
         self,
         targets: list[str],
         evidence_by_url: dict[str, dict[str, Any]],
     ) -> bool:
-        if bool(getattr(settings, "phase2_on_empty_force_disable", False)):
-            return False
-        minimum_score = int(getattr(settings, "csrf_backfill_min_score", 20) or 20)
-        for target in targets:
-            if not self._is_low_value_backfill_target(target):
-                return True
-            evidence = evidence_by_url.get(target, {}) if isinstance(evidence_by_url, dict) else {}
-            if not isinstance(evidence, dict):
-                evidence = {}
-            method = str(evidence.get("method", "GET") or "GET").upper()
-            has_form_tag = bool(evidence.get("has_form_tag", False))
-            try:
-                score = int(evidence.get("score", 0) or 0)
-            except Exception:
-                score = 0
-            if method in {"POST", "PUT", "PATCH", "DELETE"} or has_form_tag or score >= minimum_score:
-                return True
-        return False
+        return self._seed_service.should_enable_phase2_on_empty_for_backfill(targets, evidence_by_url)
 
     def _apply_phase2_on_empty_policy(self, enabled: bool) -> bool:
-        """
-        グローバル設定で phase2_on_empty を無効化するための集約ヘルパー。
-        """
-        if bool(getattr(settings, "phase2_on_empty_force_disable", False)):
-            return False
-        return bool(enabled)
+        return self._seed_service.apply_phase2_on_empty_policy(enabled)
 
     def _collect_csrf_seed_targets(
         self,
         recon_results: dict[str, dict],
         budget: int,
     ) -> tuple[list[str], dict[str, dict[str, Any]]]:
-        from urllib.parse import urlparse
-        import json
-
-        seed_categories = [
-            "auth",
-            "basket_order",
-            "feedback_review",
-            "api_data",
-            "api_candidate",
-            "xss_candidate",
-            "id_param",
-            "admin",
-            "client_route_dom",
-            "product_search",
-            "uncategorized",
-        ]
-        minimum_score = int(getattr(settings, "csrf_backfill_min_score", 20) or 20)
-        ranked: dict[str, dict[str, Any]] = {}
-
-        for seed_category in seed_categories:
-            entry = recon_results.get(f"tagged_{seed_category}") or recon_results.get(seed_category) or {}
-            seed_file = str(entry.get("file", "") or "").strip()
-            if not seed_file:
-                continue
-            tf = self._resolve_recon_file_path(seed_file)
-            if tf is None:
-                continue
-            try:
-                for raw_line in tf.read_text(encoding="utf-8").splitlines():
-                    line = raw_line.strip()
-                    if not line:
-                        continue
-                    try:
-                        obj = json.loads(line)
-                    except Exception:
-                        continue
-                    candidate_url = str(obj.get("url", obj.get("target", "")) or "").strip()
-                    if not candidate_url:
-                        continue
-                    score, reasons = self._score_csrf_seed_candidate(candidate_url, seed_category, obj if isinstance(obj, dict) else {})
-                    if score <= -999:
-                        continue
-                    existing = ranked.get(candidate_url)
-                    if existing is None or score > int(existing.get("score", -10_000)):
-                        ranked[candidate_url] = {
-                            "score": score,
-                            "reasons": reasons,
-                            "category": seed_category,
-                            "method": str(obj.get("method", "GET") or "GET").upper(),
-                            "has_form_tag": bool(obj.get("has_form_tag", False) or obj.get("forms")),
-                        }
-            except Exception:
-                continue
-
-        ranked_items = sorted(
-            ranked.items(),
-            key=lambda kv: (
-                int(kv[1].get("score", 0)),
-                len(urlparse(str(kv[0])).path or ""),
-            ),
-            reverse=True,
-        )
-        strong = [item for item in ranked_items if int(item[1].get("score", 0)) >= minimum_score]
-        selected = strong[: max(1, budget)]
-
-        if not selected and ranked_items:
-            non_root = [item for item in ranked_items if (urlparse(str(item[0])).path or "").strip("/") != ""]
-            selected = (non_root or ranked_items)[:1]
-
-        selected_urls = [url for url, _ in selected][: max(1, budget)]
-        selected_evidence = {url: evidence for url, evidence in selected}
-
-        if selected_urls:
-            logger.info(
-                "[MC] CSRF backfill selected %d target(s) (budget=%d, min_score=%d): %s",
-                len(selected_urls),
-                budget,
-                minimum_score,
-                ", ".join(
-                    f"{u} [score={selected_evidence[u].get('score', 0)}]"
-                    for u in selected_urls
-                ),
-            )
-
-        return selected_urls, selected_evidence
+        return self._seed_service.collect_csrf_seed_targets(recon_results, budget)
 
     def _record_failure_context(self, task: Task, phase: str, reason: str) -> None:
         phase_text = str(phase or "").strip() or "unknown_phase"
@@ -7327,123 +6021,25 @@ class MasterConductor:
         }
 
     def _get_context_auth_headers(self) -> dict[str, str]:
-        """target_info から認証ヘッダーを抽出し、Cookie/Bearer を補完する。"""
-        target_info = getattr(self.context, "target_info", {})
-        if not isinstance(target_info, dict):
-            return {}
-
-        headers: dict[str, str] = {}
-        raw_headers = target_info.get("auth_headers", {})
-        if isinstance(raw_headers, dict):
-            for key, value in raw_headers.items():
-                header_name = str(key).strip()
-                header_value = str(value).strip()
-                if header_name and header_value:
-                    headers[header_name] = header_value
-
-        raw_cookies = str(target_info.get("cookies", "") or "").strip()
-        if raw_cookies:
-            headers.setdefault("Cookie", raw_cookies)
-
-        bearer_token = str(target_info.get("bearer_token", "") or "").strip()
-        if bearer_token:
-            if bearer_token.lower().startswith("bearer "):
-                bearer_token = bearer_token[7:].strip()
-            if bearer_token:
-                headers.setdefault("Authorization", f"Bearer {bearer_token}")
-
-        return headers
+        return self._seed_service.get_context_auth_headers()
 
     def _get_context_cookie_string(self) -> str:
-        return str(self._get_context_auth_headers().get("Cookie", "") or "")
+        return self._seed_service.get_context_cookie_string()
 
     def _normalize_url_candidate(self, value: str) -> str:
-        candidate = str(value or "").strip()
-        if not candidate:
-            return ""
-        candidate = candidate.strip("`'\"")
-        candidate = candidate.rstrip("`'\"),.;:]}>")
-        if candidate.startswith("http:/") and not candidate.startswith("http://"):
-            candidate = candidate.replace("http:/", "http://", 1)
-        if candidate.startswith("https:/") and not candidate.startswith("https://"):
-            candidate = candidate.replace("https:/", "https://", 1)
-        return candidate
+        return self._seed_service.normalize_url_candidate(value)
 
     def _extract_host_candidate(self, value: str) -> str:
-        from urllib.parse import urlparse
-
-        normalized = self._normalize_url_candidate(str(value or "").strip())
-        if not normalized:
-            return ""
-        if normalized.startswith(("http://", "https://")):
-            parsed = urlparse(normalized)
-        else:
-            parsed = urlparse(f"//{normalized}")
-        host = str(parsed.hostname or parsed.netloc or "").strip().lower()
-        if not host:
-            host = normalized.split("/")[0].split("?")[0].strip().lower()
-        if ":" in host:
-            host = host.split(":", 1)[0].strip()
-        return host
+        return self._seed_service.extract_host_candidate(value)
 
     def _resolve_in_scope_hosts(self) -> list[str]:
-        hosts: list[str] = []
-        seen: set[str] = set()
-
-        def _push(raw: str) -> None:
-            host = self._extract_host_candidate(raw)
-            if not host or host in seen:
-                return
-            seen.add(host)
-            hosts.append(host)
-
-        target_info = getattr(self.context, "target_info", {})
-        if isinstance(target_info, dict):
-            _push(str(target_info.get("target", "") or ""))
-            _push(str(target_info.get("host", "") or ""))
-            for raw in target_info.get("in_scope_domains", []) or []:
-                _push(str(raw or ""))
-
-        _push(str(getattr(self, "target", "") or ""))
-        for raw in list(getattr(self.context, "discovered_assets", []) or [])[:20]:
-            _push(str(raw or ""))
-
-        return hosts
+        return self._seed_service.resolve_in_scope_hosts()
 
     def _is_target_url_in_scope(self, url: str, scope_hosts: list[str]) -> bool:
-        if not scope_hosts:
-            return False
-        host = self._extract_host_candidate(url)
-        if not host:
-            return False
-        return any(host == scope_host or host.endswith(f".{scope_host}") for scope_host in scope_hosts)
+        return self._seed_service.is_target_url_in_scope(url, scope_hosts)
 
     def _resolve_task_target(self, task: Task) -> str:
-        params = task.params if isinstance(getattr(task, "params", None), dict) else {}
-
-        candidate_values: list[str] = []
-        for raw in (
-            getattr(task, "target", ""),
-            params.get("target", ""),
-            params.get("url", ""),
-            params.get("endpoint", ""),
-        ):
-            normalized = self._normalize_url_candidate(str(raw or ""))
-            if normalized:
-                candidate_values.append(normalized)
-
-        targets = params.get("targets")
-        if isinstance(targets, list):
-            for raw in targets:
-                normalized = self._normalize_url_candidate(str(raw or ""))
-                if normalized:
-                    candidate_values.append(normalized)
-                    break
-
-        for candidate in candidate_values:
-            if candidate.startswith(("http://", "https://")):
-                return candidate
-        return candidate_values[0] if candidate_values else ""
+        return self._seed_service.resolve_task_target(task)
 
     def _task_has_csrf_candidate_category(self, task: Any) -> bool:
         params = task.params if isinstance(getattr(task, "params", None), dict) else {}
@@ -7515,33 +6111,7 @@ class MasterConductor:
         return False
 
     def _task_matches_scenario(self, task: Any, scenario_id: str) -> bool:
-        normalized_target = str(scenario_id or "").strip().lower().replace("-", "_")
-        if not normalized_target:
-            return False
-
-        params = task.params if isinstance(getattr(task, "params", None), dict) else {}
-        if not isinstance(params, dict):
-            params = {}
-
-        candidates = [
-            str(params.get("scenario_probe", "") or ""),
-            str(params.get("scenario_id", "") or ""),
-        ]
-        intervention = params.get("_intervention", {})
-        if isinstance(intervention, dict):
-            decision = intervention.get("decision", {})
-            if isinstance(decision, dict):
-                candidates.append(str(decision.get("scenario_id", "") or ""))
-
-        name = str(getattr(task, "name", "") or "")
-        if "SCN08" in name and normalized_target == "scn_08_oob_external_channel_flow":
-            return True
-
-        for candidate in candidates:
-            normalized_candidate = candidate.strip().lower().replace("-", "_")
-            if normalized_candidate == normalized_target:
-                return True
-        return False
+        return _service_task_matches_scenario(task, scenario_id)
 
     def _task_has_auth_surface(self, task: Any) -> bool:
         params = task.params if isinstance(getattr(task, "params", None), dict) else {}
@@ -7557,213 +6127,50 @@ class MasterConductor:
         return category == "auth" or "auth_endpoint" in normalized_tags or "oob_candidate" in normalized_tags
 
     def _has_scenario_in_queue_or_history(self, scenario_id: str) -> bool:
-        for task in list(getattr(self, "completed_tasks", []) or []):
-            if self._task_matches_scenario(task, scenario_id):
-                return True
-
-        task_queue = getattr(self, "task_queue", None)
-        if task_queue is not None:
-            try:
-                for queued_task in task_queue:
-                    if self._task_matches_scenario(queued_task, scenario_id):
-                        return True
-            except Exception:
-                pass
-
-        pending_hitl = getattr(self, "pending_hitl", [])
-        if isinstance(pending_hitl, list):
-            normalized_target = str(scenario_id or "").strip().lower().replace("-", "_")
-            for ticket in pending_hitl:
-                if not isinstance(ticket, dict):
-                    continue
-                task_snapshot = ticket.get("task")
-                if not isinstance(task_snapshot, dict):
-                    continue
-                params = task_snapshot.get("params", {})
-                if not isinstance(params, dict):
-                    continue
-                candidates = [
-                    str(params.get("scenario_probe", "") or ""),
-                    str(params.get("scenario_id", "") or ""),
-                ]
-                intervention = params.get("_intervention", {})
-                if isinstance(intervention, dict):
-                    decision = intervention.get("decision", {})
-                    if isinstance(decision, dict):
-                        candidates.append(str(decision.get("scenario_id", "") or ""))
-                if any(str(candidate or "").strip().lower().replace("-", "_") == normalized_target for candidate in candidates):
-                    return True
-        return False
+        return _service_has_scenario_in_queue_or_history(
+            scenario_id=scenario_id,
+            completed_tasks=list(getattr(self, "completed_tasks", []) or []),
+            task_queue=getattr(self, "task_queue", None),
+            pending_hitl=getattr(self, "pending_hitl", []),
+        )
 
     def _resolve_global_oob_guard_target(self) -> str:
-        oob_url_tokens = (
-            "reset",
-            "verify",
-            "verification",
-            "invite",
-            "activation",
-            "otp",
-            "magic",
-            "confirmation",
-            "password",
+        return _service_resolve_global_oob_guard_target(
+            completed_tasks=list(getattr(self, "completed_tasks", []) or []),
+            task_queue=getattr(self, "task_queue", None),
+            discovered_assets=list(getattr(self.context, "discovered_assets", []) or []),
+            resolve_task_target=self._resolve_task_target,
+            normalize_url_candidate=self._normalize_url_candidate,
+            resolve_in_scope_hosts=self._resolve_in_scope_hosts,
         )
-        auth_candidates: list[str] = []
-
-        def _collect_task_candidate(task: Any) -> None:
-            if not self._task_has_auth_surface(task):
-                return
-            candidate = self._resolve_task_target(task)
-            if candidate:
-                auth_candidates.append(candidate)
-
-        for task in list(getattr(self, "completed_tasks", []) or []):
-            _collect_task_candidate(task)
-
-        task_queue = getattr(self, "task_queue", None)
-        if task_queue is not None:
-            try:
-                for queued_task in task_queue:
-                    _collect_task_candidate(queued_task)
-            except Exception:
-                pass
-
-        for raw in list(getattr(self.context, "discovered_assets", []) or []):
-            candidate = self._normalize_url_candidate(str(raw or ""))
-            if not candidate.startswith(("http://", "https://")):
-                continue
-            lowered = candidate.lower()
-            if any(token in lowered for token in oob_url_tokens):
-                auth_candidates.append(candidate)
-
-        normalized_auth_candidates: list[str] = []
-        seen: set[str] = set()
-        for raw in auth_candidates:
-            candidate = self._normalize_url_candidate(raw)
-            if not candidate or candidate in seen:
-                continue
-            if not candidate.startswith(("http://", "https://")):
-                continue
-            seen.add(candidate)
-            normalized_auth_candidates.append(candidate)
-
-        if not normalized_auth_candidates:
-            return ""
-
-        prioritized = [
-            candidate
-            for candidate in normalized_auth_candidates
-            if any(token in candidate.lower() for token in oob_url_tokens)
-        ]
-        selected = prioritized or normalized_auth_candidates
-        return selected[0] if selected else ""
 
     def _resolve_global_csrf_guard_target(self) -> str:
-        raw_candidates: list[str] = []
-        target_info = getattr(self.context, "target_info", {})
-        if isinstance(target_info, dict):
-            raw_candidates.append(str(target_info.get("target", "") or ""))
-        raw_candidates.append(str(getattr(self, "target", "") or ""))
-        raw_candidates.extend(str(asset or "") for asset in list(getattr(self.context, "discovered_assets", []) or []))
-
-        task_queue = getattr(self, "task_queue", None)
-        if task_queue is not None:
-            try:
-                for task in task_queue:
-                    raw_candidates.append(self._resolve_task_target(task))
-            except Exception:
-                pass
-
-        for raw in raw_candidates:
-            candidate = self._normalize_url_candidate(raw)
-            if not candidate:
-                continue
-            if candidate.startswith(("http://", "https://")):
-                return candidate
-
-        fallback_hosts = self._resolve_in_scope_hosts()
-        if fallback_hosts:
-            fallback_host = str(fallback_hosts[0] or "").strip().lower()
-            scheme = "http" if fallback_host in {"127.0.0.1", "localhost"} else "https"
-            return f"{scheme}://{fallback_host}/"
-        return ""
-
-    def _ensure_global_csrf_guard_task(self, trigger_source: str = "execute_loop") -> bool:
-        required_families = set(self._resolve_required_vuln_families())
-        if "csrf" not in required_families:
-            return False
-        if self._has_csrf_candidate_in_queue_or_history():
-            return False
-
-        target = self._resolve_global_csrf_guard_target()
-        if not target:
-            logger.error(
-                "Global CSRF guard was required but no guard target could be resolved (source=%s).",
-                trigger_source,
-            )
-            return False
-
-        guard_hash = hashlib.sha1(target.encode("utf-8")).hexdigest()[:10]
-        guard_id = f"csrf_guard_global_{guard_hash}"
-        task_queue = getattr(self, "task_queue", None)
-        if task_queue is not None and callable(getattr(task_queue, "get_by_id", None)):
-            if task_queue.get_by_id(guard_id) is not None:
-                return False
-
-        raw_cookies = self._get_context_cookie_string()
-        task_auth_headers = self._get_context_auth_headers()
-        guard_params: dict[str, Any] = {
-            "category": "csrf_candidate",
-            "source_category": "coverage_backfill_guard",
-            "count": 1,
-            "tags": ["csrf_candidate", "auth_endpoint", "coverage_guard_forced"],
-            "targets": [target],
-            "target": target,
-            "_coverage_guard_forced": True,
-            "scenario_id": "scn_09_multi_step_state_machine",
-            "scenario": "state machine multi-step flow workflow abuse state transition precondition chain chaining",
-            "attack_type": "workflow state transition",
-            "description": "Global CSRF coverage guard task injected from execution loop.",
-            "_context": {
-                "discovered_endpoints": self.context.discovered_assets[:10],
-                "auth_tokens": self.context.target_info.get("auth_tokens", {}) if isinstance(getattr(self.context, "target_info", {}), dict) else {},
-                "discovered_params": [],
-                "tech_stack": list(self.context.target_info.get("tech_stack", [])) if isinstance(getattr(self.context, "target_info", {}), dict) else [],
-                "waf_info": {},
-                "critical_findings": [],
-                "csrf_seed_evidence_by_url": {
-                    target: {
-                        "score": -1,
-                        "reasons": ["global_coverage_guard"],
-                        "category": "coverage_backfill_guard",
-                        "method": "GET",
-                        "has_form_tag": False,
-                    }
-                },
-            },
-            "headers": {},
-            "cookies": raw_cookies,
-            "unknown_classification_only": False,
-            "phase2_on_empty_phase1": False,
-            "csrf_active_verify": False,
-            "phase2_risk_force_vuln_types": [],
-            "phase2_max_seconds_risk_forced": 30,
-            "phase2_max_seconds": 60,
-        }
-        if task_auth_headers:
-            guard_params["auth_headers"] = task_auth_headers
-
-        guard_task = Task(
-            id=guard_id,
-            name="CSRF Coverage Guard Check (global)",
-            agent_type="InjectionSwarm",
-            action="scan",
-            phase="attack",
-            params=guard_params,
-            target=target,
-            tags=["csrf_candidate", "auth_endpoint", "coverage_guard_forced"],
-            priority=1250,
+        return _service_resolve_global_csrf_guard_target(
+            context_target_info=getattr(self.context, "target_info", {}),
+            target_attr=str(getattr(self, "target", "") or ""),
+            discovered_assets=list(getattr(self.context, "discovered_assets", []) or []),
+            task_queue=getattr(self, "task_queue", None),
+            resolve_task_target=self._resolve_task_target,
+            normalize_url_candidate=self._normalize_url_candidate,
+            resolve_in_scope_hosts=self._resolve_in_scope_hosts,
         )
 
+    def _ensure_global_csrf_guard_task(self, trigger_source: str = "execute_loop") -> bool:
+        if self._has_csrf_candidate_in_queue_or_history():
+            return False
+        should_inject, guard_task, guard_id = ensure_global_csrf_guard_decision(
+            trigger_source=trigger_source,
+            resolve_required_vuln_families=self._resolve_required_vuln_families,
+            resolve_guard_target=self._resolve_global_csrf_guard_target,
+            task_queue=getattr(self, "task_queue", None),
+            get_context_cookie_string=self._get_context_cookie_string,
+            get_context_auth_headers=self._get_context_auth_headers,
+            discovered_assets=getattr(self.context, "discovered_assets", [])[:10] if hasattr(self.context, "discovered_assets") else [],
+            target_info=getattr(self.context, "target_info", {}) if hasattr(self.context, "target_info") else {},
+        )
+        if not should_inject or guard_task is None:
+            return False
+        task_queue = getattr(self, "task_queue", None)
         if task_queue is None:
             return False
         task_queue.add(guard_task)
@@ -7771,88 +6178,26 @@ class MasterConductor:
         self._derived_task_count += 1
         logger.warning(
             "Global CSRF coverage guard injected (source=%s, target=%s, task_id=%s)",
-            trigger_source,
-            target,
-            guard_id,
+            trigger_source, guard_task.target, guard_id,
         )
         return True
 
     def _ensure_global_xss_guard_task(self, trigger_source: str = "execute_loop") -> bool:
-        required_families = set(self._resolve_required_vuln_families())
-        if "xss" not in required_families:
-            return False
         if self._has_xss_candidate_in_queue_or_history():
             return False
-
-        target = self._resolve_global_csrf_guard_target()
-        if not target:
-            logger.error(
-                "Global XSS guard was required but no guard target could be resolved (source=%s).",
-                trigger_source,
-            )
-            return False
-
-        guard_hash = hashlib.sha1(target.encode("utf-8")).hexdigest()[:10]
-        guard_id = f"xss_guard_global_{guard_hash}"
-        task_queue = getattr(self, "task_queue", None)
-        if task_queue is not None and callable(getattr(task_queue, "get_by_id", None)):
-            if task_queue.get_by_id(guard_id) is not None:
-                return False
-
-        raw_cookies = self._get_context_cookie_string()
-        task_auth_headers = self._get_context_auth_headers()
-        guard_params: dict[str, Any] = {
-            "category": "xss_candidate",
-            "source_category": "coverage_backfill_guard",
-            "count": 1,
-            "tags": ["xss_candidate", "sqli_candidate", "coverage_guard_forced"],
-            "targets": [target],
-            "target": target,
-            "_coverage_guard_forced": True,
-            "scenario_id": "scn_03_injection_input_tampering",
-            "scenario": "injection input tampering payload mutation query/body/header parameter abuse",
-            "attack_type": "input tampering injection",
-            "description": "Global XSS coverage guard task injected from execution loop.",
-            "_context": {
-                "discovered_endpoints": self.context.discovered_assets[:10],
-                "auth_tokens": self.context.target_info.get("auth_tokens", {}) if isinstance(getattr(self.context, "target_info", {}), dict) else {},
-                "discovered_params": [],
-                "tech_stack": list(self.context.target_info.get("tech_stack", [])) if isinstance(getattr(self.context, "target_info", {}), dict) else [],
-                "waf_info": {},
-                "critical_findings": [],
-                "xss_seed_evidence_by_url": {
-                    target: {
-                        "score": -1,
-                        "reasons": ["global_coverage_guard"],
-                        "category": "coverage_backfill_guard",
-                        "method": "GET",
-                        "has_form_tag": False,
-                    }
-                },
-            },
-            "headers": {},
-            "cookies": raw_cookies,
-            "unknown_classification_only": False,
-            "phase2_on_empty_phase1": False,
-            "phase2_risk_force_vuln_types": [],
-            "phase2_max_seconds_risk_forced": 30,
-            "phase2_max_seconds": 60,
-        }
-        if task_auth_headers:
-            guard_params["auth_headers"] = task_auth_headers
-
-        guard_task = Task(
-            id=guard_id,
-            name="XSS Coverage Guard Check (global)",
-            agent_type="InjectionSwarm",
-            action="scan",
-            phase="attack",
-            params=guard_params,
-            target=target,
-            tags=["xss_candidate", "sqli_candidate", "coverage_guard_forced"],
-            priority=1249,
+        should_inject, guard_task, guard_id = ensure_global_xss_guard_decision(
+            trigger_source=trigger_source,
+            resolve_required_vuln_families=self._resolve_required_vuln_families,
+            resolve_guard_target=self._resolve_global_csrf_guard_target,
+            task_queue=getattr(self, "task_queue", None),
+            get_context_cookie_string=self._get_context_cookie_string,
+            get_context_auth_headers=self._get_context_auth_headers,
+            discovered_assets=getattr(self.context, "discovered_assets", [])[:10] if hasattr(self.context, "discovered_assets") else [],
+            target_info=getattr(self.context, "target_info", {}) if hasattr(self.context, "target_info") else {},
         )
-
+        if not should_inject or guard_task is None:
+            return False
+        task_queue = getattr(self, "task_queue", None)
         if task_queue is None:
             return False
         task_queue.add(guard_task)
@@ -7860,9 +6205,7 @@ class MasterConductor:
         self._derived_task_count += 1
         logger.warning(
             "Global XSS coverage guard injected (source=%s, target=%s, task_id=%s)",
-            trigger_source,
-            target,
-            guard_id,
+            trigger_source, guard_task.target, guard_id,
         )
         return True
 
@@ -7870,83 +6213,26 @@ class MasterConductor:
         scenario_id = "scn_08_oob_external_channel_flow"
         if self._has_scenario_in_queue_or_history(scenario_id):
             return False
-
-        target = self._resolve_global_oob_guard_target()
-        if not target:
-            return False
-
-        guard_hash = hashlib.sha1(target.encode("utf-8")).hexdigest()[:10]
-        guard_id = f"oob_guard_global_{guard_hash}"
-        task_queue = getattr(self, "task_queue", None)
-        if task_queue is not None and callable(getattr(task_queue, "get_by_id", None)):
-            if task_queue.get_by_id(guard_id) is not None:
-                return False
-
-        raw_cookies = self._get_context_cookie_string()
-        task_auth_headers = self._get_context_auth_headers()
-        guard_params: dict[str, Any] = {
-            "category": "auth",
-            "source_category": "scenario_probe_guard",
-            "count": 1,
-            "tags": ["auth_endpoint", "oob_candidate", "manual_verify", "coverage_guard_forced"],
-            "targets": [target],
-            "target": target,
-            "_coverage_guard_forced": True,
-            "scenario_probe": scenario_id,
-            "scenario_id": scenario_id,
-            "scenario": "password reset reset token email verification verification code magic link invite acceptance account activation confirmation code oob out-of-band mailbox sms otp",
-            "attack_type": "oob surface mapping",
-            "description": "Global OOB scenario coverage guard task injected from execution loop.",
-            "_context": {
-                "discovered_endpoints": self.context.discovered_assets[:10],
-                "auth_tokens": self.context.target_info.get("auth_tokens", {}) if isinstance(getattr(self.context, "target_info", {}), dict) else {},
-                "discovered_params": [],
-                "tech_stack": list(self.context.target_info.get("tech_stack", [])) if isinstance(getattr(self.context, "target_info", {}), dict) else [],
-                "waf_info": {},
-                "critical_findings": [],
-                "scenario_probe_evidence_by_url": {
-                    target: {
-                        "score": -1,
-                        "reasons": ["global_oob_guard"],
-                        "category": "scenario_probe_guard",
-                        "method": "GET",
-                        "has_form_tag": False,
-                    }
-                },
-            },
-            "headers": {},
-            "cookies": raw_cookies,
-            "unknown_classification_only": False,
-            "phase2_on_empty_phase1": False,
-            "phase2_risk_force_vuln_types": [],
-            "phase2_max_seconds_risk_forced": 30,
-            "phase2_max_seconds": 45,
-        }
-        if task_auth_headers:
-            guard_params["auth_headers"] = task_auth_headers
-
-        guard_task = Task(
-            id=guard_id,
-            name="OOB Scenario Coverage Guard Check (global)",
-            agent_type="InjectionSwarm",
-            action="scan",
-            phase="attack",
-            params=guard_params,
-            target=target,
-            tags=["auth_endpoint", "oob_candidate", "manual_verify", "coverage_guard_forced"],
-            priority=1248,
+        should_inject, guard_task, guard_id = ensure_global_oob_guard_decision(
+            trigger_source=trigger_source,
+            resolve_guard_target=self._resolve_global_oob_guard_target,
+            task_queue=getattr(self, "task_queue", None),
+            get_context_cookie_string=self._get_context_cookie_string,
+            get_context_auth_headers=self._get_context_auth_headers,
+            discovered_assets=getattr(self.context, "discovered_assets", [])[:10] if hasattr(self.context, "discovered_assets") else [],
+            target_info=getattr(self.context, "target_info", {}) if hasattr(self.context, "target_info") else {},
         )
-
+        if not should_inject or guard_task is None:
+            return False
+        task_queue = getattr(self, "task_queue", None)
         if task_queue is None:
             return False
         task_queue.add(guard_task)
         self._injected_task_ids.add(guard_task.id)
         self._derived_task_count += 1
         logger.warning(
-            "Global OOB scenario guard injected (source=%s, target=%s, task_id=%s)",
-            trigger_source,
-            target,
-            guard_id,
+            "Global OOB coverage guard injected (source=%s, target=%s, task_id=%s)",
+            trigger_source, guard_task.target, guard_id,
         )
         return True
 

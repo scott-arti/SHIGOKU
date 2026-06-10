@@ -288,4 +288,5 @@ SGK-2026-0276,純粋判定/ログヘルパーの execution_policy/phase1_results
 SGK-2026-0277,_run_api_minimal_check（約1007行）を api_probe_runner.py へ移設し、manager.py を thin wrapper 化,done,subtask_plan,SGK-2026-0265,docs/shigoku/subtasks/2026-06-09_injectionmanager-api-minimal-service-extraction_subtask_plan.md
 SGK-2026-0278,SharedWorkspace stub解消とID pool互換復旧,done,subtask_plan,SGK-2026-0277,docs/shigoku/subtasks/2026-06-09_sharedworkspace-stub-id-pool-compat_subtask_plan.md
 SGK-2026-0279,InjectionManager 追加分割計画: 残存大規模責務の外出し,done,subtask_plan,SGK-2026-0265,docs/shigoku/subtasks/2026-06-09_injectionmanager-additional-split-plan_subtask_plan.md
-SGK-2026-0280,MasterConductor 追加分割計画: seed/path helper 優先抽出,active,subtask_plan,SGK-2026-0264,docs/shigoku/subtasks/2026-06-09_masterconductor-seed-helper-priority-split_subtask_plan.md
+SGK-2026-0280,MasterConductor 追加分割計画: seed/path helper 優先抽出,done,subtask_plan,SGK-2026-0264,docs/shigoku/subtasks/2026-06-09_masterconductor-seed-helper-priority-split_subtask_plan.md
+SGK-2026-0281,MasterConductor 追加分割計画: scenario/global guard と実行ループ優先度整理,active,subtask_plan,SGK-2026-0264,docs/shigoku/subtasks/2026-06-10_masterconductor-next-high-impact-split_subtask_plan.md

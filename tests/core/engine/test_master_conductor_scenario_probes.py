@@ -594,3 +594,25 @@ def test_is_target_url_in_scope_accepts_subdomain():
         "https://other.example.net/api",
         ["app.example.com"],
     )
+
+
+def test_resolve_recon_file_path_after_project_manager_swap(tmp_path: Path):
+    mc = MasterConductor.__new__(MasterConductor)
+    mc.context = SimpleNamespace(discovered_assets=[], target_info={})
+
+    _ = mc._seed_service
+
+    tagged_dir = tmp_path / "tagged_urls"
+    tagged_dir.mkdir()
+    tagged_file = tagged_dir / "tagged_test.jsonl"
+    tagged_file.write_text('{"url": "http://example.com/test", "method": "GET"}\n', encoding="utf-8")
+
+    mc.project_manager = type("pm", (), {"project_dir": str(tmp_path)})()
+    mc.workspace = None
+
+    resolved = mc._resolve_recon_file_path(str(tagged_file))
+    assert resolved is not None, (
+        "stale dependency: _resolve_recon_file_path returned None after "
+        "project_manager was set post _seed_service access"
+    )
+    assert resolved.exists()

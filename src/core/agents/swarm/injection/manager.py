@@ -70,13 +70,34 @@ from src.core.agents.swarm.injection.manager_internal.tool_runners import (
     build_hunter_task,
     format_cors_hunter_result,
     format_simple_hunter_result,
+    run_cmd_ssrf_hunter_runner,
+    run_cors_hunter_runner,
+    run_crlf_hunter_runner,
+    run_graphql_hunter_runner,
+    run_lfi_check_runner,
+    run_open_redirect_check_runner,
+    run_sqli_hunter_runner,
+    run_ssrf_hunter_runner,
+    run_ssti_hunter_runner,
+    run_xss_hunter_runner,
 )
 from src.core.agents.swarm.injection.manager_internal.process_url_dispatcher import (
+    dispatch_vuln_type_branch,
     process_unknown_classification_only,
 )
 from src.core.agents.swarm.injection.manager_internal.unknown_hypotheses import (
     build_unknown_hypotheses,
     build_unknown_idor_candidate_finding,
+)
+from src.core.agents.swarm.injection.manager_internal.specialist_factory import (
+    create_specialists,
+)
+from src.core.agents.swarm.injection.manager_internal.tool_registration import (
+    register_initial_tools as _register_initial_tools_impl,
+    register_manager_tool_scans,
+)
+from src.core.agents.swarm.injection.manager_internal.unknown_scan_runner import (
+    run_unknown_hypothesis_scans,
 )
 from src.config import settings
 
@@ -146,194 +167,45 @@ class InjectionManagerAgent(BaseManagerAgent):
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         super().__init__(config)
-        # 各インジェクション型スキャナ (Specialist) の初期化
         self._initialize_specialists()
         self._phase2_detection_mode: str = "phase2"
         self._ephemeral_network_clients: List[Any] = []
-
-        # FindingValidator初期化（証拠品質ゲート）
         self._finding_validator = FindingValidator()
-
-        # LLMから呼び出し可能なツールとして登録 (Phase 2 用)
         self._register_manager_tools()
 
     def _register_manager_tools(self):
-        """スペシャリストの実行メソッドをLLMツールとして登録"""
-        if "sqli" in self.specialists:
-            self.register_tool(
-                "sqli_scan", 
-                self.run_sqli_hunter,
-                "SQLインジェクション脆弱性の詳細スキャンを実行します。URLと関連パラメータを自動でテストします。"
-            )
-        if "xss" in self.specialists:
-            self.register_tool(
-                "xss_scan", 
-                self.run_xss_hunter,
-                "XSS (Cross-Site Scripting) 脆弱性の詳細スキャンを実行します。反射・格納型などをテストします。"
-            )
-        if "lfi" in self.specialists:
-            self.register_tool(
-                "lfi_scan", 
-                self.run_lfi_check,
-                "LFI (Local File Inclusion) やディレクトリトラバーサル脆弱性をスキャンします。"
-            )
-        if "redirect" in self.specialists: # Changed from "open_redirect" to "redirect" to match _initialize_specialists
-            self.register_tool(
-                "open_redirect_scan", 
-                self.run_open_redirect_check,
-                "オープンリダイレクト脆弱性の詳細スキャンを実行します。"
-            )
-        if "cmd_ssrf" in self.specialists:
-            self.register_tool(
-                "cmd_ssrf_scan", 
-                self.run_cmd_ssrf_hunter,
-                "OSコマンドインジェクションおよびSSRF脆弱性の詳細スキャンを実行します。"
-            )
-        if "ssrf" in self.specialists:
-            self.register_tool(
-                "ssrf_scan",
-                self.run_ssrf_hunter,
-                "SSRF脆弱性の応答ベーススキャンを実行します。"
-            )
-        if "ssti" in self.specialists:
-            self.register_tool(
-                "ssti_scan",
-                self.run_ssti_hunter,
-                "SSTI (Server-Side Template Injection) 脆弱性の決定論的スキャンを実行します。"
-            )
-        if "cors" in self.specialists:
-            self.register_tool(
-                "cors_scan",
-                self.run_cors_hunter,
-                "CORS設定ミスの検出を実行します。"
-            )
-        if "crlf" in self.specialists:
-            self.register_tool(
-                "crlf_scan",
-                self.run_crlf_hunter,
-                "CRLFインジェクションの決定論的スキャンを実行します。"
-            )
+        register_manager_tool_scans(
+            register_tool=self.register_tool,
+            specialists=self.specialists,
+            run_sqli_hunter=self.run_sqli_hunter,
+            run_xss_hunter=self.run_xss_hunter,
+            run_lfi_check=self.run_lfi_check,
+            run_open_redirect_check=self.run_open_redirect_check,
+            run_cmd_ssrf_hunter=self.run_cmd_ssrf_hunter,
+            run_ssrf_hunter=self.run_ssrf_hunter,
+            run_ssti_hunter=self.run_ssti_hunter,
+            run_cors_hunter=self.run_cors_hunter,
+            run_crlf_hunter=self.run_crlf_hunter,
+        )
         self._register_initial_tools()
-        # キャッシュ機構：同一 URL/パラメータの重複チェックを防止
         self._request_cache: Dict[str, Dict[str, Any]] = {}
 
     def _initialize_specialists(self) -> None:
-        """Specialist の初期化 (Lazy import)"""
-        self.specialists: Dict[str, Specialist] = {}
-
-        # SmartSQLiHunter
-        try:
-            from src.core.agents.swarm.injection.smart_sqli import SmartSQLiHunter
-            self.specialists["sqli"] = SmartSQLiHunter(config=self.config)
-        except ImportError:
-            logger.warning("SmartSQLiHunter not available")
-
-        # OpenRedirectSpecialist
-        try:
-            from src.core.agents.swarm.injection.open_redirect import OpenRedirectSpecialist
-            self.specialists["redirect"] = OpenRedirectSpecialist(config=self.config)
-        except ImportError:
-            logger.warning("OpenRedirectSpecialist not available")
-
-        # SmartLFIHunter
-        try:
-            from src.core.agents.swarm.injection.smart_lfi import SmartLFIHunter
-            self.specialists["lfi"] = SmartLFIHunter(config=self.config)
-        except ImportError:
-            logger.warning("SmartLFIHunter not available")
-
-        # SmartXSSHunter
-        try:
-            from src.core.agents.swarm.injection.smart_xss import SmartXSSHunter
-            self.specialists["xss"] = SmartXSSHunter(config=self.config)
-        except ImportError:
-            logger.warning("SmartXSSHunter not available")
-
-        # SmartCmdSSRFHunter
-        try:
-            from src.core.agents.swarm.injection.smart_cmd_ssrf import SmartCmdSSRFHunter
-            self.specialists["cmd_ssrf"] = SmartCmdSSRFHunter(config=self.config)
-        except ImportError:
-            logger.warning("SmartCmdSSRFHunter not available")
-
-        # SmartSSRFHunter
-        try:
-            from src.core.agents.swarm.injection.smart_ssrf import SmartSSRFHunter
-            self.specialists["ssrf"] = SmartSSRFHunter(config=self.config)
-        except ImportError:
-            logger.warning("SmartSSRFHunter not available")
-
-        # SmartSSTIHunter
-        try:
-            from src.core.agents.swarm.injection.smart_ssti import SmartSSTIHunter
-            self.specialists["ssti"] = SmartSSTIHunter(config=self.config)
-        except ImportError:
-            logger.warning("SmartSSTIHunter not available")
-
-        # SmartCORSHunter
-        try:
-            from src.core.agents.swarm.injection.smart_cors import SmartCORSHunter
-            self.specialists["cors"] = SmartCORSHunter(config=self.config)
-        except ImportError:
-            logger.warning("SmartCORSHunter not available")
-
-        # SmartCRLFHunter
-        try:
-            from src.core.agents.swarm.injection.smart_crlf import SmartCRLFHunter
-            self.specialists["crlf"] = SmartCRLFHunter(config=self.config)
-        except ImportError:
-            logger.warning("SmartCRLFHunter not available")
-
-        # SmartGraphQLHunter
-        try:
-            from src.core.agents.swarm.injection.smart_graphql import SmartGraphQLHunter
-            self.specialists["graphql"] = SmartGraphQLHunter(config=self.config)
-        except ImportError:
-            logger.warning("SmartGraphQLHunter not available")
+        self.specialists: Dict[str, Specialist] = create_specialists(config=self.config)
 
     def _register_initial_tools(self) -> None:
-        """LLM が使用するツールの登録"""
-        self.register_tool(
-            "analyze_parameters",
-            self.analyze_parameters,
-            "Analyze URL parameters for injection entry points. Args: url (str)"
+        _register_initial_tools_impl(
+            register_tool=self.register_tool,
+            specialists=self.specialists,
+            analyze_parameters=self.analyze_parameters,
+            run_sqli_hunter=self.run_sqli_hunter,
+            run_open_redirect_check=self.run_open_redirect_check,
+            run_lfi_check=self.run_lfi_check,
+            run_xss_hunter=self.run_xss_hunter,
+            run_cmd_ssrf_hunter=self.run_cmd_ssrf_hunter,
+            run_ssrf_hunter=self.run_ssrf_hunter,
+            run_graphql_hunter=self.run_graphql_hunter,
         )
-        self.register_tool(
-            "run_sqli_hunter",
-            self.run_sqli_hunter,
-            "Run Smart SQL Injection Hunter on a target. Args: url (str), params (dict)"
-        )
-        self.register_tool(
-            "run_open_redirect_check",
-            self.run_open_redirect_check,
-            "Check for Open Redirect vulnerabilities. Args: url (str), params (dict)"
-        )
-        self.register_tool(
-            "run_lfi_check",
-            self.run_lfi_check,
-            "Check for LFI/Path Traversal vulnerabilities. Args: url (str), params (dict)"
-        )
-        self.register_tool(
-            "run_xss_hunter",
-            self.run_xss_hunter,
-            "Run Smart XSS Hunter on a target. Args: url (str), params (dict)"
-        )
-        self.register_tool(
-            "run_cmd_ssrf_hunter",
-            self.run_cmd_ssrf_hunter,
-            "Run Smart Command Injection & SSRF Hunter on a target. Args: url (str), params (dict)"
-        )
-        self.register_tool(
-            "run_ssrf_hunter",
-            self.run_ssrf_hunter,
-            "Run deterministic SSRF Hunter on a target. Args: url (str), params (dict)"
-        )
-        if "graphql" in self.specialists:
-            self.register_tool(
-                "graphql_scan",
-                self.run_graphql_hunter,
-                "GraphQL Introspection有効性を検出します。"
-            )
 
     # --- URL の「タイプ」判定ヘルパー ---
 
@@ -353,77 +225,26 @@ class InjectionManagerAgent(BaseManagerAgent):
         base_params: Dict[str, Any],
         quick_mode: bool,
     ) -> Dict[str, Any]:
-        """仮説に沿って必要な Specialist のみ実行する。"""
-        profile = build_unknown_hypotheses(url, base_params, available_specialists=set(self.specialists.keys()))
-        selected = profile.get("selected_specialists", [])
-
-        logger.info(
-            "[%s] unknown hypothesis routing: url=%s hypotheses=%s specialists=%s",
-            self.name,
-            url,
-            profile.get("hypotheses", []),
-            selected,
+        return await run_unknown_hypothesis_scans(
+            url=url,
+            base_params=base_params,
+            quick_mode=quick_mode,
+            callables={
+                "sqli": self.run_sqli_hunter,
+                "xss": self.run_xss_hunter,
+                "lfi": self.run_lfi_check,
+                "ssti": self.run_ssti_hunter,
+                "cors": self.run_cors_hunter,
+                "crlf": self.run_crlf_hunter,
+                "cmd_ssrf": self.run_cmd_ssrf_hunter,
+                "ssrf": self.run_ssrf_hunter,
+                "graphql": self.run_graphql_hunter,
+            },
+            specialists=self.specialists,
+            current_context=self.current_context,
+            excluded_params=self.EXCLUDED_TESTED_PARAMS,
+            agent_name=self.name,
         )
-
-        unknown_results: List[Dict[str, Any]] = []
-        reflection_observed = False
-        xss_evidence = ""
-        blind_correlation: Dict[str, Any] = {}
-
-        for specialist in selected:
-            if specialist == "sqli":
-                sqli_result = await self.run_sqli_hunter(url=url, params=base_params, quick_mode=quick_mode)
-                unknown_results.append(sqli_result)
-                if not blind_correlation:
-                    blind_correlation = normalize_blind_correlation(
-                        sqli_result.get("blind_correlation", {}) or {}
-                    )
-            elif specialist == "xss":
-                xss_result = await self.run_xss_hunter(url=url, params=base_params, quick_mode=quick_mode)
-                unknown_results.append(xss_result)
-                reflection_observed = bool(xss_result.get("reflection_observed", False))
-                xss_evidence = str(xss_result.get("evidence", "") or "")
-            elif specialist == "lfi":
-                unknown_results.append(await self.run_lfi_check(url=url, params=base_params, quick_mode=quick_mode))
-            elif specialist == "ssti":
-                ssti_result = await self.run_ssti_hunter(url=url, params=base_params, quick_mode=quick_mode)
-                unknown_results.append(ssti_result)
-            elif specialist == "cors":
-                cors_result = await self.run_cors_hunter(url=url, params=base_params, quick_mode=quick_mode)
-                unknown_results.append(cors_result)
-            elif specialist == "crlf":
-                crlf_result = await self.run_crlf_hunter(url=url, params=base_params, quick_mode=quick_mode)
-                unknown_results.append(crlf_result)
-            elif specialist == "cmd_ssrf":
-                cmd_result = await self.run_cmd_ssrf_hunter(url=url, params=base_params, quick_mode=quick_mode)
-                unknown_results.append(cmd_result)
-                if not blind_correlation:
-                    blind_correlation = normalize_blind_correlation(
-                        cmd_result.get("blind_correlation", {}) or {}
-                    )
-            elif specialist == "ssrf":
-                ssrf_result = await self.run_ssrf_hunter(url=url, params=base_params, quick_mode=quick_mode)
-                unknown_results.append(ssrf_result)
-            elif specialist == "graphql":
-                graphql_result = await self.run_graphql_hunter(url=url, params=base_params, quick_mode=quick_mode)
-                unknown_results.append(graphql_result)
-
-        merged_params: List[str] = []
-        for partial in unknown_results:
-            merged_params.extend(partial.get("tested_params", []) or [])
-
-        findings_count = sum(int(partial.get("findings_count", 0) or 0) for partial in unknown_results)
-        findings_list = self.current_context["findings"][-findings_count:] if findings_count > 0 else []
-
-        return {
-            "findings_count": findings_count,
-            "findings": findings_list,
-            "tested_params": sanitize_tested_params(merged_params, excluded_params=self.EXCLUDED_TESTED_PARAMS),
-            "reflection_observed": reflection_observed,
-            "xss_evidence": xss_evidence,
-            "blind_correlation": normalize_blind_correlation(blind_correlation),
-            "unknown_profile": profile,
-        }
 
     @staticmethod
     def _extract_security_level(cookies: str) -> str:
@@ -1475,25 +1296,6 @@ class InjectionManagerAgent(BaseManagerAgent):
         return result
 
     async def _process_single_url(self, url: str, vuln_type: str, base_params: Dict[str, Any], quick_mode: bool = False) -> Dict[str, Any]:
-        """
-        単一 URL を処理するヘルパーメソッド。
-        
-        Args:
-            url: ターゲット URL
-            vuln_type: 脆弱性タイプ
-            base_params: リクエストパラメータ
-            quick_mode: True の場合、軽量モードで実行（ターン数制限あり）
-        
-        Returns:
-            {"findings_count": int, "vuln_type": str, "findings": list}
-        """
-        findings_count = 0
-        findings_list = []
-        tested_params: List[str] = []
-        reflection_observed = False
-        xss_evidence = ""
-        blind_correlation: Dict[str, Any] = {}
-        unknown_profile: Dict[str, Any] = {}
         probe_sent: Optional[bool] = None
         probe_skipped_reason = ""
         comparison_checks: List[Dict[str, Any]] = []
@@ -1506,157 +1308,40 @@ class InjectionManagerAgent(BaseManagerAgent):
         detection_mode = self._resolve_detection_mode(base_params, "phase1")
 
         try:
-            if vuln_type == "sqli":
-                sqli_result = await self.run_sqli_hunter(url=url, params=base_params, quick_mode=quick_mode)
-                findings_count = sqli_result.get("findings_count", 0)
-                tested_params = sanitize_tested_params(sqli_result.get("tested_params", []), excluded_params=self.EXCLUDED_TESTED_PARAMS)
-                blind_correlation = normalize_blind_correlation(
-                    sqli_result.get("blind_correlation", {}) or {}
-                )
-                findings_list = self.current_context["findings"][-findings_count:] if findings_count > 0 else []
-                if findings_count == 0:
-                    # SQLi 発見なしの場合、XSS のみ実行
-                    xss_result = await self.run_xss_hunter(url=url, params=base_params, quick_mode=quick_mode)
-                    tested_params = sanitize_tested_params(tested_params + xss_result.get("tested_params", []), excluded_params=self.EXCLUDED_TESTED_PARAMS)
-                    reflection_observed = bool(xss_result.get("reflection_observed", False))
-                    xss_evidence = str(xss_result.get("evidence", "") or "")
+            branch_result = await dispatch_vuln_type_branch(
+                url=url,
+                vuln_type=vuln_type,
+                base_params=base_params,
+                quick_mode=quick_mode,
+                detection_mode=detection_mode,
+                callables={
+                    "sqli": self.run_sqli_hunter,
+                    "xss": self.run_xss_hunter,
+                    "lfi": self.run_lfi_check,
+                    "ssti": self.run_ssti_hunter,
+                    "cors": self.run_cors_hunter,
+                    "crlf": self.run_crlf_hunter,
+                    "redirect": self.run_open_redirect_check,
+                    "cmd_ssrf": self.run_cmd_ssrf_hunter,
+                    "ssrf": self.run_ssrf_hunter,
+                    "csrf": self._run_csrf_minimal_check,
+                    "api": self._run_api_minimal_check,
+                    "admin": self.run_admin_check,
+                    "unknown_scans": self._run_unknown_hypothesis_scans,
+                },
+                current_context=self.current_context,
+                specialists=self.specialists,
+                excluded_params=self.EXCLUDED_TESTED_PARAMS,
+                agent_name=self.name,
+            )
+            findings_count = branch_result["findings_count"]
+            findings_list = branch_result["findings_list"]
+            tested_params = branch_result["tested_params"]
+            reflection_observed = branch_result.get("reflection_observed", False)
+            xss_evidence = branch_result.get("xss_evidence", "")
+            blind_correlation = branch_result.get("blind_correlation", {})
+            unknown_profile = branch_result.get("unknown_profile", {})
 
-            elif vuln_type == "xss":
-                xss_result = await self.run_xss_hunter(url=url, params=base_params, quick_mode=quick_mode)
-                findings_count = xss_result.get("findings_count", 0)
-                tested_params = sanitize_tested_params(xss_result.get("tested_params", []), excluded_params=self.EXCLUDED_TESTED_PARAMS)
-                findings_list = self.current_context["findings"][-findings_count:] if findings_count > 0 else []
-                reflection_observed = bool(xss_result.get("reflection_observed", False))
-                xss_evidence = str(xss_result.get("evidence", "") or "")
-
-            elif vuln_type == "lfi":
-                lfi_result = await self.run_lfi_check(url=url, params=base_params)
-                findings_count = lfi_result.get("findings_count", 0)
-                tested_params = sanitize_tested_params(lfi_result.get("tested_params", []), excluded_params=self.EXCLUDED_TESTED_PARAMS)
-                findings_list = self.current_context["findings"][-findings_count:] if findings_count > 0 else []
-
-            elif vuln_type == "ssti":
-                ssti_result = await self.run_ssti_hunter(url=url, params=base_params)
-                findings_count = ssti_result.get("findings_count", 0)
-                tested_params = sanitize_tested_params(ssti_result.get("tested_params", []), excluded_params=self.EXCLUDED_TESTED_PARAMS)
-                findings_list = self.current_context["findings"][-findings_count:] if findings_count > 0 else []
-
-            elif vuln_type == "cors":
-                cors_result = await self.run_cors_hunter(url=url, params=base_params)
-                findings_count = cors_result.get("findings_count", 0)
-                tested_params = sanitize_tested_params(cors_result.get("tested_params", []), excluded_params=self.EXCLUDED_TESTED_PARAMS)
-                findings_list = self.current_context["findings"][-findings_count:] if findings_count > 0 else []
-
-            elif vuln_type == "crlf":
-                crlf_result = await self.run_crlf_hunter(url=url, params=base_params)
-                findings_count = crlf_result.get("findings_count", 0)
-                tested_params = sanitize_tested_params(crlf_result.get("tested_params", []), excluded_params=self.EXCLUDED_TESTED_PARAMS)
-                findings_list = self.current_context["findings"][-findings_count:] if findings_count > 0 else []
-
-            elif vuln_type == "redirect":
-                redirect_result = await self.run_open_redirect_check(url=url, params=base_params)
-                findings_count = redirect_result.get("findings_count", 0)
-                findings_list = self.current_context["findings"][-findings_count:] if findings_count > 0 else []
-
-            elif vuln_type == "cmd_ssrf":
-                cmd_result = await self.run_cmd_ssrf_hunter(url=url, params=base_params)
-                findings_count = cmd_result.get("findings_count", 0)
-                tested_params = sanitize_tested_params(cmd_result.get("tested_params", []), excluded_params=self.EXCLUDED_TESTED_PARAMS)
-                blind_correlation = normalize_blind_correlation(
-                    cmd_result.get("blind_correlation", {}) or {}
-                )
-                findings_list = self.current_context["findings"][-findings_count:] if findings_count > 0 else []
-
-            elif vuln_type == "ssrf":
-                ssrf_result = await self.run_ssrf_hunter(url=url, params=base_params)
-                findings_count = ssrf_result.get("findings_count", 0)
-                tested_params = sanitize_tested_params(ssrf_result.get("tested_params", []), excluded_params=self.EXCLUDED_TESTED_PARAMS)
-                findings_list = self.current_context["findings"][-findings_count:] if findings_count > 0 else []
-
-            elif vuln_type == "csrf":
-                csrf_result = await self._run_csrf_minimal_check(url=url, base_params=base_params)
-                findings_count = csrf_result.get("findings_count", 0)
-                tested_params = sanitize_tested_params(csrf_result.get("tested_params", []), excluded_params=self.EXCLUDED_TESTED_PARAMS)
-                findings_list = self.current_context["findings"][-findings_count:] if findings_count > 0 else []
-
-            elif vuln_type == "api":
-                api_result = await self._run_api_minimal_check(url=url, base_params=base_params)
-                findings_count = api_result.get("findings_count", 0)
-                tested_params = sanitize_tested_params(api_result.get("tested_params", []), excluded_params=self.EXCLUDED_TESTED_PARAMS)
-
-            elif vuln_type == "admin":
-                # BizLogicSwarm代替: adminエンドポイント認可バイパス試行
-                admin_result = await self.run_admin_check(url=url, params=base_params)
-                findings_count = admin_result.get("findings_count", 0)
-                tested_params = sanitize_tested_params(admin_result.get("tested_params", []), excluded_params=self.EXCLUDED_TESTED_PARAMS)
-                findings_list = self.current_context["findings"][-findings_count:] if findings_count > 0 else []
-                blind_correlation = {}  # adminチェックは現状未対応
-
-            else:  # unknown: 仮説駆動で対象 Specialist のみ実行
-                unknown_classification_only = self._coerce_bool(
-                    (self.current_context.get("params", {}) if isinstance(self.current_context, dict) else {}).get("unknown_classification_only"),
-                    default=True,
-                )
-
-                if unknown_classification_only:
-                    result = process_unknown_classification_only(
-                        url=url,
-                        base_params=base_params,
-                        available_specialists=set(self.specialists.keys()),
-                        source_agent_name=self.name,
-                        excluded_params=self.EXCLUDED_TESTED_PARAMS,
-                    )
-                    findings_count = result["findings_count"]
-                    findings_list = result["findings_list"]
-                    tested_params = result["tested_params"]
-                    unknown_profile = result["unknown_profile"]
-                    idor_candidate = result["idor_candidate"]
-                    if idor_candidate is not None:
-                        self.current_context["findings"].append(idor_candidate)
-                    logger.info(
-                        "[%s] unknown classification-only mode: url=%s hypotheses=%s specialists=%s",
-                        self.name,
-                        url,
-                        unknown_profile.get("hypotheses", []),
-                        unknown_profile.get("selected_specialists", []),
-                    )
-                else:
-                    unknown_result = await self._run_unknown_hypothesis_scans(
-                        url=url,
-                        base_params=base_params,
-                        quick_mode=quick_mode,
-                    )
-                    findings_count = unknown_result.get("findings_count", 0)
-                    findings_list = unknown_result.get("findings", [])
-                    tested_params = sanitize_tested_params(unknown_result.get("tested_params", []), excluded_params=self.EXCLUDED_TESTED_PARAMS)
-                    reflection_observed = bool(unknown_result.get("reflection_observed", False))
-                    xss_evidence = str(unknown_result.get("xss_evidence", "") or "")
-                    blind_correlation = normalize_blind_correlation(
-                        unknown_result.get("blind_correlation", {}) or {}
-                    )
-                    unknown_profile = unknown_result.get("unknown_profile", {}) or {}
-                    logger.debug(
-                        "[%s] unknown profile for %s => %s",
-                        self.name,
-                        url,
-                        unknown_profile,
-                    )
-                    if findings_count == 0:
-                        idor_candidate = build_unknown_idor_candidate_finding(
-                            url=url,
-                            tested_params=tested_params,
-                            unknown_profile=unknown_profile,
-                        source_agent_name=self.name,
-                        excluded_params=self.EXCLUDED_TESTED_PARAMS,
-                        )
-                        if idor_candidate is not None:
-                            self.current_context["findings"].append(idor_candidate)
-                            findings_count = 1
-                            findings_list = [idor_candidate]
-
-            normalize_findings_additional_info(findings_list, tested_params, detection_mode, excluded_params=self.EXCLUDED_TESTED_PARAMS)
-
-            # キャッシュに結果を保存
             cache_key = self._generate_cache_key(url, vuln_type, base_params)
             self._request_cache[cache_key] = build_process_url_cache_entry(
                 vuln_type=vuln_type,
@@ -1681,17 +1366,16 @@ class InjectionManagerAgent(BaseManagerAgent):
 
         except Exception as exc:
             logger.error("[%s] _process_single_url error on %s: %s", self.name, url, exc)
-            # エラー時もキャッシュに保存（再試行防止）
             cache_key = self._generate_cache_key(url, vuln_type, base_params)
             self._request_cache[cache_key] = build_process_url_cache_entry(
                 vuln_type=vuln_type,
                 findings_count=0,
                 findings=[],
-                tested_params=tested_params,
+                tested_params=[],
                 reflection_observed=False,
                 xss_evidence="",
                 blind_correlation=normalize_blind_correlation({}),
-                unknown_profile=unknown_profile,
+                unknown_profile={},
                 probe_sent=probe_sent,
                 probe_skipped_reason=probe_skipped_reason,
                 probe_request_raw=probe_request_raw,
@@ -1704,6 +1388,13 @@ class InjectionManagerAgent(BaseManagerAgent):
                 detection_mode=detection_mode,
                 error=str(exc),
             )
+            findings_count = 0
+            findings_list = []
+            tested_params = []
+            reflection_observed = False
+            xss_evidence = ""
+            blind_correlation = {}
+            unknown_profile = {}
 
         return {
             "findings_count": findings_count,
@@ -1771,522 +1462,159 @@ class InjectionManagerAgent(BaseManagerAgent):
         }
 
     async def run_sqli_hunter(self, url: str, params: Dict[str, Any] = None, quick_mode: bool = False, **_kwargs) -> Dict[str, Any]:
-        if "sqli" not in self.specialists:
-            return {"error": "SQLi Specialist not available"}
-
-        logger.info("[%s] Delegating SQLi check to SmartSQLiHunter (quick_mode=%s)", self.name, quick_mode)
-
-        target_task, detection_mode = build_hunter_task(
-            url=url,
-            specialist_key="sqli",
-            task_name="SQLi Check",
-            tags=["sqli"],
-            params=params,
-            kwargs=_kwargs,
-            current_context=self.current_context,
-            phase2_detection_mode=self._phase2_detection_mode,
-            normalize_tool_supplied_params=self._normalize_tool_supplied_params,
-            resolve_detection_mode=self._resolve_detection_mode,
+        return await run_sqli_hunter_runner(
+            deps={
+                "specialists": self.specialists,
+                "current_context": self.current_context,
+                "phase2_detection_mode": self._phase2_detection_mode,
+                "excluded_params": self.EXCLUDED_TESTED_PARAMS,
+                "normalize_tool_supplied_params": self._normalize_tool_supplied_params,
+                "resolve_detection_mode": self._resolve_detection_mode,
+                "agent_name": self.name,
+            },
+            url=url, params=params, quick_mode=quick_mode, **_kwargs,
         )
-
-        findings = await self.specialists["sqli"].execute_with_retry(target_task, quick_mode=quick_mode) or []
-        self.current_context["findings"].extend(findings)
-        tested_params = []
-        if findings and hasattr(findings[0], "additional_info"):
-            tested_params = findings[0].additional_info.get("tested_params", [])
-        if not tested_params:
-            tested_params = getattr(self.specialists["sqli"], "last_tested_params", []) or []
-        blind_correlation = {}
-        if findings and hasattr(findings[0], "additional_info"):
-            blind_correlation = findings[0].additional_info.get("blind_correlation", {}) or {}
-        if not blind_correlation:
-            blind_correlation = getattr(self.specialists["sqli"], "last_blind_correlation", {}) or {}
-        blind_correlation = normalize_blind_correlation(blind_correlation)
-        normalize_findings_additional_info(findings, tested_params, detection_mode, excluded_params=self.EXCLUDED_TESTED_PARAMS)
-
-        # Layer 3: Hunter ツールの出力形式改善 - LLM が誤解しない明確な形式
-        if findings:
-            finding = findings[0]
-            return {
-                "success": True,
-                "findings_count": len(findings),
-                "vulnerability": "SQL Injection",
-                "method": finding.evidence.request_method if hasattr(finding, 'evidence') and finding.evidence else "GET",
-                "parameter": finding.additional_info.get("parameter", "") if hasattr(finding, 'additional_info') else "",
-                "payload": finding.additional_info.get("payload", "") if hasattr(finding, 'additional_info') else "",
-                "tested_params": tested_params,
-                "blind_correlation": blind_correlation,
-                "evidence": finding.description if hasattr(finding, 'description') else str(finding),
-                "severity": finding.severity.name if hasattr(finding, 'severity') else "HIGH",
-                "info": f"SQL Injection vulnerability confirmed in parameter '{finding.additional_info.get('parameter', 'unknown')}'"
-            }
-        else:
-            return {
-                "success": False,
-                "findings_count": 0,
-                "tested_params": tested_params,
-                "blind_correlation": blind_correlation,
-                "message": "No SQL Injection vulnerabilities found after comprehensive testing"
-            }
 
     async def run_xss_hunter(self, url: str, params: Dict[str, Any] = None, quick_mode: bool = False, **_kwargs) -> Dict[str, Any]:
-        if "xss" not in self.specialists:
-            return {"error": "XSS Specialist not available"}
-
-        logger.info("[%s] Delegating XSS check to SmartXSSHunter (quick_mode=%s)", self.name, quick_mode)
-
-        target_task, detection_mode = build_hunter_task(
-            url=url,
-            specialist_key="xss",
-            task_name="XSS Check",
-            tags=["xss"],
-            params=params,
-            kwargs=_kwargs,
-            current_context=self.current_context,
-            phase2_detection_mode=self._phase2_detection_mode,
-            normalize_tool_supplied_params=self._normalize_tool_supplied_params,
-            resolve_detection_mode=self._resolve_detection_mode,
+        return await run_xss_hunter_runner(
+            deps={
+                "specialists": self.specialists,
+                "current_context": self.current_context,
+                "phase2_detection_mode": self._phase2_detection_mode,
+                "excluded_params": self.EXCLUDED_TESTED_PARAMS,
+                "normalize_tool_supplied_params": self._normalize_tool_supplied_params,
+                "resolve_detection_mode": self._resolve_detection_mode,
+                "agent_name": self.name,
+            },
+            url=url, params=params, quick_mode=quick_mode, **_kwargs,
         )
-
-        findings = await self.specialists["xss"].execute_with_retry(target_task, quick_mode=quick_mode) or []
-        self.current_context["findings"].extend(findings)
-        tested_params = []
-        if findings and hasattr(findings[0], "additional_info"):
-            tested_params = findings[0].additional_info.get("tested_params", [])
-        if not tested_params:
-            tested_params = getattr(self.specialists["xss"], "last_tested_params", []) or []
-        normalize_findings_additional_info(findings, tested_params, detection_mode, excluded_params=self.EXCLUDED_TESTED_PARAMS)
-
-        # Layer 3: Hunter ツールの出力形式改善 - LLM が誤解しない明確な形式
-        if findings:
-            finding = findings[0]
-            reflection_observed = False
-            if hasattr(finding, "additional_info") and isinstance(finding.additional_info, dict):
-                reflection_observed = bool(finding.additional_info.get("reflection_observed", False))
-            return {
-                "success": True,
-                "findings_count": len(findings),
-                "vulnerability": "XSS",
-                "method": finding.evidence.request_method if hasattr(finding, 'evidence') and finding.evidence else "GET",
-                "parameter": finding.additional_info.get("parameter", "") if hasattr(finding, 'additional_info') else "",
-                "payload": finding.additional_info.get("payload", "") if hasattr(finding, 'additional_info') else "",
-                "tested_params": tested_params,
-                "evidence": finding.description if hasattr(finding, 'description') else str(finding),
-                "reflection_observed": reflection_observed,
-                "severity": finding.severity.name if hasattr(finding, 'severity') else "HIGH",
-                "info": f"XSS vulnerability confirmed in parameter '{finding.additional_info.get('parameter', 'unknown')}'"
-            }
-        else:
-            specialist_reflection = bool(getattr(self.specialists["xss"], "reflection_observed", False))
-            specialist_evidence = str(getattr(self.specialists["xss"], "evidence", "") or "")
-            return {
-                "success": False,
-                "findings_count": 0,
-                "tested_params": tested_params,
-                "reflection_observed": specialist_reflection,
-                "evidence": specialist_evidence,
-                "message": "No XSS vulnerabilities found after comprehensive testing"
-            }
 
     async def run_open_redirect_check(self, url: str, params: Dict[str, Any] = None, quick_mode: bool = False, **_kwargs) -> Dict[str, Any]:
-        if "redirect" not in self.specialists:
-            return {"error": "Redirect Specialist not available"}
-
-        logger.info("[%s] Delegating Open Redirect check to specialist (quick_mode=%s)", self.name, quick_mode)
-
-        target_task, detection_mode = build_hunter_task(
-            url=url,
-            specialist_key="redirect",
-            task_name="Open Redirect Check",
-            tags=["redirect"],
-            params=params,
-            kwargs=_kwargs,
-            current_context=self.current_context,
-            phase2_detection_mode=self._phase2_detection_mode,
-            normalize_tool_supplied_params=self._normalize_tool_supplied_params,
-            resolve_detection_mode=self._resolve_detection_mode,
-        )
-
-        findings = await self.specialists["redirect"].execute_with_retry(target_task, quick_mode=quick_mode) or []
-        self.current_context["findings"].extend(findings)
-        tested_params_from_url = sanitize_tested_params(list(parse_qs(urlparse(url).query).keys()), excluded_params=self.EXCLUDED_TESTED_PARAMS)
-        normalize_findings_additional_info(findings, tested_params_from_url, detection_mode, excluded_params=self.EXCLUDED_TESTED_PARAMS)
-        return format_simple_hunter_result(
-            findings=findings,
-            url=url,
-            excluded_params=self.EXCLUDED_TESTED_PARAMS,
-            vuln_name="Open Redirect",
-            severity="MEDIUM",
-            not_found_message="No Open Redirect vulnerabilities found",
+        return await run_open_redirect_check_runner(
+            deps={
+                "specialists": self.specialists,
+                "current_context": self.current_context,
+                "phase2_detection_mode": self._phase2_detection_mode,
+                "excluded_params": self.EXCLUDED_TESTED_PARAMS,
+                "normalize_tool_supplied_params": self._normalize_tool_supplied_params,
+                "resolve_detection_mode": self._resolve_detection_mode,
+                "agent_name": self.name,
+            },
+            url=url, params=params, quick_mode=quick_mode, **_kwargs,
         )
 
     async def run_lfi_check(self, url: str, params: Dict[str, Any] = None, quick_mode: bool = False, **_kwargs) -> Dict[str, Any]:
-        if "lfi" not in self.specialists:
-            return {"error": "LFI Specialist not available"}
-
-        logger.info("[%s] Delegating LFI check to SmartLFIHunter (quick_mode=%s)", self.name, quick_mode)
-
-        target_task, detection_mode = build_hunter_task(
-            url=url,
-            specialist_key="lfi",
-            task_name="LFI/Traversal Check",
-            tags=["lfi"],
-            params=params,
-            kwargs=_kwargs,
-            current_context=self.current_context,
-            phase2_detection_mode=self._phase2_detection_mode,
-            normalize_tool_supplied_params=self._normalize_tool_supplied_params,
-            resolve_detection_mode=self._resolve_detection_mode,
-        )
-
-        findings = await self.specialists["lfi"].execute_with_retry(target_task, quick_mode=quick_mode) or []
-        self.current_context["findings"].extend(findings)
-
-        tested_params: List[str] = []
-        if findings and hasattr(findings[0], "additional_info"):
-            tested_params = findings[0].additional_info.get("tested_params", []) or []
-        normalize_findings_additional_info(findings, tested_params, detection_mode, excluded_params=self.EXCLUDED_TESTED_PARAMS)
-        return format_simple_hunter_result(
-            findings=findings,
-            url=url,
-            excluded_params=self.EXCLUDED_TESTED_PARAMS,
-            vuln_name="LFI/Path Traversal",
-            severity="HIGH",
-            not_found_message="No LFI vulnerabilities found",
+        return await run_lfi_check_runner(
+            deps={
+                "specialists": self.specialists,
+                "current_context": self.current_context,
+                "phase2_detection_mode": self._phase2_detection_mode,
+                "excluded_params": self.EXCLUDED_TESTED_PARAMS,
+                "normalize_tool_supplied_params": self._normalize_tool_supplied_params,
+                "resolve_detection_mode": self._resolve_detection_mode,
+                "agent_name": self.name,
+            },
+            url=url, params=params, quick_mode=quick_mode, **_kwargs,
         )
 
     async def run_ssti_hunter(self, url: str, params: Dict[str, Any] = None, quick_mode: bool = False, **_kwargs) -> Dict[str, Any]:
-        if "ssti" not in self.specialists:
-            return {"error": "SSTI Specialist not available", "findings_count": 0, "tested_params": []}
-
-        logger.info("[%s] Delegating SSTI check to SmartSSTIHunter", self.name)
-
-        target_task, detection_mode = build_hunter_task(
-            url=url,
-            specialist_key="ssti",
-            task_name="SSTI Check",
-            tags=["ssti"],
-            params=params,
-            kwargs=_kwargs,
-            current_context=self.current_context,
-            phase2_detection_mode=self._phase2_detection_mode,
-            normalize_tool_supplied_params=self._normalize_tool_supplied_params,
-            resolve_detection_mode=self._resolve_detection_mode,
+        return await run_ssti_hunter_runner(
+            deps={
+                "specialists": self.specialists,
+                "current_context": self.current_context,
+                "phase2_detection_mode": self._phase2_detection_mode,
+                "excluded_params": self.EXCLUDED_TESTED_PARAMS,
+                "normalize_tool_supplied_params": self._normalize_tool_supplied_params,
+                "resolve_detection_mode": self._resolve_detection_mode,
+                "agent_name": self.name,
+            },
+            url=url, params=params, quick_mode=quick_mode, **_kwargs,
         )
-
-        effective_params = target_task.params
-        effective_params["use_encoding"] = _kwargs.get("use_encoding", False)
-        tech_stack = (
-            _kwargs.get("tech_stack")
-            or self.current_context.get("tech_stack")
-            or self.current_context.get("fingerprint", {}).get("tech_stack", [])
-        )
-        if tech_stack:
-            effective_params["_context"] = {"tech_stack": list(tech_stack)}
-
-        findings = await self.specialists["ssti"].execute(target_task, quick_mode=quick_mode) or []
-        self.current_context["findings"].extend(findings)
-
-        tested_params: List[str] = []
-        if findings and hasattr(findings[0], "additional_info"):
-            tested_params = findings[0].additional_info.get("tested_params", []) or []
-
-        if findings:
-            finding = findings[0]
-            return {
-                "findings_count": len(findings),
-                "success": True,
-                "vulnerability": "SSTI",
-                "parameter": finding.additional_info.get("parameter", "") if hasattr(finding, "additional_info") else "",
-                "engine": finding.additional_info.get("engine", "unknown") if hasattr(finding, "additional_info") else "",
-                "payload": finding.additional_info.get("payload", "") if hasattr(finding, "additional_info") else "",
-                "evidence": finding.description if hasattr(finding, "description") else str(finding),
-                "severity": finding.severity.name if hasattr(finding, "severity") else "CRITICAL",
-                "tested_params": sanitize_tested_params(tested_params, excluded_params=self.EXCLUDED_TESTED_PARAMS),
-                "vulnerable": True,
-            }
-        else:
-            fallback_tested_params = sanitize_tested_params(list(parse_qs(urlparse(url).query).keys()), excluded_params=self.EXCLUDED_TESTED_PARAMS)
-            return {
-                "findings_count": 0,
-                "success": False,
-                "vulnerable": False,
-                "tested_params": fallback_tested_params,
-                "message": "No SSTI vulnerabilities found",
-            }
 
     async def run_cors_hunter(self, url: str, params: Dict[str, Any] = None, quick_mode: bool = False, **_kwargs) -> Dict[str, Any]:
-        if "cors" not in self.specialists:
-            return {"error": "CORS Specialist not available", "findings_count": 0, "tested_params": []}
-
-        logger.info("[%s] Delegating CORS check to SmartCORSHunter", self.name)
-
         if not isinstance(self.current_context, dict):
             self.current_context = {}
         self.current_context.setdefault("findings", [])
         self.current_context.setdefault("auth_headers", {})
         self.current_context.setdefault("params", {})
-
-        target_task, _detection_mode = build_hunter_task(
-            url=url,
-            specialist_key="cors",
-            task_name="CORS Check",
-            tags=["cors"],
-            params=params,
-            kwargs=_kwargs,
-            current_context=self.current_context,
-            phase2_detection_mode=self._phase2_detection_mode,
-            normalize_tool_supplied_params=self._normalize_tool_supplied_params,
-            resolve_detection_mode=self._resolve_detection_mode,
+        return await run_cors_hunter_runner(
+            deps={
+                "specialists": self.specialists,
+                "current_context": self.current_context,
+                "phase2_detection_mode": self._phase2_detection_mode,
+                "excluded_params": self.EXCLUDED_TESTED_PARAMS,
+                "normalize_tool_supplied_params": self._normalize_tool_supplied_params,
+                "resolve_detection_mode": self._resolve_detection_mode,
+                "agent_name": self.name,
+            },
+            url=url, params=params, quick_mode=quick_mode, **_kwargs,
         )
-
-        findings = await self.specialists["cors"].execute(target_task, quick_mode=quick_mode) or []
-        self.current_context["findings"].extend(findings)
-        return format_cors_hunter_result(findings=findings)
 
     async def run_crlf_hunter(self, url: str, params: Dict[str, Any] = None, quick_mode: bool = False, **_kwargs) -> Dict[str, Any]:
-        """
-        SmartCRLFHunter を実行（決定論的 CRLF インジェクションスキャン）
-
-        Args:
-            url: ターゲット URL
-            params: リクエストパラメータ（_auth 含む）
-            quick_mode: 未使用（SmartCRLFHunter は常に決定論的）
-        """
-        if "crlf" not in self.specialists:
-            return {"error": "CRLF Specialist not available", "findings_count": 0, "tested_params": []}
-
-        logger.info("[%s] Delegating CRLF check to SmartCRLFHunter", self.name)
-        effective_params = self._normalize_tool_supplied_params(params, _kwargs)
-
         if not isinstance(self.current_context, dict):
             self.current_context = {}
         self.current_context.setdefault("findings", [])
         self.current_context.setdefault("auth_headers", {})
         self.current_context.setdefault("params", {})
-
-        cookies_str = _kwargs.get("cookies") or self.current_context.get("params", {}).get("cookies", "")
-        effective_params["_auth"] = {
-            "auth_headers": _kwargs.get("auth_headers", self.current_context.get("auth_headers", {})),
-            "cookies": cookies_str,
-        }
-
-        target_task = Task(
-            id=f"inj_crlf_{id(url)}",
-            name="CRLF Check",
-            target=url,
-            params=effective_params,
-            tags=["crlf"],
+        return await run_crlf_hunter_runner(
+            deps={
+                "specialists": self.specialists,
+                "current_context": self.current_context,
+                "phase2_detection_mode": self._phase2_detection_mode,
+                "excluded_params": self.EXCLUDED_TESTED_PARAMS,
+                "normalize_tool_supplied_params": self._normalize_tool_supplied_params,
+                "resolve_detection_mode": self._resolve_detection_mode,
+                "agent_name": self.name,
+            },
+            url=url, params=params, quick_mode=quick_mode, **_kwargs,
         )
-        findings = await self.specialists["crlf"].execute(target_task, quick_mode=quick_mode) or []
-        self.current_context["findings"].extend(findings)
-
-        if findings:
-            finding = findings[0]
-            return {
-                "findings_count": len(findings),
-                "success": True,
-                "vulnerable": True,
-                "vulnerability": "CRLF_INJECTION",
-                "injected_header": finding.additional_info.get("injected_header", "") if hasattr(finding, "additional_info") else "",
-                "payload": finding.additional_info.get("payload", "") if hasattr(finding, "additional_info") else "",
-                "poc_html": finding.additional_info.get("poc_html", "") if hasattr(finding, "additional_info") else "",
-                "evidence": finding.description if hasattr(finding, "description") else str(finding),
-                "severity": finding.severity.name if hasattr(finding, "severity") else "MEDIUM",
-                "tested_params": finding.additional_info.get("tested_params", []) if hasattr(finding, "additional_info") else [],
-            }
-        else:
-            return {
-                "findings_count": 0,
-                "success": False,
-                "vulnerable": False,
-                "tested_params": [],
-                "message": "No CRLF injection found",
-            }
 
     async def run_graphql_hunter(self, url: str, params: Dict[str, Any] = None, quick_mode: bool = False, **_kwargs) -> Dict[str, Any]:
-        """
-        SmartGraphQLHunter を実行（GraphQL Introspection 検出）
-
-        Args:
-            url: ターゲット URL
-            params: リクエストパラメータ（_auth 含む）
-            quick_mode: 未使用（SmartGraphQLHunter は常に決定論的）
-        """
-        if "graphql" not in self.specialists:
-            return {"error": "GraphQL Specialist not available", "findings_count": 0, "tested_params": []}
-
-        logger.info("[%s] Delegating GraphQL check to SmartGraphQLHunter", self.name)
-
-        # current_context未初期化ガード（A-2/A-3発覚）
         if not isinstance(self.current_context, dict):
             self.current_context = {}
         self.current_context.setdefault("findings", [])
         self.current_context.setdefault("auth_headers", {})
         self.current_context.setdefault("params", {})
-
-        effective_params = self._normalize_tool_supplied_params(params, _kwargs)
-
-        cookies_str = _kwargs.get("cookies") or self.current_context.get("params", {}).get("cookies", "")
-        effective_params["_auth"] = {
-            "auth_headers": _kwargs.get("auth_headers", self.current_context.get("auth_headers", {})),
-            "cookies": cookies_str,
-        }
-
-        target_task = Task(
-            id=f"inj_graphql_{id(url)}",
-            name="GraphQL Introspection Check",
-            target=url,
-            params=effective_params,
-            tags=["graphql"],
+        return await run_graphql_hunter_runner(
+            deps={
+                "specialists": self.specialists,
+                "current_context": self.current_context,
+                "phase2_detection_mode": self._phase2_detection_mode,
+                "excluded_params": self.EXCLUDED_TESTED_PARAMS,
+                "normalize_tool_supplied_params": self._normalize_tool_supplied_params,
+                "resolve_detection_mode": self._resolve_detection_mode,
+                "agent_name": self.name,
+            },
+            url=url, params=params, quick_mode=quick_mode, **_kwargs,
         )
-        findings = await self.specialists["graphql"].execute(target_task, quick_mode=quick_mode) or []
-        self.current_context["findings"].extend(findings)
-
-        if findings:
-            finding = findings[0]
-            return {
-                "findings_count": len(findings),
-                "success": True,
-                "vulnerable": True,
-                "vulnerability": "GRAPHQL_INTROSPECTION",
-                "introspection_enabled": finding.additional_info.get("introspection_enabled", False) if hasattr(finding, "additional_info") else False,
-                "graphiql_enabled": finding.additional_info.get("graphiql_enabled", False) if hasattr(finding, "additional_info") else False,
-                "field_suggestions_enabled": finding.additional_info.get("field_suggestions_enabled", False) if hasattr(finding, "additional_info") else False,
-                "sensitive_fields": finding.additional_info.get("sensitive_fields", []) if hasattr(finding, "additional_info") else [],
-                "poc_html": finding.additional_info.get("poc_html", "") if hasattr(finding, "additional_info") else "",
-                "poc_request": finding.additional_info.get("poc_request", "") if hasattr(finding, "additional_info") else "",
-                "poc_response": finding.additional_info.get("poc_response", "") if hasattr(finding, "additional_info") else "",
-                "evidence": finding.description if hasattr(finding, "description") else str(finding),
-                "severity": finding.severity.name if hasattr(finding, "severity") else "MEDIUM",
-                "tested_params": finding.additional_info.get("tested_params", []) if hasattr(finding, "additional_info") else [],
-            }
-        else:
-            return {
-                "findings_count": 0,
-                "success": False,
-                "vulnerable": False,
-                "tested_params": [],
-                "message": "No GraphQL introspection enabled",
-            }
 
     async def run_cmd_ssrf_hunter(self, url: str, params: Dict[str, Any] = None, quick_mode: bool = False, **_kwargs) -> Dict[str, Any]:
-        if "cmd_ssrf" not in self.specialists:
-            return {"error": "CmdSSRF Specialist not available"}
-
-        logger.info("[%s] Delegating Cmd/SSRF check to SmartCmdSSRFHunter (quick_mode=%s)", self.name, quick_mode)
-
-        target_task, detection_mode = build_hunter_task(
-            url=url,
-            specialist_key="cmd_ssrf",
-            task_name="Cmd/SSRF Check",
-            tags=["cmd_ssrf"],
-            params=params,
-            kwargs=_kwargs,
-            current_context=self.current_context,
-            phase2_detection_mode=self._phase2_detection_mode,
-            normalize_tool_supplied_params=self._normalize_tool_supplied_params,
-            resolve_detection_mode=self._resolve_detection_mode,
+        return await run_cmd_ssrf_hunter_runner(
+            deps={
+                "specialists": self.specialists,
+                "current_context": self.current_context,
+                "phase2_detection_mode": self._phase2_detection_mode,
+                "excluded_params": self.EXCLUDED_TESTED_PARAMS,
+                "normalize_tool_supplied_params": self._normalize_tool_supplied_params,
+                "resolve_detection_mode": self._resolve_detection_mode,
+                "agent_name": self.name,
+            },
+            url=url, params=params, quick_mode=quick_mode, **_kwargs,
         )
-
-        findings = await self.specialists["cmd_ssrf"].execute_with_retry(target_task, quick_mode=quick_mode) or []
-        self.current_context["findings"].extend(findings)
-
-        tested_params: List[str] = []
-        blind_correlation: Dict[str, Any] = {}
-        if findings and hasattr(findings[0], "additional_info"):
-            tested_params = findings[0].additional_info.get("tested_params", []) or []
-            blind_correlation = findings[0].additional_info.get("blind_correlation", {}) or {}
-        if not tested_params:
-            tested_params = getattr(self.specialists["cmd_ssrf"], "last_tested_params", []) or []
-        if not blind_correlation:
-            blind_correlation = getattr(self.specialists["cmd_ssrf"], "last_blind_correlation", {}) or {}
-        blind_correlation = normalize_blind_correlation(blind_correlation)
-        normalize_findings_additional_info(findings, tested_params, detection_mode, excluded_params=self.EXCLUDED_TESTED_PARAMS)
-
-        # Layer 3: Hunter ツールの出力形式改善
-        if findings:
-            finding = findings[0]
-            return {
-                "findings_count": len(findings),
-                "success": True,
-                "vulnerability": "SSRF/Command Injection",
-                "parameter": finding.additional_info.get("parameter", "") if hasattr(finding, 'additional_info') else "",
-                "payload": finding.additional_info.get("payload", "") if hasattr(finding, 'additional_info') else "",
-                "evidence": finding.description if hasattr(finding, 'description') else str(finding),
-                "severity": finding.severity.name if hasattr(finding, 'severity') else "CRITICAL",
-                "tested_params": sanitize_tested_params(tested_params, excluded_params=self.EXCLUDED_TESTED_PARAMS),
-                "blind_correlation": blind_correlation,
-                "info": f"SSRF/Command Injection vulnerability confirmed"
-            }
-        else:
-            fallback_tested_params = tested_params or sanitize_tested_params(list(parse_qs(urlparse(url).query).keys()), excluded_params=self.EXCLUDED_TESTED_PARAMS)
-            return {
-                "findings_count": 0,
-                "success": False,
-                "tested_params": fallback_tested_params,
-                "blind_correlation": {},
-                "message": "No SSRF/Command Injection vulnerabilities found"
-            }
 
     async def run_ssrf_hunter(self, url: str, params: Dict[str, Any] = None, quick_mode: bool = False, **_kwargs) -> Dict[str, Any]:
-        """SmartSSRFHunter を実行する。"""
-        if "ssrf" not in self.specialists:
-            return {"error": "SSRF Specialist not available"}
-
-        logger.info("[%s] Delegating SSRF check to SmartSSRFHunter (quick_mode=%s)", self.name, quick_mode)
-
-        effective_params = self._normalize_tool_supplied_params(params, _kwargs)
-        effective_params["_auth"] = {
-            "auth_headers": _kwargs.get("auth_headers", self.current_context.get("auth_headers")),
-            "cookies": _kwargs.get("cookies", self.current_context.get("params", {}).get("cookies"))
-        }
-
-        target_task = Task(
-            id=f"inj_ssrf_{id(url)}",
-            name="SSRF Check",
-            target=url,
-            params=effective_params,
-            tags=["ssrf"],
+        return await run_ssrf_hunter_runner(
+            deps={
+                "specialists": self.specialists,
+                "current_context": self.current_context,
+                "phase2_detection_mode": self._phase2_detection_mode,
+                "excluded_params": self.EXCLUDED_TESTED_PARAMS,
+                "normalize_tool_supplied_params": self._normalize_tool_supplied_params,
+                "resolve_detection_mode": self._resolve_detection_mode,
+                "agent_name": self.name,
+            },
+            url=url, params=params, quick_mode=quick_mode, **_kwargs,
         )
-        findings = await self.specialists["ssrf"].execute_with_retry(target_task, quick_mode=quick_mode) or []
-        self.current_context["findings"].extend(findings)
-
-        tested_params: List[str] = []
-        if findings and hasattr(findings[0], "additional_info"):
-            tested_params = findings[0].additional_info.get("tested_params", []) or []
-        if not tested_params:
-            tested_params = getattr(self.specialists["ssrf"], "last_tested_params", []) or []
-
-        if findings:
-            finding = findings[0]
-            info = finding.additional_info if hasattr(finding, "additional_info") else {}
-            return {
-                "findings_count": len(findings),
-                "success": True,
-                "vulnerable": True,
-                "vulnerability": "SSRF",
-                "payload_type": info.get("payload_type", ""),
-                "payload": info.get("payload", ""),
-                "evidence": info.get("evidence", "") or finding.description,
-                "response_code": getattr(getattr(finding, "evidence", None), "response_status", 0),
-                "matched_variant": info.get("matched_variant", ""),
-                "matched_variant_source": info.get("matched_variant_source", ""),
-                "severity": finding.severity.name if hasattr(finding, "severity") else "HIGH",
-                "tested_params": sanitize_tested_params(tested_params, excluded_params=self.EXCLUDED_TESTED_PARAMS),
-                "poc_request": info.get("poc_request", ""),
-                "poc_response": info.get("poc_response", ""),
-                "poc_html": info.get("poc_html", ""),
-            }
-
-        fallback_tested_params = tested_params or sanitize_tested_params(list(parse_qs(urlparse(url).query).keys()), excluded_params=self.EXCLUDED_TESTED_PARAMS)
-        return {
-            "findings_count": 0,
-            "success": False,
-            "vulnerable": False,
-            "tested_params": fallback_tested_params,
-            "message": "No SSRF vulnerabilities found",
-        }
 
     def validate_findings(self, findings: Optional[List] = None) -> tuple:
         """

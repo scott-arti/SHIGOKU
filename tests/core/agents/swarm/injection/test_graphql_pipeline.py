@@ -99,7 +99,7 @@ class TestUnknownCategoryTriggersGraphQL:
         manager = InjectionManagerAgent()
         
         # Mock build_unknown_hypotheses to return graphql (dict format)
-        with patch("src.core.agents.swarm.injection.manager.build_unknown_hypotheses") as mock_build:
+        with patch("src.core.agents.swarm.injection.manager_internal.unknown_scan_runner.build_unknown_hypotheses") as mock_build:
             mock_build.return_value = {
                 "hypotheses": ["graphql"],
                 "signals": ["graphql_signal"],
