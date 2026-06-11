@@ -69,8 +69,36 @@ from src.core.engine.master_conductor_state_snapshot import (
     restore_pending_hitl_from_session_payload,
     restore_task_queue_from_session_payload,
 )
-from src.core.waf.bypasser import WAFBypasser
 from src.core.engine.master_conductor_recon_seed_target_service import ReconSeedTargetService
+from src.core.engine.master_conductor_hitl_precheck_service import (
+    build_intervention_hitl_info,
+    build_scn07_12_notification_lines,
+    is_manual_defer_target_v1 as _svc_is_manual_defer_target_v1,
+    is_scn07_to_12 as _svc_is_scn07_to_12,
+    normalize_intervention_gate_mode as _svc_normalize_intervention_gate_mode,
+    requires_intervention_approval as _svc_requires_intervention_approval,
+)
+from src.core.engine.master_conductor_dispatch_service import (
+    dispatch_scope_verification_fast_path as _svc_dispatch_scope_verification_fast_path,
+)
+from src.core.engine.master_conductor_policy_service import (
+    assess_missing_link_probe_rollout as _svc_assess_missing_link_probe_rollout,
+    build_chain_audit_details,
+    build_degradation_audit_details,
+    build_degradation_component_contract as _svc_build_degradation_component_contract,
+    build_probe_runtime_context_from_chain_finding as _svc_build_probe_runtime_context_from_chain_finding,
+    build_race_profile as _svc_build_race_profile,
+    build_safe_probe_variations as _svc_build_safe_probe_variations,
+    evaluate_active_probe_policy as _svc_evaluate_active_probe_policy,
+    evaluate_active_probe_runtime_guard as _svc_evaluate_active_probe_runtime_guard,
+    evaluate_phase2_operational_mode as _svc_evaluate_phase2_operational_mode,
+    normalize_workflow_template as _svc_normalize_workflow_template,
+    rank_missing_link_targets_by_information_gain as _svc_rank_missing_link_targets_by_information_gain,
+    resolve_active_probe_policy_default,
+    resolve_active_probe_policy_for_program as _svc_resolve_active_probe_policy_for_program,
+    resolve_component_degradation as _svc_resolve_component_degradation,
+    sanitize_active_probe_policy as _svc_sanitize_active_probe_policy,
+)
 
 _SCN_CATALOG_DEFAULTS: tuple[tuple[str, str], ...] = (
     ("scn_01_idor_bola_object_access", "IDOR/BOLA Object Access"),
@@ -2180,10 +2208,7 @@ class MasterConductor:
             return []
     
     def _normalize_intervention_gate_mode(self) -> str:
-        mode = str(getattr(settings, "intervention_gate_mode", "observe") or "observe").strip().lower()
-        if mode not in {"observe", "enforce_human_preferred", "enforce_hitl"}:
-            return "observe"
-        return mode
+        return _svc_normalize_intervention_gate_mode(settings)
 
     def evaluate_active_probe_policy(
         self,
@@ -2196,67 +2221,23 @@ class MasterConductor:
         Returns:
             {"allowed": bool, "reason": str}
         """
-        strategy = str(probe.get("strategy", "") or "").strip().lower()
-        qps = float(probe.get("qps", 0) or 0)
-
-        allow = {str(v).strip().lower() for v in (policy.get("allow") or []) if str(v).strip()}
-        deny = {str(v).strip().lower() for v in (policy.get("deny") or []) if str(v).strip()}
-        per_asset_qps_cap = float(policy.get("per_asset_qps_cap", 0) or 0)
-
-        if strategy in deny:
-            return {"allowed": False, "reason": "strategy_denied"}
-        if allow and strategy not in allow:
-            return {"allowed": False, "reason": "strategy_not_allowed"}
-        if per_asset_qps_cap > 0 and qps > per_asset_qps_cap:
-            return {"allowed": False, "reason": "qps_cap_exceeded"}
-        return {"allowed": True, "reason": "allowed"}
+        return _svc_evaluate_active_probe_policy(probe, policy)
 
     def _rank_missing_link_targets_by_information_gain(
         self,
         candidates: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        ranked: list[dict[str, Any]] = []
-        for candidate in candidates:
-            item = dict(candidate)
-            missing_links = item.get("missing_links", [])
-            evidence = item.get("evidence", {})
-            if not isinstance(missing_links, list):
-                missing_links = []
-            if not isinstance(evidence, dict):
-                evidence = {}
-            evidence_gain = sum(1 for value in evidence.values() if bool(value))
-            information_gain = (len(missing_links) * 2) + evidence_gain
-            item["max_information_gain"] = information_gain
-            ranked.append(item)
-        return sorted(ranked, key=lambda item: item.get("max_information_gain", 0), reverse=True)
+        return _svc_rank_missing_link_targets_by_information_gain(candidates)
 
     def _resolve_active_probe_policy_for_program(
         self,
         runtime_policy: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
-        target_info = getattr(getattr(self, "context", None), "target_info", {}) or {}
-        program_policy = (
-            target_info.get("program_probe_policy", {})
-            if isinstance(target_info, dict)
-            else {}
-        )
-        if isinstance(program_policy, dict) and program_policy:
-            return self._sanitize_active_probe_policy(
-                program_policy,
-                source="program_override",
-                include_source=runtime_policy is not None,
-            )
-        if isinstance(runtime_policy, dict) and runtime_policy:
-            return self._sanitize_active_probe_policy(
-                runtime_policy,
-                source="runtime_flag",
-                include_source=True,
-            )
-        resolved = self._resolve_active_probe_policy()
-        return self._sanitize_active_probe_policy(
-            resolved,
-            source="config_default",
-            include_source=True,
+        return _svc_resolve_active_probe_policy_for_program(
+            context_target_info=getattr(getattr(self, "context", None), "target_info", None),
+            sanitize=self._sanitize_active_probe_policy,
+            resolve_default=self._resolve_active_probe_policy,
+            runtime_policy=runtime_policy,
         )
 
     def _sanitize_active_probe_policy(
@@ -2266,56 +2247,20 @@ class MasterConductor:
         source: str,
         include_source: bool,
     ) -> dict[str, Any]:
-        policy = raw_policy if isinstance(raw_policy, dict) else {}
-        allowed_keys = {
-            "allow",
-            "deny",
-            "per_asset_qps_cap",
-            "global_probe_budget",
-        }
-        ignored_keys = sorted(str(key) for key in policy.keys() if key not in allowed_keys and key != "source")
-        result = {
-            "allow": [str(v) for v in (policy.get("allow") or []) if str(v).strip()],
-            "deny": [str(v) for v in (policy.get("deny") or []) if str(v).strip()],
-            "per_asset_qps_cap": int(policy.get("per_asset_qps_cap", 0) or 0),
-        }
-        if "global_probe_budget" in policy:
-            result["global_probe_budget"] = int(policy.get("global_probe_budget", 0) or 0)
-        if include_source:
-            result["source"] = source
-        if ignored_keys:
-            result["ignored_keys"] = ignored_keys
-        return result
+        return _svc_sanitize_active_probe_policy(raw_policy, source=source, include_source=include_source)
 
     def _normalize_workflow_template(self, raw_template: Optional[dict[str, Any]]) -> dict[str, Any]:
-        template = raw_template if isinstance(raw_template, dict) else {}
-        return {
-            "template_id": str(template.get("template_id", "") or ""),
-            "steps": [str(step) for step in (template.get("steps") or []) if str(step).strip()],
-            "source": str(template.get("source", "") or ""),
-        }
+        return _svc_normalize_workflow_template(raw_template)
 
     def build_probe_runtime_context_from_chain_finding(
         self,
         finding_info: Optional[dict[str, Any]],
     ) -> dict[str, Any]:
-        info = finding_info if isinstance(finding_info, dict) else {}
-        raw_policy = info.get("resolved_tactical_policy", {})
-        source = (
-            str(raw_policy.get("source", "runtime_flag") or "runtime_flag")
-            if isinstance(raw_policy, dict)
-            else "runtime_flag"
+        return _svc_build_probe_runtime_context_from_chain_finding(
+            finding_info,
+            sanitize=self._sanitize_active_probe_policy,
+            normalize_template=self._normalize_workflow_template,
         )
-        return {
-            "runtime_policy": self._sanitize_active_probe_policy(
-                raw_policy,
-                source=source,
-                include_source=True,
-            ),
-            "workflow_template": self._normalize_workflow_template(
-                info.get("resolved_workflow_template", {})
-            ),
-        }
 
     def assess_missing_link_probe_rollout(
         self,
@@ -2324,70 +2269,21 @@ class MasterConductor:
         current_metrics: dict[str, Any],
         thresholds: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
-        thresholds = thresholds if isinstance(thresholds, dict) else {}
-        baseline_ratio = float(baseline_metrics.get("blocked_defer_ratio", 0.0) or 0.0)
-        current_ratio = float(current_metrics.get("blocked_defer_ratio", 0.0) or 0.0)
-        baseline_tasks = int(baseline_metrics.get("planned_task_count", 0) or 0)
-        current_tasks = int(current_metrics.get("planned_task_count", 0) or 0)
-        baseline_qps_hits = int(baseline_metrics.get("qps_cap_hits", 0) or 0)
-        current_qps_hits = int(current_metrics.get("qps_cap_hits", 0) or 0)
-
-        ratio_threshold = float(thresholds.get("blocked_defer_ratio_delta", 0.0) or 0.0)
-        task_threshold = int(thresholds.get("planned_task_delta", 0) or 0)
-        qps_threshold = int(thresholds.get("qps_cap_hit_delta", 0) or 0)
-
-        reasons: list[str] = []
-        if (current_ratio - baseline_ratio) > ratio_threshold:
-            reasons.append("blocked_defer_ratio_exceeded")
-        if (current_tasks - baseline_tasks) > task_threshold:
-            reasons.append("planned_task_delta_exceeded")
-        if (current_qps_hits - baseline_qps_hits) > qps_threshold:
-            reasons.append("qps_cap_hit_delta_exceeded")
-
-        return {
-            "workflow_template_mode": "read_only" if reasons else "enabled",
-            "reasons": reasons,
-            "baseline_metrics": {
-                "blocked_defer_ratio": baseline_ratio,
-                "planned_task_count": baseline_tasks,
-                "qps_cap_hits": baseline_qps_hits,
-            },
-            "current_metrics": {
-                "blocked_defer_ratio": current_ratio,
-                "planned_task_count": current_tasks,
-                "qps_cap_hits": current_qps_hits,
-            },
-        }
+        return _svc_assess_missing_link_probe_rollout(
+            baseline_metrics=baseline_metrics,
+            current_metrics=current_metrics,
+            thresholds=thresholds,
+        )
 
     def evaluate_active_probe_runtime_guard(
         self,
         outcomes: list[dict[str, Any]],
         dependency_error: bool = False,
     ) -> dict[str, Any]:
-        if dependency_error:
-            return {"state": "defer", "reason": "external_dependency_failure"}
-
-        blocked_signals = 0
-        for outcome in outcomes:
-            if not isinstance(outcome, dict):
-                continue
-            status_code = int(outcome.get("status_code", 0) or 0)
-            waf_detected = bool(outcome.get("waf_detected", False))
-            if waf_detected or status_code == 403 or status_code >= 500:
-                blocked_signals += 1
-
-        if blocked_signals > 0:
-            return {"state": "blocked", "reason": "waf_or_5xx_threshold"}
-        return {"state": "continue", "reason": "allowed"}
+        return _svc_evaluate_active_probe_runtime_guard(outcomes, dependency_error)
 
     def build_race_profile(self, mode: str = "interval") -> dict[str, Any]:
-        normalized = str(mode or "interval").strip().lower()
-        profiles = {
-            "burst": {"mode": "burst", "burst": 3, "interval_ms": 0, "order_permutations": 2},
-            "interval": {"mode": "interval", "burst": 1, "interval_ms": 250, "order_permutations": 1},
-            "ordered": {"mode": "ordered", "burst": 1, "interval_ms": 100, "order_permutations": 3},
-        }
-        return dict(profiles.get(normalized, profiles["interval"]))
+        return _svc_build_race_profile(mode)
 
     def build_safe_probe_variations(
         self,
@@ -2397,27 +2293,12 @@ class MasterConductor:
         allowlist: list[str],
         fail_closed: bool,
     ) -> list[dict[str, Any]]:
-        normalized_allowlist = [str(item).strip().lower() for item in allowlist if str(item).strip()]
-        if fail_closed and not normalized_allowlist:
-            return []
-
-        bypasser = WAFBypasser()
-        mutation_types = bypasser.choose_mutation_types(waf_name)
-        headers = bypasser.build_bypass_headers(waf_name, attempt=0)
-
-        variations: list[dict[str, Any]] = []
-        for mutation_type in mutation_types:
-            mutation_name = getattr(mutation_type, "value", str(mutation_type)).strip().lower()
-            if normalized_allowlist and mutation_name not in normalized_allowlist:
-                continue
-            variations.append(
-                {
-                    "mutation_type": mutation_name,
-                    "headers": dict(headers),
-                    "dry_run": bool(dry_run),
-                }
-            )
-        return variations
+        return _svc_build_safe_probe_variations(
+            waf_name,
+            dry_run=dry_run,
+            allowlist=allowlist,
+            fail_closed=fail_closed,
+        )
 
     def plan_missing_link_probes(
         self,
@@ -2547,28 +2428,9 @@ class MasterConductor:
             related_target=str(audit_context.get("scope_basis", "") or "") or None,
         )
         audit_event_id = f"audit-{uuid.uuid4().hex[:12]}"
-        details = {
-            "audit_event_id": audit_event_id,
-            "decision_id": decision_trace.decision_id,
-            "chain_key": str(chain.get("chain_key", "") or ""),
-            "rule_id": str(chain.get("rule_id", "") or ""),
-            "scope_basis": str(audit_context.get("scope_basis", "") or ""),
-            "input_fingerprint": str(audit_context.get("input_fingerprint", "") or ""),
-            "override": bool(audit_context.get("override", False)),
-            "stop_reason": str(audit_context.get("stop_reason", "") or ""),
-            "excluded_reasons": list(chain.get("excluded_reasons", []) or []),
-            "reason_code": str(
-                chain.get("reason_code")
-                or audit_context.get("stop_reason")
-                or next(iter(list(chain.get("excluded_reasons", []) or [])), "")
-            ).strip(),
-            "finding_id": str(chain.get("finding_id", "") or ""),
-            "previous_state": str(chain.get("previous_state", "") or ""),
-            "session_generation": chain.get("session_generation"),
-            "token_epoch": chain.get("token_epoch"),
-            "csrf_epoch": chain.get("csrf_epoch"),
-            "final_state": str(chain.get("state", "") or "unknown"),
-        }
+        details = build_chain_audit_details(chain, audit_context)
+        details["audit_event_id"] = audit_event_id
+        details["decision_id"] = decision_trace.decision_id
         self.audit_logger.log(
             AuditEvent(
                 event_type=AuditEventType.CONFIG_CHANGED,
@@ -2589,44 +2451,10 @@ class MasterConductor:
         failure_mode: str,
         policy: dict[str, str],
     ) -> dict[str, str]:
-        normalized_mode = str(failure_mode or "").strip().lower()
-        normalized_policy = {
-            str(key).strip().lower(): str(value).strip().lower()
-            for key, value in dict(policy or {}).items()
-            if str(key).strip()
-        }
-        state = normalized_policy.get(normalized_mode, "blocked")
-        if state not in {"blocked", "defer", "continue"}:
-            state = "blocked"
-        return {
-            "state": state,
-            "reason": normalized_mode,
-        }
+        return _svc_evaluate_phase2_operational_mode(failure_mode=failure_mode, policy=policy)
 
     def _build_degradation_component_contract(self) -> dict[str, dict[str, str]]:
-        return {
-            "program_memory": {
-                "allowed_fallback": "in_memory_only",
-                "forbidden_transition": "submit_without_memory_consistency",
-                "recovery_precondition": "memory_backend_restored",
-                "ttl": "15m",
-                "rollback_trigger": "ttl_expired",
-            },
-            "audit_logger": {
-                "allowed_fallback": "buffered_events",
-                "forbidden_transition": "drop_audit_events",
-                "recovery_precondition": "audit_pipeline_restored",
-                "ttl": "10m",
-                "rollback_trigger": "buffer_flush_failed",
-            },
-            "report_adapter": {
-                "allowed_fallback": "canonical_payload_only",
-                "forbidden_transition": "platform_submit_while_degraded",
-                "recovery_precondition": "adapter_health_restored",
-                "ttl": "30m",
-                "rollback_trigger": "submit_path_unavailable",
-            },
-        }
+        return _svc_build_degradation_component_contract()
 
     def emit_degradation_audit_record(
         self,
@@ -2656,19 +2484,9 @@ class MasterConductor:
             related_target="component_degradation",
         )
         audit_event_id = f"audit-{uuid.uuid4().hex[:12]}"
-        details = {
-            "audit_event_id": audit_event_id,
-            "decision_id": decision_trace.decision_id,
-            "correlation_id": str(audit_context.get("correlation_id", "") or ""),
-            "policy_version": str(audit_context.get("policy_version", "") or ""),
-            "component_status": normalized_status,
-            "degraded_components": list(degradation_result.get("degraded_components", []) or []),
-            "fallbacks": dict(degradation_result.get("fallbacks", {}) or {}),
-            "reason": str(degradation_result.get("reason", "") or ""),
-            "recovery_actions": dict(degradation_result.get("recovery_actions", {}) or {}),
-            "submit_blocked": bool(degradation_result.get("submit_blocked", False)),
-            "replay_verdict": str(degradation_result.get("replay_verdict", "") or ""),
-        }
+        details = build_degradation_audit_details(component_status, degradation_result, audit_context)
+        details["audit_event_id"] = audit_event_id
+        details["decision_id"] = decision_trace.decision_id
         self.audit_logger.log(
             AuditEvent(
                 event_type=AuditEventType.CONFIG_CHANGED,
@@ -2685,89 +2503,10 @@ class MasterConductor:
         }
 
     def resolve_component_degradation(self, component_status: dict[str, str]) -> dict[str, Any]:
-        normalized_status = {
-            str(component).strip(): str(status).strip().lower()
-            for component, status in dict(component_status or {}).items()
-            if str(component).strip()
-        }
-        component_contract = self._build_degradation_component_contract()
-        degraded_markers = {"degraded", "dependency_failure", "ttl_expired", "manual_rollback"}
-        blocked_markers = {"scope_violation", "waf_repeat", "blocked"}
-        defer_markers = {"dependency_failure", "ttl_expired", "manual_rollback", "defer"}
-        degraded_components = [
-            component
-            for component, status in normalized_status.items()
-            if status in degraded_markers or component == "report_adapter" and status == "degraded"
-        ]
-        fallbacks = {
-            component: component_contract.get(component, {}).get("allowed_fallback", "best_effort")
-            for component in degraded_components
-        }
-
-        reason = "nominal"
-        state = "continue"
-        no_go_conditions: list[str] = []
-        if any(status in blocked_markers for status in normalized_status.values()):
-            state = "blocked"
-            reason = next(status for status in normalized_status.values() if status in blocked_markers)
-            no_go_conditions.append(reason)
-        elif any(status in defer_markers for status in normalized_status.values()):
-            state = "defer"
-            reason = next(status for status in normalized_status.values() if status in defer_markers)
-        elif normalized_status.get("report_adapter") == "degraded":
-            reason = "report_adapter_degraded"
-
-        submit_blocked = state in {"blocked", "defer"} or normalized_status.get("report_adapter") == "degraded"
-        replay_verdict = "not_required"
-        if state == "blocked":
-            replay_verdict = "not_allowed"
-        elif submit_blocked:
-            replay_verdict = "required"
-
-        recovery_actions: dict[str, str] = {}
-        for component in degraded_components:
-            if component == "program_memory":
-                recovery_actions[component] = (
-                    "rollback_to_last_consistent_snapshot"
-                    if normalized_status.get(component) == "ttl_expired"
-                    else "restore_memory_backend"
-                )
-            elif component == "audit_logger":
-                recovery_actions[component] = "restore_audit_pipeline"
-            elif component == "report_adapter":
-                recovery_actions[component] = "replay_canonical_payload"
-            else:
-                recovery_actions[component] = "best_effort_recovery"
-
-        contract_view = {
-            component: {
-                "allowed_fallback": component_contract.get(component, {}).get("allowed_fallback", "best_effort"),
-                "forbidden_transition": component_contract.get(component, {}).get(
-                    "forbidden_transition", "unknown_transition"
-                ),
-                "recovery_precondition": component_contract.get(component, {}).get(
-                    "recovery_precondition", "manual_verification_required"
-                ),
-                "ttl": component_contract.get(component, {}).get("ttl", "inherit_default"),
-                "rollback_trigger": component_contract.get(component, {}).get(
-                    "rollback_trigger", "manual_review"
-                ),
-            }
-            for component in normalized_status.keys()
-        }
-
-        return {
-            "state": state,
-            "reason": reason,
-            "degraded_components": degraded_components,
-            "fallbacks": fallbacks,
-            "component_contract": contract_view,
-            "submit_blocked": submit_blocked,
-            "replay_verdict": replay_verdict,
-            "recovery_actions": recovery_actions,
-            "no_go_conditions": no_go_conditions,
-            "policy_version": "phase2_degrade_v1",
-        }
+        return _svc_resolve_component_degradation(
+            component_status,
+            component_contract=self._build_degradation_component_contract(),
+        )
 
     def run_pre_action_gate_shadow(
         self,
@@ -2874,17 +2613,7 @@ class MasterConductor:
         return report
 
     def _resolve_active_probe_policy(self) -> dict[str, Any]:
-        allow_raw = str(getattr(settings, "active_probe_strategy_allowlist", "") or "")
-        deny_raw = str(getattr(settings, "active_probe_strategy_denylist", "") or "")
-        allow = [v.strip().lower() for v in allow_raw.split(",") if v.strip()]
-        deny = [v.strip().lower() for v in deny_raw.split(",") if v.strip()]
-        qps_cap = int(getattr(settings, "active_probe_per_asset_qps_cap", 5) or 5)
-        return {
-            "allow": allow,
-            "deny": deny,
-            "per_asset_qps_cap": qps_cap,
-            "global_probe_budget": int(getattr(settings, "active_probe_global_budget", 0) or 0),
-        }
+        return resolve_active_probe_policy_default(settings)
 
     def _get_intervention_decision(self, task: Task) -> dict[str, Any]:
         decision: dict[str, Any] = {
@@ -3135,19 +2864,11 @@ class MasterConductor:
         }
 
     def _is_scn07_to_12(self, decision: dict[str, Any]) -> bool:
-        scenario_id = str(decision.get("scenario_id", "") or "").strip().lower().replace("-", "_")
-        if not scenario_id.startswith("scn_"):
-            return False
-        number = self._extract_scn_number(scenario_id)
-        return 7 <= number <= 12
+        return _svc_is_scn07_to_12(decision, self._extract_scn_number)
 
     def _is_manual_defer_target_v1(self, decision: dict[str, Any]) -> bool:
         """Ver.1 manual defer policy: keep SCN11 executable for autonomous chain probing."""
-        scenario_id = str(decision.get("scenario_id", "") or "").strip().lower().replace("-", "_")
-        if not scenario_id.startswith("scn_"):
-            return False
-        number = self._extract_scn_number(scenario_id)
-        return number in {7, 8, 9, 10, 12}
+        return _svc_is_manual_defer_target_v1(decision, self._extract_scn_number)
 
     def _notify_scn07_12_intervention(self, task: Task, decision: dict[str, Any], gate_mode: str) -> None:
         """SCN07-12 は Ver.1 方針で通知を必ず送る（手動実行導線）。"""
@@ -5398,65 +5119,19 @@ class MasterConductor:
         ScopeParser の LLM/外部依存を介さずに、最低限のスコープを確定して
         初期フェーズの timeout 連鎖を防ぐ。
         """
-        from urllib.parse import urlparse
-        from src.core.security.ethics_guard import ScopeDefinition, get_ethics_guard
-
-        raw_target = str(
-            task.params.get("target")
-            or self.context.target_info.get("target")
-            or ""
-        ).strip()
-        if not raw_target:
-            return {
-                "success": False,
-                "task_id": task.id,
-                "agent": "scope_parser",
-                "error": "Target not specified for scope verification",
-            }
-
-        normalized_target = raw_target if "://" in raw_target else f"http://{raw_target}"
-        parsed = urlparse(normalized_target)
-        host = (parsed.hostname or parsed.netloc or "").strip().lower()
-
-        in_scope_domains = [host] if host else []
-        scope = ScopeDefinition(
-            program_name=f"Auto Scope ({host or 'target'})",
-            in_scope_domains=in_scope_domains,
-            max_requests_per_minute=60,
-            strict_mode=False,
+        result = _svc_dispatch_scope_verification_fast_path(
+            task,
+            context_target_info=self.context.target_info,
             allow_post_exploit=bool(getattr(settings, "allow_post_exploit", False)),
         )
-
-        try:
-            get_ethics_guard().set_scope(scope)
-        except Exception as guard_exc:
-            logger.warning("Failed to apply fast-path scope to EthicsGuard: %s", guard_exc)
-
-        target_info_update: dict[str, Any] = {
-            "target": normalized_target,
-            "scope_source": "fast_path_auto",
-        }
-        if host:
-            target_info_update["host"] = host
-        if parsed.scheme:
-            target_info_update["scheme"] = parsed.scheme
-        if in_scope_domains:
-            target_info_update["in_scope_domains"] = in_scope_domains
-
-        return {
-            "success": True,
-            "task_id": task.id,
-            "agent": "scope_parser",
-            "message": "Scope verification completed via fast-path",
-            "data": {
-                "target": normalized_target,
-                "in_scope_domains": in_scope_domains,
-                "out_of_scope_domains": [],
-                "strict_mode": False,
-            },
-            "context": {"target_info": target_info_update},
-            "findings": [],
-        }
+        scope = result.pop("_scope_definition", None)
+        if scope is not None:
+            try:
+                from src.core.security.ethics_guard import get_ethics_guard
+                get_ethics_guard().set_scope(scope)
+            except Exception as guard_exc:
+                logger.warning("Failed to apply fast-path scope to EthicsGuard: %s", guard_exc)
+        return result
     
     async def _dispatch(self, task: Task) -> dict:
         """タスクを適切なエージェントにディスパッチ"""

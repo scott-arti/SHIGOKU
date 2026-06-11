@@ -1,5 +1,5 @@
 version: 1
-updated_at: '2026-06-10'
+updated_at: '2026-06-12'
 namespace: SGK
 id_rules:
   core: SGK-YYYY-NNNN
@@ -3186,6 +3186,43 @@ tasks:
   - docs/shigoku/subtasks/2026-06-09_masterconductor-seed-helper-priority-split_subtask_plan.md
   - docs/shigoku/reports/2026-06-10_sgk-2026-0281_masterconductor-next-split_work_report.md
   - docs/shigoku/worklogs/2026-06-10_sgk-2026-0281_masterconductor-next-split_work_log.md
+- provisional_id: DOC-0299
+  task_id: SGK-2026-0282
+  doc_type: work_report
+  title: 'MasterConductor 追加分割計画: policy/HITL/dispatch 段階抽出'
+  primary_doc: docs/shigoku/reports/2026-06-12_sgk-2026-0282_masterconductor-policy-hitl-dispatch_work_report.md
+  status: done
+  provisional: false
+  task_summary: 'MasterConductor 追加分割計画: policy/HITL/dispatch 段階抽出'
+  parent_task_id: SGK-2026-0264
+  related_docs:
+  - docs/shigoku/plans/2026-06-05_master-conductor-split-plan_plan.md
+  - docs/shigoku/subtasks/2026-06-09_masterconductor-seed-helper-priority-split_subtask_plan.md
+  - docs/shigoku/subtasks/2026-06-10_masterconductor-next-high-impact-split_subtask_plan.md
+  - docs/shigoku/subtasks/2026-06-12_masterconductor-policy-hitl-dispatch_subtask_plan.md
+  - docs/shigoku/reports/2026-06-10_sgk-2026-0281_masterconductor-next-split_work_report.md
+- provisional_id: DOC-0300
+  task_id: SGK-2026-0284
+  doc_type: subtask_plan
+  title: 'MasterConductor Policy/HITL 抽出 follow-up: 残存メソッド再構築・parity tests・compat inventory'
+  primary_doc: docs/shigoku/subtasks/2026-06-12_sgk-2026-0284_mc-policy-hitl-followup_subtask_plan.md
+  status: backlog
+  provisional: false
+  task_summary: 'MasterConductor Policy/HITL 抽出 follow-up: _run_intervention_precheck 再構築、_generate_summary 軽量抽出、execute_parallel dedup、3-layer parity tests、compat wrapper inventory'
+  parent_task_id: SGK-2026-0264
+  related_docs:
+  - docs/shigoku/reports/2026-06-12_sgk-2026-0282_masterconductor-policy-hitl-dispatch_work_report.md
+- provisional_id: DOC-0301
+  task_id: SGK-2026-0285
+  doc_type: subtask_plan
+  title: 'MasterConductor _dispatch 本体抽出: character tests・branch routing matrix・contextvar reset 検証'
+  primary_doc: docs/shigoku/subtasks/2026-06-12_sgk-2026-0285_mc-dispatch-extraction_subtask_plan.md
+  status: backlog
+  provisional: false
+  task_summary: 'MasterConductor _dispatch 本体抽出: scope fast path, post-exploit guard, CTF filter, worker, swarm, recon, recipe, AgentFactory fallback の branch tests + routing order matrix + contextvar reset'
+  parent_task_id: SGK-2026-0264
+  related_docs:
+  - docs/shigoku/reports/2026-06-12_sgk-2026-0282_masterconductor-policy-hitl-dispatch_work_report.md
 doc_type_allowed_values:
 - spec
 - roadmap

@@ -1,7 +1,7 @@
 # SHIGOKU タスク台帳
 
-- 更新日: 2026-06-10
-- 総タスク数: 291
+- 更新日: 2026-06-12
+- 総タスク数: 292
 - ステータス許可値: backlog / active / done / deferred / archived
 - doc_type 許可値: spec / roadmap / plan / subtask_plan / work_report / work_log / manual
 
@@ -297,4 +297,7 @@
 | SGK-2026-0278 | SharedWorkspace stub解消とID pool互換復旧 | done | subtask_plan | SGK-2026-0277 | docs/shigoku/subtasks/2026-06-09_sharedworkspace-stub-id-pool-compat_subtask_plan.md |
 | SGK-2026-0279 | InjectionManager 追加分割計画: 残存大規模責務の外出し | done | subtask_plan | SGK-2026-0265 | docs/shigoku/subtasks/2026-06-09_injectionmanager-additional-split-plan_subtask_plan.md |
 | SGK-2026-0280 | MasterConductor 追加分割計画: seed/path helper 優先抽出 | done | subtask_plan | SGK-2026-0264 | docs/shigoku/subtasks/2026-06-09_masterconductor-seed-helper-priority-split_subtask_plan.md |
-| SGK-2026-0281 | MasterConductor 追加分割計画: scenario/global guard と実行ループ優先度整理 | active | subtask_plan | SGK-2026-0264 | docs/shigoku/subtasks/2026-06-10_masterconductor-next-high-impact-split_subtask_plan.md |
+| SGK-2026-0281 | MasterConductor 追加分割計画: scenario/global guard と実行ループ優先度整理 | done | subtask_plan | SGK-2026-0264 | docs/shigoku/subtasks/2026-06-10_masterconductor-next-high-impact-split_subtask_plan.md |
+| SGK-2026-0282 | MasterConductor 追加分割計画: policy/HITL/dispatch 段階抽出 | done | work_report | SGK-2026-0264 | docs/shigoku/reports/2026-06-12_sgk-2026-0282_masterconductor-policy-hitl-dispatch_work_report.md |
+| SGK-2026-0284 | MasterConductor Policy/HITL 抽出 follow-up: 残存メソッド再構築・parity tests・compat inventory | backlog | subtask_plan | SGK-2026-0264 | docs/shigoku/subtasks/2026-06-12_sgk-2026-0284_mc-policy-hitl-followup_subtask_plan.md |
+| SGK-2026-0285 | MasterConductor _dispatch 本体抽出: character tests・branch routing matrix・contextvar reset 検証 | backlog | subtask_plan | SGK-2026-0264 | docs/shigoku/subtasks/2026-06-12_sgk-2026-0285_mc-dispatch-extraction_subtask_plan.md |
