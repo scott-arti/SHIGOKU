@@ -71,8 +71,10 @@ from src.core.engine.master_conductor_state_snapshot import (
 )
 from src.core.engine.master_conductor_recon_seed_target_service import ReconSeedTargetService
 from src.core.engine.master_conductor_hitl_precheck_service import (
+    PrecheckDecision,
     build_intervention_hitl_info,
     build_scn07_12_notification_lines,
+    evaluate_precheck_decision,
     is_manual_defer_target_v1 as _svc_is_manual_defer_target_v1,
     is_scn07_to_12 as _svc_is_scn07_to_12,
     normalize_intervention_gate_mode as _svc_normalize_intervention_gate_mode,
@@ -80,6 +82,27 @@ from src.core.engine.master_conductor_hitl_precheck_service import (
 )
 from src.core.engine.master_conductor_dispatch_service import (
     dispatch_scope_verification_fast_path as _svc_dispatch_scope_verification_fast_path,
+    run_recon_pipeline_isolated,
+    dispatch_post_exploit_guard as _svc_dispatch_post_exploit_guard,
+    dispatch_ctf_filter as _svc_dispatch_ctf_filter,
+    dispatch_worker as _svc_dispatch_worker,
+    dispatch_swarm as _svc_dispatch_swarm,
+    dispatch_cartographer as _svc_dispatch_cartographer,
+    dispatch_fingerprinter as _svc_dispatch_fingerprinter,
+    dispatch_recipe_check as _svc_dispatch_recipe_check,
+    execute_agent_dispatch as _svc_execute_agent_dispatch,
+)
+from src.core.engine.master_conductor_summary_service import (
+    compute_duration_percentile,
+    compute_failure_aggregation,
+)
+from src.core.engine.master_conductor_execution_runner_service import (
+    build_task_started_payload,
+    build_task_state_event_payload,
+    build_execution_record_init,
+    build_parallel_tasks,
+    compute_batch_size,
+    compute_batch_timeout_params,
 )
 from src.core.engine.master_conductor_policy_service import (
     assess_missing_link_probe_rollout as _svc_assess_missing_link_probe_rollout,
@@ -2717,8 +2740,26 @@ class MasterConductor:
         gate_mode = self._normalize_intervention_gate_mode()
         self._annotate_task_intervention_decision(task, decision, gate_mode)
         self._notify_scn07_12_intervention(task, decision, gate_mode)
-        defer_manual_v1 = bool(getattr(settings, "defer_scn07_12_hitl_v1", True))
-        if defer_manual_v1 and self._is_manual_defer_target_v1(decision):
+
+        has_callback = bool(getattr(self, "human_approval_callback", None))
+        defer_v1 = bool(getattr(settings, "defer_scn07_12_hitl_v1", True))
+
+        precheck = evaluate_precheck_decision(
+            task_id=str(getattr(task, "id", "") or ""),
+            decision=decision,
+            gate_mode=gate_mode,
+            is_hitl_resume=False,
+            extract_scn_number=self._extract_scn_number,
+            is_manual_defer_v1_enabled=defer_v1,
+            has_callback=has_callback,
+        )
+
+        # --- allow: no block ---
+        if precheck.action == "allow":
+            return None
+
+        # --- defer_manual_v1: apply manual defer mutations ---
+        if precheck.action == "defer_manual_v1":
             task.params.setdefault("_intervention", {})
             task.params["_intervention"]["approval"] = {
                 "required": True,
@@ -2727,10 +2768,7 @@ class MasterConductor:
                 "status": "deferred_manual_v1",
             }
             task.state = TaskState.SKIPPED
-            task.error = (
-                f"Deferred for manual validation in Ver.1 (scenario={decision.get('scenario_id', 'default_route')}, "
-                f"route={decision.get('route', 'shigoku_only')}, gate_mode={gate_mode})"
-            )
+            task.error = precheck.error_message or ""
             self._record_failure_context(task, "precheck", "intervention_gate_deferred_manual_v1")
             return {
                 "success": True,
@@ -2738,20 +2776,11 @@ class MasterConductor:
                 "pending_hitl": False,
                 "manual_deferred": True,
                 "message": task.error,
-                "intervention": {
-                    "decision": decision,
-                    "gate_mode": gate_mode,
-                    "approved": False,
-                    "pending_hitl": False,
-                    "manual_deferred": True,
-                },
+                "intervention": precheck.intervention_meta,
             }
 
-        if not self._requires_intervention_approval(decision, gate_mode):
-            return None
-
+        # --- require_approval: callback / pending / denied ---
         route = str(decision.get("route", "shigoku_only") or "shigoku_only").strip().lower()
-        has_callback = bool(getattr(self, "human_approval_callback", None))
         approved: Optional[bool] = None
         if has_callback:
             hitl_info = self._build_intervention_hitl_info(task, decision, gate_mode)
@@ -2822,9 +2851,7 @@ class MasterConductor:
                 },
             }
 
-        if approved:
-            return None
-
+        # approved is False: denied
         task.params["_intervention"]["approval"]["status"] = "rejected"
         denial_error = (
             f"Blocked by intervention gate (mode={gate_mode}, route={route}, "
@@ -2897,38 +2924,13 @@ class MasterConductor:
         primary_target = str(params.get("target", "") or getattr(task, "target", "") or "").strip()
         target_summary = ", ".join(str(t) for t in targets[:3]) if targets else (primary_target or "-")
 
-        reasons = decision.get("reasons", [])
-        if not isinstance(reasons, list):
-            reasons = [str(reasons)]
-        matched = decision.get("matched_signals", [])
-        if not isinstance(matched, list):
-            matched = [str(matched)]
-
-        scenario_titles = {
-            7: "Token Trust Boundary",
-            8: "Out-of-Band External Channel",
-            9: "Multi-step State Machine",
-            10: "Semantic Business Logic",
-            11: "Multi-Vector Chain",
-            12: "Advanced SSRF Internal Topology",
-        }
-        suspected = scenario_titles.get(number, "Manual Review Scenario")
-        route = str(decision.get("route", "shigoku_only") or "shigoku_only")
-        confidence = str(decision.get("confidence", 0.0))
-        reason_text = " | ".join(str(x) for x in reasons[:4]) if reasons else "-"
-        matched_text = " | ".join(str(x) for x in matched[:6]) if matched else "-"
-
-        message_lines = [
-            f"🔔 SCN{number:02d} Manual Validation Candidate",
-            f"- Scenario: {suspected} ({scenario_id})",
-            f"- Target(s): {target_summary}",
-            f"- Task: {str(getattr(task, 'name', '') or '-')}",
-            f"- Route/Gate: {route} / {str(gate_mode or 'observe')}",
-            f"- Confidence: {confidence}",
-            f"- Suspected Signals: {matched_text}",
-            f"- Why Flagged: {reason_text}",
-            "- Required Action: Manually validate this scenario and record outcome (verified / not reproducible / needs more evidence).",
-        ]
+        message_lines = build_scn07_12_notification_lines(
+            task_id=task_id,
+            task_name=str(getattr(task, "name", "") or "-"),
+            decision=decision,
+            gate_mode=gate_mode,
+            target_summary=target_summary,
+        )
         message = "\n".join(message_lines)
 
         try:
@@ -3384,31 +3386,24 @@ class MasterConductor:
                         if not self.task_queue.get_by_id(t.id):
                             self.task_queue.add(t)
 
-            # 1. バッチ作成 (現在空いているスロット分、または動的推奨数)
-            # InjectionManagerAgent のタスクは既定で逐次制限するが、
-            # injection_full_parallel_dispatch=true の時は制限付き並列を許可する。
-            batch_tasks = []
-            suggested_batch = getattr(self.resource_manager, "get_suggested_concurrency", lambda: 5)() # fallback to 5
-            full_parallel_injection = bool(getattr(settings, "injection_full_parallel_dispatch", False))
-            
-            # キューの先頭タスクを確認して InjectionManagerAgent ならバッチサイズ 1 に制限
-            first_task = self.task_queue.peek()
-            first_agent_type = (first_task.agent_type or "") if first_task else ""
-            has_injection_in_queue = "injection" in first_agent_type.lower()
+            # 1. バッチサイズ計算
+            suggested_batch, has_injection_in_queue = compute_batch_size(
+                self.task_queue,
+                self.resource_manager,
+                injection_full_parallel_dispatch=bool(getattr(settings, "injection_full_parallel_dispatch", False)),
+                injection_batch_parallelism=int(getattr(settings, "injection_batch_parallelism", 2)),
+            )
             if has_injection_in_queue:
-                if full_parallel_injection:
-                    injection_batch_limit = max(1, int(getattr(settings, "injection_batch_parallelism", 2)))
-                    suggested_batch = max(1, min(int(suggested_batch or 1), injection_batch_limit))
+                if bool(getattr(settings, "injection_full_parallel_dispatch", False)):
                     logger.info(
-                        "🚀 Injection full parallel dispatch enabled (suggested_batch=%s, injection_batch_parallelism=%s)",
+                        "Injection full parallel dispatch enabled (suggested_batch=%s)",
                         suggested_batch,
-                        injection_batch_limit,
                     )
                 else:
-                    suggested_batch = 1
-                    logger.info("🔒 Limiting batch size to 1 for InjectionManagerAgent task (sequential execution)")
+                    logger.info("Limiting batch size to 1 for InjectionManagerAgent task (sequential execution)")
 
             logger.debug(f"🔑 MainThread attempting to acquire _state_lock for batch creation")
+            batch_tasks = []
             with self._state_lock:
                 logger.debug(f"🔓 MainThread acquired _state_lock for batch creation")
                 while len(batch_tasks) < suggested_batch and not self.task_queue.is_empty():
@@ -3426,11 +3421,7 @@ class MasterConductor:
                 break
 
             # 2. 並列実行用の ParallelTask オブジェクトに変換
-            p_tasks = []
-            for t in batch_tasks:
-                p_tasks.append(create_parallel_task(
-                    t.id, self._execute_single_task_full_flow, t, category=t.agent_type or "default"
-                ))
+            p_tasks = build_parallel_tasks(batch_tasks, self._execute_single_task_full_flow)
             
             # 3. オーケストレーターで実行
             rich_logger.show_tree(
@@ -3438,30 +3429,25 @@ class MasterConductor:
                 title=f"Executing Batch (Total executed: {executed})"
             )
 
-            # InjectionManagerAgent のタスクが含まれる場合、制限付き並列で実行
-            # （過去のレースコンディション対策として、全並列ではなく小さなチャンクに分割）
             has_injection = any("injection" in (t.agent_type or "").lower() for t in batch_tasks)
+            full_parallel_injection = bool(getattr(settings, "injection_full_parallel_dispatch", False))
+            batch_timeout, chunk_size, has_recon_master, mixed_agents = compute_batch_timeout_params(
+                batch_tasks,
+                has_injection,
+                injection_manager_timeout=int(getattr(settings, "injection_manager_timeout", 1800)),
+                injection_batch_parallelism=int(getattr(settings, "injection_batch_parallelism", 2)),
+                parallel_batch_timeout=int(getattr(settings, "parallel_batch_timeout", 600)),
+                recon_master_timeout=int(getattr(settings, "recon_master_timeout", 900)),
+                injection_full_parallel_dispatch=full_parallel_injection,
+            )
             try:
                 if has_injection:
-                    batch_timeout = getattr(settings, "injection_manager_timeout", 1800)
-                    chunk_size = max(1, int(getattr(settings, "injection_batch_parallelism", 2)))
-                    mixed_agents = any("injection" not in (t.agent_type or "").lower() for t in batch_tasks)
-                    if mixed_agents and not full_parallel_injection:
-                        # 混在バッチでは Injection 系の長時間タスクに引きずられやすいため
-                        # チャンクを 1 件化して巻き添え失敗を防ぐ
-                        chunk_size = 1
-                        batch_timeout = max(
-                            int(batch_timeout),
-                            int(getattr(settings, "parallel_batch_timeout", 600)),
-                            900,
-                        )
                     logger.info(
-                        "🕒 Using extended batch timeout (%ss) for InjectionManagerAgent tasks (limited parallelism=%s)",
+                        "Using extended batch timeout (%ss) for InjectionManagerAgent tasks (limited parallelism=%s)",
                         batch_timeout,
                         chunk_size,
                     )
 
-                    # 制限付き並列実行（チャンク単位）
                     results = []
                     for i in range(0, len(p_tasks), chunk_size):
                         chunk = p_tasks[i:i + chunk_size]
@@ -3471,17 +3457,6 @@ class MasterConductor:
                         )
                         results.extend(result)
                 else:
-                    batch_timeout = int(getattr(settings, "parallel_batch_timeout", 600))
-                    has_recon_master = any(
-                        "recon_master" in (t.agent_type or "").lower()
-                        for t in batch_tasks
-                    )
-                    if has_recon_master:
-                        # recon_master は long-running のため、バッチ側タイムアウトが先に切れないよう揃える
-                        batch_timeout = max(
-                            batch_timeout,
-                            int(getattr(settings, "recon_master_timeout", 900)),
-                        )
                     results = self._run_async_safe(
                         self.orchestrator.execute_parallel(p_tasks, timeout=batch_timeout),
                         timeout_override=batch_timeout
@@ -3630,19 +3605,7 @@ class MasterConductor:
         # 2. イベント通知
         event_bus = get_event_bus()
         correlation = self.context.target_info.get("correlation", {})
-        started_payload = ensure_observability_fields(
-            {
-                "task_id": task.id,
-                "task_name": task.name,
-                "agent": task.agent_type,
-            },
-            correlation=correlation,
-            endpoint=str(task.params.get("target", "") or ""),
-            error_type="none",
-            timeout_ms=int(task.params.get("timeout", 0) or 0),
-            retry_count=int(getattr(task, "timeout_retry_count", 0) or 0),
-            test_case_id=str(task.id),
-        )
+        started_payload = build_task_started_payload(task, correlation=correlation)
         event_bus.emit_sync(
             Event(
                 type=EventType.TASK_STARTED,
@@ -3652,11 +3615,7 @@ class MasterConductor:
         )
 
         # 3. 実行記録作成
-        exec_record = TaskExecutionRecord(
-            task_id=task.id, task_name=task.name, agent_type=task.agent_type,
-            action=task.action, target_url=task.params.get("target", ""),
-            parameters=task.params.copy(), source=getattr(task, 'source', 'unknown')
-        )
+        exec_record = build_execution_record_init(task)
 
         # 📸 HOOK: 実行前スナップショット (DiffAnalyzer)
         before_snap_id = None
@@ -4022,28 +3981,10 @@ class MasterConductor:
         try:
             event_bus = get_event_bus()
             correlation = self.context.target_info.get("correlation", {})
-            reason_code = str(getattr(task, "failure_reason_code", "") or "")
-            error_message = str(result.get("error", "") or getattr(task, "error", "") or "")
-            payload = ensure_observability_fields(
-                {
-                    "task_id": task.id,
-                    "task_name": task.name,
-                    "agent": task.agent_type,
-                    "state": str(getattr(task, "state", "")),
-                    "success": bool(result.get("success", False)),
-                    "phase": str(result.get("phase", "") or ""),
-                    "failure_reason_code": reason_code,
-                    "failure_category": classify_failure_pattern(
-                        reason_code=reason_code,
-                        error_message=error_message,
-                    ),
-                },
+            payload = build_task_state_event_payload(
+                task,
+                result,
                 correlation=correlation,
-                endpoint=str(task.params.get("target", "") or ""),
-                error_type=error_message or "none",
-                timeout_ms=int(task.params.get("timeout", 0) or 0),
-                retry_count=int(getattr(task, "timeout_retry_count", 0) or 0),
-                test_case_id=str(task.id),
             )
             event_bus.emit_sync(
                 Event(
@@ -5143,24 +5084,16 @@ class MasterConductor:
         current_mode = self.context.target_info.get("mode", "bugbounty")
         
         # --- Scope-based Post Exploitation Control ---
-        if task.agent_type in ["post_exploit", "secret_looter", "internal_recon", "pivot_scan"] or getattr(task, "action", "") in ["secret_looting", "internal_recon"]:
-            from src.core.security.ethics_guard import get_ethics_guard
-            guard = get_ethics_guard()
-            if guard.scope:
-                allow_pe = guard.scope.allow_post_exploit
-            else:
-                allow_pe = getattr(settings, "allow_post_exploit", False)
-            
-            if current_mode.lower() == "bugbounty" and not allow_pe:
-                logger.info(f"Skipping post-exploit task {task.id} ({task.agent_type}) due to strict bugbounty scope rules.")
-                return {
-                    "success": True, 
-                    "task_id": task.id, 
-                    "agent": task.agent_type, 
-                    "data": {"skipped": True, "reason": "Post-exploitation not allowed in current scope"}, 
-                    "error": None,
-                    "findings": []
-                }
+        from src.core.security.ethics_guard import get_ethics_guard
+        guard = get_ethics_guard()
+        pe_guard = _svc_dispatch_post_exploit_guard(
+            task,
+            current_mode=current_mode,
+            settings_allow_post_exploit=getattr(settings, "allow_post_exploit", False),
+            scope_allow_post_exploit=guard.scope.allow_post_exploit if guard.scope else None,
+        )
+        if pe_guard is not None:
+            return pe_guard
         
         # コンテキストに応じたエージェントフィルタリング
         context_tag = self.context.target_info.get("context_tag")
@@ -5170,189 +5103,54 @@ class MasterConductor:
             pass
         
         # === Phase 1: フェーズベースフィルタリング (CTFモード限定) ===
-        current_mode = self.context.target_info.get("mode", "bugbounty")
-        
-        if current_mode == "ctf":
-            from src.core.engine.agent_registry import is_agent_available
-            
-            # CTFモードではWeb限定（ユーザー要件）
-            context_tag = "web"
-            
-            if not is_agent_available(task.agent_type, context_tag):
-                logger.warning(
-                    f"Agent '{task.agent_type}' is not available in CTF {context_tag} context. "
-                    f"Filtering applied to prevent context pollution."
-                )
-                return {
-                    "success": False,
-                    "task_id": task.id,
-                    "agent": task.agent_type,
-                    "error": f"Agent filtered: not available in {context_tag} context",
-                }
+        ctf_filter = _svc_dispatch_ctf_filter(task, current_mode=current_mode)
+        if ctf_filter is not None:
+            return ctf_filter
         
         # ワークスペースパスの取得
         workspace_root = str(self.workspace.base) if self.workspace else None
 
         # === Phase 1.2: New Worker Dispatch (Shigoku v2) ===
-        from src.core.swarm.worker.factory import get_worker_factory
-        worker_factory = get_worker_factory(self.accumulated_context, self.llm_client, self.network_client)
-        worker = worker_factory.create_worker(task.agent_type)
-        
-        if worker:
-            logger.info(f"Dispatching to Worker: {task.agent_type} (Unified Architecture)")
-            # Worker実行 (Worker.execute は同期、将来的に非同期化される可能性を考慮)
-            import inspect
-            res = worker.execute(task)
-            if inspect.isawaitable(res):
-                worker_result = await res
-            else:
-                worker_result = res
-            
-            # TaskResult (Swarm/Worker) を MC 互換の dict に変換して返す
-            return {
-                "success": worker_result.success,
-                "task_id": task.id,
-                "agent": task.agent_type,
-                "data": worker_result.data,
-                "error": worker_result.error,
-                "findings": worker_result.findings,
-                "is_swarm": True # Marking it as new swarm/worker type
-            }
+        worker_result = await _svc_dispatch_worker(
+            task,
+            accumulated_context=self.accumulated_context,
+            llm_client=self.llm_client,
+            network_client=self.network_client,
+        )
+        if worker_result is not None:
+            return worker_result
 
         # === Phase 1.5: Swarm ディスパッチ ===
-        # 明示 agent_type を優先し、互換目的で agent_type 未指定時のみ tags で補完する
-        task_params = task.params if isinstance(task.params, dict) else {}
-        normalized_agent_type = str(task.agent_type or "").strip().lower()
-        has_tags = bool(task_params.get("tags"))
-        if normalized_agent_type == "swarm" or (not normalized_agent_type and has_tags):
-            try:
-                from src.core.engine.swarm_dispatcher import get_swarm_dispatcher
-                # Config/Network/LLM/Loop を渡して Dispatcher を取得し、タスクを実行 (Dependency Injection)
-                dispatcher = get_swarm_dispatcher(
-                    config=self.project_manager.config if self.project_manager else {},
-                    network_client=self.network_client,
-                    llm_client=self.llm_client,
-                    loop=self._get_loop(),
-                    event_bus=self.event_bus
-                )
-                # RecipeLoader/RAG を Swarm に渡す (MC から移行)
-                if self.recipe_loader:
-                    dispatcher.set_recipe_loader(self.recipe_loader)
-                if self.rag:
-                    dispatcher.set_rag(self.rag)
-                
-                # RAGから関連情報を取得 (Tier 4: Agentic RAG 統合)
-                # Note: This block is placed here based on the provided Code Edit snippet's context.
-                # The instruction mentioned `_get_initial_context`, but the provided code snippet
-                # clearly indicates insertion within `_dispatch` after `dispatcher.set_rag(self.rag)`.
-                # Assuming the Code Edit's context is the primary guide for placement.
-                if self.agentic_rag:
-                    logger.info("[MasterConductor] Using Agentic RAG for initial context...")
-                    # 'target' variable needs to be defined for this to work.
-                    # Assuming 'target' is available from task.params or self.context.target_info
-                    target = task.params.get("target", self.context.target_info.get("target", ""))
-                    rag_results = await self.agentic_rag.retrieve_with_feedback(
-                        query=target,
-                        goal=f"Initial reconnaissance and attack surface mapping for {target}"
-                    )
-                elif self.rag:
-                    target = task.params.get("target", self.context.target_info.get("target", ""))
-                    rag_results = await self.rag.retrieve(target)
-                else:
-                    rag_results = []
-
-                tags = task.params.get("tags", [])
-                target = task.params.get("target", self.context.target_info.get("target", ""))
-                
-                # 非同期実行 (Safe thread execution)
-                try:
-                    result = await dispatcher.dispatch(
-                        tags=tags,
-                        target=target,
-                        task_name=task.name,
-                        params=task.params,
-                    )
-                except Exception as e:
-                    logger.error(f"Swarm execution error: {e}")
-                    result = None
-                
-                if result:
-                    # SwarmResult を MC 形式に変換
-                    return {
-                        "success": result.status in ["success", "partial_success"],
-                        "task_id": task.id,
-                        "agent": result.swarm_name,
-                        "data": {
-                            "findings": [f.to_dict() for f in result.findings],
-                            "execution_log": result.execution_log,
-                            "total_specialists": result.total_specialists,
-                            "successful_specialists": result.successful_specialists,
-                        },
-                        "findings": result.findings,  # Finding オブジェクトも含む
-                    }
-                # result が None の場合、フォールバックして通常のエージェント実行へ
-                logger.info(f"No matching swarm for task {task.id}, falling back to agent dispatch")
-                
-            except Exception as e:
-                logger.error(f"Swarm dispatch error: {e}")
-                # エラー時もフォールバック
-                pass
+        swarm_result = await _svc_dispatch_swarm(
+            task,
+            project_manager_config=self.project_manager.config if self.project_manager else None,
+            network_client=self.network_client,
+            llm_client=self.llm_client,
+            event_bus=self.event_bus,
+            recipe_loader=self.recipe_loader,
+            rag=self.rag,
+            agentic_rag=self.agentic_rag,
+        )
+        if swarm_result is not None:
+            return swarm_result
 
         # === Phase 2: 特殊ツールの直接呼び出し ===
         # Cartographer/Fingerprinterは通常のクラスであり、
         # AgentRegistryに登録されていないため直接呼び出す
         
         if task.agent_type == "cartographer":
-            try:
-                from src.core.intel.cartographer import Cartographer
-                target = task.params.get("target", self.context.target_info.get("target"))
-                logger.info(f"Dispatching Cartographer (Async/Shared) for target: {target}")
-                
-                # 共有NetworkClientを注入
-                cartographer = Cartographer(target, network_client=self.network_client, max_depth=3, max_pages=100)
-                try:
-                    # Threadから安全にAsync実行
-                    sitemap = self._run_async_safe(cartographer.map_site())
-                finally:
-                    cartographer.close()
-                return {
-                    "success": True,
-                    "task_id": task.id,
-                    "agent": "cartographer",
-                    "data": {"nodes_count": len(sitemap.nodes), "endpoints": sitemap.get_endpoints()[:20]},
-                    "new_assets": sitemap.get_endpoints(),
-                }
-            except Exception as e:
-                logger.error(f"Cartographer execution error: {e}")
-                return {"success": False, "task_id": task.id, "agent": "cartographer", "error": str(e)}
+            return await _svc_dispatch_cartographer(
+                task,
+                network_client=self.network_client,
+                workspace_root=workspace_root,
+            )
         
         if task.agent_type == "fingerprinter":
-            try:
-                from src.core.intel.fingerprinter import Fingerprinter
-                target = task.params.get("target", self.context.target_info.get("target"))
-                logger.info(f"Dispatching Fingerprinter (Shared Session) for target: {target}")
-                
-                fingerprinter = Fingerprinter()
-                # 共有NetworkClientを使用して非同期リクエスト
-                resp = self._run_async_safe(self.network_client.request("GET", target, timeout=15))
-                
-                if resp and resp.is_success:
-                    techs = fingerprinter.identify(resp.body, resp.headers)
-                    tech_names = [t.name for t in techs] if techs else []
-                    
-                    # 知識グラフへの反映などは上位で処理される前提
-                    return {
-                        "success": True,
-                        "task_id": task.id,
-                        "agent": "fingerprinter",
-                        "data": {"technologies": tech_names, "tech_details": [vars(t) for t in techs]},
-                        "findings": tech_names
-                    }
-                else:
-                    return {"success": False, "task_id": task.id, "agent": "fingerprinter", "error": f"Failed to fetch target: {target}"}
-            except Exception as e:
-                logger.error(f"Fingerprinter execution error: {e}")
-                return {"success": False, "task_id": task.id, "agent": "fingerprinter", "error": str(e)}
+            return await _svc_dispatch_fingerprinter(
+                task,
+                network_client=self.network_client,
+                workspace_root=workspace_root,
+            )
 
         # === Phase 3: Recon Master (Parallel Pipeline) ===
         if task.agent_type == "recon_master":
@@ -5389,23 +5187,13 @@ class MasterConductor:
                 start_step = int(task.params.get("start_step", 1))
                 end_step = int(task.params.get("end_step", 8))
                 
-                # 非同期実行 (別スレッドの独自ループで実行)
-                def _run_pipeline_isolated():
-                    import asyncio
-                    new_loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(new_loop)
-                    try:
-                        return new_loop.run_until_complete(
-                            pipeline.run(target, start_step=start_step, end_step=end_step)
-                        )
-                    finally:
-                        new_loop.close()
-
-                # NOTE:
-                # Run isolated recon in a worker thread without blocking the main asyncio loop.
-                # Blocking here starves other in-batch tasks (e.g. scope_parser) and can trigger
-                # false timeout cascades.
-                state = await asyncio.to_thread(_run_pipeline_isolated)
+                # 非同期実行 (別スレッドの独自ループで実行) — service へ委譲
+                state = await run_recon_pipeline_isolated(
+                    pipeline,
+                    target,
+                    start_step=start_step,
+                    end_step=end_step,
+                )
                 
                 # PhaseGate にデータを蓄積
                 for asset in state.live_subs:
@@ -5451,7 +5239,7 @@ class MasterConductor:
                 return {"success": False, "task_id": task.id, "agent": "recon_master", "error": str(e)}
 
         # Phase 8: Optimized Recipe Execution
-        if task.action == "run_recipe":
+        if _svc_dispatch_recipe_check(task):
             logger.info(f"Executing optimized recipe: {task.params.get('recipe_name')}")
             try:
                 return await self._execute_recipe_task(task)
@@ -5514,124 +5302,11 @@ class MasterConductor:
                 task.params["target"] = resolved_target
         
             try:
-                # 1. Swarmエージェント (execute()メソッドを持つ)
-                if hasattr(agent, 'execute'):
-                    logger.debug(f"Using execute() method for {task.agent_type}")
-                    try:
-                        # 実行 (Safe thread execution to avoid 'asyncio.run() from running loop' error)
-                        logger.info(f"⏳ Executing {task.agent_type}.execute() for task {task.id}")
-                        result = await agent.execute(
-                            target=resolved_target or task.params.get("target"),
-                            params=task.params
-                        )
-                        logger.info(f"✅ {task.agent_type}.execute() completed for task {task.id}")
-                    except TypeError as e:
-                        # エージェントごとの execute シグネチャ差異を吸収するフォールバック
-                        error_msg = str(e)
-                        handled = False
-
-                        if "unexpected keyword argument" in error_msg:
-                            try:
-                                from src.tools.builtin.handoff import HandoffContext
-                                context_payload = dict(task.params or {})
-                                context_target = context_payload.get("target") or task.target
-                                if context_target:
-                                    context_payload["target"] = context_target
-                                logger.warning(
-                                    "%s execute signature mismatch (%s). Retrying with HandoffContext.",
-                                    task.agent_type,
-                                    error_msg,
-                                )
-                                result = await agent.execute(HandoffContext.from_params(context_payload))
-                                handled = True
-                            except Exception as context_exc:
-                                logger.debug("HandoffContext fallback failed for %s: %s", task.agent_type, context_exc)
-
-                        if not handled and "unexpected keyword argument 'params'" in error_msg:
-                            logger.warning(f"{task.agent_type} does not accept 'params'. Retrying without it.")
-                            result = await agent.execute(target=resolved_target or task.params.get("target"))
-                            handled = True
-
-                        if not handled and "unexpected keyword argument 'target'" in error_msg:
-                            logger.warning(f"{task.agent_type} does not accept 'target'. Retrying with params only.")
-                            result = await agent.execute(params=task.params)
-                            handled = True
-
-                        if not handled:
-                            raise
-                
-                
-                    # HandoffContextを辞書に変換
-                    if hasattr(result, 'to_dict'):
-                        result_data = result.to_dict()
-                    elif hasattr(result, '__dict__'):
-                        result_data = vars(result)
-                    else:
-                        result_data = {"result": str(result)}
-            
-                # 1.5. 新しい run() メソッド (ToolExecutorAgentなど)
-                elif hasattr(agent, 'run') and not getattr(agent, 'force_process', False):
-                    # run() は辞書を受け取り、辞書を返す新しい標準インターフェース
-                    logger.debug(f"Using run() method for {task.agent_type}")
-                
-                    try:
-                        # Taskオブジェクトを辞書に変換して渡す
-                        task_dict = task.to_dict()
-                        if "params" not in task_dict:
-                             task_dict["params"] = task.params
-                        if not task_dict.get("target"):
-                            task_dict["target"] = resolved_target
-                        task_params = task_dict.get("params", {})
-                        if isinstance(task_params, dict) and resolved_target and not task_params.get("target"):
-                            task_params["target"] = resolved_target
-
-                        # Safe thread execution
-                        logger.info(f"⏳ Executing {task.agent_type}.run() for task {task.id}")
-                        result_data = await agent.run(task_dict)
-                        logger.info(f"✅ {task.agent_type}.run() completed for task {task.id}")
-                    
-                        # 結果が辞書でない場合も可能なら構造化データとして保持
-                        if not isinstance(result_data, dict):
-                            if hasattr(result_data, 'to_dict'):
-                                result_data = result_data.to_dict()
-                            elif hasattr(result_data, '__dict__'):
-                                result_data = vars(result_data)
-                            else:
-                                result_data = {"output": str(result_data), "task_params": task.params}
-
-                    except Exception as e:
-                        import traceback
-                        logger.error(f"Async execution error in run(): {e}\n{traceback.format_exc()}")
-                        result_data = {"error": str(e), "task_params": task.params}
-
-                # 2. BaseAgent系 (process()メソッドを持つ)
-                elif hasattr(agent, 'process'):
-                    logger.debug(f"Using process() method for {task.agent_type}")
-                    import json
-                    task_input = json.dumps(task.params)
-                
-                    try:
-                        # Safe thread execution
-                        logger.info(f"⏳ Executing {task.agent_type}.process() for task {task.id}")
-                        result_text = await agent.process(task_input)
-                        logger.info(f"✅ {task.agent_type}.process() completed for task {task.id}")
-                    except Exception as e:
-                        import traceback
-                        logger.error(f"Async execution error: {e}\n{traceback.format_exc()}")
-                        result_text = f"Error: {e}"
-                
-                    result_data = {
-                        "output": result_text,
-                        "task_params": task.params
-                    }
-            
-                else:
-                    # 未知のエージェントタイプ
-                    logger.warning(f"Agent {task.agent_type} has no execute() or process() method")
-                    result_data = {
-                        "error": "Unsupported agent type",
-                        "agent_type": task.agent_type
-                    }
+                result_data = await _svc_execute_agent_dispatch(
+                    agent,
+                    task,
+                    resolved_target=resolved_target,
+                )
             finally:
                 # 1. クッキーリセット
                 if token:
@@ -6069,56 +5744,16 @@ class MasterConductor:
         success = len([t for t in self.completed_tasks if t.state == TaskState.SUCCESS])
         failed = len([t for t in self.completed_tasks if t.state == TaskState.FAILED])
         replanned = len([t for t in self.completed_tasks if t.state == TaskState.REPLANNED])
-        failed_reason_codes: dict[str, int] = {}
-        failed_failure_categories: dict[str, int] = {}
-        unknown_failure_count = 0
-        for task in self.completed_tasks:
-            if task.state != TaskState.FAILED:
-                continue
-            reason_code = str(getattr(task, "failure_reason_code", "") or "").strip()
-            if not reason_code:
-                reason_code = self._normalize_failure_reason_code(
-                    str(getattr(task, "failure_phase", "") or ""),
-                    getattr(task, "failure_reason", "") or getattr(task, "error", ""),
-                    getattr(task, "error", ""),
-                )
-                task.failure_reason_code = reason_code
-            failed_reason_codes[reason_code] = failed_reason_codes.get(reason_code, 0) + 1
-            failure_category = classify_failure_pattern(
-                reason_code=reason_code,
-                error_message=str(getattr(task, "error", "") or ""),
-            )
-            failed_failure_categories[failure_category] = failed_failure_categories.get(failure_category, 0) + 1
-            if failure_category == "unknown":
-                unknown_failure_count += 1
-        unknown_rate = unknown_failure_count / failed if failed > 0 else 0.0
-        execution_log = getattr(self, "execution_log", None)
-        records = execution_log.get_all() if execution_log is not None and hasattr(execution_log, "get_all") else []
-        duration_samples = [
-            float(d)
-            for d in (record.duration_seconds() for record in records)
-            if d is not None and d >= 0
-        ]
-        duration_samples.sort()
 
-        def _percentile(samples: list[float], ratio: float) -> float:
-            if not samples:
-                return 0.0
-            index = int(round((len(samples) - 1) * ratio))
-            index = max(0, min(index, len(samples) - 1))
-            return float(samples[index])
+        failure_agg = compute_failure_aggregation(
+            self.completed_tasks,
+            normalize_failure_reason_code=self._normalize_failure_reason_code,
+        )
 
-        p95_seconds = _percentile(duration_samples, 0.95)
-        p99_seconds = _percentile(duration_samples, 0.99)
-        pr_execution_time_slo = {
-            "target_p95_seconds": 900.0,
-            "target_p99_seconds": 1200.0,
-            "observed_p95_seconds": p95_seconds,
-            "observed_p99_seconds": p99_seconds,
-            "sample_count": len(duration_samples),
-            "insufficient_samples": len(duration_samples) < 100,
-            "status": "pass" if p95_seconds <= 900.0 and p99_seconds <= 1200.0 else "fail",
-        }
+        percentile_data = compute_duration_percentile(
+            getattr(self, "execution_log", None),
+        )
+
         coverage_gate = self._evaluate_vuln_family_coverage()
         scenario_coverage = self._evaluate_intervention_scenario_coverage()
         pending_hitl_items = self.list_pending_hitl_tickets(statuses={"pending", "approved", "queued"})
@@ -6152,12 +5787,12 @@ class MasterConductor:
             "scenario_required": int(scenario_coverage.get("required_count", 0) or 0),
             "scenario_covered": int(scenario_coverage.get("covered_count", 0) or 0),
             "pending_hitl_count": len(pending_hitl_items),
-            "failed_reason_codes": dict(sorted(failed_reason_codes.items(), key=lambda kv: (-kv[1], kv[0]))),
-            "failed_failure_categories": dict(sorted(failed_failure_categories.items(), key=lambda kv: (-kv[1], kv[0]))),
-            "unknown_failure_count": unknown_failure_count,
-            "unknown_rate": unknown_rate,
+            "failed_reason_codes": failure_agg["failed_reason_codes"],
+            "failed_failure_categories": failure_agg["failed_failure_categories"],
+            "unknown_failure_count": failure_agg["unknown_failure_count"],
+            "unknown_rate": failure_agg["unknown_rate"],
             "quarantined_signatures": len(getattr(self, "_quarantined_signatures", {})),
-            "pr_execution_time_slo": pr_execution_time_slo,
+            "pr_execution_time_slo": percentile_data["pr_execution_time_slo"],
         }
     
     def get_context(self) -> ExecutionContext:

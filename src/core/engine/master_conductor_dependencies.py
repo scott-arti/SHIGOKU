@@ -95,6 +95,8 @@ class ReconExecutionDependencies:
     """recon execution service へ渡す依存束ね
 
     ReconPipeline 実行と PhaseGate 反映を担当する。
+    facade 参照が不要になるよう、ReconPipeline(master_conductor=self) を
+    直接生成しないための adapter 境界として使用する。
     """
     phase_gate: Any = None  # PhaseGate
     event_bus: Any = None  # EventBus
@@ -104,3 +106,36 @@ class ReconExecutionDependencies:
     _recon_executed: bool = False
     attack_planner: Any = None
     network_client: Any = None
+    # ReconPipeline 構築に必要な facade 依存
+    project_manager: Any = None
+    workspace_root: Optional[str] = None
+    # recon 結果から attack task を生成して queue に追加する callable
+    create_attack_tasks_from_recon: Optional[Callable[..., Any]] = None
+    add_tasks: Optional[Callable[..., Any]] = None
+    # recon 重複実行防止フラグの mutation（service からは参照のみ、set は facade）
+    set_recon_executed: Optional[Callable[[], None]] = None
+
+
+def build_recon_dependencies_from_mc(mc: Any) -> ReconExecutionDependencies:
+    """MasterConductor facade から ReconExecutionDependencies を構築する。
+
+    抽出先 service は本 dataclass 経由で依存を受け取り、
+    ReconPipeline(master_conductor=self) を直接生成しない。
+    """
+    return ReconExecutionDependencies(
+        phase_gate=getattr(mc, "phase_gate", None),
+        event_bus=getattr(mc, "event_bus", None),
+        task_queue=getattr(mc, "task_queue", None),
+        settings=getattr(mc, "settings", None),
+        mode=str(getattr(mc, "mode", "BUG_BOUNTY") or "BUG_BOUNTY"),
+        _recon_executed=bool(getattr(mc, "_recon_executed", False)),
+        attack_planner=getattr(mc, "attack_planner", None),
+        network_client=getattr(mc, "network_client", None),
+        project_manager=getattr(mc, "project_manager", None),
+        workspace_root=(
+            str(mc.workspace.base) if getattr(mc, "workspace", None) else None
+        ),
+        create_attack_tasks_from_recon=getattr(mc, "_create_attack_tasks_from_recon", None),
+        add_tasks=getattr(mc, "_add_tasks", None),
+        set_recon_executed=lambda: setattr(mc, "_recon_executed", True),
+    )

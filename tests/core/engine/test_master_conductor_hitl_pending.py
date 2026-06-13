@@ -197,3 +197,132 @@ def test_build_pending_hitl_ticket_preserves_schema_and_snapshot() -> None:
         "queued_task_id": None,
         "outcome": None,
     }
+
+
+def test_resumed_from_pending_hitl_skips_precheck(monkeypatch) -> None:
+    """resumed_from_pending_hitl=True のとき _run_intervention_precheck は早期リターンする。"""
+    monkeypatch.setattr(settings, "intervention_gate_mode", "enforce_hitl", raising=False)
+    monkeypatch.setattr(settings, "intervention_human_preferred_fail_closed", False, raising=False)
+
+    mc = _new_conductor(callback=None)
+    task = Task(
+        id="task_resumed_hitl",
+        name="Resumed from pending HITL",
+        action="scan",
+        agent_type="InjectionSwarm",
+        params={
+            "_intervention": {
+                "resumed_from_pending_hitl": True,
+            }
+        },
+    )
+
+    blocked = mc._run_intervention_precheck(task)
+
+    assert blocked is None
+    approval = task.params.get("_intervention", {}).get("approval", {})
+    assert approval.get("required") is True
+    assert approval.get("approved") is True
+    assert approval.get("mode") == "hitl_resume"
+
+
+def test_evaluate_precheck_decision_service_parity_resume(monkeypatch) -> None:
+    """HITL service の evaluate_precheck_decision が resumed_from_pending_hitl で正しい PrecheckDecision を返す。"""
+    from src.core.engine.master_conductor import MasterConductor
+    from src.core.engine.master_conductor_hitl_precheck_service import evaluate_precheck_decision
+
+    decision = {"route": "shigoku_hitl", "scenario_id": "scn_07_token_trust"}
+    extract_scn = lambda sid: (
+        int(sid.split("_")[1]) if sid.startswith("scn_") and len(sid.split("_")) > 1 else 0
+    )
+
+    result = evaluate_precheck_decision(
+        task_id="t1",
+        decision=decision,
+        gate_mode="enforce_hitl",
+        is_hitl_resume=True,
+        extract_scn_number=extract_scn,
+        is_manual_defer_v1_enabled=True,
+        has_callback=False,
+    )
+
+    assert result.action == "resume"
+    assert result.approved is True
+    assert result.pending_hitl is False
+    assert result.intervention_meta.get("resumed_from_pending_hitl") is True
+
+
+def test_evaluate_precheck_decision_service_parity_manual_defer(monkeypatch) -> None:
+    """SCN08 が manual defer v1 対象として判定される。"""
+    from src.core.engine.master_conductor_hitl_precheck_service import evaluate_precheck_decision
+
+    decision = {"route": "shigoku_hitl", "scenario_id": "scn_08_oob_external_channel"}
+    extract_scn = lambda sid: (
+        int(sid.split("_")[1]) if sid.startswith("scn_") and len(sid.split("_")) > 1 else 0
+    )
+
+    result = evaluate_precheck_decision(
+        task_id="t2",
+        decision=decision,
+        gate_mode="enforce_hitl",
+        is_hitl_resume=False,
+        extract_scn_number=extract_scn,
+        is_manual_defer_v1_enabled=True,
+        has_callback=False,
+    )
+
+    assert result.action == "defer_manual_v1"
+    assert result.skipped is True
+    assert result.manual_deferred is True
+    assert result.pending_hitl is False
+
+
+def test_evaluate_precheck_decision_service_parity_require_approval(monkeypatch) -> None:
+    """HITL route の場合は approval required 判定になる。"""
+    from src.core.engine.master_conductor_hitl_precheck_service import evaluate_precheck_decision
+
+    decision = {"route": "shigoku_hitl", "scenario_id": "scn_07_token_trust"}
+    extract_scn = lambda sid: (
+        int(sid.split("_")[1]) if sid.startswith("scn_") and len(sid.split("_")) > 1 else 0
+    )
+
+    result = evaluate_precheck_decision(
+        task_id="t3",
+        decision=decision,
+        gate_mode="enforce_hitl",
+        is_hitl_resume=False,
+        extract_scn_number=extract_scn,
+        is_manual_defer_v1_enabled=False,
+        has_callback=False,
+    )
+
+    assert result.action == "require_approval"
+    assert result.skipped is True
+    assert result.pending_hitl is True
+    assert result.approved is False
+    assert result.ticket_id is None
+
+
+def test_evaluate_precheck_decision_service_parity_allow_observe(monkeypatch) -> None:
+    """observe モードの場合は allow 判定になる (HitlService と同一ロジック)。"""
+    from src.core.engine.master_conductor_hitl_precheck_service import evaluate_precheck_decision
+
+    decision = {"route": "shigoku_hitl", "scenario_id": "scn_07_token_trust"}
+    extract_scn = lambda sid: (
+        int(sid.split("_")[1]) if sid.startswith("scn_") and len(sid.split("_")) > 1 else 0
+    )
+
+    result = evaluate_precheck_decision(
+        task_id="t4",
+        decision=decision,
+        gate_mode="observe",
+        is_hitl_resume=False,
+        extract_scn_number=extract_scn,
+        is_manual_defer_v1_enabled=False,
+        has_callback=False,
+    )
+
+    # observe モードでは requires_intervention_approval が False なので allow になる
+    assert result.action == "allow"
+    assert result.skipped is False
+    assert result.approved is True

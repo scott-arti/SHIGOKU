@@ -20,6 +20,10 @@ async def test_recon_master_dispatch_uses_to_thread_for_isolated_pipeline():
     mc.llm_client = MagicMock()
     mc.network_client = MagicMock()
     mc._recon_executed = False
+    mc.recipe_loader = None
+    mc.rag = None
+    mc.agentic_rag = None
+    mc.event_bus = MagicMock()
 
     fake_state = SimpleNamespace(
         live_subs=[],

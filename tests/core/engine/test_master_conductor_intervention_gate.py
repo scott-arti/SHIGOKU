@@ -5,6 +5,7 @@ from src.config import settings
 from src.core.domain.model.task import Task, TaskState
 from src.core.engine.intervention_policy import InterventionPolicy
 from src.core.engine.master_conductor import MasterConductor
+from src.core.models.task_execution_log import TaskExecutionRecord, TaskResult
 
 
 def _new_conductor_for_intervention_tests(callback=None) -> MasterConductor:
@@ -204,3 +205,107 @@ def test_intervention_precheck_does_not_manual_defer_scn11_in_v1_policy(monkeypa
     decision = task.params.get("_intervention", {}).get("decision", {})
     assert decision.get("scenario_id") == "scn_11_multi_vector_chain"
     assert task.state != TaskState.SKIPPED
+
+
+def test_intervention_precheck_with_exec_record_mutation(monkeypatch) -> None:
+    """exec_record が渡された場合、side-effect として mark_completed と execution_log 追加が行われる。"""
+    import logging
+    from src.core.models.task_execution_log import TaskExecutionRecord
+
+    monkeypatch.setattr(settings, "intervention_gate_mode", "enforce_hitl", raising=False)
+    monkeypatch.setattr(settings, "intervention_human_preferred_fail_closed", False, raising=False)
+
+    mc = _new_conductor_for_intervention_tests(callback=None)
+    mc.execution_log = SimpleNamespace()
+    mc.execution_log.add_record = lambda rec: setattr(mc.execution_log, "_last", rec)
+    mc._record_failure_context = lambda task, stage, reason: None
+
+    task = Task(
+        id="task_exec_record_test",
+        name="exec record mutation test",
+        action="scan",
+        agent_type="InjectionSwarm",
+        params={"requires_human_input": True},
+    )
+    exec_record = TaskExecutionRecord(
+        task_id=task.id,
+        task_name=task.name,
+        agent_type=task.agent_type,
+        action=task.action,
+        target_url="",
+    )
+
+    blocked = mc._run_intervention_precheck(task, exec_record=exec_record)
+
+    assert blocked is not None
+    assert blocked.get("pending_hitl") is True
+    last_record = getattr(mc.execution_log, "_last", None)
+    assert last_record is not None
+    assert last_record.result == TaskResult.SUCCESS
+    assert "pending" in str(last_record.result_summary or "").lower()
+    meta = last_record.metadata or {}
+    assert meta.get("metadata", {}).get("intervention", {}).get("pending_hitl") is True
+
+
+def test_intervention_precheck_callback_explicitly_denies_rejected_path(monkeypatch) -> None:
+    """callback が明示的に False を返した場合、denial error が返り task.state=SKIPPED になる。"""
+    monkeypatch.setattr(settings, "intervention_gate_mode", "enforce_hitl", raising=False)
+    monkeypatch.setattr(settings, "intervention_human_preferred_fail_closed", False, raising=False)
+    monkeypatch.setattr(settings, "defer_scn07_12_hitl_v1", False, raising=False)
+
+    mc = _new_conductor_for_intervention_tests(callback=lambda _info: False)
+    mc._record_failure_context = lambda task, stage, reason: None
+    task = Task(
+        id="task_rejected",
+        name="Explicitly rejected by callback",
+        action="scan",
+        agent_type="InjectionSwarm",
+        params={"requires_human_input": True},
+    )
+
+    blocked = mc._run_intervention_precheck(task)
+
+    assert blocked is not None
+    assert blocked.get("success") is False
+    assert blocked.get("skipped") is True
+    assert "Blocked by intervention gate" in str(blocked.get("error", ""))
+    assert task.state == TaskState.SKIPPED
+    approval = task.params.get("_intervention", {}).get("approval", {})
+    assert approval.get("required") is True
+    assert approval.get("approved") is False
+
+
+def test_intervention_precheck_defer_v1_disabled_allows_scn08(monkeypatch) -> None:
+    """defer_scn07_12_hitl_v1=False のとき、SCN08 は manual defer されずに通常の approval 判定に進む。"""
+    monkeypatch.setattr(settings, "intervention_gate_mode", "enforce_hitl", raising=False)
+    monkeypatch.setattr(settings, "defer_scn07_12_hitl_v1", False, raising=False)
+
+    mc = _new_conductor_for_intervention_tests(callback=None)
+    mc._record_failure_context = lambda task, stage, reason: None
+    task = Task(
+        id="task_scn08_no_defer",
+        name="SCN08 OOB External Channel",
+        action="scan",
+        agent_type="InjectionSwarm",
+        params={
+            "_intervention": {
+                "decision": {
+                    "scenario_id": "scn_08_oob_external_channel",
+                    "route": "shigoku_hitl",
+                    "confidence": 0.4,
+                    "reasons": ["oob detected"],
+                    "matched_signals": ["external channel"],
+                }
+            }
+        },
+    )
+
+    blocked = mc._run_intervention_precheck(task)
+
+    # defer_v1=False なので manual_deferred ではなく pending_hitl へ進む
+    assert blocked is not None
+    assert blocked.get("pending_hitl") is True
+    assert blocked.get("manual_deferred", False) is False
+    assert task.state == TaskState.SKIPPED
+    # 1 ticket が pending_hitl に登録されている
+    assert len(mc.pending_hitl) == 1

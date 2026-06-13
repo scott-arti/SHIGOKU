@@ -3,50 +3,50 @@
   "arms": {
     "exploit::generic": {
       "alpha": 1.0,
-      "beta": 61.0,
-      "pulls": 60,
+      "beta": 68.0,
+      "pulls": 67,
       "total_reward": 0.0,
       "successes": 0,
-      "failures": 60
+      "failures": 67
     },
     "scanner::generic": {
       "alpha": 1.0,
-      "beta": 60.0,
-      "pulls": 59,
+      "beta": 67.0,
+      "pulls": 66,
       "total_reward": 0.0,
       "successes": 0,
-      "failures": 59
+      "failures": 66
     },
     "discovery::generic": {
-      "alpha": 36.40000000000004,
-      "beta": 24.59999999999998,
-      "pulls": 59,
-      "total_reward": 35.40000000000004,
-      "successes": 59,
+      "alpha": 40.60000000000005,
+      "beta": 27.39999999999997,
+      "pulls": 66,
+      "total_reward": 39.60000000000005,
+      "successes": 66,
       "failures": 0
     },
     "recon::generic": {
-      "alpha": 36.40000000000004,
-      "beta": 24.59999999999998,
-      "pulls": 59,
-      "total_reward": 35.40000000000004,
-      "successes": 59,
+      "alpha": 40.60000000000005,
+      "beta": 27.39999999999997,
+      "pulls": 66,
+      "total_reward": 39.60000000000005,
+      "successes": 66,
       "failures": 0
     },
     "injectionswarm::csrf_candidate": {
-      "alpha": 5.799999999999999,
-      "beta": 4.199999999999999,
-      "pulls": 8,
-      "total_reward": 4.8,
-      "successes": 8,
+      "alpha": 6.999999999999998,
+      "beta": 5.0,
+      "pulls": 10,
+      "total_reward": 5.999999999999999,
+      "successes": 10,
       "failures": 0
     },
     "injectionswarm::xss_candidate": {
-      "alpha": 5.199999999999999,
-      "beta": 3.7999999999999994,
-      "pulls": 7,
-      "total_reward": 4.2,
-      "successes": 7,
+      "alpha": 6.999999999999998,
+      "beta": 5.0,
+      "pulls": 10,
+      "total_reward": 5.999999999999999,
+      "successes": 10,
       "failures": 0
     },
     "scope_parser::generic": {
@@ -98,11 +98,11 @@
       "failures": 0
     },
     "injectionswarm::auth": {
-      "alpha": 4.6,
-      "beta": 3.3999999999999995,
-      "pulls": 6,
-      "total_reward": 3.6,
-      "successes": 6,
+      "alpha": 5.199999999999999,
+      "beta": 3.7999999999999994,
+      "pulls": 7,
+      "total_reward": 4.2,
+      "successes": 7,
       "failures": 0
     },
     "injectionswarm::basket_order": {
@@ -200,6 +200,14 @@
       "total_reward": 1.2,
       "successes": 2,
       "failures": 2
+    },
+    "universal::generic": {
+      "alpha": 1.0,
+      "beta": 1.0,
+      "pulls": 0,
+      "total_reward": 0.0,
+      "successes": 0,
+      "failures": 0
     }
   }
 }

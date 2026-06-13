@@ -6,7 +6,7 @@ parent_task_id: SGK-2026-0001
 related_docs: []
 title: 'Learned Lessons (AI Agent Orientation)'
 created_at: '2026-06-10'
-updated_at: '2026-06-11'
+updated_at: '2026-06-13'
 tags:
 - ai-agent
 - lessons-learned
@@ -23,3 +23,5 @@ tags:
 - クラスメソッドをスタンドアロン関数へ抽出する際、元メソッドが `if not isinstance(self.current_context, dict): self.current_context = {}` のようなガードを先頭に持っていた場合、抽出先の関数には deps dict 経由で `None` が渡る可能性がある。抽出先では `current_context` を初回アクセス前に `isinstance` 検査するか、ガードを wrapper 側に残すこと。
 - editツールで `task_queue.add()` や `self._injected_task_ids.add()` を含む guard メソッドの本体を thin wrapper に置換する際、oldString は必ずメソッド終端の `return True` の次行まで含めること。`return True` でマッチを止めると、その下に残った payload 構築コードや2つ目の `task_queue.add()` が次のメソッドとの間に orphaned dead code として残留する。置換後は `grep -n 'def '` で次のメソッド定義が wrapper の直後にあることを確認すること。
 - guard/payload builder を service へ抽出するとき、`scenario_probe`、`source_category`、priority 値、`evidence_by_url` のキー名は元コードから1行ずつコピーすること。値を記憶で再構築すると `"scenario_probe_guard"` が `"coverage_backfill_guard"` に、priority 1249 が 1252 に化け、`task.params.get("source_category")` を assert する既存テストが検出できず失敗する。
+- facade から service に抽出した全メソッドについて、`self.xxx` への書き込み以外の副作用（`get_notifier().notify()`、`get_ethics_guard().set_scope()` 等の global singleton 呼び出し）を service 側に残していないか、抽出後に必ず各メソッド本体を grep 検証すること。残っていると「service は state mutation 0件」が偽になる。
+- 抽出完了後の work_report で「全 N method を thin wrapper 化」や「行数削減 XXX」と主張する前に、必ず `grep -A3 "def method_name"` で実態を確認し、wrapper 化されていない heavy method の残存をリストアップすること。本セッションでは `plan_missing_link_probes` (64行), `run_pre_action_gate_shadow` (103行), `_notify_scn07_12_intervention` (65行) の未抽出を見落とした。

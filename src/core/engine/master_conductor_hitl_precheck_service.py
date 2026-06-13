@@ -77,29 +77,14 @@ def requires_intervention_approval(
     decision: dict[str, Any],
     gate_mode: str,
 ) -> bool:
-    """承認が必要かどうかを判定する。"""
+    """承認が必要かどうかを判定する（HitlService と同一の判定ロジック）。"""
     route = str(decision.get("route", "shigoku_only") or "shigoku_only").strip().lower()
-    confidence = float(decision.get("confidence", 0.0) or 0.0)
-    enforce_hitl = gate_mode == "enforce_hitl"
-    enforce_human = gate_mode == "enforce_human_preferred"
-    is_hitl = route in {
-        "shigoku_hitl",
-        "shigoku_hitl_priority",
-        "intervention_hitl_direct",
-    }
-    is_autonomous = route == "shigoku_only"
-    low_confidence = confidence < 0.3
-
-    if enforce_hitl:
-        return True
-    if enforce_human and (is_hitl or low_confidence):
-        return True
-    if is_hitl:
-        return True
-    if is_autonomous and low_confidence:
-        return False
     if gate_mode == "observe":
         return False
+    if gate_mode == "enforce_hitl":
+        return route in {"shigoku_hitl", "human_preferred"}
+    if gate_mode == "enforce_human_preferred":
+        return route == "human_preferred"
     return False
 
 
@@ -285,6 +270,7 @@ def evaluate_precheck_decision(
     if not requires_intervention_approval(decision, gate_mode):
         return PrecheckDecision(
             action="allow",
+            approved=True,
             intervention_meta={
                 "decision": decision,
                 "gate_mode": gate_mode,
