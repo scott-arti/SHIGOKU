@@ -1,7 +1,7 @@
 # SHIGOKU タスク台帳
 
-- 更新日: 2026-06-12
-- 総タスク数: 295
+- 更新日: 2026-06-13
+- 総タスク数: 296
 - ステータス許可値: backlog / active / done / deferred / archived
 - doc_type 許可値: spec / roadmap / plan / subtask_plan / work_report / work_log / manual
 
@@ -301,4 +301,5 @@
 | SGK-2026-0282 | MasterConductor 追加分割計画: policy/HITL/dispatch 段階抽出 | done | work_report | SGK-2026-0264 | docs/shigoku/reports/2026-06-12_sgk-2026-0282_masterconductor-policy-hitl-dispatch_work_report.md |
 | SGK-2026-0284 | MasterConductor Policy/HITL 抽出 follow-up: _run_intervention_precheck 再構築、_generate_summary 軽量抽出、execute_parallel dedup、3-layer parity tests、compat wrapper inventory | backlog | subtask_plan | SGK-2026-0264 | docs/shigoku/subtasks/2026-06-12_sgk-2026-0284_mc-policy-hitl-followup_subtask_plan.md |
 | SGK-2026-0285 | MasterConductor _dispatch 本体抽出: scope fast path, post-exploit guard, CTF filter, worker, swarm, recon, recipe, AgentFactory fallback の branch tests + routing order matrix + contextvar reset | backlog | subtask_plan | SGK-2026-0264 | docs/shigoku/subtasks/2026-06-12_sgk-2026-0285_mc-dispatch-extraction_subtask_plan.md |
-| SGK-2026-0286 | MasterConductor 大幅行数削減計画: execution loop・dispatch・HITL の三段階抽出 | active | subtask_plan | SGK-2026-0264 | docs/shigoku/subtasks/2026-06-12_masterconductor-execution-loop-dispatch-hitl_subtask_plan.md |
+| SGK-2026-0286 | MasterConductor 大幅行数削減計画: execution loop・dispatch・HITL の三段階抽出 | done | subtask_plan | SGK-2026-0264 | docs/shigoku/subtasks/2026-06-12_masterconductor-execution-loop-dispatch-hitl_subtask_plan.md |
+| SGK-2026-0287 | MasterConductor execution loop 深層抽出: Plan/Apply/FailurePolicy 分解 | active | subtask_plan | SGK-2026-0264 | docs/shigoku/subtasks/2026-06-13_masterconductor-execution-loop-deep-extraction_subtask_plan.md |

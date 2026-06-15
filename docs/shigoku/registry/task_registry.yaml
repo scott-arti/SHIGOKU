@@ -1,5 +1,5 @@
 version: 1
-updated_at: '2026-06-12'
+updated_at: '2026-06-13'
 namespace: SGK
 id_rules:
   core: SGK-YYYY-NNNN
@@ -3243,6 +3243,19 @@ tasks:
   - docs/shigoku/reports/2026-06-12_sgk-2026-0282_masterconductor-policy-hitl-dispatch_work_report.md
   - docs/shigoku/subtasks/2026-06-12_sgk-2026-0284_mc-policy-hitl-followup_subtask_plan.md
   - docs/shigoku/subtasks/2026-06-12_sgk-2026-0285_mc-dispatch-extraction_subtask_plan.md
+  - docs/shigoku/reports/2026-06-13_sgk-2026-0286_work_report.md
+- provisional_id: DOC-0303
+  task_id: SGK-2026-0287
+  doc_type: subtask_plan
+  title: 'MasterConductor execution loop 深層抽出: Plan/Apply/FailurePolicy 分解'
+  primary_doc: docs/shigoku/subtasks/2026-06-13_masterconductor-execution-loop-deep-extraction_subtask_plan.md
+  status: active
+  provisional: false
+  task_summary: 'MasterConductor execution loop 深層抽出: Plan/Apply/FailurePolicy 分解'
+  parent_task_id: SGK-2026-0264
+  related_docs:
+  - docs/shigoku/plans/2026-06-05_master-conductor-split-plan_plan.md
+  - docs/shigoku/subtasks/2026-06-12_masterconductor-execution-loop-dispatch-hitl_subtask_plan.md
   - docs/shigoku/reports/2026-06-13_sgk-2026-0286_work_report.md
 doc_type_allowed_values:
 - spec

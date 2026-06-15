@@ -3,7 +3,10 @@ Execution Runner Service
 
 execute_with_replan / _execute_single_task_full_flow から切り出す
 pure helper 群。event payload builder、execution record 構築、
-result normalizer を担当する。
+batch size/timeout 計算を担当する。
+
+Plan/Apply/Decision 用 dataclass + builder は
+master_conductor_execution_plan_service.py に分離。
 
 状態変更（task_queue / execution_log / pending_hitl / event emission）は
 facade 側の責務とする。本 service は副作用を持たない pure function として実装する。

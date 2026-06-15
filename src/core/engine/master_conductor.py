@@ -100,9 +100,15 @@ from src.core.engine.master_conductor_execution_runner_service import (
     build_task_started_payload,
     build_task_state_event_payload,
     build_execution_record_init,
-    build_parallel_tasks,
     compute_batch_size,
-    compute_batch_timeout_params,
+)
+from src.core.engine.master_conductor_execution_plan_service import (
+    build_batch_execution_plan,
+    build_timeout_recovery_plan,
+    build_batch_result_apply_plan,
+    build_failure_replan_decision,
+    build_dispatch_timeout_decision,
+    is_timeout_related as _svc_is_timeout_related,
 )
 from src.core.engine.master_conductor_policy_service import (
     assess_missing_link_probe_rollout as _svc_assess_missing_link_probe_rollout,
@@ -3308,6 +3314,89 @@ class MasterConductor:
             "data": result_bundle,
         }
     
+    def _run_pre_batch_intelligence(self, executed: int) -> None:
+        """execute_with_replan の pre-batch intelligence phase（facade helper）。
+
+        SelfReflection / strategy review / KG-based dynamic task inference を担当する。
+        cadence と呼び出し順は本 helper で固定する。
+        """
+        REFLECTION_INTERVAL = getattr(settings, "reflection_interval", 20)
+        if executed > 0 and executed % REFLECTION_INTERVAL == 0:
+            try:
+                insights = self.self_reflection.reflect()
+                for insight in insights:
+                    if insight.actionable:
+                        logger.info("🧠 SelfReflection insight: %s → %s", insight.insight, insight.suggested_action)
+                        if hasattr(self, "decision_tracer"):
+                            self.decision_tracer.trace(
+                                decision="reflection_insight",
+                                reason=insight.insight,
+                                context={"suggested_action": insight.suggested_action, "confidence": insight.confidence}
+                            )
+            except Exception as e:
+                logger.warning(f"Intelligence: Self-reflection failed (non-critical): {e}")
+
+        if self.optimizer.should_review(executed):
+            logger.debug(f"🔑 MainThread attempting to acquire _state_lock for strategy review")
+            with self._state_lock:
+                logger.debug(f"🔓 MainThread acquired _state_lock for strategy review")
+                self.optimizer.review_strategy(self.task_queue, self.graph, executed)
+
+            if executed > 0 and executed % 10 == 0:
+                logger.info("[MC] Triggering KG-based dynamic task inference with insights...")
+                insights = self.self_reflection.reflect()
+                new_tasks = self.attack_planner.infer_tasks(self.graph, self.context, insights=insights)
+                for t in new_tasks:
+                    if not self.task_queue.get_by_id(t.id):
+                        self.task_queue.add(t)
+
+    def _finalize_execution_summary(self, executed: int, *, normal_completion: bool = True) -> dict:
+        """execute_with_replan の summary tail（facade helper）。
+
+        final save_session / _generate_summary / rich_logger 表示を担当する。
+        normal_completion=False の場合は shutdown 扱いとし、_finished_normally を立てない。
+        """
+        from src.core.logger import logger as rich_logger
+
+        if normal_completion:
+            self._finished_normally = True
+            rich_logger.status("success", "ミッションが正常に完了しました。")
+        else:
+            logger.info("[MC] Execution loop terminated by shutdown request.")
+
+        self.save_session()
+        summary = self._generate_summary()
+
+        total_duration = time.time() - self.context.metrics["start_time"]
+        self.context.metrics["end_time"] = time.time()
+        self.context.metrics["total_duration"] = total_duration
+
+        rich_logger.summary_table(
+            "Final Execution Summary",
+            ["Metric", "Value"],
+            [
+                ["Total Tasks", summary["total_tasks"]],
+                ["Success", summary["success"]],
+                ["Failed", summary["failed"]],
+                ["Replanned", summary["replanned"]],
+                ["Success Rate", f"{summary['success_rate']:.1%}"],
+                ["Discovered Assets", len(summary["discovered_assets"])],
+                ["Total Duration", f"{total_duration:.2f}s"],
+                ["Estimated Cost", f"${summary['estimated_cost']:.4f}"],
+                ["Coverage Gate", "PASS" if summary.get("coverage_gate_passed", False) else "FAIL"],
+                ["Coverage", f"{summary.get('coverage_gate_covered', 0)}/{summary.get('coverage_gate_required', 0)}"],
+                ["Coverage Missing", ", ".join(summary.get("coverage_gate_missing", [])) or "-"],
+                ["Scenario Coverage", f"{summary.get('scenario_covered', 0)}/{summary.get('scenario_required', 0)}"],
+                ["Scenario Missing", ", ".join(summary.get("scenario_missing", [])) or "-"],
+                ["Pending HITL", summary.get("pending_hitl_count", 0)],
+                ["Failed Reasons",
+                    (", ".join(f"{code}={count}" for code, count in summary.get("failed_reason_codes", {}).items())
+                     if summary.get("failed_reason_codes") else "-"),
+                ],
+            ]
+        )
+        return summary
+
     def execute_with_replan(self, max_tasks: int = None) -> dict:
         """
         再帰的実行ループ (並列化対応版)
@@ -3351,40 +3440,8 @@ class MasterConductor:
                 logger.info("[MC] Task queue is empty. Finishing execution loop.")
                 break
 
-            # 🧠 HOOK 4: 定期省察 (SelfReflection)
-            # 一定数のタスク実行後に実行履歴を分析してインサイトを得る
-            REFLECTION_INTERVAL = getattr(settings, "reflection_interval", 20)
-            if executed > 0 and executed % REFLECTION_INTERVAL == 0:
-                try:
-                    insights = self.self_reflection.reflect()
-                    for insight in insights:
-                        if insight.actionable:
-                            logger.info("🧠 SelfReflection insight: %s → %s", insight.insight, insight.suggested_action)
-                            if hasattr(self, "decision_tracer"):
-                                self.decision_tracer.trace(
-                                    decision="reflection_insight",
-                                    reason=insight.insight,
-                                    context={"suggested_action": insight.suggested_action, "confidence": insight.confidence}
-                                )
-                except Exception as e:
-                    logger.warning(f"Intelligence: Self-reflection failed (non-critical): {e}")
-
-            # 戦略的レビューフェーズ
-            if self.optimizer.should_review(executed):
-                logger.debug(f"🔑 MainThread attempting to acquire _state_lock for strategy review")
-                with self._state_lock:
-                    logger.debug(f"🔓 MainThread acquired _state_lock for strategy review")
-                    self.optimizer.review_strategy(self.task_queue, self.graph, executed)
-                
-                # 🗺️ HOOK: KG-based dynamic task inference (Insights enabled)
-                if executed > 0 and executed % 10 == 0:
-                    logger.info("[MC] Triggering KG-based dynamic task inference with insights...")
-                    insights = self.self_reflection.reflect()
-                    new_tasks = self.attack_planner.infer_tasks(self.graph, self.context, insights=insights)
-                    for t in new_tasks:
-                        # 既存のタスクと重複していないか簡易チェック (IDベース)
-                        if not self.task_queue.get_by_id(t.id):
-                            self.task_queue.add(t)
+            # Pre-batch intelligence (SelfReflection / strategy review / KG inference)
+            self._run_pre_batch_intelligence(executed)
 
             # 1. バッチサイズ計算
             suggested_batch, has_injection_in_queue = compute_batch_size(
@@ -3420,71 +3477,70 @@ class MasterConductor:
                     continue
                 break
 
-            # 2. 並列実行用の ParallelTask オブジェクトに変換
-            p_tasks = build_parallel_tasks(batch_tasks, self._execute_single_task_full_flow)
-            
-            # 3. オーケストレーターで実行
-            rich_logger.show_tree(
-                {f"Task: {t.name}": {"agent": t.agent_type, "priority": t.priority} for t in batch_tasks},
-                title=f"Executing Batch (Total executed: {executed})"
-            )
-
+            # 2. バッチ実行計画を構築 + オーケストレーターで実行
             has_injection = any("injection" in (t.agent_type or "").lower() for t in batch_tasks)
             full_parallel_injection = bool(getattr(settings, "injection_full_parallel_dispatch", False))
-            batch_timeout, chunk_size, has_recon_master, mixed_agents = compute_batch_timeout_params(
+            plan = build_batch_execution_plan(
                 batch_tasks,
-                has_injection,
+                self._execute_single_task_full_flow,
+                has_injection=has_injection,
                 injection_manager_timeout=int(getattr(settings, "injection_manager_timeout", 1800)),
                 injection_batch_parallelism=int(getattr(settings, "injection_batch_parallelism", 2)),
                 parallel_batch_timeout=int(getattr(settings, "parallel_batch_timeout", 600)),
                 recon_master_timeout=int(getattr(settings, "recon_master_timeout", 900)),
                 injection_full_parallel_dispatch=full_parallel_injection,
             )
+
+            rich_logger.show_tree(
+                {f"Task: {t.name}": {"agent": t.agent_type, "priority": t.priority} for t in batch_tasks},
+                title=f"Executing Batch (Total executed: {executed})"
+            )
+
             try:
-                if has_injection:
+                if plan.has_injection:
                     logger.info(
                         "Using extended batch timeout (%ss) for InjectionManagerAgent tasks (limited parallelism=%s)",
-                        batch_timeout,
-                        chunk_size,
+                        plan.batch_timeout, plan.chunk_size,
                     )
-
                     results = []
-                    for i in range(0, len(p_tasks), chunk_size):
-                        chunk = p_tasks[i:i + chunk_size]
+                    for i in range(0, len(plan.parallel_tasks), plan.chunk_size):
+                        chunk = plan.parallel_tasks[i:i + plan.chunk_size]
                         result = self._run_async_safe(
-                            self.orchestrator.execute_parallel(chunk, timeout=batch_timeout),
-                            timeout_override=batch_timeout
+                            self.orchestrator.execute_parallel(chunk, timeout=plan.batch_timeout),
+                            timeout_override=plan.batch_timeout,
                         )
                         results.extend(result)
                 else:
                     results = self._run_async_safe(
-                        self.orchestrator.execute_parallel(p_tasks, timeout=batch_timeout),
-                        timeout_override=batch_timeout
+                        self.orchestrator.execute_parallel(plan.parallel_tasks, timeout=plan.batch_timeout),
+                        timeout_override=plan.batch_timeout,
                     )
             except Exception as batch_exc:
-                failure_reason = "timeout_batch" if self._is_timeout_related(batch_exc) else type(batch_exc).__name__
-                logger.error("Batch execution failed (%s): %r", failure_reason, batch_exc)
+                recovery_plan = build_timeout_recovery_plan(batch_tasks, batch_exc)
+                logger.error("Batch execution failed (%s): %r", recovery_plan.failure_reason, batch_exc)
 
-                # 巻き添え失敗を避けるため、未完了タスクのみ逐次リカバリ実行
-                if self._is_timeout_related(batch_exc):
+                # 未完了タスクのみ逐次リカバリ実行（完了済みタスクは再実行しない）
+                if _svc_is_timeout_related(batch_exc):
                     logger.warning(
                         "Batch timeout detected. Retrying unfinished tasks sequentially (count=%d).",
-                        sum(1 for t in batch_tasks if t.state not in [TaskState.SUCCESS, TaskState.FAILED]),
+                        len(recovery_plan.recovery_task_ids),
                     )
-                    for task in batch_tasks:
-                        if task.state in [TaskState.SUCCESS, TaskState.FAILED]:
+                    recovery_map = {str(getattr(t, "id", "")): t for t in batch_tasks}
+                    for tid in recovery_plan.recovery_task_ids:
+                        task = recovery_map.get(tid)
+                        if task is None:
                             continue
                         try:
                             self._execute_single_task_full_flow(task)
                         except Exception as recovery_exc:
-                            logger.error("Sequential recovery failed for %s: %r", task.id, recovery_exc)
+                            logger.error("Sequential recovery failed for %s: %r", tid, recovery_exc)
                             with self._state_lock:
                                 if task.state not in [TaskState.SUCCESS, TaskState.FAILED]:
                                     task.state = TaskState.FAILED
                                     task.error = repr(recovery_exc)
                                     recovery_reason = (
                                         "timeout_recovery"
-                                        if self._is_timeout_related(recovery_exc)
+                                        if _svc_is_timeout_related(recovery_exc)
                                         else type(recovery_exc).__name__
                                     )
                                     self._record_failure_context(task, "orchestrator_batch_recovery", recovery_reason)
@@ -3494,7 +3550,7 @@ class MasterConductor:
                         if task.state not in [TaskState.SUCCESS, TaskState.FAILED, TaskState.SKIPPED]:
                             task.state = TaskState.FAILED
                             task.error = repr(batch_exc)
-                            self._record_failure_context(task, "orchestrator_batch_execute", failure_reason)
+                            self._record_failure_context(task, "orchestrator_batch_execute", recovery_plan.failure_reason)
                     self.completed_tasks.extend(batch_tasks)
                 executed += len(batch_tasks)
                 continue
@@ -3502,130 +3558,335 @@ class MasterConductor:
             executed += len(results)
             logger.info("Executed batch of %d tasks (Total: %d)", len(results), executed)
 
-            # Update completed_tasks and handle timeouts/errors from orchestrator
-            task_map = {t.id: t for t in batch_tasks}
-            for res in results:
-                task = task_map.get(res.task_id)
-                if task:
-                     if not res.success and task.state not in [TaskState.SUCCESS, TaskState.FAILED, TaskState.SKIPPED]:
-                         # Update task if orchestrator reported error but task state wasn't updated (e.g. timeout/cancel)
-                         task.state = TaskState.FAILED
-                         task.error = res.error
-                         failure_reason = "timeout_orchestrator" if self._is_timeout_related(res.error) else (res.error or "orchestrator_failed")
-                         self._record_failure_context(task, "orchestrator_batch", str(failure_reason))
-            
+            # 3. オーケストレーター結果の apply（plan 経由）
+            apply_plan = build_batch_result_apply_plan(batch_tasks, results)
+            for entry in apply_plan.failed_tasks:
+                task = entry["task"]
+                task.state = TaskState.FAILED
+                task.error = entry["error"]
+                self._record_failure_context(task, "orchestrator_batch", str(entry["failure_reason"]))
+
             with self._state_lock:
-                 self.completed_tasks.extend(batch_tasks)
+                self.completed_tasks.extend(batch_tasks)
 
             # セッション保存 (チェックポイント)
             if self._auto_checkpoint and executed % getattr(settings, "checkpoint_interval", 10) == 0:
                 self.save_session()
 
-        if not self._shutdown_requested:
-            self._finished_normally = True
-            rich_logger.status("success", "ミッションが正常に完了しました。")
+        return self._finalize_execution_summary(executed, normal_completion=not self._shutdown_requested)
 
-        self.save_session()
-        summary = self._generate_summary()
-        
-        # 最終サマリーの表示
-        total_duration = time.time() - self.context.metrics["start_time"]
-        self.context.metrics["end_time"] = time.time()
-        self.context.metrics["total_duration"] = total_duration
-        
-        rich_logger.summary_table(
-            "Final Execution Summary",
-            ["Metric", "Value"],
-            [
-                ["Total Tasks", summary["total_tasks"]],
-                ["Success", summary["success"]],
-                ["Failed", summary["failed"]],
-                ["Replanned", summary["replanned"]],
-                ["Success Rate", f"{summary['success_rate']:.1%}"],
-                ["Discovered Assets", len(summary["discovered_assets"])],
-                ["Total Duration", f"{total_duration:.2f}s"],
-                ["Estimated Cost", f"${summary['estimated_cost']:.4f}"],
-                [
-                    "Coverage Gate",
-                    "PASS" if summary.get("coverage_gate_passed", False) else "FAIL",
-                ],
-                [
-                    "Coverage",
-                    f"{summary.get('coverage_gate_covered', 0)}/{summary.get('coverage_gate_required', 0)}",
-                ],
-                [
-                    "Coverage Missing",
-                    ", ".join(summary.get("coverage_gate_missing", [])) or "-",
-                ],
-                [
-                    "Scenario Coverage",
-                    f"{summary.get('scenario_covered', 0)}/{summary.get('scenario_required', 0)}",
-                ],
-                [
-                    "Scenario Missing",
-                    ", ".join(summary.get("scenario_missing", [])) or "-",
-                ],
-                [
-                    "Pending HITL",
-                    summary.get("pending_hitl_count", 0),
-                ],
-                [
-                    "Failed Reasons",
-                    (
-                        ", ".join(
-                            f"{code}={count}"
-                            for code, count in summary.get("failed_reason_codes", {}).items()
+    def _assess_task_risk(self, task: Task, exec_record: Any) -> Optional[dict]:
+        """タスク実行前のリスク評価と介入チェック（facade helper）。
+
+        RiskPredictor block + intervention precheck を担当する。
+        ブロック時は早期 return 用 dict を返し、通過時は None を返す。
+        """
+        # RiskPredictor block
+        try:
+            from src.core.intelligence import ActionRiskProfile
+            action_type = self._map_agent_to_action_type(task.agent_type, task.action)
+            profile = ActionRiskProfile(
+                action_type=action_type,
+                target_url=task.params.get("target", ""),
+                has_waf="waf" in str(self.context.target_info).lower(),
+                consecutive_failures=getattr(task, "replan_depth", 0),
+                payload=str(task.params.get("payload", "")) if task.params.get("payload") else None
+            )
+            assessment = self.risk_predictor.assess(profile)
+
+            if not assessment.should_proceed:
+                logger.warning("🚫 RiskPredictor blocked task %s (risk level: %s)", task.id, assessment.risk_level)
+                with self._state_lock:
+                    task.state = TaskState.FAILED
+                    task.error = f"Blocked by RiskPredictor: {assessment.risk_level}"
+                    self._record_failure_context(task, "precheck", "risk_predictor_block")
+                    exec_record.mark_completed(success=False, error=task.error)
+                    self.execution_log.add_record(exec_record)
+                self._mark_pending_hitl_done(task, success=False)
+                self._record_task_prioritizer_outcome(task, {"success": False, "error": task.error})
+                return {"success": False, "error": "Blocked by RiskPredictor", "risk": assessment.to_dict()}
+
+            if assessment.recommended_delay > 0:
+                delay_disabled = bool(getattr(settings, "risk_predictor_delay_disable", False))
+                high_only = bool(getattr(settings, "risk_predictor_delay_high_only", False))
+                min_score = float(getattr(settings, "risk_predictor_delay_min_score", 0.7) or 0.7)
+                apply_delay = not delay_disabled
+                risk_score = float(getattr(assessment, "risk_score", 0.0) or 0.0)
+                risk_level = str(getattr(assessment, "risk_level", "") or "").strip().lower()
+                is_high_risk_level = risk_level in {"high", "critical"}
+                if apply_delay and high_only and not (is_high_risk_level or risk_score >= min_score):
+                    apply_delay = False
+
+                if apply_delay:
+                    delay = min(assessment.recommended_delay, 10.0)
+                    logger.info("⏳ RiskPredictor: applying recommended delay %.2fs for %s", delay, task.name)
+                    time.sleep(delay)
+                else:
+                    if delay_disabled:
+                        logger.info("RiskPredictor: delay disabled by settings for %s", task.name)
+                    else:
+                        logger.info(
+                            "RiskPredictor: skipped delay for %s (risk_level=%s, risk_score=%.2f, min_score=%.2f)",
+                            task.name, risk_level or "unknown", risk_score, min_score,
                         )
-                        if summary.get("failed_reason_codes")
-                        else "-"
-                    ),
-                ],
-            ]
+        except Exception as e:
+            logger.warning(f"Intelligence: Risk assessment failed (non-critical): {e}")
+
+        # Intervention precheck
+        intervention_block = self._run_intervention_precheck(task, exec_record=exec_record)
+        if intervention_block is not None:
+            self._record_task_prioritizer_outcome(task, intervention_block)
+            return intervention_block
+        return None
+
+    def _apply_post_dispatch_intelligence(
+        self, task: Task, result: dict, before_snap_id: Optional[str]
+    ) -> None:
+        """Dispatch 後のインテリジェンスフック（facade helper）。
+
+        DecisionEnhancer + DiffAnalyzer を担当する。
+        """
+        # DecisionEnhancer
+        try:
+            from src.core.intelligence import DecisionContext, Decision
+            waf_detected = "waf" in str(result.get("message", "")).lower() or result.get("data", {}).get("waf_blocked", False)
+            rate_limited = "rate limit" in str(result.get("message", "")).lower() or result.get("status") == 429
+
+            d_ctx = DecisionContext(
+                action_type=task.agent_type or "unknown",
+                target_url=task.params.get("target", ""),
+                previous_attempts=getattr(task, "replan_depth", 0),
+                waf_detected=waf_detected,
+                rate_limit_active=rate_limited
+            )
+            enhanced_decision = self.decision_enhancer.decide(d_ctx)
+
+            if enhanced_decision.decision in [Decision.RETRY, Decision.MODIFY]:
+                logger.info("💡 DecisionEnhancer: %s requested. Reason: %s",
+                            enhanced_decision.decision.value, enhanced_decision.reasoning)
+                if getattr(task, "replan_depth", 0) < 3:
+                    new_task = task.clone()
+                    new_task.id = f"{task.id}_retry_{int(time.time())}"
+                    new_task.replan_depth = getattr(task, "replan_depth", 0) + 1
+                    if enhanced_decision.modifications:
+                        new_task.params["_modifications"] = enhanced_decision.modifications
+                        logger.info("🔧 Applying modifications: %s", enhanced_decision.modifications)
+                    self.task_queue.add(new_task)
+        except Exception as e:
+            logger.warning("DecisionEnhancer: Failed to enhance decision: %s", e)
+
+        # DiffAnalyzer
+        if before_snap_id:
+            try:
+                target = task.params.get("target", "default")
+                current_data = {
+                    "urls": [n.url for n in self.graph.get_nodes_by_type("Page") if hasattr(n, "url")],
+                    "endpoints": [n.url for n in self.graph.get_nodes_by_type("Endpoint") if hasattr(n, "url")]
+                }
+                _, after_snap_id = self.diff_analyzer.take_snapshot(target, current_data, label=f"after_{task.id}")
+                diffs = self.diff_analyzer.compare(
+                    self.diff_analyzer.snapshots[after_snap_id],
+                    self.diff_analyzer.snapshots[before_snap_id]
+                )
+                has_changes = any(d.has_changes() for d in diffs.values())
+                if has_changes:
+                    logger.info("🔍 State changes detected after %s!", task.id)
+                    for cat, d in diffs.items():
+                        if d.added:
+                            logger.info("  [+] Added in %s: %s", cat, d.added[:5])
+            except Exception as e:
+                logger.warning("DiffAnalyzer: Failed to perform post-execution diff: %s", e)
+
+    def _handle_task_success(self, task: Task, result: dict, exec_record: Any) -> None:
+        """タスク成功時の状態更新とフック（facade helper）。"""
+        task.state = TaskState.SUCCESS
+        task.failure_phase = None
+        task.failure_reason = None
+        task.failure_reason_code = None
+        if isinstance(task.params, dict):
+            task.params.pop("_failure", None)
+        self.context.update_success_rate(True)
+        self._emit_task_state_event(
+            event_type=EventType.TASK_COMPLETED,
+            task=task,
+            result=result,
         )
-        
-        return summary
+        self._update_flaky_quarantine(task, success=True)
+
+        # SelfReflection & PriorityBooster
+        try:
+            from src.core.intelligence import ExecutionRecord, ExecutionOutcome
+            def _get_finding_title(f):
+                return f.title if hasattr(f, 'title') else f.get('title', 'Unknown')
+            def _get_finding_type(f):
+                vt = f.vuln_type if hasattr(f, 'vuln_type') else f.get('vuln_type', f.get('type', 'Unknown'))
+                return vt.value if hasattr(vt, 'value') else str(vt)
+
+            self.self_reflection.record(ExecutionRecord(
+                task_id=task.id,
+                action_type=task.agent_type or "unknown",
+                target=task.params.get("target", ""),
+                outcome=ExecutionOutcome.SUCCESS,
+                duration_seconds=exec_record.duration_seconds() or 0.0,
+                findings=[f"[{_get_finding_type(f)}] {_get_finding_title(f)}" for f in result.get("findings", [])],
+                response_code=result.get("data", {}).get("status_code") or result.get("status_code"),
+                payload_used=str(task.params.get("payload", "")) if task.params.get("payload") else None
+            ))
+
+            response_body = result.get("output", "") or result.get("data", {}).get("response_body", "")
+            if response_body:
+                boost_event = self.priority_booster.auto_detect_boost(
+                    target=task.params.get("target", ""),
+                    content=str(response_body),
+                    related_tasks=self.task_queue.get_pending_task_ids()
+                )
+                if boost_event:
+                    affected_ids = self.priority_booster.boost_on_discovery(boost_event)
+                    boost_val = int(boost_event.boost_amount * 50)
+                    if affected_ids:
+                        logger.info("🔥 Discovery triggered priority boost for tasks: %s (+%d)", affected_ids, boost_val)
+                        self.task_queue.boost_priority(lambda t, aids=affected_ids: t.id in aids, boost_val)
+        except Exception as e:
+            logger.warning(f"Intelligence: Success feedback failed (non-critical): {e}")
+
+        if result.get("new_assets"):
+            self._expand_plan_for_assets(result["new_assets"])
+
+        for finding in result.get("findings", []):
+            self.handle_finding(finding)
+            critical_actions = self.critical_path_analyzer.analyze(finding)
+            for action in critical_actions:
+                if action.action_type == "boost_priority":
+                    target_tags = action.target_filter.get("tags", [])
+                    def condition_fn(t, tt=target_tags):
+                        t_tags = getattr(t, 'params', {}).get('tags', [])
+                        return any(tag in tt for tag in t_tags)
+                    self.task_queue.boost_priority(
+                        condition=condition_fn,
+                        new_priority=action.params.get("priority", 999)
+                    )
+
+        react_tasks = self._observe_and_rethink(task, result)
+        self._add_tasks(react_tasks, source="react")
+        self._process_handoff(task, result)
+
+        new_context = self.context_propagator.extract(result)
+        if not new_context.is_empty():
+            self.accumulated_context.merge(new_context)
+            if new_context.discovered_params:
+                self.wordlist_manager.learn_params(new_context.discovered_params)
+            self.task_queue.inject_context(new_context)
+
+        result_ctx = result.get("context", {})
+        if isinstance(result_ctx, dict):
+            target_info_update = result_ctx.get("target_info", {})
+            if target_info_update:
+                self.context.target_info.update(target_info_update)
+                logger.debug(f"Updated target_info from task {task.id}: {list(target_info_update.keys())}")
+
+    def _handle_task_failure(self, task: Task, result: dict, exec_record: Any) -> None:
+        """タスク失敗時の状態更新と分析・リプラン（facade helper）。"""
+        task.state = TaskState.FAILED
+        task.error = result.get("error", task.error)
+        failure_phase = str(result.get("phase", "dispatch_result")) if isinstance(result, dict) else "dispatch_result"
+        failure_reason = self._extract_failure_reason(result)
+        if self._is_timeout_related(failure_reason):
+            failure_reason = "timeout_result"
+        self._record_failure_context(task, failure_phase, failure_reason)
+        self._emit_task_state_event(
+            event_type=EventType.TASK_FAILED,
+            task=task,
+            result=result,
+        )
+        flaky_verdict = self._update_flaky_quarantine(task, success=False)
+
+        # ErrorAnalyzer & SelfReflection
+        root_cause = None
+        try:
+            from src.core.intelligence import ErrorRecord, ExecutionOutcome, ExecutionRecord
+            error_record = ErrorRecord(
+                error_message=result.get("error", "Unknown error"),
+                status_code=result.get("data", {}).get("status_code"),
+                target_url=task.params.get("target", ""),
+                action_type=task.agent_type,
+            )
+            root_cause = self.error_analyzer.analyze(error_record)
+
+            outcome = ExecutionOutcome.FAILURE
+            if root_cause and root_cause.category.value in ["waf_blocked", "ip_blocked", "rate_limited"]:
+                outcome = ExecutionOutcome.BLOCKED
+
+            self.self_reflection.record(ExecutionRecord(
+                task_id=task.id,
+                action_type=task.agent_type or "unknown",
+                target=task.params.get("target", ""),
+                outcome=outcome,
+                duration_seconds=exec_record.duration_seconds() or 0.0,
+                error_message=result.get("error"),
+                response_code=result.get("data", {}).get("status_code"),
+            ))
+        except Exception as e:
+            logger.warning(f"Intelligence: Error analysis failed (non-critical): {e}")
+
+        # Replan decision (service plan)
+        replan_decision = build_failure_replan_decision(
+            task, root_cause, flaky_verdict,
+            max_replan_depth=self.max_replan_depth,
+        )
+        if replan_decision.should_quarantine:
+            task.params["_quarantine"] = {
+                "status": "quarantine",
+                "window_size": flaky_verdict.get("window_size"),
+                "failures": flaky_verdict.get("failures"),
+                "failure_rate": flaky_verdict.get("failure_rate"),
+                "reason": replan_decision.quarantine_reason or "flaky_auto_quarantine",
+            }
+        if replan_decision.should_replan:
+            if replan_decision.wait_seconds > 0:
+                logger.info(f"Intelligence: ErrorAnalyzer suggests waiting {replan_decision.wait_seconds}s before replan")
+                time.sleep(replan_decision.wait_seconds)
+            failure_replan = self.replan(task, result.get("error", "Unknown error"), root_cause=root_cause)
+            for alt in failure_replan:
+                alt.replan_depth = task.replan_depth + 1
+                alt.parent_id = task.id
+            self._add_tasks(failure_replan, source="failure_replan")
+        elif not replan_decision.retry_recommended:
+            logger.info(f"Intelligence: ErrorAnalyzer suggests NOT retrying task {task.id} (Category: {replan_decision.root_cause_category or 'unknown'})")
 
     def _execute_single_task_full_flow(self, task: Task) -> dict:
         """
-        単一タスクの全工程（事前準備、実行、事後処理）をカプセル化
+        単一タスクの全工程（thin wrapper）。
         スレッドセーフに状態を更新します。
+        preparation / dispatch / result apply / failure policy の各 helper を呼び出す。
         """
         import uuid
         from src.core.models.task_execution_log import TaskExecutionRecord
         from src.core.infra.event_bus import get_event_bus, Event, EventType
         from src.core.notifications.notifier import get_notifier
 
-        # 1. 事前準備 (Enrichment)
+        # 1. 事前準備 (Enrichment) + event emit + record init
         with self._state_lock:
             task.state = TaskState.RUNNING
             if not self.accumulated_context.is_empty():
                 task.params["_context"] = self.accumulated_context.to_dict()
             task = self.context_designer.enrich_task(task, self.context, self.accumulated_context, workspace=self.workspace)
-            
-        # 2. イベント通知
+
         event_bus = get_event_bus()
         correlation = self.context.target_info.get("correlation", {})
         started_payload = build_task_started_payload(task, correlation=correlation)
         event_bus.emit_sync(
-            Event(
-                type=EventType.TASK_STARTED,
-                payload=started_payload,
-                source="master_conductor",
-            )
+            Event(type=EventType.TASK_STARTED, payload=started_payload, source="master_conductor")
         )
-
-        # 3. 実行記録作成
         exec_record = build_execution_record_init(task)
 
-        # 📸 HOOK: 実行前スナップショット (DiffAnalyzer)
+        # 2. 実行前スナップショット
         before_snap_id = None
         if task.action in ["fuzz", "post", "put", "delete"] or task.params.get("method") in ["POST", "PUT", "DELETE"]:
             try:
                 target = task.params.get("target", "default")
-                # KnowledgeGraphから現在の知見を収集 (簡易版)
                 current_data = {
                     "urls": [n.url for n in self.graph.get_nodes_by_type("Page") if hasattr(n, "url")],
-                    "endpoints": [n.url for n in self.graph.get_nodes_by_type("Endpoint") if hasattr(n, "url")]
+                    "endpoints": [n.url for n in self.graph.get_nodes_by_type("Endpoint") if hasattr(n, "url")],
                 }
                 _, before_snap_id = self.diff_analyzer.take_snapshot(target, current_data, label=f"before_{task.id}")
                 logger.info("📸 Captured 'before' snapshot: %s", before_snap_id)
@@ -3633,80 +3894,25 @@ class MasterConductor:
                 logger.warning("DiffAnalyzer: Failed to take 'before' snapshot: %s", e)
 
         try:
-            # 🛡️ HOOK 1: 実行前リスク評価 (RiskPredictor)
-            # 攻撃的すぎる行動やWAF検知リスクが高い場合にタスクを制御
-            try:
-                from src.core.intelligence import ActionRiskProfile
-                action_type = self._map_agent_to_action_type(task.agent_type, task.action)
-                profile = ActionRiskProfile(
-                    action_type=action_type,
-                    target_url=task.params.get("target", ""),
-                    has_waf="waf" in str(self.context.target_info).lower(),
-                    consecutive_failures=getattr(task, "replan_depth", 0),
-                    payload=str(task.params.get("payload", "")) if task.params.get("payload") else None
-                )
-                assessment = self.risk_predictor.assess(profile)
-                
-                if not assessment.should_proceed:
-                    logger.warning("🚫 RiskPredictor blocked task %s (risk level: %s)", task.id, assessment.risk_level)
-                    with self._state_lock:
-                        task.state = TaskState.FAILED # SKIPPED 状態がないため FAILED 扱い
-                        task.error = f"Blocked by RiskPredictor: {assessment.risk_level}"
-                        self._record_failure_context(task, "precheck", "risk_predictor_block")
-                        exec_record.mark_completed(success=False, error=task.error)
-                        self.execution_log.add_record(exec_record)
-                    self._mark_pending_hitl_done(task, success=False)
-                    self._record_task_prioritizer_outcome(task, {"success": False, "error": task.error})
-                    return {"success": False, "error": "Blocked by RiskPredictor", "risk": assessment.to_dict()}
-                
-                if assessment.recommended_delay > 0:
-                    delay_disabled = bool(getattr(settings, "risk_predictor_delay_disable", False))
-                    high_only = bool(getattr(settings, "risk_predictor_delay_high_only", False))
-                    min_score = float(getattr(settings, "risk_predictor_delay_min_score", 0.7) or 0.7)
-                    apply_delay = not delay_disabled
-                    risk_score = float(getattr(assessment, "risk_score", 0.0) or 0.0)
-                    risk_level = str(getattr(assessment, "risk_level", "") or "").strip().lower()
-                    is_high_risk_level = risk_level in {"high", "critical"}
-                    if apply_delay and high_only and not (is_high_risk_level or risk_score >= min_score):
-                        apply_delay = False
+            # 3. リスク評価 + 介入チェック
+            precheck_result = self._assess_task_risk(task, exec_record)
+            if precheck_result is not None:
+                return precheck_result
 
-                    if apply_delay:
-                        delay = min(assessment.recommended_delay, 10.0) # 最大10秒
-                        logger.info("⏳ RiskPredictor: applying recommended delay %.2fs for %s", delay, task.name)
-                        # メインループを止めすぎないよう注意（並列実行なら個別スレッドで停止）
-                        time.sleep(delay)
-                    else:
-                        if delay_disabled:
-                            logger.info("RiskPredictor: delay disabled by settings for %s", task.name)
-                        else:
-                            logger.info(
-                                "RiskPredictor: skipped delay for %s (risk_level=%s, risk_score=%.2f, min_score=%.2f)",
-                                task.name,
-                                risk_level or "unknown",
-                                risk_score,
-                                min_score,
-                            )
-            except Exception as e:
-                logger.warning(f"Intelligence: Risk assessment failed (non-critical): {e}")
-
-            intervention_block = self._run_intervention_precheck(task, exec_record=exec_record)
-            if intervention_block is not None:
-                self._record_task_prioritizer_outcome(task, intervention_block)
-                return intervention_block
-
-            # 4. 実ディスパッチ (各 Swarm 呼び出し)
+            # 4. Dispatch
             logger.info(f"🚀 Dispatching {task.agent_type} (task {task.id}) via _run_async_safe")
-            
-            timeout_override = None
-            if getattr(task, "agent_type", "") in ["InjectionManager", "InjectionManagerAgent", "injection_manager", "InjectionSwarm", "injection_manager_agent"] or "Injection" in getattr(task, "agent_type", ""):
-                timeout_override = getattr(settings, "injection_manager_timeout", 1800)
+            timeout_override, _timeout_reason = build_dispatch_timeout_decision(
+                task,
+                injection_manager_timeout=int(getattr(settings, "injection_manager_timeout", 1800)),
+            )
+            if timeout_override is not None:
                 logger.debug(f"Using extended timeout {timeout_override}s for {task.agent_type}")
-                
+
             result = self._dispatch_with_timeout_retry(task, timeout_override=timeout_override)
             task.result = result
             logger.info(f"📥 Received result from {task.agent_type} (task {task.id})")
-                
-            # 5. 結果処理とリプラン (ロックを保持して安全に)
+
+            # 5. 結果処理 (lock + intelligence hooks + success/failure branch)
             logger.debug(f"🔑 Thread {threading.get_ident()} attempting to acquire _state_lock for task {task.id} result processing")
             with self._state_lock:
                 logger.debug(f"🔓 Thread {threading.get_ident()} acquired _state_lock for task {task.id} result processing")
@@ -3714,243 +3920,24 @@ class MasterConductor:
                     success=result.get("success", False),
                     summary=result.get("message", ""),
                     output=result.get("output", ""),
-                    metadata=result.get("data", {})
+                    metadata=result.get("data", {}),
                 )
                 for f in result.get("findings", []):
                     exec_record.add_vulnerability(f)
-                
                 self.execution_log.add_record(exec_record)
-            
-                # 🧠 HOOK: 意思決定強化 (DecisionEnhancer)
-                try:
-                    from src.core.intelligence import DecisionContext, Decision
-                    waf_detected = "waf" in str(result.get("message", "")).lower() or result.get("data", {}).get("waf_blocked", False)
-                    rate_limited = "rate limit" in str(result.get("message", "")).lower() or result.get("status") == 429
-                    
-                    d_ctx = DecisionContext(
-                        action_type=task.agent_type or "unknown",
-                        target_url=task.params.get("target", ""),
-                        previous_attempts=getattr(task, "replan_depth", 0),
-                        waf_detected=waf_detected,
-                        rate_limit_active=rate_limited
-                    )
-                    enhanced_decision = self.decision_enhancer.decide(d_ctx)
-                    
-                    if enhanced_decision.decision in [Decision.RETRY, Decision.MODIFY]:
-                        logger.info("💡 DecisionEnhancer: %s requested. Reason: %s", 
-                                    enhanced_decision.decision.value, enhanced_decision.reasoning)
-                        # タスクを再スケジュール (回数制限あり)
-                        if getattr(task, "replan_depth", 0) < 3:
-                            new_task = task.clone()
-                            new_task.id = f"{task.id}_retry_{int(time.time())}"
-                            new_task.replan_depth = getattr(task, "replan_depth", 0) + 1
-                            if enhanced_decision.modifications:
-                                new_task.params["_modifications"] = enhanced_decision.modifications
-                                logger.info("🔧 Applying modifications: %s", enhanced_decision.modifications)
-                            self.task_queue.add(new_task)
-                except Exception as e:
-                    logger.warning("DecisionEnhancer: Failed to enhance decision: %s", e)
 
-                # 📸 HOOK: 実行後スナップショット & 差分分析 (DiffAnalyzer)
-                if before_snap_id:
-                    try:
-                        target = task.params.get("target", "default")
-                        current_data = {
-                            "urls": [n.url for n in self.graph.get_nodes_by_type("Page") if hasattr(n, "url")],
-                            "endpoints": [n.url for n in self.graph.get_nodes_by_type("Endpoint") if hasattr(n, "url")]
-                        }
-                        _, after_snap_id = self.diff_analyzer.take_snapshot(target, current_data, label=f"after_{task.id}")
-                        
-                        # 差分比較
-                        diffs = self.diff_analyzer.compare(
-                            self.diff_analyzer.snapshots[after_snap_id],
-                            self.diff_analyzer.snapshots[before_snap_id]
-                        )
-                        
-                        has_changes = any(d.has_changes() for d in diffs.values())
-                        if has_changes:
-                            logger.info("🔍 State changes detected after %s!", task.id)
-                            # 差分をKnowledgeGraphへ記録 (重要なもの)
-                            for cat, d in diffs.items():
-                                if d.added:
-                                    logger.info("  [+] Added in %s: %s", cat, d.added[:5])
-                    except Exception as e:
-                        logger.warning("DiffAnalyzer: Failed to perform post-execution diff: %s", e)
+                # Intelligence hooks (DecisionEnhancer + DiffAnalyzer)
+                self._apply_post_dispatch_intelligence(task, result, before_snap_id)
 
                 if result.get("success", False):
-                    task.state = TaskState.SUCCESS
-                    task.failure_phase = None
-                    task.failure_reason = None
-                    task.failure_reason_code = None
-                    if isinstance(task.params, dict):
-                        task.params.pop("_failure", None)
-                    self.context.update_success_rate(True)
-                    self._emit_task_state_event(
-                        event_type=EventType.TASK_COMPLETED,
-                        task=task,
-                        result=result,
-                    )
-                    self._update_flaky_quarantine(task, success=True)
-                    
-                    # 📈 HOOK 2: 成功時フィードバック (SelfReflection & PriorityBooster)
-                    try:
-                        from src.core.intelligence import ExecutionRecord, ExecutionOutcome
-                        def _get_finding_title(f):
-                            return f.title if hasattr(f, 'title') else f.get('title', 'Unknown')
-                        def _get_finding_type(f):
-                            vt = f.vuln_type if hasattr(f, 'vuln_type') else f.get('vuln_type', f.get('type', 'Unknown'))
-                            return vt.value if hasattr(vt, 'value') else str(vt)
-
-                        self.self_reflection.record(ExecutionRecord(
-                            task_id=task.id,
-                            action_type=task.agent_type or "unknown",
-                            target=task.params.get("target", ""),
-                            outcome=ExecutionOutcome.SUCCESS,
-                            duration_seconds=exec_record.duration_seconds() or 0.0,
-                            findings=[f"[{_get_finding_type(f)}] {_get_finding_title(f)}" for f in result.get("findings", [])],
-                            response_code=result.get("data", {}).get("status_code") or result.get("status_code"),
-                            payload_used=str(task.params.get("payload", "")) if task.params.get("payload") else None
-                        ))
-                        
-                        # PriorityBooster: レスポンス内容から重要資産を見つけて後続タスクをブースト
-                        response_body = result.get("output", "") or result.get("data", {}).get("response_body", "")
-                        if response_body:
-                            # 待機中のタスクを対象にする
-                            boost_event = self.priority_booster.auto_detect_boost(
-                                target=task.params.get("target", ""),
-                                content=str(response_body),
-                                related_tasks=self.task_queue.get_pending_task_ids()
-                            )
-                            if boost_event:
-                                affected_ids = self.priority_booster.boost_on_discovery(boost_event)
-                                # キューの優先度にも反映 (0-100にスケーリング)
-                                boost_val = int(boost_event.boost_amount * 50) # 最大50ポイント上昇
-                                if affected_ids:
-                                    logger.info("🔥 Discovery triggered priority boost for tasks: %s (+%d)", affected_ids, boost_val)
-                                    self.task_queue.boost_priority(lambda t, aids=affected_ids: t.id in aids, boost_val)
-                    except Exception as e:
-                        logger.warning(f"Intelligence: Success feedback failed (non-critical): {e}")
-
-                    # 資産発見時のプラン拡張
-                    if result.get("new_assets"):
-                        self._expand_plan_for_assets(result["new_assets"])
-                    
-                    # Finding フィードバック
-                    for finding in result.get("findings", []):
-                        self.handle_finding(finding)
-                        # クリティカルパス分析
-                        critical_actions = self.critical_path_analyzer.analyze(finding)
-                        for action in critical_actions:
-                            if action.action_type == "boost_priority":
-                                target_tags = action.target_filter.get("tags", [])
-                                def condition_fn(t, tt=target_tags):
-                                    t_tags = getattr(t, 'params', {}).get('tags', [])
-                                    return any(tag in tt for tag in t_tags)
-                                    
-                                self.task_queue.boost_priority(
-                                    condition=condition_fn,
-                                    new_priority=action.params.get("priority", 999)
-                                )
-                    
-                    # 再帰的計画 (ReThink)
-                    react_tasks = self._observe_and_rethink(task, result)
-                    self._add_tasks(react_tasks, source="react")
-
-                    # Handoff 処理
-                    self._process_handoff(task, result)
-                    
-                    # コンテキスト伝搬
-                    new_context = self.context_propagator.extract(result)
-                    if not new_context.is_empty():
-                        self.accumulated_context.merge(new_context)
-                        if new_context.discovered_params:
-                            self.wordlist_manager.learn_params(new_context.discovered_params)
-                        self.task_queue.inject_context(new_context)
-
-                    # ExecutionContext (TargetInfo) の直接更新
-                    # ScopeParserなどが返した target_info (Cookie等) を反映
-                    result_ctx = result.get("context", {})
-                    if isinstance(result_ctx, dict):
-                        target_info_update = result_ctx.get("target_info", {})
-                        if target_info_update:
-                            self.context.target_info.update(target_info_update)
-                            logger.debug(f"Updated target_info from task {task.id}: {list(target_info_update.keys())}")
+                    self._handle_task_success(task, result, exec_record)
                 else:
-                    task.state = TaskState.FAILED
-                    task.error = result.get("error", task.error)
-                    failure_phase = str(result.get("phase", "dispatch_result")) if isinstance(result, dict) else "dispatch_result"
-                    failure_reason = self._extract_failure_reason(result)
-                    if self._is_timeout_related(failure_reason):
-                        failure_reason = "timeout_result"
-                    self._record_failure_context(task, failure_phase, failure_reason)
-                    self._emit_task_state_event(
-                        event_type=EventType.TASK_FAILED,
-                        task=task,
-                        result=result,
-                    )
-                    flaky_verdict = self._update_flaky_quarantine(task, success=False)
-                    
-                    # 🔍 HOOK 3: 失敗時分析 (ErrorAnalyzer & SelfReflection)
-                    root_cause = None
-                    try:
-                        from src.core.intelligence import ErrorRecord, ExecutionOutcome, ExecutionRecord
-                        error_record = ErrorRecord(
-                            error_message=result.get("error", "Unknown error"),
-                            status_code=result.get("data", {}).get("status_code"),
-                            target_url=task.params.get("target", ""),
-                            action_type=task.agent_type,
-                        )
-                        root_cause = self.error_analyzer.analyze(error_record)
-                        
-                        # SelfReflection に記録（WAFブロック等は BLOCKED 扱い）
-                        outcome = ExecutionOutcome.FAILURE
-                        if root_cause and root_cause.category.value in ["waf_blocked", "ip_blocked", "rate_limited"]:
-                            outcome = ExecutionOutcome.BLOCKED
-                        
-                        self.self_reflection.record(ExecutionRecord(
-                            task_id=task.id,
-                            action_type=task.agent_type or "unknown",
-                            target=task.params.get("target", ""),
-                            outcome=outcome,
-                            duration_seconds=exec_record.duration_seconds() or 0.0,
-                            error_message=result.get("error"),
-                            response_code=result.get("data", {}).get("status_code"),
-                        ))
-                    except Exception as e:
-                        logger.warning(f"Intelligence: Error analysis failed (non-critical): {e}")
+                    self._handle_task_failure(task, result, exec_record)
 
-                    # 失敗時のリプランニング
-                    if task.replan_depth < self.max_replan_depth:
-                        # ErrorAnalyzer がリトライを奨励する場合のみ実行（デフォルトTrue）
-                        should_replan = root_cause.retry_recommended if root_cause else True
-                        if flaky_verdict.get("status") == "quarantine":
-                            should_replan = False
-                            task.params["_quarantine"] = {
-                                "status": "quarantine",
-                                "window_size": flaky_verdict.get("window_size"),
-                                "failures": flaky_verdict.get("failures"),
-                                "failure_rate": flaky_verdict.get("failure_rate"),
-                                "reason": "flaky_auto_quarantine",
-                            }
-                        
-                        if should_replan:
-                            if root_cause and root_cause.wait_seconds:
-                                logger.info(f"Intelligence: ErrorAnalyzer suggests waiting {root_cause.wait_seconds}s before replan")
-                                time.sleep(min(root_cause.wait_seconds, 15.0)) # 最大15秒待機
-
-                            failure_replan = self.replan(task, result.get("error", "Unknown error"), root_cause=root_cause)
-                            for alt in failure_replan:
-                                alt.replan_depth = task.replan_depth + 1
-                                alt.parent_id = task.id
-                            self._add_tasks(failure_replan, source="failure_replan")
-                        else:
-                            logger.info(f"Intelligence: ErrorAnalyzer suggests NOT retrying task {task.id} (Category: {root_cause.category if root_cause else 'unknown'})")
-
-            # HITL チェック (並列中でもスレッドセーフに実行)
+            # 6. HITL
             hitl_info = self.check_hitl_required(task, result)
             if hitl_info:
                 self.request_human_approval(hitl_info)
-
             self._mark_pending_hitl_done(task, success=bool(result.get("success", False)))
             self._record_task_prioritizer_outcome(task, result)
             return result
