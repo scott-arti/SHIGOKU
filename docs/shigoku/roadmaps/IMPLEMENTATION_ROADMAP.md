@@ -1,6 +1,7 @@
 ---
 task_id: SGK-2026-0065
 doc_type: roadmap
+doc_usage: reference_roadmap
 status: active
 parent_task_id: SGK-2026-0101
 related_docs:
@@ -16,6 +17,8 @@ updated_at: '2026-05-19'
 
 本ドキュメントは、SHIGOKUを「自律型かつ戦略的なセキュリティ診断ツール」へと進化させるための実装フェーズを定義します。
 「既存の独立エージェントの整理」と「戦略エンジンの導入」を主軸とし、以下の4フェーズで開発を進めます。
+
+> 2026-06-19 注記: このロードマップは歴史的な計画と進捗記録を兼ねています。現行コードでは一部のモジュール配置が変更されており、たとえばネットワーククライアントは `src/core/infra/network_client.py`、Recon 実装は `src/recon/` と `src/core/recon/`、MC 連携の実体は `ActionDispatcher` 単独ファイルではなく現行 orchestration 層へ再編されています。
 
 ## Phase 1: 足場固めと構造改革 (Swarm化 & 入力正規化) - **Completed**
 
@@ -38,7 +41,7 @@ updated_at: '2026-05-19'
   - 外部ツール実行 (subprocess) 特化。LLM非依存。
 - [ ] **LLMWorker**: `src/core/swarm/worker/llm_worker.py`
   - 推論・コード生成・判断特化。
-- [ ] **NetworkClient Wrapper**: `src/core/common/network_client.py`
+- [ ] **NetworkClient Wrapper**: `src/core/infra/network_client.py`
   - `ProceduralWorker` から呼び出しやすい形への適合。
 
 ### 3. 独立エージェントの統廃合 (Migration)
@@ -62,7 +65,7 @@ updated_at: '2026-05-19'
 
 ### 4. Master Conductor (MC) との連携修正
 
-- [x] **ActionDispatcher Refactor**: `src/core/engine/action_dispatcher.py`
+- [x] **ActionDispatcher Refactor**: 現行 orchestration 層へ統合済み（旧 `src/core/engine/action_dispatcher.py` 前提の記述）
   - [x] 独立エージェント呼び出し分岐 (`if agent_name == ...`) を削除。
   - [x] 全タスクを `SwarmManager.assign_task()` 経由に統一。
 
@@ -98,7 +101,7 @@ updated_at: '2026-05-19'
 
 目的: 柔軟かつ効率的な偵察プロセスの確立。MCが始動する前に「良質な燃料（資産情報）」を供給する。
 
-### 1. Adaptive Recon Pipeline (`src/core/recon/`)
+### 1. Adaptive Recon Pipeline (`src/recon/`, `src/core/recon/`)
 
 - [x] **ReconOrchestrator**: ターゲットの種類とモードに基づき、適切なレシピを選択・実行する。
 - [x] **ReconRecipeFactory**: 7つの偵察パターン（レシピ）の生成。
@@ -138,24 +141,3 @@ updated_at: '2026-05-19'
 - [ ] **Advanced Visualization**:
   - [ ] 攻撃パスのグラフ化 (Neo4j -> UI)。
   - [ ] リアルタイム・タイムライン・ダッシュボード。
-
-目的: 侵入後の価値最大化と、CTFにおける勝利条件の自動達成。
-
-### 1. CTF Flag 監視システム (FlagWatcher)
-
-- [ ] **FlagWatcher Core**: `src/core/engine/flag_watcher.py`
-  - レスポンスや出力からのフラグ自動検知とMC停止フック。
-- [ ] **Integration Hooks**:
-  - `NetworkClient` (HTTP Response), `ProceduralWorker` (Command Output), `InteractionServer` (OOB).
-
-### 2. Post-Exploitation Swarm (`src/core/swarm/post_exploit/`)
-
-- [ ] **InternalReconWorker**: RCE/LFI後の内部情報収集。
-- [ ] **ShellStabilizerWorker**: シェルのアップグレード。
-- [ ] **PivotWorker**: SSRFや侵入先経由の内部ネットワークスキャン。
-- [ ] **SecretLooterWorker**: 認証情報や機密ファイルの探索。
-
-### 3. Master Conductor (MC) Trigger Mechanism
-
-- [ ] **Finding Event Listener**: 脆弱性発見イベントのハンドリング。
-- [ ] **Automatic Escalation**: 致命的脆弱性発見時に自動でPost-Exploitタスクを割り込ませるロジック。

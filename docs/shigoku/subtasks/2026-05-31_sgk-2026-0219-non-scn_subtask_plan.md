@@ -1,6 +1,7 @@
 ---
 task_id: SGK-2026-0249
 doc_type: subtask_plan
+doc_usage: execution_plan
 status: active
 parent_task_id: SGK-2026-0219
 related_docs:

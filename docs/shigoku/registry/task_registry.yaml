@@ -203,7 +203,7 @@ tasks:
   doc_type: spec
   title: 007. プロンプトモジュールのリネームとユーティリティパッケージの導入
   primary_doc: docs/shigoku/specs/adr/007-prompts-rename-and-utils-package.md
-  status: active
+  status: done
   provisional: false
   task_summary: 007. プロンプトモジュールのリネームとユーティリティパッケージの導入
   parent_task_id: null
@@ -223,7 +223,7 @@ tasks:
   doc_type: spec
   title: 'ADR-009: 技術的負債解消（Phase 0-4 完了）'
   primary_doc: docs/shigoku/specs/adr/009-tech-debt-resolution-complete.md
-  status: active
+  status: done
   provisional: false
   task_summary: 'ADR-009: 技術的負債解消（Phase 0-4 完了）'
   parent_task_id: null
@@ -233,7 +233,7 @@ tasks:
   doc_type: spec
   title: 'ADR: エンドポイント承認キャッシュによるガードレール競合の解決'
   primary_doc: docs/shigoku/specs/adr/2026-02-27_RequestGuard_Implementation.md
-  status: active
+  status: done
   provisional: false
   task_summary: 'ADR: エンドポイント承認キャッシュによるガードレール競合の解決'
   parent_task_id: null
@@ -473,7 +473,7 @@ tasks:
   doc_type: spec
   title: Reconnaissance Pipeline シナリオ設計書
   primary_doc: docs/shigoku/specs/recon_scenario.md
-  status: active
+  status: done
   provisional: false
   task_summary: Reconnaissance Pipeline シナリオ設計書
   parent_task_id: null

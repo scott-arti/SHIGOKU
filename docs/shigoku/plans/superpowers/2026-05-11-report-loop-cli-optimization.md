@@ -1,6 +1,7 @@
 ---
 task_id: SGK-2026-0050
 doc_type: plan
+doc_usage: implementation_plan
 status: backlog
 parent_task_id: null
 related_docs: []

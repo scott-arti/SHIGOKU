@@ -1,7 +1,8 @@
 ---
 task_id: SGK-2026-0020
 doc_type: spec
-status: active
+doc_usage: historical_completion_spec
+status: done
 parent_task_id: null
 related_docs: []
 created_at: '2026-05-19'
@@ -9,6 +10,8 @@ updated_at: '2026-05-19'
 ---
 
 # 007. プロンプトモジュールのリネームとユーティリティパッケージの導入
+
+> 2026-06-19 注記: この ADR は実装完了後の履歴資料です。本文で述べる `src/prompts/__init__.py` の互換レイヤー、`src/core/utils/json_utils.py`、`MultiAccountSessionManager._load_from_env()` に対応する現行実装があります。
 
 **Date:** 2026-01-05
 **Status:** Accepted

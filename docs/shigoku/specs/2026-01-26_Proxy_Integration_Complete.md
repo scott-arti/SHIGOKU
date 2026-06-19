@@ -1,6 +1,7 @@
 ---
 task_id: SGK-2026-0073
 doc_type: spec
+doc_usage: historical_completion_spec
 status: active
 parent_task_id: null
 related_docs: []
@@ -9,6 +10,8 @@ updated_at: '2026-05-19'
 ---
 
 # 仕様書: Phase 1.3 Proxy Integration Completion
+
+> 2026-06-19 注記: この仕様書は歴史的な完了仕様です。現行コードでは `AsyncNetworkClient` の実体は `src/core/infra/network_client.py` にあります。また、一部の対象エージェント名・配置は更新後のコードと一致しません。
 
 **目標**: システム全体でのプロキシローテーションと統一HTTPクライアント (`AsyncNetworkClient`) の適用を完了させ、匿名性と耐障害性を確保する。
 
@@ -29,12 +32,14 @@ updated_at: '2026-05-19'
 
 以下のエージェントについても `httpx` を `AsyncNetworkClient` に置換します。
 
-- **`src/core/agents/specialized/taint_analysis_agent.py`**
-  - `analyze` メソッド内の `httpx.get`/`post` を置換。
 - **`src/core/agents/specialized/api_spec_reconstructor.py`**
   - `_fetch_content` メソッド内の `httpx.get` を置換。
 - **`src/core/agents/specialized/graphql_navigator.py`**
   - `explore`, `_try_introspection` 等のメソッド内の `httpx.post` を置換。
+
+補足:
+- 旧記述の `src/core/agents/specialized/taint_analysis_agent.py` は現行ツリーには存在しません。
+- 現行の `AsyncNetworkClient` 参照先は `src/core/infra/network_client.py` です。
 
 ## 3. 実装詳細ルール
 

@@ -64,34 +64,10 @@ class ToolRegistry:
                 description="GitHub監視とシークレット検出",
             ),
             ToolInfo(
-                name="visual_filter",
-                display_name="Visual Filter",
-                category="intel",
-                description="ページタイプ画像分類",
-            ),
-            ToolInfo(
-                name="google_dorker",
-                display_name="Google Dorker",
-                category="intel",
-                description="Google Dork検索",
-            ),
-            ToolInfo(
-                name="js_analyzer",
-                display_name="JS Analyzer",
-                category="intel",
-                description="JavaScript解析とエンドポイント抽出",
-            ),
-            ToolInfo(
                 name="subzy",
                 display_name="Subzy",
                 category="intel",
                 description="サブドメインテイクオーバー検出 (Go)",
-            ),
-            ToolInfo(
-                name="wayback_integrator",
-                display_name="Wayback Integrator",
-                category="intel",
-                description="Wayback Machine履歴取得",
             ),
             ToolInfo(
                 name="cloud_enum",
@@ -106,46 +82,10 @@ class ToolRegistry:
                 description="マルチクラウドセキュリティ監査 (Python)",
             ),
             ToolInfo(
-                name="cve_explorer",
-                display_name="CVE Explorer",
-                category="intel",
-                description="CVE情報検索",
-            ),
-            ToolInfo(
-                name="email_harvester",
-                display_name="Email Harvester",
-                category="intel",
-                description="メールアドレス収集",
-            ),
-            ToolInfo(
-                name="asn_discoverer",
-                display_name="ASN Discoverer",
-                category="intel",
-                description="ASN情報とIP範囲発見",
-            ),
-            ToolInfo(
-                name="cert_transparency",
-                display_name="Cert Transparency",
-                category="intel",
-                description="証明書透明性ログ検索",
-            ),
-            ToolInfo(
-                name="shodan_integrator",
-                display_name="Shodan Integrator",
-                category="intel",
-                description="Shodan API連携",
-            ),
-            ToolInfo(
                 name="dns_history",
                 display_name="DNS History",
                 category="intel",
                 description="DNS履歴収集",
-            ),
-            ToolInfo(
-                name="headless_crawler",
-                display_name="Headless Crawler",
-                category="intel",
-                description="ヘッドレスブラウザクローリング",
             ),
             ToolInfo(
                 name="proxy_log_analyzer",
@@ -268,12 +208,6 @@ class ToolRegistry:
                 display_name="Nuclei Template Generator",
                 category="analysis",
                 description="Nucleiテンプレート動的生成",
-            ),
-            ToolInfo(
-                name="disclosed_report_hunter",
-                display_name="Disclosed Report Hunter",
-                category="intel",
-                description="公開レポート探索と傾向分析",
             ),
         ]
         

@@ -61,26 +61,16 @@ BUILTIN_MODES = {
         logging_level="info",
         auto_report=True,
         tools={
-            # Intel - 偵察ツール (17種)
+            # Intel - 偵察ツール
             "cartographer": True,
             "fingerprinter": True,
             "commit_watcher": True,
-            "visual_filter": True,
-            "google_dorker": True,
-            "js_analyzer": True,
             "takeover_detector": False, # deprecated
             "subzy": True, # takeover_detector replacement
-            "wayback_integrator": True,
             "cloud_misconfig_detector": False, # deprecated
             "cloud_enum": True, # cloud_misconfig_detector replacement
             "scoutsuite": True,
-            "cve_explorer": True,
-            "email_harvester": True,
-            "asn_discoverer": True,
-            "cert_transparency": True,
-            "shodan_integrator": True,
             "dns_history": True,
-            "headless_crawler": True,
             "proxy_log_analyzer": True,  # 新規追加
             # Attack - 攻撃ツール (11種)
             "jwt_inspector": True,
@@ -125,26 +115,16 @@ BUILTIN_MODES = {
         logging_level="debug",
         auto_report=False,
         tools={
-            # Intel - 偵察ツール (17種、全て有効)
+            # Intel - 偵察ツール
             "cartographer": True,
             "fingerprinter": True,
             "commit_watcher": True,
-            "visual_filter": True,
-            "google_dorker": True,
-            "js_analyzer": True,
             "takeover_detector": False, # deprecated
             "subzy": True,
-            "wayback_integrator": True,
             "cloud_misconfig_detector": False, # deprecated
             "cloud_enum": True,
             "scoutsuite": True,
-            "cve_explorer": True,
-            "email_harvester": True,
-            "asn_discoverer": True,
-            "cert_transparency": True,
-            "shodan_integrator": True,
             "dns_history": True,
-            "headless_crawler": True,
             "proxy_log_analyzer": True,  # 新規追加
             # Attack - 攻撃ツール (11種、全て有効)
             "jwt_inspector": True,
@@ -195,22 +175,12 @@ BUILTIN_MODES = {
             "cartographer": True,
             "fingerprinter": True,
             "commit_watcher": False,  # CTFでは不要
-            "visual_filter": True,
-            "google_dorker": False,  # CTFでは不要
-            "js_analyzer": True,
             "takeover_detector": False,  # CTFでは不要
             "subzy": False, # CTFでは不要
-            "wayback_integrator": False,  # CTFでは不要
             "cloud_misconfig_detector": False, # deprecated
             "cloud_enum": True,
             "scoutsuite": True,
-            "cve_explorer": True,
-            "email_harvester": False,  # CTFでは不要
-            "asn_discoverer": False,  # CTFでは不要
-            "cert_transparency": False,  # CTFでは不要
-            "shodan_integrator": False,  # CTFでは不要
             "dns_history": False,  # CTFでは不要
-            "headless_crawler": True,
             "proxy_log_analyzer": True,  # 新規追加、ログ分析は有用
             # Attack - 攻撃ツール（全開）
             "jwt_inspector": True,

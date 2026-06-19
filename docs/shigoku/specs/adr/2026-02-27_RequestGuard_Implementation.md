@@ -1,7 +1,8 @@
 ---
 task_id: SGK-2026-0023
 doc_type: spec
-status: active
+doc_usage: historical_completion_spec
+status: done
 parent_task_id: null
 related_docs: []
 created_at: '2026-02-27'
@@ -9,6 +10,8 @@ updated_at: '2026-05-19'
 ---
 
 # ADR: エンドポイント承認キャッシュによるガードレール競合の解決
+
+> 2026-06-19 注記: この ADR は RequestGuard 導入完了後の履歴資料です。本文で述べる `src/core/security/request_guard.py`、`src/core/infra/smart_request.py`、`src/core/engine/swarm_dispatcher.py`、`src/core/agents/swarm/logic/idor.py` に対応する現行実装があります。
 
 ## ステータス
 

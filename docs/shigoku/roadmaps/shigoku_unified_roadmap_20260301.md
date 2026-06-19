@@ -1,6 +1,7 @@
 ---
 task_id: SGK-2026-0070
 doc_type: roadmap
+doc_usage: reference_roadmap
 status: active
 parent_task_id: SGK-2026-0101
 related_docs:

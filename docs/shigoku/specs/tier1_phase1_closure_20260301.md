@@ -1,6 +1,7 @@
 ---
 task_id: SGK-2026-0161
 doc_type: spec
+doc_usage: historical_completion_spec
 status: active
 parent_task_id: null
 related_docs: []
@@ -9,6 +10,8 @@ updated_at: '2026-05-19'
 ---
 
 # Spec: Tier 1 (Phase 1 Closure) - `multipart/form-data` 対応 & Swarm Semaphore
+
+> 2026-06-19 注記: この文書は Phase 1 Closure の実装完了後に残っている歴史的仕様です。本文で述べている `BodyMutator` の `multipart/form-data` 対応と `SwarmManager` 系の `Semaphore` 制御は現行コードに実装済みです。
 
 ## 概要
 

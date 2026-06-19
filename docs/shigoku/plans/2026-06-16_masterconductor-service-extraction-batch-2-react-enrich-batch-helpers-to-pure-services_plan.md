@@ -1,6 +1,7 @@
 ---
 task_id: SGK-2026-0292
 doc_type: plan
+doc_usage: implementation_plan
 status: done
 parent_task_id: SGK-2026-0264
 related_docs:

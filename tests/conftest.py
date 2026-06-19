@@ -18,5 +18,7 @@ except ImportError:
 
 try:
     import litellm
-except ImportError:
+except Exception:
+    # litellm import can fail with environment-level dependency mismatches
+    # (for example incompatible pydantic / pydantic-core versions).
     sys.modules["litellm"] = MagicMock()

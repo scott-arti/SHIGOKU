@@ -4,6 +4,7 @@ description: LLMをCritic/Generatorとして用いたコンテキスト節約型
 status: active
 task_id: SGK-2026-0102
 doc_type: spec
+doc_usage: reference_spec
 parent_task_id: null
 related_docs: []
 created_at: '2026-05-19'

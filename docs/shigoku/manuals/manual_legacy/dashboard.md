@@ -1,6 +1,7 @@
 ---
 task_id: SGK-2026-0009
 doc_type: manual
+doc_usage: legacy_reference_manual
 status: active
 parent_task_id: null
 related_docs: []
@@ -9,6 +10,8 @@ updated_at: '2026-05-19'
 ---
 
 # SHIGOKU Dashboard 機能マニュアル
+
+> この文書は `manual_legacy` 配下の旧運用ガイドです。現行の dashboard/monitoring 周りは一部 CLI や起動方法が変わっているため、現行運用では補助資料として扱ってください。
 
 SHIGOKUには2種類のダッシュボード/レポート機能が存在します。
 
@@ -74,6 +77,8 @@ npm run dev
 - **Score**: プロジェクトごとの脆弱性スコア（0-10）
 - **Hunting Log**: 実行された攻撃/偵察のタイムライン
 
-## 今後の推奨アクション
+## 現行との差分メモ
 
-Webダッシュボードを簡単に起動するための `python -m src.main --dashboard` コマンドの実装を推奨します。
+- `python -m src.main --dashboard` というオプションは現行 CLI にはありません。
+- ターミナル向けの現行オプションは `--live-dashboard` です。
+- Web Dashboard 自体は引き続き `src/dashboard/api` と `src/dashboard/frontend` を個別起動する構成です。

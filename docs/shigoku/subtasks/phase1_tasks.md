@@ -1,6 +1,7 @@
 ---
 task_id: SGK-2026-0171
 doc_type: subtask_plan
+doc_usage: execution_plan
 status: backlog
 parent_task_id: SGK-2026-0058
 related_docs:

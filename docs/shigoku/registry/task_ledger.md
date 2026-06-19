@@ -26,10 +26,10 @@
 | SGK-2026-0017 | 004. セキュリティと信頼性向上のためのバグ修正設計判断 | active | spec |  | docs/shigoku/specs/adr/004-bugfix-security-reliability-improvements.md |
 | SGK-2026-0018 | 005. エンジン信頼性向上とコスト最適化 | active | spec |  | docs/shigoku/specs/adr/005-engine-reliability-and-cost-optimization.md |
 | SGK-2026-0019 | 006. バグ修正と例外処理方針の改善 | active | spec |  | docs/shigoku/specs/adr/006-fix-critical-bugs-and-exception-handling.md |
-| SGK-2026-0020 | 007. プロンプトモジュールのリネームとユーティリティパッケージの導入 | active | spec |  | docs/shigoku/specs/adr/007-prompts-rename-and-utils-package.md |
+| SGK-2026-0020 | 007. プロンプトモジュールのリネームとユーティリティパッケージの導入 | done | spec |  | docs/shigoku/specs/adr/007-prompts-rename-and-utils-package.md |
 | SGK-2026-0021 | ADR-008: Phase 1-3 技術的負債解消リファクタリング | active | spec |  | docs/shigoku/specs/adr/008-phase1-3-technical-debt-resolution.md |
-| SGK-2026-0022 | ADR-009: 技術的負債解消（Phase 0-4 完了） | active | spec |  | docs/shigoku/specs/adr/009-tech-debt-resolution-complete.md |
-| SGK-2026-0023 | ADR: エンドポイント承認キャッシュによるガードレール競合の解決 | active | spec |  | docs/shigoku/specs/adr/2026-02-27_RequestGuard_Implementation.md |
+| SGK-2026-0022 | ADR-009: 技術的負債解消（Phase 0-4 完了） | done | spec |  | docs/shigoku/specs/adr/009-tech-debt-resolution-complete.md |
+| SGK-2026-0023 | ADR: エンドポイント承認キャッシュによるガードレール競合の解決 | done | spec |  | docs/shigoku/specs/adr/2026-02-27_RequestGuard_Implementation.md |
 | SGK-2026-0024 | HexStrike vs SHIGOKU 比較分析 | done | work_report |  | docs/shigoku/reports/analysis/hexstrike_analysis.md |
 | SGK-2026-0026 | Report Loop KPI Baseline (2026-05-11) | done | work_report |  | docs/shigoku/reports/analysis/report_loop_kpi_baseline_2026-05-11.md |
 | SGK-2026-0027 | Caido Integration & Tagging Filter 実装計画 | active | spec |  | docs/shigoku/specs/caido_integration.md |
@@ -53,7 +53,7 @@
 | SGK-2026-0045 | VisualFilter - 画像解析・ページ分類エンジン | active | spec |  | docs/shigoku/specs/modules/VISUAL_FILTER.md |
 | SGK-2026-0046 | WordlistLearner - ワードリスト自動学習モジュール | active | spec |  | docs/shigoku/specs/modules/WORDLIST_LEARNER.md |
 | SGK-2026-0047 | WordlistManager - ワードリスト管理モジュール | active | spec |  | docs/shigoku/specs/modules/WORDLIST_MANAGER.md |
-| SGK-2026-0048 | Reconnaissance Pipeline シナリオ設計書 | active | spec |  | docs/shigoku/specs/recon_scenario.md |
+| SGK-2026-0048 | Reconnaissance Pipeline シナリオ設計書 | done | spec |  | docs/shigoku/specs/recon_scenario.md |
 | SGK-2026-0049 | 脆弱性機能実装仕様書 | active | spec |  | docs/shigoku/specs/standards/vulnerability_feature_implementation_spec.md |
 | SGK-2026-0050 | Report Loop CLI Optimization Implementation Plan | backlog | plan |  | docs/shigoku/plans/superpowers/2026-05-11-report-loop-cli-optimization.md |
 | SGK-2026-0051 | Raw Confirmed Stability + IDOR/Endpoint Class Recovery Implementation Plan | backlog | plan |  | docs/shigoku/plans/superpowers/2026-05-13-raw-confirmed-idor-endpoint.md |

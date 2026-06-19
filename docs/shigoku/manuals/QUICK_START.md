@@ -1,6 +1,7 @@
 ---
 task_id: SGK-2026-0005
 doc_type: manual
+doc_usage: reference_manual
 status: active
 parent_task_id: null
 related_docs: []
@@ -102,8 +103,8 @@ docker compose ps
 
 ```
 NAME                SERVICE    STATUS    PORTS
-shigoku-neo4j-1     neo4j      running   7474->7474, 7687->7687
-shigoku-chromadb-1  chromadb   running   8001->8000
+shigoku-neo4j       neo4j      running   7474->7474, 7687->7687
+shigoku-chromadb    chromadb   running   8003->8000
 ```
 
 ### 2-3. サービス接続確認
@@ -114,7 +115,7 @@ shigoku-chromadb-1  chromadb   running   8001->8000
 2. 接続情報を入力:
    - **Connect URL**: `bolt://localhost:7687`
    - **Username**: `neo4j`
-   - **Password**: `deephunter2024` (docker-compose.yml 参照)
+   - **Password**: `shigoku_k3y_7bA9vF2xR5w` (`docker-compose.yml` の `NEO4J_AUTH` を参照)
 3. 「Connect」をクリック
 
 **成功時**: Cypher 入力画面が表示される
@@ -122,7 +123,7 @@ shigoku-chromadb-1  chromadb   running   8001->8000
 #### ChromaDB (ベクトル DB)
 
 ```bash
-curl http://localhost:8001/api/v1/heartbeat
+curl http://localhost:8003/api/v1/heartbeat
 ```
 
 **成功時**: `{"nanosecond heartbeat": 1234567890123456789}` のような JSON が返る
@@ -171,9 +172,9 @@ pip install -r requirements.txt
 # .env ファイル例
 NEO4J_URI=bolt://localhost:7687
 NEO4J_USER=neo4j
-NEO4J_PASSWORD=deephunter2024
+NEO4J_PASSWORD=shigoku_k3y_7bA9vF2xR5w
 CHROMA_HOST=localhost
-CHROMA_PORT=8001
+CHROMA_PORT=8003
 GITHUB_TOKEN=ghp_your_token_here  # オプション
 OBSIDIAN_VAULT_PATH=~/Obsidian/Security  # オプション
 ```
@@ -329,7 +330,7 @@ docker compose up -d
 
 ```bash
 # ヘルスチェック
-curl http://localhost:8001/api/v1/heartbeat
+curl http://localhost:8003/api/v1/heartbeat
 
 # コンテナ再起動
 docker compose restart chromadb

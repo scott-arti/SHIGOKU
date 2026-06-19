@@ -1,6 +1,7 @@
 ---
 task_id: SGK-2026-0028
 doc_type: spec
+doc_usage: reference_spec
 status: active
 parent_task_id: null
 related_docs: []

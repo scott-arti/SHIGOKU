@@ -4,6 +4,7 @@ description: Fixes broken history links in HTML reports and ensures all timestam
   are displayed in JST.
 task_id: SGK-2026-0125
 doc_type: spec
+doc_usage: reference_spec
 status: active
 parent_task_id: null
 related_docs: []

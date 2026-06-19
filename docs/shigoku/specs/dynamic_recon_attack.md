@@ -3,6 +3,7 @@ name: dynamic_recon_attack
 description: Dynamic Recon and High-Precision Attack Validation Architecture
 task_id: SGK-2026-0114
 doc_type: spec
+doc_usage: reference_spec
 status: active
 parent_task_id: null
 related_docs: []

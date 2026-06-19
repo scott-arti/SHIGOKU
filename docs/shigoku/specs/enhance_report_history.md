@@ -4,6 +4,7 @@ description: Enhances the report history to include all project history across a
   reports, supports grouping by target, and adds execution time display.
 task_id: SGK-2026-0117
 doc_type: spec
+doc_usage: reference_spec
 status: active
 parent_task_id: null
 related_docs: []

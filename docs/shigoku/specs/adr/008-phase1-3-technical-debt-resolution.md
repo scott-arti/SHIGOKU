@@ -1,6 +1,7 @@
 ---
 task_id: SGK-2026-0021
 doc_type: spec
+doc_usage: historical_completion_spec
 status: active
 parent_task_id: null
 related_docs: []
@@ -9,6 +10,8 @@ updated_at: '2026-05-19'
 ---
 
 # ADR-008: Phase 1-3 技術的負債解消リファクタリング
+
+> 2026-06-19 注記: この ADR は Phase 1-3 リファクタリング完了後の履歴資料です。本文の `pydantic-settings` 導入、`safe_subprocess`、`AgentRegistry`、`asset_loader` に対応する現行実装があり、後続の [ADR-009](009-tech-debt-resolution-complete.md) にも接続しています。
 
 **日付**: 2026-01-05  
 **ステータス**: Accepted  

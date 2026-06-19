@@ -3,6 +3,7 @@ name: REQ_tier4_mc_intelligence
 description: Tier 4 - Master Conductor 知能の完全化機能の仕様定義
 task_id: SGK-2026-0096
 doc_type: spec
+doc_usage: reference_spec
 status: active
 parent_task_id: null
 related_docs: []

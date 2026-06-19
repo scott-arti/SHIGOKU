@@ -1,7 +1,8 @@
 ---
 task_id: SGK-2026-0022
 doc_type: spec
-status: active
+doc_usage: historical_completion_spec
+status: done
 parent_task_id: null
 related_docs: []
 created_at: '2026-05-19'
@@ -9,6 +10,8 @@ updated_at: '2026-05-19'
 ---
 
 # ADR-009: 技術的負債解消（Phase 0-4 完了）
+
+> 2026-06-19 注記: この ADR は完了済みの技術的負債解消についての履歴資料です。本文で挙げる `AgentProtocol`、`agent_registry`、設定 YAML 群、`__main__.py` 簡素化は現行コードに反映済みです。
 
 ## ステータス
 

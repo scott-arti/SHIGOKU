@@ -1,6 +1,7 @@
 ---
 task_id: SGK-2026-0001
 doc_type: manual
+doc_usage: reference_manual
 status: active
 parent_task_id: null
 related_docs: []
@@ -30,6 +31,7 @@ updated_at: '2026-05-19'
 ```yaml
 ---
 doc_type: spec|roadmap|plan|subtask_plan|work_report|work_log|manual
+doc_usage: reference_spec | historical_completion_spec | reference_roadmap | legacy_reference_roadmap | implementation_plan | execution_plan | completion_report | execution_log | reference_manual | legacy_reference_manual
 task_id: SGK-YYYY-NNNN
 parent_task_id: null
 title: ""

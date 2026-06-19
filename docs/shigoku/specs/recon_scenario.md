@@ -1,7 +1,8 @@
 ---
 task_id: SGK-2026-0048
 doc_type: spec
-status: active
+doc_usage: historical_completion_spec
+status: done
 parent_task_id: null
 related_docs: []
 created_at: '2026-05-19'
@@ -9,6 +10,8 @@ updated_at: '2026-05-19'
 ---
 
 # Reconnaissance Pipeline シナリオ設計書
+
+> 2026-06-19 注記: この文書は Recon パイプライン実装後に残っている歴史的仕様です。本文の実装状況欄に対応する処理は現行の `src/recon/pipeline.py` と `src/core/recon/orchestrator.py` にあります。
 
 **最終更新**: 2026-01-12
 

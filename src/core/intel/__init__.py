@@ -30,100 +30,10 @@ except ImportError as e:
     Fingerprinter = None
 
 try:
-    from .visual_filter import VisualFilter
-except ImportError as e:
-    logger.debug(f"Optional import 'VisualFilter' failed: {e}")
-    VisualFilter = None
-
-try:
     from .commit_watcher import CommitWatcher
 except ImportError as e:
     logger.debug(f"Optional import 'CommitWatcher' failed: {e}")
     CommitWatcher = None
-
-try:
-    from .headless_crawler import HeadlessCrawler
-except ImportError as e:
-    logger.debug(f"Optional import 'HeadlessCrawler' failed: {e}")
-    HeadlessCrawler = None
-
-# Phase 6 新規モジュール
-try:
-    from .google_dorker import (
-        GoogleDorker,
-        DorkCategory,
-        DorkResult,
-        create_google_dorker,
-    )
-except ImportError as e:
-    logger.debug(f"Optional import 'GoogleDorker' failed: {e}")
-
-try:
-    from .js_analyzer import (
-        JSAnalyzer,
-        JSAnalysisResult,
-        create_js_analyzer,
-    )
-except ImportError as e:
-    logger.debug(f"Optional import 'JSAnalyzer' failed: {e}")
-
-try:
-    from .wayback_integrator import (
-        WaybackIntegrator,
-        WaybackSnapshot,
-        WaybackDiff,
-        create_wayback_integrator,
-    )
-except ImportError as e:
-    logger.debug(f"Optional import 'WaybackIntegrator' failed: {e}")
-
-try:
-    from .cve_explorer import (
-        CVEExplorer,
-        CVEInfo,
-        CVESeverity,
-        create_cve_explorer,
-    )
-except ImportError as e:
-    logger.debug(f"Optional import 'CVEExplorer' failed: {e}")
-
-try:
-    from .email_harvester import (
-        EmailHarvester,
-        EmailInfo,
-        create_email_harvester,
-    )
-except ImportError as e:
-    logger.debug(f"Optional import 'EmailHarvester' failed: {e}")
-
-try:
-    from .asn_discoverer import (
-        ASNDiscoverer,
-        ASNInfo,
-        IPRange,
-        create_asn_discoverer,
-    )
-except ImportError as e:
-    logger.debug(f"Optional import 'ASNDiscoverer' failed: {e}")
-
-try:
-    from .cert_transparency import (
-        CertTransparency,
-        CertInfo,
-        create_cert_transparency,
-    )
-except ImportError as e:
-    logger.debug(f"Optional import 'CertTransparency' failed: {e}")
-
-try:
-    from .shodan_integrator import (
-        ShodanIntegrator,
-        HostInfo,
-        ServiceInfo,
-        create_shodan_integrator,
-    )
-except ImportError as e:
-    logger.debug(f"Optional import 'ShodanIntegrator' failed: {e}")
 
 try:
     from .dns_history import (
@@ -147,39 +57,7 @@ __all__ = [
     # 既存
     "Cartographer",
     "Fingerprinter",
-    "VisualFilter",
     "CommitWatcher",
-    "HeadlessCrawler",
-    # Phase 6
-    "GoogleDorker",
-    "DorkCategory",
-    "DorkResult",
-    "create_google_dorker",
-    "JSAnalyzer",
-    "JSAnalysisResult",
-    "create_js_analyzer",
-    "WaybackIntegrator",
-    "WaybackSnapshot",
-    "WaybackDiff",
-    "create_wayback_integrator",
-    "CVEExplorer",
-    "CVEInfo",
-    "CVESeverity",
-    "create_cve_explorer",
-    "EmailHarvester",
-    "EmailInfo",
-    "create_email_harvester",
-    "ASNDiscoverer",
-    "ASNInfo",
-    "IPRange",
-    "create_asn_discoverer",
-    "CertTransparency",
-    "CertInfo",
-    "create_cert_transparency",
-    "ShodanIntegrator",
-    "HostInfo",
-    "ServiceInfo",
-    "create_shodan_integrator",
     # DNS History
     "DNSHistoryCollector",
     "DNSHistoryResult",

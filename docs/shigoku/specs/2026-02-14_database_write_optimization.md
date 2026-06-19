@@ -1,6 +1,7 @@
 ---
 task_id: SGK-2026-0086
 doc_type: spec
+doc_usage: historical_completion_spec
 status: active
 parent_task_id: null
 related_docs: []
@@ -9,6 +10,8 @@ updated_at: '2026-05-19'
 ---
 
 # Spec: データベース書き込み最適化 (Hybrid Batch Architecture)
+
+> 2026-06-19 注記: この文書は実装完了後に参照用として残っている歴史的仕様です。本文で述べる `AsyncDatabaseWriter`、`FindingsRepository.save_batch`、`KnowledgeGraph.save_pages_batch`、WAL 設定は現行コードに存在します。
 
 ## 1. 概要
 

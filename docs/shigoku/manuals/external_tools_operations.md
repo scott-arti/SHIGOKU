@@ -1,6 +1,7 @@
 ---
 task_id: SGK-2026-0224
 doc_type: manual
+doc_usage: reference_manual
 status: done
 parent_task_id: SGK-2026-0224
 related_docs:

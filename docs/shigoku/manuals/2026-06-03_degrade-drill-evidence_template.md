@@ -1,6 +1,7 @@
 ---
 task_id: SGK-2026-0255
 doc_type: manual
+doc_usage: reference_manual
 status: active
 parent_task_id: SGK-2026-0251
 related_docs:

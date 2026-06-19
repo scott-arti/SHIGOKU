@@ -3,6 +3,7 @@ name: tier7-platformization
 description: Tier 7 プラットフォーム化の実装仕様
 task_id: SGK-2026-0165
 doc_type: spec
+doc_usage: reference_spec
 status: active
 parent_task_id: null
 related_docs: []
