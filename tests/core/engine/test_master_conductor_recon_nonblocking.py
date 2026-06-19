@@ -42,7 +42,7 @@ async def test_recon_master_dispatch_uses_to_thread_for_isolated_pipeline():
 
     with patch("src.recon.pipeline.ReconPipeline") as mock_pipeline_cls:
         mock_pipeline_cls.return_value = MagicMock()
-        with patch("src.core.engine.master_conductor.asyncio.to_thread", new=AsyncMock(return_value=fake_state)) as mock_to_thread:
+        with patch("src.core.engine.master_conductor_facade.asyncio.to_thread", new=AsyncMock(return_value=fake_state)) as mock_to_thread:
             result = await mc._dispatch(task)
 
     assert result.get("success") is True

@@ -286,16 +286,32 @@ async def dispatch_swarm(
 
         # Agentic RAG / RAG context retrieval
         target = task.params.get("target", "")
-        if agentic_rag:
-            logger.info("[MasterConductor] Using Agentic RAG for initial context...")
-            rag_results = await agentic_rag.retrieve_with_feedback(
-                query=target,
-                goal=f"Initial reconnaissance and attack surface mapping for {target}",
-            )
-        elif rag:
-            rag_results = await rag.retrieve(target)
-        else:
-            rag_results = []
+        rag_results = []
+        # SGK-2026-0262: policy に基づき RAG 利用判断
+        _use_rag = True
+        try:
+            from src.core.rag_module.rag_policy import should_use_rag_for_component, get_default_policy
+            _policy = get_default_policy()
+            _decision = should_use_rag_for_component("swarm", policy=_policy)
+            _use_rag = _decision != "no_rag"  # NO_RAG 以外なら RAG 利用可
+        except ImportError:
+            pass
+
+        if _use_rag:
+            if agentic_rag:
+                logger.info("[MasterConductor] Using Agentic RAG for initial context...")
+                rag_results = await agentic_rag.retrieve_with_feedback(
+                    query=target,
+                    goal=f"Initial reconnaissance and attack surface mapping for {target}",
+                )
+            elif rag:
+                rag_results = rag.retrieve(target)
+
+        # SGK-2026-0262: RAG 結果を dispatcher に渡す（params 経由）
+        if rag_results:
+            enriched_params = dict(task.params)
+            enriched_params["_rag_context"] = rag_results
+            task.params = enriched_params
 
         tags = task.params.get("tags", [])
         target = task.params.get("target", "")

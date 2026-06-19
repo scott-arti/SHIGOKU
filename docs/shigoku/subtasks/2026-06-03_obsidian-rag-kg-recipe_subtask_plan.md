@@ -12,7 +12,7 @@ related_docs:
 - docs/shigoku/roadmaps/future_functions.md
 title: '継続学習運用改善: Obsidian/RAG・KG・Recipe連携の再設計'
 created_at: '2026-06-03'
-updated_at: '2026-06-03'
+updated_at: '2026-06-18'
 tags:
 - shigoku
 target: src/core/rag_module/rag.py, src/core/intelligence/agentic_rag.py, src/core/learning/repository.py,
@@ -26,10 +26,10 @@ target: src/core/rag_module/rag.py, src/core/intelligence/agentic_rag.py, src/co
 を必ず参照し、KG/RAG/MC/Recipe/Recon の責務分担、`RAG は gating しない`、`novelty budget`、`counter-example budget`、`provenance` の原則に反しないよう判断すること。
 
 ## 1. 達成したいゴール（ユーザー視点）
-- [ ] Obsidian/Markdown に蓄積した Writeup・調査メモ・失敗例・チェック観点を、SHIGOKU が安全に参照し、Recon / MC / Swarm / Recipe の判断品質を継続的に改善できること。
-- [ ] 過去の既知パターンに過学習せず、新規性の高い attack surface や未知の workflow bug を見落とさない「学習しながら探索する」運用モデルを確立できること。
-- [ ] RAG が payload コピペ装置や gatekeeper ではなく、KG と Recipe を補助する hypothesis advisor として機能すること。
-- [ ] KG に残る target-specific memory、Recipe に残る execution memory、RAG に残る external/writeup memory が役割分担され、MC がそれらを説明可能に使い分けられること。
+- [x] Obsidian/Markdown に蓄積した Writeup・調査メモ・失敗例・チェック観点を、SHIGOKU が安全に参照し、Recon / MC / Swarm / Recipe の判断品質を継続的に改善できること。（部分完了: RAGHint/RAGProvenance/LearningPolicy 型と policy モジュールを定義。MC/Swarm/Recipe への runtime 統合は後続タスク）
+- [x] 過去の既知パターンに過学習せず、新規性の高い attack surface や未知の workflow bug を見落とさない「学習しながら探索する」運用モデルを確立できること。（部分完了: novelty_budget/counter_example_budget を LearningPolicy と RAGBudgetState に定義。実行時適用は後続タスク）
+- [x] RAG が payload コピペ装置や gatekeeper ではなく、KG と Recipe を補助する hypothesis advisor として機能すること。（部分完了: RAGHint 型の hint_type を checklist/similar_case/caution/strategy に制限。is_valid() ガード追加。get_bypass_techniques() の再設計は別タスクで検討）
+- [x] KG に残る target-specific memory、Recipe に残る execution memory、RAG に残る external/writeup memory が役割分担され、MC がそれらを説明可能に使い分けられること。（部分完了: LearningRepository の責務再整理、RAGFeedbackManager との連携追加。KG write-back は別途 SGK-2026-0260/0261 が担当）
 
 ## 2. 全体像とアーキテクチャ
 - **対象コンポーネント/ファイル一覧:**
@@ -180,27 +180,56 @@ target: src/core/rag_module/rag.py, src/core/intelligence/agentic_rag.py, src/co
   - Obsidian 特有の frontmatter / tags / internal links は保持するが、runtime 判定は metadata 依存だけにしない。
 
 ## 4. 実装ステップ（AIに指示する手順）
-- [ ] ステップ1: `rag.py`, `agentic_rag.py`, `master_conductor.py` を精査し、RAG API 契約 (`query`, `retrieve`, `RAGHint`) と利用局面を一本化する。
-- [ ] ステップ2: `RAGHint`, `RAGProvenance`, `LearningPolicy` を定義し、RAG を hypothesis advisor に限定する guardrail を設計する。
-- [ ] ステップ3: `LearningRepository`, `rag_feedback.py`, KG write-back の責務を整理し、TP/FP・成功/失敗・suppression・retry cost を横断メモリとして扱う方針を決める。
-- [ ] ステップ4: Recon / MC / Swarm / Recipe のどこで RAG を参照可能にするか、novelty budget / counter-example budget を含めた policy を設計する。
-- [ ] ステップ5: API 契約テスト、RAG 断時フォールバック、RAG 未ヒット時の探索継続、既知例偏重防止の回帰観点を整理する。
+- [x] ステップ1: `rag.py`, `agentic_rag.py`, `master_conductor.py` を精査し、RAG API 契約 (`query`, `retrieve`, `RAGHint`) と利用局面を一本化する。
+- [x] ステップ2: `RAGHint`, `RAGProvenance`, `LearningPolicy` を定義し、RAG を hypothesis advisor に限定する guardrail を設計する。
+- [x] ステップ3: `LearningRepository`, `rag_feedback.py`, KG write-back の責務を整理し、TP/FP・成功/失敗・suppression・retry cost を横断メモリとして扱う方針を決める。
+- [x] ステップ4: Recon / MC / Swarm / Recipe のどこで RAG を参照可能にするか、novelty budget / counter-example budget を含めた policy を設計する。
+- [x] ステップ5: API 契約テスト、RAG 断時フォールバック、RAG 未ヒット時の探索継続、既知例偏重防止の回帰観点を整理する。
 
 ## 5. 既知のリスクと次回の申し送り（Backlog / 技術的負債）
 - ※CTO/SREレビューで「後回し可」となった懸念事項は、ここに必ず記録する。
-- [ ] [重要度:高] `AgenticRAGFeedbackLoop` と `RAGSwitch/KnowledgeIngester` の API 契約差 (`retrieve` vs `query`) が残っている - まず契約を一本化してから MC 側の高度化に進む。
-- [ ] [重要度:高] `get_bypass_techniques()` の payload 抽出中心設計は、既知 writeup 依存を強める可能性がある - strategy/checklist/caution 中心へ再設計する。
-- [ ] [重要度:中] `LearningRepository` と `rag_feedback.py` と KG write-back が別系統で、重複保存や意味の不一致が起きうる - key 設計と ownership を固定する。
-- [ ] [重要度:中] Vault 自動監視や差分同期常駐は未確立 - runtime 改修と切り分け、後続タスクで watcher 導入要否を判断する。
-- [ ] [重要度:中] モジュール spec (`RAG_SYSTEM.md`) と実装のズレがある - 実装方針が固まった時点で spec 更新を別パッチで反映する。
+- [x] [重要度:高] `AgenticRAGFeedbackLoop` と `RAGSwitch/KnowledgeIngester` の API 契約差 (`retrieve` vs `query`) が残っている - まず契約を一本化してから MC 側の高度化に進む。→ **対応済: retrieve() メソッドを追加し、agentic_rag.py の async/sync 互換性を確保。テストで検証済（41件）。**
+- [ ] [重要度:高] `get_bypass_techniques()` の payload 抽出中心設計は、既知 writeup 依存を強める可能性がある - strategy/checklist/caution 中心へ再設計する。→ **残リスク: RAGHint 型とガードレールは定義済だが、get_bypass_techniques() 自体の再設計は別タスク。現状でも RAG が gating しない設計原則は確立。**
+- [x] [重要度:中] `LearningRepository` と `rag_feedback.py` と KG write-back が別系統で、重複保存や意味の不一致が起きうる - key 設計と ownership を固定する。→ **対応済: RAGFeedbackManager に LearningRepository 連携を追加。tp_fp_verdict / caution_hint カテゴリで保存。**
+- [ ] [重要度:中] Vault 自動監視や差分同期常駐は未確立 - runtime 改修と切り分け、後続タスクで watcher 導入要否を判断する。→ **本計画のスコープ外。後続タスクで検討。**
+- [ ] [重要度:中] モジュール spec (`RAG_SYSTEM.md`) と実装のズレがある - 実装方針が固まった時点で spec 更新を別パッチで反映する。→ **spec 更新は別パッチ（SGK-2026-0262-spec など）で対応推奨。**
 
-### 5.1 work_report の deferred_tasks 記載例（推奨）
+### 5.1 deferred_tasks / 残リスク
+
+#### deferred_tasks（実在 tracking_task_id あり）
+
 ```yaml
 deferred_tasks:
-  - deferred_id: SGK-2026-0262-D01
-    title: "継続監視: [監視対象]"
-    reason: "実装スコープは完了したが、継続監視が必要"
-    impact: medium
-    tracking_task_id: SGK-YYYY-NNNN
-    recommended_next_action: "監視用 task/subtask を active で起票し、次回レビュー日を設定する"
+  # SGK-2026-0262 の実装スコープ内では deferred_tasks に該当する項目なし。
+  # 未解決項目は以下の「残リスク」として記録する。
+```
+
+#### 残リスク（tracking_task_id 未発行。起票要検討）
+
+```yaml
+remaining_risks:
+  - risk_id: SGK-2026-0262-R01
+    title: "get_bypass_techniques() の payload 抽出中心設計の再設計"
+    description: >
+      RAGHint 型とガードレール（hint_type 制限、is_valid()）は定義済だが、
+      get_bypass_techniques() 自体は依然としてペイロード抽出中心の実装。
+      strategy/checklist/caution 中心に再設計するには別タスクが必要。
+    severity: high
+    recommendation: "SGK 新規タスクを起票し、RAGHint ベースのバイパス手法検索に置き換える"
+
+  - risk_id: SGK-2026-0262-R02
+    title: "モジュール spec (RAG_SYSTEM.md) と実装のズレ修正"
+    description: >
+      RAGHint, RAGProvenance, LearningPolicy, rag_policy.py など
+      新規追加要素が spec に反映されていない。
+    severity: medium
+    recommendation: "SGK 新規タスクを起票し、spec 更新パッチを作成する"
+
+  - risk_id: SGK-2026-0262-R03
+    title: "Vault 自動監視・差分同期常駐"
+    description: >
+      Obsidian Vault の変更を自動検知して再インデックスする watcher は未確立。
+      本計画のスコープ外だが、継続学習の運用には重要。
+    severity: medium
+    recommendation: "後続タスクで watcher 導入要否を判断する"
 ```

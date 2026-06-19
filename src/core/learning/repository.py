@@ -3,6 +3,26 @@ LearningRepository: 学習結果の永続化
 
 SQLiteベースの軽量学習リポジトリ。
 WAF回避パターン、エラー解決策、成功ペイロード等を保存・共有する。
+
+SGK-2026-0262: 責務整理
+- LearningRepository は、TP/FP・成功/失敗・suppression・retry cost を扱う
+  SHIGOKU 全体の「横断メモリ」として位置づける。
+- KG（KnowledgeGraph）は runtime facts / target-specific memory の正本であり、
+  一般的な学習エントリは LearningRepository に保存する。
+- RAGFeedbackManager は LearningRepository にフィードする形で連携する
+  （独立した JSON ファイルは後方互換用に維持）。
+
+カテゴリ定義（SGK-2026-0262）:
+- tp_fp_verdict:    TP/FP 判定結果
+- retry_cost:       再試行コスト（成功率、所要時間）
+- caution_hint:     FP になりやすい条件の注意喚起
+- success_failure:  戦術ごとの成功/失敗サマリ
+- suppression:      抑制判断（なぜ抑止したか）
+- rag_provenance:   RAG 由来ヒントの出所情報（監査用）
+- waf_bypass:       WAF回避パターン（従来互換）
+- error_solutions:  エラー解決策（従来互換）
+- success_payloads: 成功ペイロード（従来互換）
+- vuln_patterns:    脆弱性パターン（従来互換）
 """
 from __future__ import annotations
 

@@ -5,7 +5,7 @@ from src.core.domain.model.task import Task
 
 @pytest.fixture
 def mc():
-    with patch('src.core.engine.master_conductor.settings') as mock_settings:
+    with patch('src.core.engine.master_conductor_facade.settings') as mock_settings:
         mock_settings.environment = "BUG_BOUNTY"
         mock_settings.ctf_target = None
         mock_settings.ctf_flag_format = "flag\\{.*\\}"
@@ -22,7 +22,7 @@ def mc():
         )
 
 def test_mc_persona_initialization():
-    with patch('src.core.engine.master_conductor.settings') as mock_settings:
+    with patch('src.core.engine.master_conductor_facade.settings') as mock_settings:
         # Bug Bounty Mode
         mock_settings.environment = "BUG_BOUNTY"
         mock_settings.ctf_target = None

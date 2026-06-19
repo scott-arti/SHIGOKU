@@ -9,6 +9,11 @@ from typing import Optional, Dict, Callable
 from dataclasses import dataclass
 from contextlib import asynccontextmanager
 
+from src.core.detection.browser_pool import (
+    BrowserPool as CanonicalBrowserPool,
+    BrowserPoolXSSVerifier,
+)
+
 # Optional import - gracefully handle if playwright not installed
 try:
     from playwright.async_api import async_playwright, Browser
@@ -153,8 +158,8 @@ class XSSDetectionEngine:
     - DOM XSS: Browser execution confirmation
     """
     
-    def __init__(self, browser_pool: Optional[BrowserPool] = None):
-        self.browser_pool = browser_pool or BrowserPool()
+    def __init__(self, browser_pool: Optional[CanonicalBrowserPool] = None):
+        self.browser_pool = browser_pool or CanonicalBrowserPool()
         self._confirmed_payloads: set = set()
     
     async def detect_reflected_xss(
@@ -263,28 +268,65 @@ class XSSDetectionEngine:
         Detect stored XSS by:
         1. Submitting payload to storage endpoint
         2. Checking if payload executes when viewing display endpoint
+
+        Storage submission delegates to StoredXSSDetector so submission
+        handling stays consistent. Verification uses BrowserPoolXSSVerifier
+        with this engine's own browser pool, opening display_url directly
+        (without injecting the payload into the query string) to confirm
+        that the stored payload fired.
         """
-        # Step 1: Store payload (requires HTTP client)
-        # This is a placeholder - actual implementation would use HTTP client
-        logger.info(f"Stored XSS detection: submitting to {storage_url}")
-        
-        # Step 2: Wait and check display endpoint
-        await asyncio.sleep(1)  # Give time for storage
-        
-        # Step 3: Check with browser
-        return await self.detect_dom_xss(display_url, param, payload)
+        from src.core.agents.swarm.injection.stored_xss_detector import (
+            ParsedForm,
+            StoredXSSDetector,
+        )
+
+        detector = StoredXSSDetector()
+        form = ParsedForm(
+            action=storage_url,
+            method="POST",
+            params={param: ""},
+        )
+
+        submit_ok, _, _ = await detector._submit_form(form, {param: payload})
+        if not submit_ok:
+            logger.warning(
+                "[XSSDetectionEngine] Failed to submit stored XSS payload to %s",
+                storage_url,
+            )
+            return None
+
+        await asyncio.sleep(1)  # Allow storage propagation
+
+        verifier = BrowserPoolXSSVerifier(pool=self.browser_pool)
+        result = await verifier.verify_stored(
+            display_url, payload, dialog_timeout=3.0
+        )
+
+        if result.executed:
+            return XSSFinding(
+                type="stored",
+                target=display_url,
+                endpoint=storage_url,
+                param=param,
+                payload=payload,
+                evidence=str(result.evidence),
+                confidence=0.90,
+                browser_confirmed=True,
+            )
+
+        return None
     
     async def close(self):
         """Cleanup resources"""
-        await self.browser_pool.close()
+        await self.browser_pool.stop()
 
 
 # Convenience functions
 
 async def create_xss_detector() -> XSSDetectionEngine:
     """Create XSS detector with default browser pool"""
-    pool = BrowserPool(size=5, max_requests_per_browser=100)
-    await pool.initialize()
+    pool = CanonicalBrowserPool(size=5, max_requests_per_browser=100)
+    await pool.start()
     return XSSDetectionEngine(pool)
 
 

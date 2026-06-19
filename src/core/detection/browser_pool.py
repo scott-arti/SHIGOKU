@@ -156,13 +156,21 @@ class _MockPage:
     def __init__(self, slot_id: int) -> None:
         self.slot_id = slot_id
         self._dialog_handlers: List[Any] = []
+        self.url: Optional[str] = None
 
     async def goto(self, url: str, **kwargs) -> None:
+        self.url = url
         await asyncio.sleep(0.005)
 
     def on(self, event: str, handler: Any) -> None:
         if event == "dialog":
             self._dialog_handlers.append(handler)
+
+    async def add_init_script(self, script: str) -> None:
+        pass
+
+    async def evaluate(self, script: str, arg: Any = None) -> Any:
+        return False
 
     async def close(self) -> None:
         pass
@@ -373,6 +381,41 @@ class BrowserPoolXSSVerifier:
         ]
         return list(await asyncio.gather(*coros, return_exceptions=False))
 
+    async def verify_stored(
+        self,
+        url: str,
+        payload: str,
+        *,
+        dialog_timeout: float = 3.0,
+    ) -> XSSVerificationResult:
+        """
+        Stored XSS 用発火確認。
+
+        display_url をそのまま開き、保存済みペイロードが発火して
+        JavaScript ダイアログが表示されるかを確認する。
+        Playwright が未導入の場合は静的反射チェックにフォールバック。
+
+        Returns:
+            XSSVerificationResult: evidence に StoredXSSDetector と同じ
+            `method` / `url` / `dialog_message` または `snippet` キーを含む dict。
+        """
+        if not _PLAYWRIGHT_AVAILABLE:
+            return await self._verify_static_stored(url, payload)
+
+        pool = await self._get_pool()
+        try:
+            async with pool.acquire() as browser:
+                page = await browser.new_page()
+                return await self._run_stored_browser_check(
+                    page, url, payload, dialog_timeout
+                )
+        except TimeoutError as e:
+            logger.warning("[BrowserPool] Acquire timeout: %s", e)
+            return XSSVerificationResult(
+                url=url, parameter="", payload=payload,
+                executed=False, error="pool_timeout",
+            )
+
     async def close(self) -> None:
         if self._owns_pool and self._pool is not None:
             await self._pool.stop()
@@ -435,6 +478,88 @@ class BrowserPoolXSSVerifier:
                 "test_url": test_url,
             },
         )
+
+    async def _run_stored_browser_check(
+        self,
+        page: Any,
+        url: str,
+        payload: str,
+        dialog_timeout: float,
+    ) -> XSSVerificationResult:
+        """display_url をそのまま開いて Stored XSS 発火を確認"""
+        dialog_fired = asyncio.Event()
+        dialog_message: Optional[str] = None
+
+        async def on_dialog(dialog: Any) -> None:
+            nonlocal dialog_message
+            dialog_message = dialog.message
+            dialog_fired.set()
+            try:
+                await dialog.dismiss()
+            except Exception:
+                pass
+
+        page.on("dialog", on_dialog)
+
+        try:
+            await page.goto(url, wait_until="networkidle", timeout=10_000)
+        except Exception as e:
+            logger.debug("[BrowserPool] goto failed: %s", e)
+
+        executed = False
+        try:
+            await asyncio.wait_for(dialog_fired.wait(), timeout=dialog_timeout)
+            executed = True
+        except asyncio.TimeoutError:
+            pass
+
+        try:
+            await page.close()
+        except Exception:
+            pass
+
+        return XSSVerificationResult(
+            url=url,
+            parameter="",
+            payload=payload,
+            executed=executed,
+            evidence={
+                "method": "playwright_dialog",
+                "url": url,
+                "dialog_message": dialog_message,
+            },
+        )
+
+    async def _verify_static_stored(
+        self, url: str, payload: str
+    ) -> XSSVerificationResult:
+        """Playwright がない場合の Stored XSS 静的反射チェック"""
+        try:
+            import urllib.request
+            with urllib.request.urlopen(url, timeout=5) as resp:
+                body = resp.read().decode(errors="replace")
+            key = payload.replace('"', "").replace("'", "")[:20]
+            idx = body.lower().find(key.lower())
+            executed = idx != -1
+            snippet = ""
+            if executed:
+                start = max(0, idx - 50)
+                end = min(len(body), idx + len(key) + 50)
+                snippet = body[start:end]
+            return XSSVerificationResult(
+                url=url, parameter="", payload=payload,
+                executed=executed,
+                evidence={
+                    "method": "static_reflection_check",
+                    "url": url,
+                    "snippet": snippet,
+                },
+            )
+        except Exception as e:
+            return XSSVerificationResult(
+                url=url, parameter="", payload=payload,
+                executed=False, error=str(e),
+            )
 
     async def _verify_static(
         self, url: str, parameter: str, payload: str

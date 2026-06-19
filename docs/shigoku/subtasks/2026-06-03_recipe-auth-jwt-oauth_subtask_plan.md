@@ -1,7 +1,7 @@
 ---
 task_id: SGK-2026-0259
 doc_type: subtask_plan
-status: active
+status: done
 parent_task_id: SGK-2026-0221
 related_docs:
 - docs/shigoku/plans/2026-05-19_mock-optimizedreciperunner-discovery-graphql_plan.md
@@ -11,7 +11,7 @@ related_docs:
 - docs/shigoku/roadmaps/future_functions1.md
 title: 'Recipe高度化: 単一セッション高額Auth/JWT/OAuth検出強化'
 created_at: '2026-06-03'
-updated_at: '2026-06-03'
+updated_at: '2026-06-18'
 tags:
 - shigoku
 target: src/core/engine/recipe_loader.py, src/core/engine/master_conductor.py, recipes/auth,
@@ -25,10 +25,10 @@ target: src/core/engine/recipe_loader.py, src/core/engine/master_conductor.py, r
 を必ず参照し、KG を runtime facts の正本、RAG を hypothesis advisor、Recipe を deterministic verification として扱う前提を崩さずに判断すること。
 
 ## 1. 達成したいゴール（ユーザー視点）
-- [ ] SHIGOKU が単一セッションだけで成立する高額 Auth/JWT/OAuth 不備を、既存 Recon / Discovery / Session 情報から自動選抜し、低ノイズで再現性高く検出できること。
-- [ ] `--recipe` の手動指定に依存せず、対象の認証サーフェスが見つかった時だけ高期待値 Recipe を注入し、不要な全件実行を避けられること。
-- [ ] Blind/OOB/複数アカウントを前提にしない `probe -> confirm -> evidence` 実行で、即時観測可能な差分だけを根拠として保持できること。
-- [ ] JWT/OAuth/Session 系を第一優先とし、同一アカウント内で観測できる Hidden Capability / 管理 API 操作の権限超えを第二優先として拡張可能なこと。
+- [x] SHIGOKU が単一セッションだけで成立する高額 Auth/JWT/OAuth 不備を、既存 Recon / Discovery / Session 情報から自動選抜し、低ノイズで再現性高く検出できること。
+- [x] `--recipe` の手動指定に依存せず、対象の認証サーフェスが見つかった時だけ高期待値 Recipe を注入し、不要な全件実行を避けられること。
+- [x] Blind/OOB/複数アカウントを前提にしない `probe -> confirm -> evidence` 実行で、即時観測可能な差分だけを根拠として保持できること。
+- [x] JWT/OAuth/Session 系を第一優先とし、同一アカウント内で観測できる Hidden Capability / 管理 API 操作の権限超えを第二優先として拡張可能なこと。
 
 ## 2. 全体像とアーキテクチャ
 - **対象コンポーネント/ファイル一覧:**
@@ -111,14 +111,14 @@ target: src/core/engine/recipe_loader.py, src/core/engine/master_conductor.py, r
   - unsupported action / missing prerequisite
 
 ## 4. 実装ステップ（AIに指示する手順）
-- [ ] ステップ1: `recipe_loader.py` と契約周辺を更新し、Recipe schema に `trigger`, `stages`, `success_signals`, `failure_signals`, `stop_conditions`, `evidence_policy` を追加する。
-- [ ] ステップ2: `match_recipes_to_context()` を score-based selection へ変更し、required / optional signals と top-N 制限を導入する。
-- [ ] ステップ3: `master_conductor.py` 側で Recipe 自動注入条件を整理し、`tech_stack` だけでなく auth surface / token / session metadata を渡す。
-- [ ] ステップ4: `optimized_runner.py` に stage-aware execution と structured evidence aggregation を実装し、`probe -> confirm -> evidence` の段階実行を保証する。
-- [ ] ステップ5: `recipes/auth/` に JWT/OAuth/Session 向け Recipe を追加し、既存 YAML を新 schema に合わせて最小移行する。
-- [ ] ステップ6: Hidden Capability / 管理 API probe を同一セッション前提で再利用できる共通 step 群を設計する。
-- [ ] ステップ7: unit / engine / runner テストを追加し、全件実行廃止、top-N 選抜、stop condition、evidence 契約を固定化する。
-- [ ] ステップ8: 必要最小限の docs 更新を行い、Recipe の想定ユースケースを「単一セッション高額検出」に寄せて明文化する。
+- [x] ステップ1: `recipe_loader.py` と契約周辺を更新し、Recipe schema に `trigger`, `stages`, `success_signals`, `failure_signals`, `stop_conditions`, `evidence_policy` を追加する。
+- [x] ステップ2: `match_recipes_to_context()` を score-based selection へ変更し、required / optional signals と top-N 制限を導入する。
+- [x] ステップ3: `master_conductor.py` 側で Recipe 自動注入条件を整理し、`tech_stack` だけでなく auth surface / token / session metadata を渡す。
+- [x] ステップ4: `optimized_runner.py` に stage-aware execution と structured evidence aggregation を実装し、`probe -> confirm -> evidence` の段階実行を保証する。
+- [x] ステップ5: `recipes/auth/` に JWT/OAuth/Session 向け Recipe を追加し、既存 YAML を新 schema に合わせて最小移行する。
+- [x] ステップ6: Hidden Capability / 管理 API probe を同一セッション前提で再利用できる共通 step 群を設計する。
+- [x] ステップ7: unit / engine / runner テストを追加し、全件実行廃止、top-N 選抜、stop condition、evidence 契約を固定化する。
+- [x] ステップ8: 必要最小限の docs 更新を行い、Recipe の想定ユースケースを「単一セッション高額検出」に寄せて明文化する。
 
 ### 4.1 テスト観点
 - `RecipeLoader`:
@@ -138,21 +138,48 @@ target: src/core/engine/recipe_loader.py, src/core/engine/master_conductor.py, r
 
 ## 5. 既知のリスクと次回の申し送り（Backlog / 技術的負債）
 - ※CTO/SREレビューで「後回し可」となった懸念事項は、ここに必ず記録する。
-- [ ] [重要度:高] Recipe schema 拡張で既存 YAML 互換が崩れる可能性 - 互換モードまたは段階移行を設け、既存 Recipe は fail-fast か migration で明示する。
-- [ ] [重要度:高] auth surface metadata の収集が不十分だと score が不安定になる - Discovery / browser / API 観測の正規化キーを先に固定する。
-- [ ] [重要度:高] `action` を allowlist に追加しただけでは technique の意図や実行方法が十分伝わらず、キーワード依存の曖昧な LLM 判断に寄りやすい - `action vocabulary` ごとに routing、required inputs、success signals、stop conditions、specialist/tool binding をセットで設計する。
-- [ ] [重要度:中] success_signals が弱いと false positive が増える - confirmed 判定は evidence 密度の閾値制にして、単一差分のみでは昇格しない。
-- [ ] [重要度:中] Hidden Capability probe が広すぎるとノイズや安全性の問題が出る - 語彙辞書と candidate ranking を持たせ、少数精鋭の候補だけ実行する。
-- [ ] [重要度:中] OAuth / Session のアプリ差異が大きく、汎用 Recipe が過適合する可能性 - provider 固有ではなく invariants 中心で Recipe を記述する。
-- [ ] [重要度:低] 将来の multi-account / OOB 系と schema をどう共存させるか未整理 - 本計画では single-session profile を正本とし、別 profile として後日拡張する。
+- [x] [重要度:高] Recipe schema 拡張で既存 YAML 互換が崩れる可能性 → 解決済。既存YAMLは default値で読み込まれ、新field欠如時も正常動作。schema検証はwarningログのみ。
+- [x] [重要度:中] success_signals が弱いと false positive が増える → 解決済。`_classify_verdict()` で高信頼度複数エビデンスのみconfirmed判定。
+- [x] [重要度:中] OAuth / Session のアプリ差異が大きく、汎用 Recipe が過適合する可能性 → 解決済。全Recipeがinvariants中心の設計。
+- [x] [CTO W-1] `auth_headers` 内 JWT 検出で Bearer prefix strip 未実装 → 2026-06-18 修正済。`recipe_loader.py` L89-97。
+- [x] [CTO W-2] f-string ログスタイル不統一 → 2026-06-18 修正済。`master_conductor_facade.py` L2674。
 
-### 5.1 work_report の deferred_tasks 記載例（推奨）
+### 5.1 Deferred Tasks（後続対応が必要な技術的負債）
+
 ```yaml
 deferred_tasks:
   - deferred_id: SGK-2026-0259-D01
-    title: "継続監視: [監視対象]"
-    reason: "実装スコープは完了したが、継続監視が必要"
+    title: "auth surface metadata 正規化キー固定"
+    reason: "Discovery/browser/API観測の正規化キーが未固定のため、score算出が不安定になるリスク"
+    impact: high
+    source_risk: "計画書 L142"
+    recommended_next_action: "auth_surface_metadata の required keys をスキーマとして定義し、収集側と消費側の契約を固定する"
+
+  - deferred_id: SGK-2026-0259-D02
+    title: "action vocabulary の routing/binding 設計"
+    reason: "allowlistだけでは technique の意図が曖昧で LLM 判断に寄る。routing, required inputs, specialist binding をセット設計する必要あり"
+    impact: high
+    source_risk: "計画書 L143"
+    recommended_next_action: "action vocabulary ごとに routing contract を定義する subtask を起票"
+
+  - deferred_id: SGK-2026-0259-D03
+    title: "Hidden Capability probe 語彙辞書/candidate ranking"
+    reason: "probe範囲が広すぎるとノイズと安全性の問題が出る"
     impact: medium
-    tracking_task_id: SGK-YYYY-NNNN
-    recommended_next_action: "監視用 task/subtask を active で起票し、次回レビュー日を設定する"
+    source_risk: "計画書 L145"
+    recommended_next_action: "admin endpoint 語彙辞書を定義し、candidate ranking で少数精鋭の候補のみ実行する仕組みを追加"
+
+  - deferred_id: SGK-2026-0259-D04
+    title: "multi-account / OOB 系 schema 共存設計"
+    reason: "single-session profile を正本としたが、将来の multi-account/OOB 拡張時の schema 統合が未整理"
+    impact: low
+    source_risk: "計画書 L147"
+    recommended_next_action: "Recipe profile (single-session / multi-account / oob) を enum 化し、loader で分岐する設計を検討"
+
+  - deferred_id: SGK-2026-0259-D05
+    title: "asyncio.Task 動的属性追加の型安全化"
+    reason: "optimized_runner.py で asyncio.Task に node_id を動的追加しており、型チェッカーで警告が出る"
+    impact: low
+    source_risk: "CTO Review N-1"
+    recommended_next_action: "明示的な task_id→node_id マッピング dict に移行"
 ```

@@ -1,0 +1,113 @@
+name: session_invariant
+description: "Detect session/token invariant violations across login, refresh, profile changes within a single session"
+tags: ["auth", "session", "invariant", "token"]
+severity: "critical"
+priority: 90
+
+trigger:
+  required_signals:
+    - bearer_token
+    - session_cookie
+    - login_endpoint
+  optional_signals:
+    - jwt_pattern
+    - refresh_endpoint
+    - admin_endpoint
+
+steps:
+  - id: probe_login_token_rotation
+    name: "Probe token change after login"
+    action: scan
+    params:
+      agent_type: "swarm"
+      instruction: |
+        Check token/session rotation after login:
+        1. Record current bearer token and session cookie.
+        2. Perform login with same credentials.
+        3. Compare old vs new tokens/cookies.
+        4. Verify old token is invalidated (returns 401).
+        Goal: detect missing token rotation on re-login.
+
+  - id: probe_refresh_persistence
+    name: "Probe old token after refresh"
+    action: scan
+    params:
+      agent_type: "swarm"
+      instruction: |
+        Check old token validity after refresh:
+        1. Obtain a fresh access token via refresh flow.
+        2. Use the old (pre-refresh) access token.
+        3. Verify old token returns 401 (revoked).
+        Goal: detect refresh without revocation.
+
+  - id: probe_profile_role_change
+    name: "Probe role/capability after profile change"
+    action: scan
+    params:
+      agent_type: "swarm"
+      instruction: |
+        Check role representation consistency:
+        1. Record current role/capability claims from token or /me endpoint.
+        2. Change profile settings (e.g., email, name).
+        3. Re-check role/capability claims.
+        4. Verify role representation is consistent (no drift).
+        Goal: detect token not re-issued after profile change.
+
+  - id: confirm_invariant_violation
+    name: "Confirm invariant violation"
+    action: scan
+    params:
+      agent_type: "swarm"
+      instruction: |
+        If any probe found an invariant violation:
+        1. Reproduce the finding with timing controls.
+        2. Confirm old token still grants access to protected resources.
+        3. Verify the invariant break persists across multiple attempts.
+
+  - id: collect_evidence
+    name: "Collect invariant evidence"
+    action: report
+    params:
+      agent_type: "swarm"
+      instruction: |
+        Collect structured evidence:
+        - Old vs new token comparison.
+        - HTTP response codes proving old token still valid.
+        - Role/capability representation before and after profile change.
+        - Which session state transition triggered the invariant break.
+
+stages:
+  - name: probe
+    steps: ["probe_login_token_rotation", "probe_refresh_persistence", "probe_profile_role_change"]
+    min_success: 1
+  - name: confirm
+    steps: ["confirm_invariant_violation"]
+    min_success: 1
+  - name: evidence
+    steps: ["collect_evidence"]
+    min_success: 1
+
+success_signals:
+  - type: "old_token_still_valid"
+    expect: "200 on protected resource with pre-login/pre-refresh token"
+  - type: "role_drift_after_profile_change"
+    expect: "role/capability claim changes unexpectedly after profile update"
+  - type: "session_not_invalidated"
+    expect: "old session cookie still active after re-login"
+
+failure_signals:
+  - type: "proper_rotation"
+    on_failure: "no_finding"
+  - type: "rate_limit"
+    on_failure: "retry_later"
+
+stop_conditions:
+  - rate_limit
+  - waf_block
+  - auth_surface_missing
+  - no_refresh_endpoint
+
+evidence_policy:
+  max_items: 15
+  redact_secrets: true
+  structured: true

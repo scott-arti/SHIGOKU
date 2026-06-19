@@ -59,7 +59,7 @@ async def test_dispatch_routes_scope_parser_to_fast_path():
 
     # Mock the internal scope verification to avoid global side effects
     with patch(
-        "src.core.engine.master_conductor._svc_dispatch_scope_verification_fast_path",
+        "src.core.engine.master_conductor_facade._svc_dispatch_scope_verification_fast_path",
         return_value={
             "success": True,
             "task_id": task.id,
@@ -136,7 +136,7 @@ async def test_dispatch_allows_post_exploit_when_enabled():
     ), patch(
         "src.core.swarm.worker.factory.get_worker_factory", return_value=mock_factory
     ), patch(
-        "src.core.engine.master_conductor.settings"
+        "src.core.engine.master_conductor_facade.settings"
     ) as mock_settings:
         mock_settings.allow_post_exploit = True
         result = await mc._dispatch(task)
@@ -385,7 +385,7 @@ async def test_dispatch_routes_to_agentfactory_fallback():
     with patch(
         "src.core.swarm.worker.factory.get_worker_factory", return_value=mock_factory
     ), patch(
-        "src.core.engine.master_conductor.AgentFactory"
+        "src.core.engine.master_conductor_facade.AgentFactory"
     ) as mock_agent_factory_cls, patch(
         "src.core.infra.network_client.current_scan_cookies"
     ) as mock_cookies:
@@ -558,7 +558,7 @@ async def test_dispatch_recon_master_return_schema():
     ), patch(
         "src.recon.pipeline.ReconPipeline"
     ) as mock_pipeline_cls, patch(
-        "src.core.engine.master_conductor.asyncio.to_thread",
+        "src.core.engine.master_conductor_facade.asyncio.to_thread",
         new=AsyncMock(return_value=fake_state),
     ):
         mock_pipeline_cls.return_value = MagicMock()
@@ -598,7 +598,7 @@ async def test_dispatch_agentfactory_return_schema():
     with patch(
         "src.core.swarm.worker.factory.get_worker_factory", return_value=mock_factory
     ), patch(
-        "src.core.engine.master_conductor.AgentFactory"
+        "src.core.engine.master_conductor_facade.AgentFactory"
     ) as mock_agent_factory, patch(
         "src.core.infra.network_client.current_scan_cookies"
     ) as mock_cookies:
@@ -647,7 +647,7 @@ async def test_dispatch_resets_cookies_on_success():
     with patch(
         "src.core.swarm.worker.factory.get_worker_factory", return_value=mock_factory
     ), patch(
-        "src.core.engine.master_conductor.AgentFactory"
+        "src.core.engine.master_conductor_facade.AgentFactory"
     ) as mock_agent_factory_cls, patch(
         "src.core.infra.network_client.current_scan_cookies"
     ) as mock_cookies:
@@ -691,7 +691,7 @@ async def test_dispatch_resets_cookies_on_agent_error():
     with patch(
         "src.core.swarm.worker.factory.get_worker_factory", return_value=mock_factory
     ), patch(
-        "src.core.engine.master_conductor.AgentFactory"
+        "src.core.engine.master_conductor_facade.AgentFactory"
     ) as mock_agent_factory_cls, patch(
         "src.core.infra.network_client.current_scan_cookies"
     ) as mock_cookies:
@@ -743,7 +743,7 @@ async def test_dispatch_resets_cookies_on_typeerror_fallback():
     with patch(
         "src.core.swarm.worker.factory.get_worker_factory", return_value=mock_factory
     ), patch(
-        "src.core.engine.master_conductor.AgentFactory"
+        "src.core.engine.master_conductor_facade.AgentFactory"
     ) as mock_agent_factory_cls, patch(
         "src.core.infra.network_client.current_scan_cookies"
     ) as mock_cookies:
@@ -778,7 +778,7 @@ async def test_dispatch_resets_cookies_on_import_error():
     with patch(
         "src.core.swarm.worker.factory.get_worker_factory", return_value=mock_factory
     ), patch(
-        "src.core.engine.master_conductor.AgentFactory"
+        "src.core.engine.master_conductor_facade.AgentFactory"
     ) as mock_agent_factory_cls, patch(
         "src.core.infra.network_client.current_scan_cookies"
     ) as mock_cookies:
@@ -833,7 +833,7 @@ async def test_recon_dispatch_isolated_loop_cleaned_up():
     ), patch(
         "src.recon.pipeline.ReconPipeline"
     ) as mock_pipeline_cls, patch(
-        "src.core.engine.master_conductor.asyncio.to_thread",
+        "src.core.engine.master_conductor_facade.asyncio.to_thread",
         new_callable=AsyncMock,
     ) as mock_to_thread:
         mock_pipeline = MagicMock()
@@ -864,7 +864,7 @@ async def test_recon_dispatch_duplicate_skip_no_thread():
     with patch(
         "src.core.swarm.worker.factory.get_worker_factory", return_value=mock_factory
     ), patch(
-        "src.core.engine.master_conductor.asyncio.to_thread"
+        "src.core.engine.master_conductor_facade.asyncio.to_thread"
     ) as mock_to_thread:
         task = Task(
             id="t_recon_dup", name="recon duplicate",
@@ -894,7 +894,7 @@ async def test_recon_dispatch_error_no_dangling_loop():
     ), patch(
         "src.recon.pipeline.ReconPipeline"
     ) as mock_pipeline_cls, patch(
-        "src.core.engine.master_conductor.asyncio.to_thread",
+        "src.core.engine.master_conductor_facade.asyncio.to_thread",
         new_callable=AsyncMock,
     ) as mock_to_thread:
         mock_pipeline = MagicMock()
@@ -1025,7 +1025,7 @@ async def test_dispatch_recon_master_return_schema():
     ), patch(
         "src.recon.pipeline.ReconPipeline"
     ) as mock_pipeline_cls, patch(
-        "src.core.engine.master_conductor.asyncio.to_thread",
+        "src.core.engine.master_conductor_facade.asyncio.to_thread",
         new=AsyncMock(return_value=fake_state),
     ):
         mock_pipeline_cls.return_value = MagicMock()
@@ -1065,7 +1065,7 @@ async def test_dispatch_agentfactory_return_schema():
     with patch(
         "src.core.swarm.worker.factory.get_worker_factory", return_value=mock_factory
     ), patch(
-        "src.core.engine.master_conductor.AgentFactory"
+        "src.core.engine.master_conductor_facade.AgentFactory"
     ) as mock_agent_factory, patch(
         "src.core.infra.network_client.current_scan_cookies"
     ) as mock_cookies:

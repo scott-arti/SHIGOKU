@@ -2709,13 +2709,18 @@ tasks:
   doc_type: plan
   title: 脆弱性チェーン高精度化実装計画
   primary_doc: docs/shigoku/plans/2026-06-01_task_plan.md
-  status: active
+  status: done
   provisional: false
   task_summary: 脆弱性チェーン高精度化実装計画
   parent_task_id: SGK-2026-0131
   related_docs:
   - docs/shigoku/specs/inter_agent_chaining.md
   - docs/shigoku/specs/REQ_tier6_advanced_attacks.md
+  - docs/shigoku/reports/2026-06-03_sgk-2026-0253_program-overrides_work_report.md
+  - docs/shigoku/reports/2026-06-03_sgk-2026-0254_temporal-state_work_report.md
+  - docs/shigoku/reports/2026-06-03_sgk-2026-0255_degrade-runbook_work_report.md
+  - docs/shigoku/reports/2026-06-18_sgk-2026-0251_plan-closure_work_report.md
+  - docs/shigoku/worklogs/2026-06-18_sgk-2026-0251_plan-closure_work_log.md
 - provisional_id: DOC-0263
   task_id: SGK-2026-0251
   doc_type: work_report
@@ -2935,7 +2940,7 @@ tasks:
   primary_doc: docs/shigoku/subtasks/2026-06-03_obsidian-rag-kg-recipe_subtask_plan.md
   status: active
   provisional: false
-  task_summary: '継続学習運用改善: Obsidian/RAG・KG・Recipe連携の再設計'
+  task_summary: '継続学習運用改善: Obsidian/RAG・KG・Recipe連携の再設計（部分完了: 5ステップ実装済、runtime連携未達）'
   parent_task_id: SGK-2026-0221
   related_docs:
   - docs/shigoku/subtasks/2026-06-03_recon-signal-mc-swarm_subtask_plan.md
@@ -3257,6 +3262,39 @@ tasks:
   - docs/shigoku/plans/2026-06-05_master-conductor-split-plan_plan.md
   - docs/shigoku/subtasks/2026-06-12_masterconductor-execution-loop-dispatch-hitl_subtask_plan.md
   - docs/shigoku/reports/2026-06-13_sgk-2026-0286_work_report.md
+- provisional_id: DOC-0304
+  task_id: SGK-2026-0251
+  doc_type: work_report
+  title: SGK-2026-0251 親計画クローズ完了報告
+  primary_doc: docs/shigoku/reports/2026-06-18_sgk-2026-0251_plan-closure_work_report.md
+  status: done
+  provisional: false
+  task_summary: SGK-2026-0251 親計画クローズと継続監視分離の完了報告
+  parent_task_id: SGK-2026-0131
+  related_docs:
+  - docs/shigoku/plans/2026-06-01_task_plan.md
+  - docs/shigoku/reports/2026-06-03_sgk-2026-0253_program-overrides_work_report.md
+  - docs/shigoku/reports/2026-06-03_sgk-2026-0254_temporal-state_work_report.md
+  - docs/shigoku/reports/2026-06-03_sgk-2026-0255_degrade-runbook_work_report.md
+  - docs/shigoku/worklogs/2026-06-18_sgk-2026-0251_plan-closure_work_log.md
+  - docs/shigoku/subtasks/2026-06-03_sgk-2026-0253-program-overrides_subtask_plan.md
+  - docs/shigoku/subtasks/2026-06-03_sgk-2026-0253-sample-rules-schema-test_subtask_plan.md
+  - docs/shigoku/subtasks/2026-06-03_sgk-2026-0258-temporal-followup_subtask_plan.md
+- provisional_id: DOC-0305
+  task_id: SGK-2026-0251
+  doc_type: work_log
+  title: SGK-2026-0251 親計画クローズ作業ログ
+  primary_doc: docs/shigoku/worklogs/2026-06-18_sgk-2026-0251_plan-closure_work_log.md
+  status: done
+  provisional: false
+  task_summary: SGK-2026-0251 親計画クローズと台帳更新ログ
+  parent_task_id: SGK-2026-0131
+  related_docs:
+  - docs/shigoku/plans/2026-06-01_task_plan.md
+  - docs/shigoku/reports/2026-06-18_sgk-2026-0251_plan-closure_work_report.md
+  - docs/shigoku/subtasks/2026-06-03_sgk-2026-0253-program-overrides_subtask_plan.md
+  - docs/shigoku/subtasks/2026-06-03_sgk-2026-0253-sample-rules-schema-test_subtask_plan.md
+  - docs/shigoku/subtasks/2026-06-03_sgk-2026-0258-temporal-followup_subtask_plan.md
 doc_type_allowed_values:
 - spec
 - roadmap

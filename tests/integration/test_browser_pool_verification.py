@@ -97,19 +97,19 @@ class VerifiedBrowserPool:
     
     async def acquire(self) -> MockBrowser:
         """Acquire a browser from the pool"""
-        async with self._lock:
-            while not self._available:
-                await asyncio.sleep(0.01)
-            
-            browser = self._available.pop(0)
-            self._in_use.add(browser)
-            self._stats.total_acquired += 1
-            
-            # Check if restart needed
-            if browser.request_count >= self.max_requests:
-                await self._restart_browser(browser)
-            
-            return browser
+        while True:
+            async with self._lock:
+                if self._available:
+                    browser = self._available.pop(0)
+                    self._in_use.add(browser)
+                    self._stats.total_acquired += 1
+
+                    # Check if restart needed
+                    if browser.request_count >= self.max_requests:
+                        browser = await self._restart_browser(browser)
+
+                    return browser
+            await asyncio.sleep(0.01)
     
     async def release(self, browser: MockBrowser):
         """Release a browser back to the pool"""

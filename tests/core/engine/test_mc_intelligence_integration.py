@@ -15,14 +15,14 @@ from src.core.intelligence import (
 
 @pytest.fixture
 def mock_mc():
-    with patch("src.core.engine.master_conductor.get_findings_repository"), \
-         patch("src.core.engine.master_conductor.AsyncDatabaseWriter"), \
-         patch("src.core.engine.master_conductor.AgentFactory"), \
-         patch("src.core.engine.master_conductor.SmartScheduler"), \
-         patch("src.core.engine.master_conductor.KnowledgeGraph"), \
-         patch("src.core.engine.master_conductor.get_event_bus") as mock_get_event_bus, \
-         patch("src.core.engine.master_conductor.get_phase_gate"), \
-         patch("src.core.engine.master_conductor.get_notifier"):
+    with patch("src.core.engine.master_conductor_facade.get_findings_repository"), \
+         patch("src.core.engine.master_conductor_facade.AsyncDatabaseWriter"), \
+         patch("src.core.engine.master_conductor_facade.AgentFactory"), \
+         patch("src.core.engine.master_conductor_facade.SmartScheduler"), \
+         patch("src.core.engine.master_conductor_facade.KnowledgeGraph"), \
+         patch("src.core.engine.master_conductor_facade.get_event_bus") as mock_get_event_bus, \
+         patch("src.core.engine.master_conductor_facade.get_phase_gate"), \
+         patch("src.core.engine.master_conductor_facade.get_notifier"):
         
         mock_get_event_bus.return_value.start = AsyncMock()
         mc = MasterConductor()
@@ -390,7 +390,7 @@ class TestMCIntelligenceIntegration:
             ReflectionInsight(insight="Pattern detected", suggested_action="None", confidence=0.8, actionable=True, category="improvement")
         ]
         
-        with patch("src.core.engine.master_conductor.settings") as mock_settings:
+        with patch("src.core.engine.master_conductor_facade.settings") as mock_settings:
             mock_settings.reflection_interval = 1
             
             # 2回ループさせる設定

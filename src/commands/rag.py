@@ -22,7 +22,7 @@ def run_rag_ingest(path: str, pdf_only: bool = False, reset: bool = False):
     print_header("📚 RAG Ingest")
     
     try:
-        from src.core.rag import KnowledgeIngester
+        from src.core.rag_module.rag import KnowledgeIngester
     except ImportError as e:
         print_result(False, f"Import error: {e}")
         return

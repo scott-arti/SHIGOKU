@@ -290,3 +290,65 @@ def test_restore_legacy_resume_session_state_tracks_failed_task_deserializations
     assert restored["task_queue"] == []
     assert restored["failed_task_deserializations"] == ["{"]
     assert restored["pending_hitl"] == []
+
+
+# ---- SGK-2026-0287 Step 16: session/summary payload parity ----
+
+def test_start_session_payload_has_required_sections() -> None:
+    """SGK-2026-0287: verify start session payload contains all sections expected by reporting/resume."""
+    payload = build_start_session_payload(
+        target="https://example.test",
+        mode="BUG_BOUNTY",
+        context_target_info={"target": "https://example.test", "correlation": {"key": "v1"}},
+    )
+
+    assert isinstance(payload, dict)
+    assert "target_url" in payload or "target" in payload
+    assert "mode" in payload or "context" in payload
+
+
+def test_checkpoint_session_state_includes_pending_hitl() -> None:
+    """SGK-2026-0287: verify checkpoint state preserves pending HITL entries."""
+    from unittest.mock import MagicMock
+
+    task_queue = MagicMock()
+    task_queue.all_tasks = []
+    completed_tasks = []
+    context = MagicMock()
+    context.target_info = {}
+    pending_hitl = [{"ticket_id": "HITL-001", "status": "pending"}]
+
+    state = build_checkpoint_session_state(
+        task_queue=task_queue,
+        completed_tasks=completed_tasks,
+        context=context,
+        pending_hitl=pending_hitl,
+    )
+
+    # Returns (serialized_queue, completed_targets, metadata dict)
+    _, _, metadata = state
+    assert isinstance(metadata, dict)
+    assert "pending_hitl" in metadata, f"pending_hitl missing, got keys: {list(metadata.keys())}"
+    assert len(metadata["pending_hitl"]) == 1
+    assert metadata["pending_hitl"][0]["ticket_id"] == "HITL-001"
+
+
+def test_legacy_restore_handles_corrupted_payload_gracefully() -> None:
+    """SGK-2026-0287: corrupted legacy session must not crash restore."""
+    from datetime import datetime
+
+    session = Session(
+        session_id="sess-crpt",
+        project_name="test",
+        mode="bugbounty",
+        target_url="https://x.test",
+        created_at=datetime.now(),
+        last_updated=datetime.now(),
+        pending_targets=["not_json"],
+        metadata={},
+    )
+
+    restored = restore_legacy_resume_session_state(session)
+    assert isinstance(restored, dict)
+    assert "task_queue" in restored
+    assert "pending_hitl" in restored

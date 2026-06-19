@@ -32,12 +32,12 @@ async def verify_flow():
     
     # 2. MasterConductor のセットアップ
     # Dispatcher などの DI をモックする
-    with patch("src.core.engine.master_conductor.ExecutionContext"), \
-         patch("src.core.engine.master_conductor.settings") as mock_settings, \
-         patch("src.core.engine.master_conductor.AttackPlanner"), \
-         patch("src.core.engine.master_conductor.AsyncDatabaseWriter"), \
-         patch("src.core.engine.master_conductor.get_findings_repository"), \
-         patch("src.core.engine.master_conductor.get_phase_gate"), \
+    with patch("src.core.engine.master_conductor_facade.ExecutionContext"), \
+         patch("src.core.engine.master_conductor_facade.settings") as mock_settings, \
+         patch("src.core.engine.master_conductor_facade.AttackPlanner"), \
+         patch("src.core.engine.master_conductor_facade.AsyncDatabaseWriter"), \
+         patch("src.core.engine.master_conductor_facade.get_findings_repository"), \
+         patch("src.core.engine.master_conductor_facade.get_phase_gate"), \
          patch("src.core.engine.flag_watcher.FlagWatcher") as mock_flag_watcher:
         
         mock_settings.environment = "BUG_BOUNTY"

@@ -2,6 +2,7 @@
 
 Phase 0: ADR-001 に基づくエントリポイント統一の検証テスト
 """
+import sys
 import subprocess
 import pytest
 
@@ -12,7 +13,7 @@ class TestEntryPoints:
     def test_main_help_returns_zero(self):
         """main.py --help が正常終了する"""
         result = subprocess.run(
-            ["python", "-m", "src.main", "--help"],
+            [sys.executable, "-m", "src.main", "--help"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -22,7 +23,7 @@ class TestEntryPoints:
     def test_main_help_shows_usage(self):
         """main.py --help が使用方法を表示する"""
         result = subprocess.run(
-            ["python", "-m", "src.main", "--help"],
+            [sys.executable, "-m", "src.main", "--help"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -32,7 +33,7 @@ class TestEntryPoints:
     def test_main_interactive_option_exists(self):
         """--interactive オプションが存在する"""
         result = subprocess.run(
-            ["python", "-m", "src.main", "--help"],
+            [sys.executable, "-m", "src.main", "--help"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -42,7 +43,7 @@ class TestEntryPoints:
     def test_main_mode_option_exists(self):
         """--mode オプションが存在する"""
         result = subprocess.run(
-            ["python", "-m", "src.main", "--help"],
+            [sys.executable, "-m", "src.main", "--help"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -61,7 +62,7 @@ class TestEntryPoints:
         # 注: 現状は対話モードに入るため、--help なしでは即座に終了しない
         # このテストは python -m src が最低限動作することを確認
         result = subprocess.run(
-            ["python", "-c", "import src.__main__"],
+            [sys.executable, "-c", "import src.__main__"],
             capture_output=True,
             text=True,
             timeout=5,
@@ -77,7 +78,7 @@ class TestCLICommands:
     def test_projects_command(self):
         """--projects コマンドが動作する"""
         result = subprocess.run(
-            ["python", "-m", "src.main", "--projects"],
+            [sys.executable, "-m", "src.main", "--projects"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -88,7 +89,7 @@ class TestCLICommands:
     def test_tools_command(self):
         """--tools コマンドが動作する"""
         result = subprocess.run(
-            ["python", "-m", "src.main", "--tools"],
+            [sys.executable, "-m", "src.main", "--tools"],
             capture_output=True,
             text=True,
             timeout=30,
@@ -98,7 +99,7 @@ class TestCLICommands:
     def test_rag_stats_command(self):
         """--rag-stats コマンドが動作する"""
         result = subprocess.run(
-            ["python", "-m", "src.main", "--rag-stats"],
+            [sys.executable, "-m", "src.main", "--rag-stats"],
             capture_output=True,
             text=True,
             timeout=10,

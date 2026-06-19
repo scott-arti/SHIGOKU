@@ -1,0 +1,125 @@
+name: refresh_rotation
+description: "Detect refresh token rotation gaps: old token reuse, scope drift, and revocation gaps"
+tags: ["auth", "refresh", "rotation", "token"]
+severity: "critical"
+priority: 88
+
+trigger:
+  required_signals:
+    - bearer_token
+    - refresh_endpoint
+  optional_signals:
+    - session_cookie
+    - jwt_pattern
+    - oauth_endpoint
+
+steps:
+  - id: probe_old_token_reuse
+    name: "Probe old access token after refresh"
+    action: scan
+    params:
+      agent_type: "swarm"
+      instruction: |
+        Test old access token validity after refresh:
+        1. Obtain a new access token via refresh_token grant.
+        2. Use the old (pre-refresh) access token on a protected endpoint.
+        3. Verify old access token returns 401 (revoked).
+        Goal: detect old access token not revoked after refresh.
+
+  - id: probe_old_refresh_reuse
+    name: "Probe old refresh token reuse"
+    action: scan
+    params:
+      agent_type: "swarm"
+      instruction: |
+        Test refresh token reuse detection:
+        1. Use the refresh token once to get a new access token.
+        2. Reuse the same refresh token a second time.
+        3. Verify the server detects reuse (revokes all tokens or returns error).
+        Goal: detect missing refresh token rotation.
+
+  - id: probe_scope_drift
+    name: "Probe scope drift after refresh"
+    action: scan
+    params:
+      agent_type: "swarm"
+      instruction: |
+        Test scope consistency after refresh:
+        1. Record the scope of the original access token.
+        2. Perform a refresh and check the scope of the new access token.
+        3. Verify the scope has not expanded (no privilege escalation).
+        4. Check if the scope can be modified in the refresh request.
+        Goal: detect scope drift or scope manipulation in refresh flow.
+
+  - id: probe_revocation_gap
+    name: "Probe revocation endpoint gap"
+    action: scan
+    params:
+      agent_type: "swarm"
+      instruction: |
+        Test token revocation effectiveness:
+        1. If a revocation endpoint exists, revoke the current token.
+        2. Attempt to use the revoked token on a protected endpoint.
+        3. Verify the revoked token returns 401.
+        Goal: detect revocation endpoint that doesn't actually revoke.
+
+  - id: confirm_rotation_gap
+    name: "Confirm rotation gap"
+    action: scan
+    params:
+      agent_type: "swarm"
+      instruction: |
+        If any probe found a rotation gap:
+        1. Reproduce the finding with timing controls.
+        2. Confirm the old/revoked token still grants access.
+        3. Verify the gap is consistent and observable.
+
+  - id: collect_evidence
+    name: "Collect rotation evidence"
+    action: report
+    params:
+      agent_type: "swarm"
+      instruction: |
+        Collect structured evidence:
+        - Old access/refresh token reuse proof (HTTP responses).
+        - Scope comparison before/after refresh.
+        - Revocation endpoint response vs actual token validity.
+        - Whether the issue affects all tokens or specific scopes.
+
+stages:
+  - name: probe
+    steps: ["probe_old_token_reuse", "probe_old_refresh_reuse", "probe_scope_drift", "probe_revocation_gap"]
+    min_success: 1
+  - name: confirm
+    steps: ["confirm_rotation_gap"]
+    min_success: 1
+  - name: evidence
+    steps: ["collect_evidence"]
+    min_success: 1
+
+success_signals:
+  - type: "old_access_token_valid"
+    expect: "2xx response with pre-refresh access token"
+  - type: "refresh_token_reuse_accepted"
+    expect: "refresh_token grant succeeds on second use"
+  - type: "scope_expansion"
+    expect: "new access token has broader scope than original"
+  - type: "revoked_token_still_valid"
+    expect: "2xx response after explicit revocation"
+
+failure_signals:
+  - type: "proper_rotation"
+    on_failure: "no_finding"
+  - type: "rate_limit"
+    on_failure: "retry_later"
+
+stop_conditions:
+  - rate_limit
+  - waf_block
+  - auth_surface_missing
+  - no_refresh_endpoint
+
+evidence_policy:
+  max_items: 15
+  redact_secrets: true
+  structured: true

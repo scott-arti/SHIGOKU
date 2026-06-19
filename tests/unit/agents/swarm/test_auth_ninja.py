@@ -238,3 +238,100 @@ async def test_session_hijacker_weak_id_idor_prefers_runtime_session_cookie():
         cookie_header = call.kwargs.get("headers", {}).get("Cookie", "")
         assert "PHPSESSID=fresh456" in cookie_header
         assert "security=low" in cookie_header
+
+
+# ===== Regression: import / factory / registry smoke (SGK-2026-0301) =====
+
+
+class TestAuthNinjaImportRegression:
+    """Public import paths compatibility after AuthNinja split."""
+
+    def test_import_from_auth_ninja_module(self):
+        from src.core.agents.swarm.auth_ninja import (
+            BaseAuthAgent,
+            JWTInspector,
+            OAuthDancer,
+            MFABypasser,
+            SessionHijacker,
+            AuthBypassResult,
+            create_auth_agent,
+        )
+        assert BaseAuthAgent is not None
+        assert JWTInspector is not None
+        assert OAuthDancer is not None
+        assert MFABypasser is not None
+        assert SessionHijacker is not None
+        assert AuthBypassResult is not None
+        assert callable(create_auth_agent)
+
+    def test_import_from_swarm_package(self):
+        from src.core.agents.swarm import JWTInspector, OAuthDancer, MFABypasser
+        assert JWTInspector is not None
+        assert OAuthDancer is not None
+        assert MFABypasser is not None
+
+    def test_import_from_attack_auth_package(self):
+        from src.core.attack.auth import JWTInspector, OAuthDancer, MFABypasser
+        assert JWTInspector is not None
+        assert OAuthDancer is not None
+        assert MFABypasser is not None
+
+
+class TestAuthNinjaFactoryRegression:
+    """create_auth_agent() returns correct types after AuthNinja split."""
+
+    def test_factory_returns_jwt_inspector(self):
+        from src.core.agents.swarm.auth_ninja import create_auth_agent, JWTInspector
+        agent = create_auth_agent("jwt")
+        assert isinstance(agent, JWTInspector)
+
+    def test_factory_returns_oauth_dancer(self):
+        from src.core.agents.swarm.auth_ninja import create_auth_agent, OAuthDancer
+        agent = create_auth_agent("oauth")
+        assert isinstance(agent, OAuthDancer)
+
+    def test_factory_returns_mfa_bypasser(self):
+        from src.core.agents.swarm.auth_ninja import create_auth_agent, MFABypasser
+        agent = create_auth_agent("mfa")
+        assert isinstance(agent, MFABypasser)
+
+    def test_factory_returns_session_hijacker(self):
+        from src.core.agents.swarm.auth_ninja import create_auth_agent, SessionHijacker
+        agent = create_auth_agent("session")
+        assert isinstance(agent, SessionHijacker)
+
+    def test_factory_alias_resolution(self):
+        from src.core.agents.swarm.auth_ninja import create_auth_agent
+        from src.core.agents.swarm.auth_ninja_jwt import JWTInspector as JWT
+        from src.core.agents.swarm.auth_ninja_oauth import OAuthDancer as OAuth
+        assert isinstance(create_auth_agent("jwt_inspector"), JWT)
+        assert isinstance(create_auth_agent("oauth_dancer"), OAuth)
+        assert isinstance(create_auth_agent("mfa_bypasser"), type(create_auth_agent("mfa")))
+        assert isinstance(create_auth_agent("session_hijacker"), type(create_auth_agent("session")))
+
+    def test_factory_unknown_type_raises(self):
+        from src.core.agents.swarm.auth_ninja import create_auth_agent
+        with pytest.raises(ValueError):
+            create_auth_agent("nonexistent_agent")
+
+
+class TestAuthNinjaRegistryRegression:
+    """Agent registry resolves authninja after split."""
+
+    def test_registry_returns_jwt_inspector(self):
+        from src.core.engine.agent_registry import get_agent_class
+        from src.core.agents.swarm.auth_ninja_jwt import JWTInspector
+        cls = get_agent_class("authninja")
+        assert cls == JWTInspector
+
+    def test_registry_jwt_alias(self):
+        from src.core.engine.agent_registry import get_agent_class
+        from src.core.agents.swarm.auth_ninja_jwt import JWTInspector
+        cls = get_agent_class("jwt")
+        assert cls == JWTInspector
+
+    def test_registry_session_alias(self):
+        from src.core.engine.agent_registry import get_agent_class
+        from src.core.agents.swarm.auth_ninja_session import SessionHijacker
+        cls = get_agent_class("sessionhijacker")
+        assert cls == SessionHijacker

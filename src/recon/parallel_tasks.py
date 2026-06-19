@@ -29,7 +29,7 @@ class ParallelTasks:
     各タスクは完了次第、分類→PM保存→MC返却を独立実行する。
     """
     
-    def __init__(self, config: dict[str, Any], project_manager: Any, master_conductor: Any = None):
+    def __init__(self, config: dict[str, Any], project_manager: Any, master_conductor: Any = None, deps: Any = None):  # SGK-2026-0288
         """初期化
         
         Args:
@@ -40,7 +40,17 @@ class ParallelTasks:
         self.config = config
         self.pm = project_manager
         self.mc = master_conductor
+        self._deps = deps  # SGK-2026-0288
         self.runner = ToolRunner()
+
+    # ---- SGK-2026-0288: deps-aware _add_tasks ----
+
+    def _add_tasks_via_deps(self, tasks: list, source: str) -> None:
+        """Add tasks via deps (preferred) or mc._add_tasks (backward compat)."""
+        if self._deps and self._deps.add_tasks:
+            self._deps.add_tasks(tasks, source=source)
+        elif self.mc and hasattr(self.mc, "_add_tasks"):
+            self.mc._add_tasks(tasks, source=source)
 
     def _get_path(self, workspace: Path, state: Any, type_name: str, ext: str = "") -> Path:
         """命名規則に従ったファイルパスを取得する
@@ -188,10 +198,9 @@ class ParallelTasks:
                     },
                     priority=60
                 )
-                # _add_tasks は internal だが現状の I/F ではこれを使う必要がある
-                if hasattr(self.mc, "_add_tasks"):
-                    self.mc._add_tasks([task], source="recon.full_port_scan")
-                    logger.info("Registered analysis task to MC")
+                # SGK-2026-0288: use deps-aware accessor
+                self._add_tasks_via_deps([task], source="recon.full_port_scan")
+                logger.info("Registered analysis task to MC")
             except Exception as e:
                 logger.error("Failed to register task to MC: %s", e)
         
@@ -330,7 +339,14 @@ class ParallelTasks:
         
         # Step 1: LLM による候補生成
         llm_candidates = []
-        if self.mc and self.mc.llm_client:
+        # SGK-2026-0288: resolve llm_client from deps (preferred) or mc
+        llm_client = None
+        if self._deps and self._deps.llm_client:
+            llm_client = self._deps.llm_client
+        elif self.mc and self.mc.llm_client:
+            llm_client = self.mc.llm_client
+
+        if llm_client:
             try:
                 # 既存サブドメインからパターンを学習して候補を生成
                 sample_subs = sorted(all_subs)[:50]  # 学習用サンプル
@@ -347,7 +363,7 @@ class ParallelTasks:
                     or getattr(settings, "model_output", None)
                     or "ollama/qwen3.5:latest"
                 )
-                response = self.mc.llm_client.chat.completions.create(
+                response = llm_client.chat.completions.create(
                     model=llm_model,
                     messages=[{"role": "user", "content": prompt}],
                     max_tokens=500,
@@ -507,7 +523,7 @@ class ParallelTasks:
                     },
                     priority=70
                 )
-                self.mc._add_tasks([task], source="recon.permutation")
+                self._add_tasks_via_deps([task], source="recon.permutation")
             except Exception as e:
                 logger.error("Failed to register task to MC: %s", e)
         
@@ -639,7 +655,7 @@ class ParallelTasks:
                     },
                     priority=80
                 )
-                self.mc._add_tasks([task], source="recon.dead_sub_scan")
+                self._add_tasks_via_deps([task], source="recon.dead_sub_scan")
             except Exception as e:
                 logger.error("Failed to register task to MC: %s", e)
 

@@ -25,7 +25,7 @@ def test_main_report_replay_runs_queue_processing(monkeypatch, tmp_path, capsys)
     async def _fake_create_platform_manager(*, hackerone_token=None, hackerone_username=None, bugcrowd_token=None):
         return _FakeManager()
 
-    monkeypatch.setattr(main_module, "create_platform_manager", _fake_create_platform_manager)
+    monkeypatch.setattr("src.core.reporting.platform_integration.create_platform_manager", _fake_create_platform_manager)
     monkeypatch.setattr(sys, "argv", [
         "shigoku",
         "--report-replay",
@@ -52,7 +52,7 @@ def test_main_report_replay_requires_configured_platform(monkeypatch, capsys):
     async def _fake_create_platform_manager(*, hackerone_token=None, hackerone_username=None, bugcrowd_token=None):
         return _FakeManager()
 
-    monkeypatch.setattr(main_module, "create_platform_manager", _fake_create_platform_manager)
+    monkeypatch.setattr("src.core.reporting.platform_integration.create_platform_manager", _fake_create_platform_manager)
     monkeypatch.setattr(
         sys,
         "argv",

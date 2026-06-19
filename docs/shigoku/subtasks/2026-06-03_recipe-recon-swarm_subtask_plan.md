@@ -235,15 +235,15 @@ target: src/core/engine/master_conductor.py, src/core/engine/recipe_loader.py, s
 - Recon 計画側で schema が増えても、Recipe 計画側では `required_signals`, `supporting_context`, `reasons` 契約に吸収できる構成を目指す。
 
 ## 4. 実装ステップ（AIに指示する手順）
-- [ ] ステップ1: Recon / Discovery から Recipe 選抜へ渡す signal vocabulary を定義し、raw signal との対応表を設計する。
-- [ ] ステップ2: `master_conductor.py` の direct swarm dispatch 経路と `run_recipe` 経路を棚卸しし、責務境界と切替条件を明文化する。
-- [ ] ステップ3: `RecipeLoader` が `RecipeCandidate` を返す新しい selection 契約を設計し、Recipe ごとの attack surface tags / vulnerability tags / supported actions を照合可能にする。
-- [ ] ステップ4: KnowledgeGraph から selection に必要な supporting context を取得する I/O を設計する。
-- [ ] ステップ5: Recipe 候補集合のライフサイクルを見直し、過去ロード済み YAML を無条件で全再利用しない selection / cache / invalidation 方針を設計する。
-- [ ] ステップ6: Recipe 実行後の evidence / follow-up routing 契約を `optimized_runner.py` / conductor 側へ導入し、allowlist にない action を事前に検出して graceful に落とす。
-- [ ] ステップ7: 重複抑制、suppression key、decision trace を追加し、同一 signal からの task explosion を防ぐ。
-- [ ] ステップ8: Recipe selector の主体を `MasterConductor` 中心に残すか、Swarm に寄せるか、または Swarm-assisted selection にするかを設計判断として明文化する。
-- [ ] ステップ9: docs とテストで `direct swarm` / `run_recipe` / `recipe -> swarm feedback` の3経路を固定化する。
+- [x] ステップ1: Recon / Discovery から Recipe 選抜へ渡す signal vocabulary を定義し、raw signal との対応表を設計する。
+- [x] ステップ2: `master_conductor.py` の direct swarm dispatch 経路と `run_recipe` 経路を棚卸しし、責務境界と切替条件を明文化する。
+- [x] ステップ3: `RecipeLoader` が `RecipeCandidate` を返す新しい selection 契約を設計し、Recipe ごとの attack surface tags / vulnerability tags / supported actions を照合可能にする。
+- [x] ステップ4: KnowledgeGraph から selection に必要な supporting context を取得する I/O を設計する。
+- [x] ステップ5: Recipe 候補集合のライフサイクルを見直し、過去ロード済み YAML を無条件で全再利用しない selection / cache / invalidation 方針を設計する。
+- [x] ステップ6: Recipe 実行後の evidence / follow-up routing 契約を `optimized_runner.py` / conductor 側へ導入し、allowlist にない action を事前に検出して graceful に落とす。
+- [x] ステップ7: 重複抑制、suppression key、decision trace を追加し、同一 signal からの task explosion を防ぐ。
+- [x] ステップ8: Recipe selector の主体を `MasterConductor` 中心に残すか、Swarm に寄せるか、または Swarm-assisted selection にするかを設計判断として明文化する。
+- [x] ステップ9: docs とテストで `direct swarm` / `run_recipe` / `recipe -> swarm feedback` の3経路を固定化する。
 
 ### 4.2 Recon 計画書との分担
 - Recon 計画書 (`SGK-2026-0261`) の完了条件:
@@ -560,3 +560,28 @@ Recon / Discovery / Browser / API probes
 8. Recipe 実行後の follow-up routing 契約
 9. specialist が必要とする structured context schema の固定
 10. `Recipe` 用語と実装命名の整合性回復
+
+### 7.14 設計判断: Recipe selector の主体 — MC 中心 + Swarm-assisted suggestion（ステップ8結論）
+
+**判断**: **MasterConductor が最終判定（final gate）を持ち、Swarm は suggestion candidate の提案に限定する**。
+
+**理由**:
+1. 継続学習アーキテクチャ参照資料の原則「deterministic first」に従い、Recipe trigger は signal + KG を正本とし、LLM 単独の気分で発火しない。
+2. MC は global dedupe / budget / routing / recipe selection の最終判断を行う唯一の場所であり、context 集約と phase gate 管理の責務をすでに持つ。
+3. Swarm に selector 主体を任せると、同じ signal から無秩序に recipe 候補が生成され、task explosion と重複実行のリスクが高まる。
+
+**Swarm の役割（制限付き）**:
+- 曖昧な signal に対する仮説列挙（「この endpoint は sqli と ssrf の両方の可能性がある」）
+- 既存 Recipe の trigger 条件に合致しないが価値がありそうな exploratory path の提案
+- Recipe 実行後の新 evidence に基づく adjacent surface 探索の提案
+
+**MC の最終判定基準**:
+- `RecipeCandidate` の score と reasons を評価
+- KG context（重複 RecipeRun、過去 Findings、隣接 endpoint 関係）を参照
+- budget と priority に基づく実行可否判断
+- `suppression_key` による重複抑制
+- signal が Recipe trigger に合致しない場合は direct swarm または defer に振り分け
+
+**将来の拡張余地**:
+- Swarm suggestion を MC の `_load_recipe_tasks()` の前段に追加し、`suggested_candidates` として受け取る
+- ただし suggestion を受け取っても最終判定は MC が行い、`match_recipes_to_context()` による signal-based scoring が優先される

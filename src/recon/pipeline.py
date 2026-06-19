@@ -129,6 +129,7 @@ class ReconPipeline:
         target: str = "",
         master_conductor: Any = None,
         workspace_root: str | Path | None = None,
+        deps: Any = None,  # SGK-2026-0288: ReconExecutionDependencies
     ) -> None:
         """初期化
         
@@ -143,6 +144,7 @@ class ReconPipeline:
         self.pm = project_manager
         self.config = config
         self.mc = master_conductor
+        self._deps = deps  # SGK-2026-0288
         
         # Prioritize ProjectManager directory if available and workspace_root not explicitly set
         if not workspace_root and self.pm and hasattr(self.pm, "project_dir"):
@@ -159,7 +161,7 @@ class ReconPipeline:
         self.pm_initialized = False
 
         from src.recon.parallel_tasks import ParallelTasks
-        self.tasks = ParallelTasks(config, project_manager, master_conductor)
+        self.tasks = ParallelTasks(config, project_manager, master_conductor, deps=deps)
         
         # 並行処理制御
         max_concurrent = config.get("scan", {}).get("max_concurrent_tasks", getattr(settings, "max_concurrent_tasks", 4))
@@ -182,6 +184,23 @@ class ReconPipeline:
         
         logger.info("ReconPipeline initialized: %s (Workspace: %s)", target, self.workspace_root)
         
+    # ---- SGK-2026-0288: deps-aware accessors ----
+
+    def _get_target_info(self) -> dict[str, Any]:
+        """Resolve target_info from deps (preferred) or mc (backward compat)."""
+        if self._deps and self._deps.target_info:
+            return self._deps.target_info
+        if self.mc and self.mc.context and isinstance(getattr(self.mc.context, "target_info", None), dict):
+            return self.mc.context.target_info
+        return {}
+
+    def _add_tasks_via_deps(self, tasks: list, source: str) -> None:
+        """Add tasks via deps (preferred) or mc._add_tasks (backward compat)."""
+        if self._deps and self._deps.add_tasks:
+            self._deps.add_tasks(tasks, source=source)
+        elif self.mc and hasattr(self.mc, "_add_tasks"):
+            self.mc._add_tasks(tasks, source=source)
+
     def _get_path(self, type_name: str, ext: str) -> Path:
         """命名規則に従ったファイルパスを取得する
         形式: YYYYMMDD_<project_name>_<type_name>.<ext>
@@ -208,8 +227,7 @@ class ReconPipeline:
         """Contextから認証ヘッダーを取得し、Cookie/Bearerを補完する。"""
         headers: dict[str, str] = {}
         target_info = {}
-        if self.mc and self.mc.context and isinstance(self.mc.context.target_info, dict):
-            target_info = self.mc.context.target_info
+        target_info = self._get_target_info()
 
         raw_headers = target_info.get("auth_headers", {})
         if isinstance(raw_headers, dict):
@@ -3355,7 +3373,7 @@ class ReconPipeline:
 
             scan_profile = "bbpt"
             if self.mc and hasattr(self.mc, "context"):
-                target_info = getattr(self.mc.context, "target_info", {})
+                target_info = self._get_target_info()
                 if isinstance(target_info, dict):
                     scan_profile = str(
                         target_info.get("scan_profile")
@@ -3411,7 +3429,7 @@ class ReconPipeline:
                 priority=task_config["priority"]
             )
             if hasattr(self.mc, "_add_tasks"):
-                self.mc._add_tasks([task], source=f"recon.tagged_{category}")
+                self._add_tasks_via_deps([task], source=f"recon.tagged_{category}")
                 logger.info(f"✅ Added {task_config['name']} task with {len(urls)} targets")
 
                 # command injection 系 URL は InjectionManager を明示起動して
@@ -3441,7 +3459,7 @@ class ReconPipeline:
                         },
                         priority=max(task_config["priority"], 88),
                     )
-                    self.mc._add_tasks([cmd_task], source=f"recon.tagged_{category}.cmd_focus")
+                    self._add_tasks_via_deps([cmd_task], source=f"recon.tagged_{category}.cmd_focus")
                     logger.info("✅ Added explicit command-injection focus task (%d targets)", len(command_targets))
 
                 # weak session id (DVWA weak_id 等) は SessionHijacker を明示起動
@@ -3482,7 +3500,7 @@ class ReconPipeline:
                         tags=["weak_session_id", "session"],
                         priority=max(task_config["priority"], 86),
                     )
-                    self.mc._add_tasks([session_task], source=f"recon.tagged_{category}.weak_session")
+                    self._add_tasks_via_deps([session_task], source=f"recon.tagged_{category}.weak_session")
                     logger.info("✅ Added explicit SessionHijacker task for weak_id endpoint")
 
                 # authbypass / weak_id 系 URL は BizLogicHunter を明示的に起動して
@@ -3542,7 +3560,7 @@ class ReconPipeline:
                                 tags=["idor_candidate", "admin_endpoint", "admin_panel", "authz_differential"],
                                 priority=max(task_config["priority"] - 1, 1),
                             ))
-                        self.mc._add_tasks(extra_tasks, source=f"recon.tagged_{category}.bizlogic")
+                        self._add_tasks_via_deps(extra_tasks, source=f"recon.tagged_{category}.bizlogic")
                         logger.info("✅ Added %d explicit BizLogicHunter task(s) for authbypass", len(extra_tasks))
             else:
                 logger.warning("MasterConductor does not support _add_tasks")

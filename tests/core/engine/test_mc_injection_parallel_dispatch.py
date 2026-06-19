@@ -10,14 +10,14 @@ from src.core.engine.parallel_orchestrator import TaskResult
 @pytest.fixture
 def mock_mc():
     with (
-        patch("src.core.engine.master_conductor.get_findings_repository"),
-        patch("src.core.engine.master_conductor.AsyncDatabaseWriter"),
-        patch("src.core.engine.master_conductor.AgentFactory"),
-        patch("src.core.engine.master_conductor.SmartScheduler"),
-        patch("src.core.engine.master_conductor.KnowledgeGraph"),
-        patch("src.core.engine.master_conductor.get_event_bus") as mock_get_event_bus,
-        patch("src.core.engine.master_conductor.get_phase_gate"),
-        patch("src.core.engine.master_conductor.get_notifier"),
+        patch("src.core.engine.master_conductor_facade.get_findings_repository"),
+        patch("src.core.engine.master_conductor_facade.AsyncDatabaseWriter"),
+        patch("src.core.engine.master_conductor_facade.AgentFactory"),
+        patch("src.core.engine.master_conductor_facade.SmartScheduler"),
+        patch("src.core.engine.master_conductor_facade.KnowledgeGraph"),
+        patch("src.core.engine.master_conductor_facade.get_event_bus") as mock_get_event_bus,
+        patch("src.core.engine.master_conductor_facade.get_phase_gate"),
+        patch("src.core.engine.master_conductor_facade.get_notifier"),
     ):
         mock_get_event_bus.return_value.start = AsyncMock()
         mc = MasterConductor()
@@ -76,7 +76,7 @@ def test_injection_full_parallel_dispatch_enables_multi_task_batch(mock_mc):
     _prepare_queue(mock_mc, tasks)
     _prepare_parallel_executor(mock_mc)
 
-    with patch("src.core.engine.master_conductor.settings") as mock_settings:
+    with patch("src.core.engine.master_conductor_facade.settings") as mock_settings:
         mock_settings.max_session_tasks = 10
         mock_settings.injection_full_parallel_dispatch = True
         mock_settings.injection_batch_parallelism = 2
@@ -100,7 +100,7 @@ def test_injection_default_dispatch_keeps_sequential_batch(mock_mc):
     _prepare_queue(mock_mc, tasks)
     _prepare_parallel_executor(mock_mc)
 
-    with patch("src.core.engine.master_conductor.settings") as mock_settings:
+    with patch("src.core.engine.master_conductor_facade.settings") as mock_settings:
         mock_settings.max_session_tasks = 10
         mock_settings.injection_full_parallel_dispatch = False
         mock_settings.injection_batch_parallelism = 2

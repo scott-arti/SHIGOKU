@@ -1,0 +1,106 @@
+name: oauth_binding_drift
+description: "Detect OAuth state/nonce/redirect binding drift within a single session"
+tags: ["auth", "oauth", "binding", "drift"]
+severity: "high"
+priority: 85
+
+trigger:
+  required_signals:
+    - bearer_token
+    - session_cookie
+    - oauth_endpoint
+  optional_signals:
+    - jwt_pattern
+    - login_endpoint
+    - auth_related_capability
+
+steps:
+  - id: probe_state_binding
+    name: "Probe state parameter binding"
+    action: scan
+    params:
+      agent_type: "swarm"
+      instruction: |
+        Test OAuth state parameter binding:
+        1. Initiate OAuth flow with a known state value.
+        2. Intercept and modify the state in the callback.
+        3. Observe if the server accepts a mismatched state.
+        Goal: detect state parameter not bound to session.
+
+  - id: probe_nonce_binding
+    name: "Probe nonce binding (OIDC)"
+    action: scan
+    params:
+      agent_type: "swarm"
+      instruction: |
+        Test nonce parameter binding in OIDC flows:
+        1. If OIDC is detected, test nonce mismatch in id_token.
+        2. Observe if the server validates nonce against the session.
+
+  - id: probe_redirect_uri
+    name: "Probe redirect_uri validation"
+    action: scan
+    params:
+      agent_type: "swarm"
+      instruction: |
+        Test redirect_uri validation:
+        1. Attempt to use a modified redirect_uri (e.g., open redirect pattern).
+        2. Observe if the authorization server redirects to an untrusted URI.
+
+  - id: confirm_binding_issue
+    name: "Confirm binding drift"
+    action: scan
+    params:
+      agent_type: "swarm"
+      instruction: |
+        If any probe stage found a binding issue:
+        1. Reproduce the finding with a controlled request.
+        2. Confirm the drift is observable (response code, redirect target).
+        3. Check if the bound parameter is shared across sessions.
+
+  - id: collect_evidence
+    name: "Collect binding drift evidence"
+    action: report
+    params:
+      agent_type: "swarm"
+      instruction: |
+        Collect structured evidence:
+        - Request/response pairs showing the binding issue.
+        - Which parameter (state, nonce, redirect_uri) was affected.
+        - Whether the drift allows token theft or account takeover.
+
+stages:
+  - name: probe
+    steps: ["probe_state_binding", "probe_nonce_binding", "probe_redirect_uri"]
+    min_success: 1
+  - name: confirm
+    steps: ["confirm_binding_issue"]
+    min_success: 1
+  - name: evidence
+    steps: ["collect_evidence"]
+    min_success: 1
+
+success_signals:
+  - type: "redirect_to_untrusted_uri"
+    expect: "3xx with attacker-controlled Location header"
+  - type: "state_mismatch_accepted"
+    expect: "200 or 302 with mismatched state parameter"
+  - type: "nonce_mismatch_accepted"
+    expect: "id_token accepted with wrong nonce"
+
+failure_signals:
+  - type: "rate_limit"
+    on_failure: "retry_later"
+  - type: "no_oauth_flow"
+    on_failure: "skip"
+
+stop_conditions:
+  - rate_limit
+  - waf_block
+  - auth_surface_missing
+  - no_oauth_endpoint
+
+evidence_policy:
+  max_items: 10
+  redact_secrets: true
+  structured: true

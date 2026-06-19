@@ -1,0 +1,111 @@
+name: hidden_admin_capability
+description: "Detect hidden admin/management API endpoints accessible within the same authenticated session"
+tags: ["auth", "admin", "hidden", "capability"]
+severity: "high"
+priority: 75
+
+trigger:
+  required_signals:
+    - bearer_token
+    - session_cookie
+  optional_signals:
+    - admin_endpoint
+    - graphql_endpoint
+    - jwt_pattern
+    - auth_related_capability
+
+steps:
+  - id: probe_admin_endpoints
+    name: "Probe common admin endpoint patterns"
+    action: scan
+    params:
+      agent_type: "swarm"
+      instruction: |
+        Test common admin/management endpoint patterns:
+        1. Enumerate known admin paths: /admin, /manage, /api/admin, /dashboard, /_admin.
+        2. Try variations: /administrator, /wp-admin, /control, /system, /internal.
+        3. For each discovered endpoint, check if accessible with current session.
+        4. Record any 2xx responses that reveal admin functionality.
+        Goal: detect admin endpoints not hidden behind authorization.
+
+  - id: probe_graphql_introspection
+    name: "Probe GraphQL schema for hidden mutations"
+    action: scan
+    params:
+      agent_type: "swarm"
+      instruction: |
+        Test GraphQL introspection for admin mutations:
+        1. If GraphQL detected, run introspection query.
+        2. Look for admin/management mutations: deleteUser, updateRole, grantAccess, etc.
+        3. Test if these mutations are executable with current session.
+        Goal: detect privileged GraphQL operations accessible to regular users.
+
+  - id: probe_api_versioning
+    name: "Probe API versioning for hidden endpoints"
+    action: scan
+    params:
+      agent_type: "swarm"
+      instruction: |
+        Test API versioning for hidden admin endpoints:
+        1. Check multiple API versions: /v1/admin, /v2/admin, /api/v1/management, /api/internal.
+        2. Look for deprecated but still active admin endpoints.
+        3. Test undocumented API paths discovered via JS bundle analysis.
+        Goal: detect unmaintained admin endpoints still accessible.
+
+  - id: confirm_hidden_access
+    name: "Confirm hidden capability access"
+    action: scan
+    params:
+      agent_type: "swarm"
+      instruction: |
+        If any probe found hidden admin access:
+        1. Reproduce access to the hidden endpoint with the same session.
+        2. Confirm the endpoint returns sensitive data or allows privileged operations.
+        3. Verify the endpoint is not exposed in the UI/documentation.
+
+  - id: collect_evidence
+    name: "Collect hidden capability evidence"
+    action: report
+    params:
+      agent_type: "swarm"
+      instruction: |
+        Collect structured evidence:
+        - Discovered hidden endpoint URLs.
+        - HTTP responses showing admin data/operations accessible.
+        - Whether the endpoint appears in documentation or UI navigation.
+        - Scope of data exposed or operations possible.
+
+stages:
+  - name: probe
+    steps: ["probe_admin_endpoints", "probe_graphql_introspection", "probe_api_versioning"]
+    min_success: 1
+  - name: confirm
+    steps: ["confirm_hidden_access"]
+    min_success: 1
+  - name: evidence
+    steps: ["collect_evidence"]
+    min_success: 1
+
+success_signals:
+  - type: "admin_endpoint_2xx"
+    expect: "2xx response from admin-pattern URL with current session"
+  - type: "graphql_admin_mutation"
+    expect: "admin mutation executes successfully via GraphQL"
+  - type: "hidden_api_sensitive_data"
+    expect: "undocumented endpoint returns user data or admin operations"
+
+failure_signals:
+  - type: "proper_auth_guard"
+    on_failure: "no_finding"
+  - type: "rate_limit"
+    on_failure: "retry_later"
+
+stop_conditions:
+  - rate_limit
+  - waf_block
+  - auth_surface_missing
+
+evidence_policy:
+  max_items: 10
+  redact_secrets: true
+  structured: true

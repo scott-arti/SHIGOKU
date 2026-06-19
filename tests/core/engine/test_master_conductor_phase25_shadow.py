@@ -81,7 +81,7 @@ def test_pre_action_gate_shadow_records_comparison_without_mutating_public_outpu
 
 def test_pre_action_gate_shadow_can_be_disabled(monkeypatch) -> None:
     mc = MasterConductor.__new__(MasterConductor)
-    monkeypatch.setattr("src.core.engine.master_conductor.settings.chain_llm_shadow_mode", False)
+    monkeypatch.setattr("src.core.engine.master_conductor_facade.settings.chain_llm_shadow_mode", False)
 
     report = mc.run_pre_action_gate_shadow([])
 

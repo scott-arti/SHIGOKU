@@ -1,0 +1,123 @@
+name: jwt_claim_enforcement
+description: "Detect JWT claim enforcement gaps (aud, iss, nbf, typ, kid) via response differential analysis"
+tags: ["auth", "jwt", "claims", "enforcement"]
+severity: "high"
+priority: 80
+
+trigger:
+  required_signals:
+    - bearer_token
+    - jwt_pattern
+  optional_signals:
+    - session_cookie
+    - login_endpoint
+    - auth_related_capability
+
+steps:
+  - id: probe_aud_claim
+    name: "Probe audience (aud) claim enforcement"
+    action: scan
+    params:
+      agent_type: "swarm"
+      instruction: |
+        Test audience claim validation:
+        1. Decode JWT to identify current aud value.
+        2. Craft a request with a JWT that has a modified aud (e.g., wrong service).
+        3. Observe if the server accepts the token with wrong audience.
+        Goal: detect missing aud validation.
+
+  - id: probe_iss_claim
+    name: "Probe issuer (iss) claim enforcement"
+    action: scan
+    params:
+      agent_type: "swarm"
+      instruction: |
+        Test issuer claim validation:
+        1. Decode JWT to identify current iss value.
+        2. Craft a request with a JWT that has a modified iss (e.g., different tenant).
+        3. Observe if the server accepts the token with wrong issuer.
+        Goal: detect missing iss validation.
+
+  - id: probe_typ_kid
+    name: "Probe type (typ) and key ID (kid) enforcement"
+    action: scan
+    params:
+      agent_type: "swarm"
+      instruction: |
+        Test typ and kid claim enforcement:
+        1. Check if server validates typ claim (e.g., "JWT" vs "jwt").
+        2. Test kid manipulation to check for key confusion.
+        3. Observe if server validates the key identifier.
+        Goal: detect missing typ/kid validation.
+
+  - id: probe_nbf_claim
+    name: "Probe not-before (nbf) claim enforcement"
+    action: scan
+    params:
+      agent_type: "swarm"
+      instruction: |
+        Test nbf claim enforcement:
+        1. Create a JWT with nbf set far in the future.
+        2. Attempt to use the token before its nbf time.
+        3. Observe if the server accepts a not-yet-valid token.
+        Goal: detect missing nbf validation.
+
+  - id: confirm_claim_issue
+    name: "Confirm claim enforcement gap"
+    action: scan
+    params:
+      agent_type: "swarm"
+      instruction: |
+        If any probe found a claim enforcement gap:
+        1. Reproduce with a clean request.
+        2. Confirm the modified claim token grants access to protected resources.
+        3. Document which claim(s) are not enforced.
+
+  - id: collect_evidence
+    name: "Collect claim evidence"
+    action: report
+    params:
+      agent_type: "swarm"
+      instruction: |
+        Collect structured evidence:
+        - Original token claims vs modified claims.
+        - HTTP responses showing access granted with invalid claims.
+        - Which claim(s) lacked enforcement (aud, iss, nbf, typ, kid).
+
+stages:
+  - name: probe
+    steps: ["probe_aud_claim", "probe_iss_claim", "probe_typ_kid", "probe_nbf_claim"]
+    min_success: 1
+  - name: confirm
+    steps: ["confirm_claim_issue"]
+    min_success: 1
+  - name: evidence
+    steps: ["collect_evidence"]
+    min_success: 1
+
+success_signals:
+  - type: "wrong_aud_accepted"
+    expect: "2xx response with modified aud claim"
+  - type: "wrong_iss_accepted"
+    expect: "2xx response with modified iss claim"
+  - type: "future_nbf_accepted"
+    expect: "2xx response with future nbf claim"
+  - type: "key_confusion"
+    expect: "2xx response with manipulated kid claim"
+
+failure_signals:
+  - type: "proper_claim_validation"
+    on_failure: "no_finding"
+  - type: "rate_limit"
+    on_failure: "retry_later"
+
+stop_conditions:
+  - rate_limit
+  - waf_block
+  - auth_surface_missing
+  - no_jwt_token
+
+evidence_policy:
+  max_items: 12
+  redact_secrets: true
+  structured: true

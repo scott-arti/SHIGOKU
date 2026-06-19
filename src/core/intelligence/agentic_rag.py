@@ -22,7 +22,7 @@ class AgenticRAGFeedbackLoop:
     def __init__(self, rag_client: Any, llm_client: Any, threshold: float = 0.7, max_retries: int = 3):
         """
         Args:
-            rag_client: 既存の RAG インスタンス（retrieveメソッドを持つことを期待）
+            rag_client: 既存の RAG インスタンス（retrieve または query メソッドを持つことを期待）
             llm_client: LLM 連携用クライアント
             threshold: 再試行の閾値 (0.0 - 1.0)
             max_retries: 最大リトライ回数
@@ -92,7 +92,16 @@ class AgenticRAGFeedbackLoop:
             logger.info("[AgenticRAG] Attempt %d: Retrieving for '%s'", attempt, current_query)
             
             # RAGから検索 (既存のRAGモジュールを呼び出し)
-            contexts = await self.rag.retrieve(current_query)
+            # retrieve があればそれを使い、なければ query にフォールバック
+            if hasattr(self.rag, 'retrieve'):
+                result = self.rag.retrieve(current_query)
+            else:
+                result = self.rag.query(current_query)
+            # async rag_client (AsyncMock等) の場合は await、同期ならそのまま使う
+            if hasattr(result, '__await__'):
+                contexts = await result
+            else:
+                contexts = result
             all_contexts.extend(contexts)
             
             # 重複除去や整形が必要ならここで実施
@@ -102,7 +111,11 @@ class AgenticRAGFeedbackLoop:
                 break
                 
             # LLMによる信頼度評価
-            confidence, next_query = await self.evaluate_confidence(current_query, [str(c) for c in contexts], goal)
+            confidence, next_query = await self.evaluate_confidence(
+                current_query,
+                [c.content if hasattr(c, 'content') else str(c) for c in contexts],
+                goal,
+            )
             
             if confidence >= self.threshold:
                 logger.info("[AgenticRAG] Confidence threshold met (%.2f >= %.2f).", confidence, self.threshold)

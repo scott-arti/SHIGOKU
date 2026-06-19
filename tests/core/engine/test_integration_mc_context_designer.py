@@ -7,7 +7,7 @@ from src.core.engine.task_queue import TaskContext
 
 @pytest.fixture
 def mock_settings():
-    with patch("src.core.engine.master_conductor.settings") as mock:
+    with patch("src.core.engine.master_conductor_facade.settings") as mock:
         mock.use_llm_planning = False
         mock.notify_on_task_start = False
         mock.notify_on_task_complete = False

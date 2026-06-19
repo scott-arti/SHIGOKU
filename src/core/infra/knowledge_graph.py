@@ -433,6 +433,171 @@ class KnowledgeGraph:
                 logger.error(f"Failed to get contextual flows: {e}")
                 return []
 
+    # ====================================================================
+    # Step 4: Recipe Selection Supporting Context I/O (SGK-2026-0260)
+    # ====================================================================
+    # Provides KG-backed context to RecipeLoader / MasterConductor for
+    # recipe candidate scoring, deduplication, and decision tracing.
+    #
+    # Input:   domain_name (str), signal_urls (List[str])
+    # Output:  Dict with keys:
+    #   - nearby_endpoints:     [Endpoint dicts with auth/workflow/tech context]
+    #   - nearby_findings:      [Finding dicts linked to endpoints]
+    #   - technology_stack:     [Technology dicts]
+    #   - previous_recipe_runs: [] (placeholder — populated when RecipeRun nodes exist)
+    #   - suppression_decisions:[] (placeholder — populated when SuppressionDecision nodes exist)
+    #   - endpoint_neighborhood: Dict[str, List] — nearby endpoints per signal URL
+    # ====================================================================
+
+    def get_recipe_selection_context(
+        self,
+        domain_name: str,
+        signal_urls: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """Return KG-backed supporting context for recipe candidate selection.
+
+        Aggregates endpoint neighborhood, findings, technology stack, and
+        execution history relevant to selecting recipes for a given target.
+
+        Args:
+            domain_name: Target domain to scope queries.
+            signal_urls: Specific URLs from attack surface signals (optional).
+                          When provided, returns per-URL neighborhood info.
+
+        Returns:
+            Dict with keys: nearby_endpoints, nearby_findings,
+            technology_stack, previous_recipe_runs, suppression_decisions,
+            endpoint_neighborhood.
+        """
+        if not self.driver:
+            return {
+                "nearby_endpoints": [],
+                "nearby_findings": [],
+                "technology_stack": [],
+                "previous_recipe_runs": [],
+                "suppression_decisions": [],
+                "endpoint_neighborhood": {},
+            }
+
+        with self.driver.session() as session:
+            result: Dict[str, Any] = {}
+
+            # 1. Technology stack (existing capability)
+            result["technology_stack"] = session.execute_read(
+                self._get_tech_stack_for_domain, domain_name,
+            )
+
+            # 2. Nearby endpoints with auth/workflow context
+            result["nearby_endpoints"] = session.execute_read(
+                self._get_nearby_endpoints_with_context, domain_name,
+            )
+
+            # 3. Nearby findings linked to endpoints
+            result["nearby_findings"] = session.execute_read(
+                self._get_nearby_findings, domain_name,
+            )
+
+            # 4. Per-signal-URL endpoint neighborhood
+            ep_neighborhood: Dict[str, List[Dict]] = {}
+            if signal_urls:
+                for url in signal_urls:
+                    neighbors = session.execute_read(
+                        self._get_endpoint_neighborhood, url, domain_name,
+                    )
+                    if neighbors:
+                        ep_neighborhood[url] = neighbors
+            result["endpoint_neighborhood"] = ep_neighborhood
+
+            # 5. Previous RecipeRuns (placeholder — to be populated when
+            #    RecipeRun nodes are created by the runner write-back)
+            result["previous_recipe_runs"] = []
+
+            # 6. Suppression decisions (placeholder)
+            result["suppression_decisions"] = []
+
+            return result
+
+    @staticmethod
+    def _get_tech_stack_for_domain(tx, domain_name: str) -> List[Dict]:
+        query = """
+        MATCH (p:Page)-[:RUNS_ON]->(t:Technology)
+        WHERE p.url CONTAINS $domain
+        RETURN DISTINCT t.name AS name, t.category AS category, p.url AS source_url
+        LIMIT 50
+        """
+        results = tx.run(query, domain=domain_name)
+        return [{"name": r["name"], "category": r["category"], "source_url": r["source_url"]} for r in results]
+
+    @staticmethod
+    def _get_nearby_endpoints_with_context(tx, domain_name: str) -> List[Dict]:
+        """Return endpoints with auth/workflow/tech relationships for the domain."""
+        query = """
+        MATCH (ep:Endpoint)
+        WHERE ep.url CONTAINS $domain
+        OPTIONAL MATCH (ep)-[:ACCEPTS_PARAM]->(param:Parameter)
+        OPTIONAL MATCH (ep)-[:VULNERABLE_TO]->(f:Finding)
+        WITH ep,
+             collect(DISTINCT param.name) AS params,
+             count(DISTINCT f) AS finding_count
+        RETURN ep.url AS url,
+               ep.method AS method,
+               ep.updated_at AS last_seen,
+               params,
+               finding_count
+        ORDER BY finding_count DESC, ep.updated_at DESC
+        LIMIT 30
+        """
+        results = tx.run(query, domain=domain_name)
+        return [dict(r) for r in results]
+
+    @staticmethod
+    def _get_nearby_findings(tx, domain_name: str) -> List[Dict]:
+        """Return findings on endpoints within the domain."""
+        query = """
+        MATCH (ep:Endpoint)-[:VULNERABLE_TO]->(f:Finding)
+        WHERE ep.url CONTAINS $domain
+        RETURN f.title AS title,
+               f.type AS vuln_type,
+               f.severity AS severity,
+               f.created_at AS created_at,
+               ep.url AS endpoint_url,
+               ep.method AS endpoint_method
+        ORDER BY f.created_at DESC
+        LIMIT 30
+        """
+        results = tx.run(query, domain=domain_name)
+        return [dict(r) for r in results]
+
+    @staticmethod
+    def _get_endpoint_neighborhood(tx, signal_url: str, domain_name: str) -> List[Dict]:
+        """Return nearby endpoints and their context for a specific signal URL."""
+        query = """
+        MATCH (ep:Endpoint)
+        WHERE ep.url CONTAINS $domain
+          AND (
+            ep.url CONTAINS $signal_path_fragment
+            OR ep.url = $signal_url
+          )
+        OPTIONAL MATCH (ep)-[:VULNERABLE_TO]->(f:Finding)
+        RETURN ep.url AS url,
+               ep.method AS method,
+               ep.updated_at AS last_seen,
+               count(DISTINCT f) AS nearby_finding_count
+        LIMIT 10
+        """
+        # Extract path fragment for fuzzy matching (strip protocol and host)
+        import re as _re
+        path_match = _re.search(r'://[^/]+(/.*)', signal_url)
+        signal_path_fragment = path_match.group(1) if path_match else signal_url
+
+        results = tx.run(
+            query,
+            domain=domain_name,
+            signal_url=signal_url,
+            signal_path_fragment=signal_path_fragment,
+        )
+        return [dict(r) for r in results]
+
     def store_state_transition(self, from_url: str, to_url: str, action: str = "POST", condition: Optional[str] = None) -> None:
         """
         明示的な状態遷移を保存（例: login -> dashboard via POST）

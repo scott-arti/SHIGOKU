@@ -114,6 +114,175 @@ class ReconExecutionDependencies:
     add_tasks: Optional[Callable[..., Any]] = None
     # recon 重複実行防止フラグの mutation（service からは参照のみ、set は facade）
     set_recon_executed: Optional[Callable[[], None]] = None
+    # SGK-2026-0288: ReconPipeline adapter に必要な追加依存
+    target_info: Optional[dict[str, Any]] = None
+    llm_client: Any = None
+
+
+# ---- SGK-2026-0287 Phase 2: Constructor decomposition helpers ----
+
+
+def build_core_dependencies(
+    graph: Any = None,
+    recipe_loader: Any = None,
+) -> dict[str, Any]:
+    """Pure helper: construct core dependencies without side effects.
+
+    Returns a dict of constructed objects. Caller assigns to self.* attributes.
+    This avoids direct module-level symbol access in __init__ and enables
+    testability via explicit dependency injection.
+    """
+    from src.core.infra.knowledge_graph import KnowledgeGraph
+    from src.core.learning.findings_repository import get_findings_repository
+    from src.core.infra.async_writer import AsyncDatabaseWriter
+    from src.core.models.task_execution_log import get_execution_log
+
+    _graph = graph or KnowledgeGraph()
+    repo = get_findings_repository()
+    writer = AsyncDatabaseWriter(kg=_graph, repo=repo)
+    execution_log = get_execution_log()
+
+    if recipe_loader is None:
+        from src.core.engine.recipe_loader import RecipeLoader
+        _recipe_loader = RecipeLoader()
+    else:
+        _recipe_loader = recipe_loader
+
+    return {
+        "graph": _graph,
+        "repo": repo,
+        "writer": writer,
+        "execution_log": execution_log,
+        "recipe_loader": _recipe_loader,
+    }
+
+
+def build_mode_config(settings: Any) -> dict[str, str]:
+    """Pure helper: resolve mode, flag_format, and system_prompt.
+
+    Returns a dict with 'mode', 'flag_format', 'system_prompt'.
+    No side effects.
+    """
+    mode = str(getattr(settings, "environment", "BUG_BOUNTY") or "BUG_BOUNTY")
+    if hasattr(settings, "ctf_target") and settings.ctf_target:
+        mode = "CTF"
+
+    flag_format = str(getattr(settings, "ctf_flag_format", "flag{.*}") or "flag{.*}")
+
+    from src.core.engine.conductor_prompts import BB_PLANNING_PROMPT, CTF_PLANNING_PROMPT
+    system_prompt = CTF_PLANNING_PROMPT.format(flag_format=flag_format) if mode == "CTF" else BB_PLANNING_PROMPT
+
+    return {"mode": mode, "flag_format": flag_format, "system_prompt": system_prompt}
+
+
+def build_intelligence_modules(llm_client: Any = None, settings: Any = None) -> dict[str, Any]:
+    """Pure helper: initialize intelligence module singletons.
+
+    Returns a dict of {attr_name: instance}. Caller assigns to self.*.
+    Graceful fallback on initialization failures (logs warnings).
+    """
+    import logging
+    _log = logging.getLogger(__name__)
+
+    from src.core.intelligence import (
+        get_risk_predictor, get_self_reflection,
+        get_error_analyzer, get_priority_booster,
+        get_decision_enhancer, get_diff_analyzer,
+        get_task_prioritizer,
+        get_chain_builder,
+        get_strategy_selector,
+    )
+
+    modules: dict[str, Any] = {
+        "risk_predictor": get_risk_predictor(),
+        "self_reflection": get_self_reflection(),
+        "error_analyzer": get_error_analyzer(),
+        "priority_booster": get_priority_booster(),
+        "decision_enhancer": get_decision_enhancer(),
+        "diff_analyzer": get_diff_analyzer(),
+    }
+
+    try:
+        modules["task_prioritizer"] = get_task_prioritizer()
+    except Exception as e:
+        _log.warning("TaskPrioritizer initialization failed, fallback to queue priority only: %s", e)
+        modules["task_prioritizer"] = None
+
+    try:
+        modules["chain_builder"] = get_chain_builder(llm_client=llm_client)
+    except Exception as e:
+        _log.warning("AttackChainBuilder initialization failed, chain inference disabled: %s", e)
+        modules["chain_builder"] = None
+
+    try:
+        modules["strategy_selector"] = get_strategy_selector()
+    except Exception as e:
+        _log.warning("StrategySelector initialization failed, default strategy fallback will be used: %s", e)
+        modules["strategy_selector"] = None
+
+    # StrategyOptimizer
+    from src.core.engine.strategy_optimizer import StrategyOptimizer
+    _mode = str(getattr(settings, "environment", "BUG_BOUNTY") or "BUG_BOUNTY") if settings else "BUG_BOUNTY"
+    modules["optimizer"] = StrategyOptimizer(llm_client=llm_client, config={"mode": _mode})
+
+    return modules
+
+
+# ---- SGK-2026-0287 Phase 3: Runtime loop decision helpers ----
+
+
+@dataclass
+class RuntimeLoopDecision:
+    """execute_with_replan のループ継続判断。
+
+    Pure decision: facade が apply する前にサービスが返す。
+    """
+    action: str = "continue"  # "continue" | "break" | "wait"
+    reason: str = ""
+
+
+def should_checkpoint(
+    executed: int,
+    auto_checkpoint: bool = True,
+    checkpoint_interval: int = 10,
+) -> bool:
+    """Pure function: checkpoint を保存すべきかを判断。
+
+    Args:
+        executed: 現在の実行済みタスク数
+        auto_checkpoint: 自動チェックポイント有効フラグ
+        checkpoint_interval: チェックポイント間隔
+    """
+    if not auto_checkpoint:
+        return False
+    if executed <= 0:
+        return False
+    if checkpoint_interval <= 0:
+        return False
+    return executed % checkpoint_interval == 0
+
+
+def build_runtime_loop_decision(
+    executed: int,
+    max_tasks: int,
+    task_queue_empty: bool,
+    shutdown_requested: bool = False,
+    has_active_background_workers: bool = False,
+) -> RuntimeLoopDecision:
+    """Pure function: 実行ループの継続/中断/待機を判断。
+
+    Returns:
+        RuntimeLoopDecision with action and reason.
+    """
+    if shutdown_requested:
+        return RuntimeLoopDecision(action="break", reason="shutdown_requested")
+    if executed >= max_tasks:
+        return RuntimeLoopDecision(action="break", reason="max_tasks_reached")
+    if task_queue_empty:
+        if has_active_background_workers:
+            return RuntimeLoopDecision(action="wait", reason="queue_empty_background_active")
+        return RuntimeLoopDecision(action="break", reason="queue_empty_no_workers")
+    return RuntimeLoopDecision(action="continue", reason="tasks_available")
 
 
 def build_recon_dependencies_from_mc(mc: Any) -> ReconExecutionDependencies:
@@ -138,4 +307,10 @@ def build_recon_dependencies_from_mc(mc: Any) -> ReconExecutionDependencies:
         create_attack_tasks_from_recon=getattr(mc, "_create_attack_tasks_from_recon", None),
         add_tasks=getattr(mc, "_add_tasks", None),
         set_recon_executed=lambda: setattr(mc, "_recon_executed", True),
+        # SGK-2026-0288: context + llm for ReconPipeline/ParallelTasks adapter
+        target_info=(
+            dict(getattr(mc.context, "target_info", {}))
+            if getattr(mc, "context", None) else None
+        ),
+        llm_client=getattr(mc, "llm_client", None),
     )

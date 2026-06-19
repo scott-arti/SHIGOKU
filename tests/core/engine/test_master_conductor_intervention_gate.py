@@ -110,7 +110,7 @@ def test_intervention_precheck_notifies_for_scn07_to_12(monkeypatch) -> None:
             return True
 
     monkeypatch.setattr(
-        "src.core.engine.master_conductor.get_notifier",
+        "src.core.engine.master_conductor_facade.get_notifier",
         lambda: _DummyNotifier(),
     )
 
@@ -154,7 +154,7 @@ def test_intervention_precheck_notification_is_deduped_per_task_scenario(monkeyp
             return True
 
     monkeypatch.setattr(
-        "src.core.engine.master_conductor.get_notifier",
+        "src.core.engine.master_conductor_facade.get_notifier",
         lambda: _DummyNotifier(),
     )
 

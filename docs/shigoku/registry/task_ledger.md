@@ -1,7 +1,7 @@
 # SHIGOKU タスク台帳
 
-- 更新日: 2026-06-13
-- 総タスク数: 296
+- 更新日: 2026-06-18
+- 総タスク数: 315
 - ステータス許可値: backlog / active / done / deferred / archived
 - doc_type 許可値: spec / roadmap / plan / subtask_plan / work_report / work_log / manual
 
@@ -253,7 +253,9 @@
 | SGK-2026-0247 | 0242/0243の重複・空テンプレ状態を記録し、台帳クローズ判断の証跡を残す | done | work_report | SGK-2026-0243 | docs/shigoku/reports/2026-05-27_sgk-2026-0247_phase-d-plan-template-closure_work_report.md |
 | SGK-2026-0248 | 0242/0243の差分確認とstatus更新、追跡用証跡の追加ログ | done | work_log | SGK-2026-0243 | docs/shigoku/worklogs/2026-05-27_sgk-2026-0248_phase-d-plan-template-closure_work_log.md |
 | SGK-2026-0222 | 分散runtime control基盤・release governance・承認正本照合実装の完了報告 | done | work_report |  | docs/shigoku/reports/2026-05-27_sgk-2026-0222_distributed-runtime-control_work_report.md |
-| SGK-2026-0244-S01 | SGK-2026-0244 の未実装項目（Stored XSS保存フェーズ、SmartXSSHunterのBrowserPool統合）を完了する子計画 | active | subtask_plan | SGK-2026-0244 | docs/shigoku/subtasks/2026-05-27_sgk-2026-0244-s01_xss-hunter-remaining-implementation_subtask_plan.md |
+| SGK-2026-0244-S01 | SGK-2026-0244 の未実装項目（Stored XSS保存フェーズ、SmartXSSHunterのBrowserPool統合）を完了する子計画 | done | subtask_plan | SGK-2026-0244 | docs/shigoku/subtasks/2026-05-27_sgk-2026-0244-s01_xss-hunter-remaining-implementation_subtask_plan.md |
+| SGK-2026-0244-S01 | SGK-2026-0244-S01 XSS Hunter 未実装項目 完了報告 | done | work_report | SGK-2026-0244 | docs/shigoku/reports/2026-06-18_sgk-2026-0244-s01_xss-hunter-remaining-implementation_work_report.md |
+| SGK-2026-0244-S01 | SGK-2026-0244-S01 XSS Hunter 未実装項目 作業ログ | done | work_log | SGK-2026-0244 | docs/shigoku/worklogs/2026-06-18_sgk-2026-0244-s01_xss-hunter-remaining-implementation_work_log.md |
 | SGK-2026-0244 | X2/X3/X4 の実装済み項目を再評価し、計画書ステータス更新と未完了項目を明確化した状況報告 | done | work_report | SGK-2026-0244 | docs/shigoku/reports/2026-05-29_sgk-2026-0244_x2-x4-status_work_report.md |
 | SGK-2026-0219 | Non-SCN評価 Step1-7 実施結果と再判定（Conditional継続） | done | work_report |  | docs/shigoku/reports/2026-05-31_sgk-2026-0219_non-scn-eval_work_report.md |
 | SGK-2026-0219 | Non-SCN評価 Step1-7 実行ログ（baseline固定・再現性・再判定） | done | work_log |  | docs/shigoku/worklogs/2026-05-31_sgk-2026-0219_non-scn-eval_work_log.md |
@@ -261,7 +263,7 @@
 | SGK-2026-0250 | SGK-2026-0221 継続監視（GraphQL運用SLO/観測） | active | subtask_plan | SGK-2026-0221 | docs/shigoku/subtasks/2026-05-31_sgk-2026-0221-graphql-slo_subtask_plan.md |
 | SGK-2026-0221 | SGK-2026-0221 親計画クローズと継続監視分離の完了報告 | done | work_report | SGK-2026-0065 | docs/shigoku/reports/2026-05-31_sgk-2026-0221_plan-closure_work_report.md |
 | SGK-2026-0221 | SGK-2026-0221 親計画クローズ作業ログ | done | work_log | SGK-2026-0065 | docs/shigoku/worklogs/2026-05-31_sgk-2026-0221_plan-closure_work_log.md |
-| SGK-2026-0251 | 脆弱性チェーン高精度化実装計画 | active | plan | SGK-2026-0131 | docs/shigoku/plans/2026-06-01_task_plan.md |
+| SGK-2026-0251 | 脆弱性チェーン高精度化実装計画 | done | plan | SGK-2026-0131 | docs/shigoku/plans/2026-06-01_task_plan.md |
 | SGK-2026-0251 | SGK-2026-0251 Phase1 の実装完了と残課題整理 | done | work_report | SGK-2026-0131 | docs/shigoku/reports/2026-06-02_sgk-2026-0251_phase1-completion_work_report.md |
 | SGK-2026-0251 | SGK-2026-0251 Phase1 完了の計画書反映と台帳更新ログ | done | work_log | SGK-2026-0131 | docs/shigoku/worklogs/2026-06-02_sgk-2026-0251_phase1-completion_work_log.md |
 | SGK-2026-0252 | 脆弱性チェーン基盤分割と feasibility solver 実装 | done | subtask_plan | SGK-2026-0251 | docs/shigoku/subtasks/2026-06-02_feasibility-solver_subtask_plan.md |
@@ -302,4 +304,28 @@
 | SGK-2026-0284 | MasterConductor Policy/HITL 抽出 follow-up: _run_intervention_precheck 再構築、_generate_summary 軽量抽出、execute_parallel dedup、3-layer parity tests、compat wrapper inventory | backlog | subtask_plan | SGK-2026-0264 | docs/shigoku/subtasks/2026-06-12_sgk-2026-0284_mc-policy-hitl-followup_subtask_plan.md |
 | SGK-2026-0285 | MasterConductor _dispatch 本体抽出: scope fast path, post-exploit guard, CTF filter, worker, swarm, recon, recipe, AgentFactory fallback の branch tests + routing order matrix + contextvar reset | backlog | subtask_plan | SGK-2026-0264 | docs/shigoku/subtasks/2026-06-12_sgk-2026-0285_mc-dispatch-extraction_subtask_plan.md |
 | SGK-2026-0286 | MasterConductor 大幅行数削減計画: execution loop・dispatch・HITL の三段階抽出 | done | subtask_plan | SGK-2026-0264 | docs/shigoku/subtasks/2026-06-12_masterconductor-execution-loop-dispatch-hitl_subtask_plan.md |
-| SGK-2026-0287 | MasterConductor execution loop 深層抽出: Plan/Apply/FailurePolicy 分解 | active | subtask_plan | SGK-2026-0264 | docs/shigoku/subtasks/2026-06-13_masterconductor-execution-loop-deep-extraction_subtask_plan.md |
+| SGK-2026-0287 | MasterConductor 抜本分割計画: compatibility shim / facade / domain coordinator 再構成 | active | subtask_plan | SGK-2026-0264 | docs/shigoku/subtasks/2026-06-13_masterconductor-execution-loop-deep-extraction_subtask_plan.md |
+| SGK-2026-0288 | ReconPipeline から MasterConductor への直接依存を Protocol 経由で解消し、_dispatch recon branch の抽出を可能にする | done | plan | SGK-2026-0264 | docs/shigoku/plans/2026-06-16_sgk-2026-0288_recon-pipeline-adapter_plan.md |
+| SGK-2026-0289 | ConductorState 導入: MasterConductor state access protocol と深層抽出前提整備 | done | plan | SGK-2026-0264 | docs/shigoku/plans/2026-06-16_conductorstate-masterconductor-state-access-protocol_plan.md |
+| SGK-2026-0290 | MasterConductor planning flow extraction: plan/replan coordinator split | done | plan | SGK-2026-0264 | docs/shigoku/plans/2026-06-16_masterconductor-planning-flow-extraction-plan-replan-coordinator-split_plan.md |
+| SGK-2026-0291 | MasterConductor facade size gate retry: finding/observation helper extraction to shrink facade under 5900 | done | plan | SGK-2026-0264 | docs/shigoku/plans/2026-06-16_masterconductor-facade-size-gate-retry-finding-observation-helper-extraction-to-shrink-facade-under-5900_plan.md |
+| SGK-2026-0292 | MasterConductor service extraction batch 2: react/enrich/batch helpers to pure services | done | plan | SGK-2026-0264 | docs/shigoku/plans/2026-06-16_masterconductor-service-extraction-batch-2-react-enrich-batch-helpers-to-pure-services_plan.md |
+| SGK-2026-0293 | MasterConductor execution cluster eviction: execute_single_task/execute_parallel/full_flow to coordinator | done | plan | SGK-2026-0264 | docs/shigoku/plans/2026-06-16_masterconductor-execution-cluster-eviction-execute-single-task-execute-parallel-full-flow-to-coordinator_plan.md |
+| SGK-2026-0294 | MasterConductor bootstrap cluster eviction: __init__/recipes/pre_action to coordinator | done | plan | SGK-2026-0264 | docs/shigoku/plans/2026-06-16_masterconductor-bootstrap-cluster-eviction-init-recipes-pre-action-to-coordinator_plan.md |
+| SGK-2026-0295 | MasterConductor lifecycle session wrapper retirement: shutdown/session/checkpoint to coordinator | done | plan | SGK-2026-0264 | docs/shigoku/plans/2026-06-16_masterconductor-lifecycle-session-wrapper-retirement-shutdown-session-checkpoint-to-coordinator_plan.md |
+| SGK-2026-0296 | MasterConductor facade shell reduction: bootstrap cleanup and pre-action gate extraction | done | plan | SGK-2026-0264 | docs/shigoku/plans/2026-06-16_masterconductor-facade-shell-reduction-bootstrap-cleanup-and-pre-action-gate-extraction_plan.md |
+| SGK-2026-0297 | MasterConductor finding react policy cluster eviction: handle_finding observe_and_rethink to coordinator | done | plan | SGK-2026-0264 | docs/shigoku/plans/2026-06-16_masterconductor-finding-react-policy-cluster-eviction-handle-finding-observe-and-rethink-to-coordinator_plan.md |
+| SGK-2026-0298 | MasterConductor intervention queue approval cluster eviction | done | plan | SGK-2026-0264 | docs/shigoku/plans/2026-06-16_masterconductor-intervention-queue-approval-cluster-eviction_plan.md |
+| SGK-2026-0299 | MasterConductor constructor bootstrap residual eviction: init and pre-action gate final extraction | active | plan | SGK-2026-0264 | docs/shigoku/plans/2026-06-16_masterconductor-constructor-bootstrap-residual-eviction-init-and-pre-action-gate-final-extraction_plan.md |
+| SGK-2026-0300 | MasterConductor dispatch guard recipe residual eviction: final cluster extraction | done | plan | SGK-2026-0264 | docs/shigoku/plans/2026-06-16_masterconductor-dispatch-guard-recipe-residual-eviction-final-cluster-extraction_plan.md |
+| SGK-2026-0301 | 巨大ファイル分割計画: AuthNinja 分割 | done | plan | SGK-2026-0065 | docs/shigoku/plans/2026-06-17_authninja_plan.md |
+| SGK-2026-0302 | 巨大ファイル分割計画: RAG Module 分割 | active | plan | SGK-2026-0065 | docs/shigoku/plans/2026-06-17_rag-module-split_plan.md |
+| SGK-2026-0303 | MasterConductor seed target service 追加分割計画: selector/collector cluster | done | work_report | SGK-2026-0280 | docs/shigoku/reports/2026-06-17_SGK-2026-0303_work_report.md |
+| SGK-2026-0304 | 巨大ファイル分割計画: Initial Release Gate 分割 | done | work_report | SGK-2026-0065 | docs/shigoku/reports/2026-06-17_SGK-2026-0304_work_report.md |
+| SGK-2026-0305 | CLI Entrypoint 追加分割計画: report/replay/quality-loop cluster | done | work_report | SGK-2026-0266 | docs/shigoku/reports/2026-06-18_SGK-2026-0305_work_report.md |
+| SGK-2026-0306 | 巨大ファイル分割計画: SmartXSS / SmartSQLi 分割 | done | work_report | SGK-2026-0065 | docs/shigoku/reports/2026-06-17_SGK-2026-0306_work_report.md |
+| SGK-2026-0307 | MasterConductor seed collectors 二段分割計画 | done | work_report | SGK-2026-0303 | docs/shigoku/reports/2026-06-17_SGK-2026-0307_work_report.md |
+| SGK-2026-0308 | 二段分割: SmartXSS/SmartSQLi orchestration logic 抽出 + monkeypatch 継続監視 | done | plan | SGK-2026-0306 | docs/shigoku/plans/2026-06-17_SGK-2026-0308_injection-facade-phase2_plan.md |
+| SGK-2026-0309 | 二段分割: report_haddix.py evidence/coverage cluster 抽出 | done | work_report | SGK-2026-0305 | docs/shigoku/reports/2026-06-18_SGK-2026-0309_work_report.md |
+| SGK-2026-0251 | SGK-2026-0251 親計画クローズと継続監視分離の完了報告 | done | work_report | SGK-2026-0131 | docs/shigoku/reports/2026-06-18_sgk-2026-0251_plan-closure_work_report.md |
+| SGK-2026-0251 | SGK-2026-0251 親計画クローズ作業ログ | done | work_log | SGK-2026-0131 | docs/shigoku/worklogs/2026-06-18_sgk-2026-0251_plan-closure_work_log.md |

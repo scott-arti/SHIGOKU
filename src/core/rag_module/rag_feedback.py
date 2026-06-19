@@ -1,7 +1,13 @@
 """
 RAG Feedback - RAGフィードバックループ
 
-False Positive学習
+False Positive学習。
+
+SGK-2026-0262: LearningRepository 連携
+- RAGFeedbackManager は従来の JSON ファイル永続化に加え、
+  オプションで LearningRepository にも FP/TP 判定を記録する。
+- LearningRepository に接続された場合、FP パターンは学習リポジトリ側でも
+  caution_hint カテゴリに保存され、後続の RAG ヒントに活用できる。
 """
 
 import logging
@@ -34,23 +40,29 @@ class FeedbackEntry:
 class RAGFeedbackManager:
     """
     RAGフィードバック管理
-    
+
     機能:
     - False Positive記録
     - True Positive確認
     - 学習データ蓄積
     - パターンベース自動判定
+
+    SGK-2026-0262: LearningRepository に接続することで、
+    FP/TP 判定を SHIGOKU 全体の横断メモリに統合できる。
     """
-    
-    def __init__(self, feedback_path: str = None):
+
+    def __init__(self, feedback_path: str = None, learning_repo=None):
         self.feedback_path = Path(
             feedback_path or os.path.expanduser("~/.shigoku/rag_feedback.json")
         )
         self.feedback_path.parent.mkdir(parents=True, exist_ok=True)
-        
+
         self.entries: List[FeedbackEntry] = []
         self.fp_patterns: Dict[str, List[str]] = {}  # タイプ -> URLパターン
-        
+
+        # SGK-2026-0262: LearningRepository 連携（任意）
+        self._learning_repo = learning_repo
+
         self._load()
     
     def _load(self):
@@ -98,7 +110,7 @@ class RAGFeedbackManager:
     ):
         """
         False Positiveとしてマーク
-        
+
         Args:
             finding: Finding辞書
             reason: 理由
@@ -112,11 +124,14 @@ class RAGFeedbackManager:
             reason=reason,
             confirmed_by=confirmed_by,
         )
-        
+
         self.entries.append(entry)
         self._learn_pattern(entry)
         self._save()
-        
+
+        # SGK-2026-0262: LearningRepository に FP 判定を記録
+        self._sync_to_repository(entry)
+
         logger.info("Marked as FP: %s", entry.finding_hash)
     
     def mark_true_positive(
@@ -132,10 +147,13 @@ class RAGFeedbackManager:
             is_false_positive=False,
             confirmed_by=confirmed_by,
         )
-        
+
         self.entries.append(entry)
         self._save()
-        
+
+        # SGK-2026-0262: LearningRepository に TP 判定を記録
+        self._sync_to_repository(entry)
+
         logger.info("Confirmed as TP: %s", entry.finding_hash)
     
     def is_likely_fp(self, finding: Dict) -> tuple:
@@ -213,24 +231,61 @@ class RAGFeedbackManager:
         """FPパターン学習"""
         if not entry.is_false_positive:
             return
-        
+
         # URLからパターン抽出
         url = entry.url
         if "?" in url:
             url = url.split("?")[0]
-        
+
         # パスの最後のセグメントをパターンとして登録
         parts = url.rstrip("/").split("/")
         if len(parts) >= 2:
             pattern = "/" + parts[-1]
-            
+
             if entry.finding_type not in self.fp_patterns:
                 self.fp_patterns[entry.finding_type] = []
-            
+
             if pattern not in self.fp_patterns[entry.finding_type]:
                 self.fp_patterns[entry.finding_type].append(pattern)
-                logger.info("Learned FP pattern: %s -> %s", 
+                logger.info("Learned FP pattern: %s -> %s",
                            entry.finding_type, pattern)
+
+    # ── SGK-2026-0262: LearningRepository 連携 ──
+
+    def _sync_to_repository(self, entry: FeedbackEntry):
+        """FP/TP 判定を LearningRepository に記録する"""
+        if self._learning_repo is None:
+            return
+        try:
+            verdict_category = "tp_fp_verdict"
+            self._learning_repo.store(
+                category=verdict_category,
+                key=entry.finding_hash,
+                value={
+                    "finding_type": entry.finding_type,
+                    "url": entry.url,
+                    "is_false_positive": entry.is_false_positive,
+                    "reason": entry.reason,
+                    "confirmed_by": entry.confirmed_by,
+                    "created_at": entry.created_at,
+                },
+                ttl_days=90,  # FP/TP 判定は長期保存
+            )
+            # FP の場合は caution_hint にも保存
+            if entry.is_false_positive and entry.reason:
+                self._learning_repo.store(
+                    category="caution_hint",
+                    key=f"{entry.finding_type}:{entry.finding_hash}",
+                    value={
+                        "finding_type": entry.finding_type,
+                        "url": entry.url,
+                        "reason": entry.reason,
+                    },
+                    ttl_days=90,
+                )
+        except Exception:
+            # LearningRepository の障害は RAGFeedback の動作を止めない
+            pass
     
     def get_stats(self) -> Dict:
         """統計"""
@@ -255,5 +310,14 @@ class RAGFeedbackManager:
 
 
 def create_rag_feedback_manager(feedback_path: str = None) -> RAGFeedbackManager:
-    """RAGFeedbackManager作成ヘルパー"""
-    return RAGFeedbackManager(feedback_path)
+    """RAGFeedbackManager作成ヘルパー
+
+    SGK-2026-0262: LearningRepository を自動注入し、
+    tp_fp_verdict / caution_hint カテゴリへの保存を有効化する。
+    """
+    try:
+        from src.core.learning.repository import get_learning_repository
+        repo = get_learning_repository()
+    except Exception:
+        repo = None
+    return RAGFeedbackManager(feedback_path, learning_repo=repo)
