@@ -275,8 +275,8 @@
 | SGK-2026-0254 | temporal constraint、audit/shadow 指標、representative 回帰確認の完了報告 | done | work_report | SGK-2026-0251 | docs/shigoku/reports/2026-06-03_sgk-2026-0254_temporal-state_work_report.md |
 | SGK-2026-0254 | SGK-2026-0254 の報告反映と継続監視分離ログ | done | work_log | SGK-2026-0251 | docs/shigoku/worklogs/2026-06-03_sgk-2026-0254_temporal-state_work_log.md |
 | SGK-2026-0258 | temporal metadata 欠損率、representative session 回帰、reason code 安定性の継続監視 | active | subtask_plan | SGK-2026-0254 | docs/shigoku/subtasks/2026-06-03_sgk-2026-0258-temporal-followup_subtask_plan.md |
-| SGK-2026-0259 | Recipe高度化: 単一セッション高額Auth/JWT/OAuth検出強化 | active | subtask_plan | SGK-2026-0221 | docs/shigoku/subtasks/2026-06-03_recipe-auth-jwt-oauth_subtask_plan.md |
-| SGK-2026-0260 | Recipe運用フロー改善: Recon起点の選抜・実行・Swarm連携 | active | subtask_plan | SGK-2026-0221 | docs/shigoku/subtasks/2026-06-03_recipe-recon-swarm_subtask_plan.md |
+| SGK-2026-0259 | Recipe高度化: 単一セッション高額Auth/JWT/OAuth検出強化 | done | subtask_plan | SGK-2026-0221 | docs/shigoku/subtasks/2026-06-03_recipe-auth-jwt-oauth_subtask_plan.md |
+| SGK-2026-0260 | Recipe運用フロー改善: Recon起点の選抜・実行・Swarm連携 | done | subtask_plan | SGK-2026-0221 | docs/shigoku/subtasks/2026-06-03_recipe-recon-swarm_subtask_plan.md |
 | SGK-2026-0261 | Recon運用フロー改善: 攻撃面分類・Signal正規化・MC/Swarm受け渡し | active | subtask_plan | SGK-2026-0221 | docs/shigoku/subtasks/2026-06-03_recon-signal-mc-swarm_subtask_plan.md |
 | SGK-2026-0262 | 継続学習運用改善: Obsidian/RAG・KG・Recipe連携の再設計 | active | subtask_plan | SGK-2026-0221 | docs/shigoku/subtasks/2026-06-03_obsidian-rag-kg-recipe_subtask_plan.md |
 | SGK-2026-0263 | 継続学習リファレンス: KG・RAG・MC・Recipe・Recon の理想アーキテクチャ | active | roadmap |  | docs/shigoku/roadmaps/2026-06-03_continuous-learning-architecture-reference.md |

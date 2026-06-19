@@ -2599,7 +2599,7 @@ tasks:
   doc_type: subtask_plan
   title: XSS Hunter未実装項目の完了計画（Stored XSS本実装・BrowserPool統合）
   primary_doc: docs/shigoku/subtasks/2026-05-27_sgk-2026-0244-s01_xss-hunter-remaining-implementation_subtask_plan.md
-  status: active
+  status: done
   provisional: false
   task_summary: SGK-2026-0244 の未実装項目（Stored XSS保存フェーズ、SmartXSSHunterのBrowserPool統合）を完了する子計画
   parent_task_id: SGK-2026-0244
@@ -2887,7 +2887,7 @@ tasks:
   doc_type: subtask_plan
   title: 'Recipe高度化: 単一セッション高額Auth/JWT/OAuth検出強化'
   primary_doc: docs/shigoku/subtasks/2026-06-03_recipe-auth-jwt-oauth_subtask_plan.md
-  status: active
+  status: done
   provisional: false
   task_summary: 'Recipe高度化: 単一セッション高額Auth/JWT/OAuth検出強化'
   parent_task_id: SGK-2026-0221
@@ -2901,7 +2901,7 @@ tasks:
   doc_type: subtask_plan
   title: 'Recipe運用フロー改善: Recon起点の選抜・実行・Swarm連携'
   primary_doc: docs/shigoku/subtasks/2026-06-03_recipe-recon-swarm_subtask_plan.md
-  status: active
+  status: done
   provisional: false
   task_summary: 'Recipe運用フロー改善: Recon起点の選抜・実行・Swarm連携'
   parent_task_id: SGK-2026-0221

@@ -1,7 +1,7 @@
 ---
 task_id: SGK-2026-0260
 doc_type: subtask_plan
-status: active
+status: done
 parent_task_id: SGK-2026-0221
 related_docs:
 - docs/shigoku/subtasks/2026-06-03_recon-signal-mc-swarm_subtask_plan.md
@@ -13,7 +13,7 @@ related_docs:
 - docs/shigoku/roadmaps/future_functions1.md
 title: 'Recipe運用フロー改善: Recon起点の選抜・実行・Swarm連携'
 created_at: '2026-06-03'
-updated_at: '2026-06-03'
+updated_at: '2026-06-19'
 tags:
 - shigoku
 target: src/core/engine/master_conductor.py, src/core/engine/recipe_loader.py, src/core/engine/optimized_runner.py,
