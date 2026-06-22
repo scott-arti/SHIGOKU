@@ -23,6 +23,8 @@ from rich.panel import Panel
 from rich.layout import Layout
 from rich.text import Text
 
+from src.cli.messages import msg
+
 logger = logging.getLogger(__name__)
 
 
@@ -50,14 +52,14 @@ class MonitoringDashboard:
     def create_semaphore_table(self, stats: Dict) -> Table:
         """セマフォ統計テーブル"""
         table = Table(
-            title="Semaphore Statistics",
+            title=msg("dashboard.semaphore_title"),
             header_style="bold cyan",
             border_style="dim"
         )
         
-        table.add_column("Metric", style="cyan")
-        table.add_column("Value", justify="right")
-        table.add_column("Status")
+        table.add_column(msg("dashboard.col_metric"), style="cyan")
+        table.add_column(msg("dashboard.col_value"), justify="right")
+        table.add_column(msg("dashboard.col_status"))
         
         enabled = stats.get("enabled", False)
         max_concurrent = stats.get("max_concurrent", 0)
@@ -72,7 +74,7 @@ class MonitoringDashboard:
         table.add_row(
             "Enabled",
             str(enabled),
-            "🟢 Active" if enabled else "🔴 Disabled"
+            msg("dashboard.active") if enabled else msg("dashboard.disabled")
         )
         table.add_row(
             "Max Concurrent",
@@ -91,7 +93,7 @@ class MonitoringDashboard:
         )
         
         # 待ち時間（警告閾値: 500ms）
-        wait_status = "🟢 OK" if avg_wait_ms < 500 else "🟡 High" if avg_wait_ms < 1000 else "🔴 Critical"
+        wait_status = msg("dashboard.ok") if avg_wait_ms < 500 else msg("dashboard.high") if avg_wait_ms < 1000 else msg("dashboard.critical")
         table.add_row(
             "Avg Wait Time",
             f"{avg_wait_ms:.1f}ms",
@@ -99,7 +101,7 @@ class MonitoringDashboard:
         )
         
         # エラー率（警告閾値: 5%）
-        error_status = "🟢 OK" if error_rate < 0.05 else "🟡 Warning" if error_rate < 0.10 else "🔴 Critical"
+        error_status = msg("dashboard.ok") if error_rate < 0.05 else msg("dashboard.warning") if error_rate < 0.10 else msg("dashboard.critical")
         table.add_row(
             "Error Rate",
             f"{error_rate:.1%}",
@@ -111,16 +113,16 @@ class MonitoringDashboard:
     def create_tool_stats_table(self) -> Table:
         """ツール別統計テーブル"""
         table = Table(
-            title="Tool Statistics",
+            title=msg("dashboard.tool_stats_title"),
             header_style="bold green",
             border_style="dim"
         )
         
-        table.add_column("Tool", style="green")
-        table.add_column("Executions", justify="right")
-        table.add_column("Success Rate", justify="right")
-        table.add_column("Avg Time", justify="right")
-        table.add_column("Status")
+        table.add_column(msg("dashboard.col_tool"), style="green")
+        table.add_column(msg("dashboard.col_executions"), justify="right")
+        table.add_column(msg("dashboard.col_success_rate"), justify="right")
+        table.add_column(msg("dashboard.col_avg_time"), justify="right")
+        table.add_column(msg("dashboard.col_status"))
         
         # ツール別集計（履歴から）
         tool_stats = defaultdict(lambda: {"total": 0, "success": 0, "total_time": 0})
@@ -138,7 +140,7 @@ class MonitoringDashboard:
             success_rate = success / total * 100 if total > 0 else 0
             avg_time = stats["total_time"] / total if total > 0 else 0
             
-            status = "🟢" if success_rate >= 95 else "🟡" if success_rate >= 80 else "🔴"
+            status = msg("dashboard.ok") if success_rate >= 95 else msg("dashboard.warning") if success_rate >= 80 else msg("dashboard.critical")
             
             table.add_row(
                 tool,
@@ -149,29 +151,29 @@ class MonitoringDashboard:
             )
         
         if not tool_stats:
-            table.add_row("No data", "-", "-", "-", "⏳")
+            table.add_row(msg("dashboard.no_data"), "-", "-", "-", "⏳")
         
         return table
     
     def create_recent_executions_table(self) -> Table:
         """最近の実行テーブル"""
         table = Table(
-            title="Recent Executions (Last 10)",
+            title=msg("dashboard.recent_title"),
             header_style="bold yellow",
             border_style="dim"
         )
         
-        table.add_column("Time", style="dim")
-        table.add_column("Tool", style="yellow")
-        table.add_column("Target", max_width=30)
-        table.add_column("Result")
-        table.add_column("Duration", justify="right")
+        table.add_column(msg("dashboard.col_time"), style="dim")
+        table.add_column(msg("dashboard.col_tool"), style="yellow")
+        table.add_column(msg("dashboard.col_target"), max_width=30)
+        table.add_column(msg("dashboard.col_result"))
+        table.add_column(msg("dashboard.col_duration"), justify="right")
         
         recent = list(reversed(self.history[-10:]))
         
         for entry in recent:
             time_str = datetime.fromtimestamp(entry.get("timestamp", 0)).strftime("%H:%M:%S")
-            status = "🟢" if entry.get("success") else "🔴"
+            status = msg("dashboard.ok") if entry.get("success") else msg("dashboard.critical")
             
             table.add_row(
                 time_str,
@@ -182,7 +184,7 @@ class MonitoringDashboard:
             )
         
         if not recent:
-            table.add_row("-", "-", "No recent executions", "-", "-")
+            table.add_row("-", "-", msg("dashboard.no_recent"), "-", "-")
         
         return table
     
@@ -193,25 +195,25 @@ class MonitoringDashboard:
         # セマフォ待ち時間警告
         avg_wait_ms = self._avg_wait_ms(stats)
         if avg_wait_ms > 500:
-            alerts.append(f"⚠️ High wait time: {avg_wait_ms:.1f}ms > 500ms threshold")
-            alerts.append("   Consider increasing SHIGOKU_EXTERNAL_TOOL_CONCURRENCY")
+            alerts.append(msg("dashboard.alert_high_wait", time=avg_wait_ms))
+            alerts.append(msg("dashboard.alert_high_wait_hint"))
         
         # エラー率警告
         error_rate = stats.get("error_rate", 0)
         if error_rate > 0.05:
-            alerts.append(f"⚠️ High error rate: {error_rate:.1%} > 5% threshold")
-            alerts.append("   Check binary health and configuration")
+            alerts.append(msg("dashboard.alert_high_error", rate=error_rate))
+            alerts.append(msg("dashboard.alert_high_error_hint"))
         
         # 使用率警告
         max_concurrent = stats.get("max_concurrent", 1)
         current_active = stats.get("current_active", 0)
         utilization = current_active / max_concurrent if max_concurrent > 0 else 0
         if utilization > 0.8:
-            alerts.append(f"⚠️ High semaphore utilization: {utilization:.1%}")
-            alerts.append("   Consider increasing concurrency or reducing load")
+            alerts.append(msg("dashboard.alert_high_utilization", utilization=utilization))
+            alerts.append(msg("dashboard.alert_high_utilization_hint"))
         
         if not alerts:
-            content = Text("✅ All systems normal", style="green")
+            content = Text(msg("dashboard.alert_all_ok"), style="green")
         else:
             content = Text("\n".join(alerts), style="yellow")
         
@@ -287,8 +289,8 @@ class MonitoringDashboard:
     
     async def run_live(self, duration: Optional[float] = None):
         """ライブダッシュボードを実行"""
-        self.console.print(f"[bold cyan]External Tool Monitoring Dashboard[/bold cyan]")
-        self.console.print(f"[dim]Press Ctrl+C to exit[/dim]\n")
+        self.console.print(msg("dashboard.header"))
+        self.console.print(msg("dashboard.exit_hint") + "\n")
         
         start_time = time.time()
         
@@ -303,7 +305,7 @@ class MonitoringDashboard:
                         break
                         
             except KeyboardInterrupt:
-                self.console.print("\n[yellow]Monitoring stopped[/yellow]")
+                self.console.print("\n" + msg("dashboard.stopped"))
     
     def export_report(self, filepath: str):
         """レポートをエクスポート"""
@@ -320,7 +322,7 @@ class MonitoringDashboard:
         with open(filepath, 'w') as f:
             json.dump(report, f, indent=2, default=str)
         
-        self.console.print(f"[green]Report exported: {filepath}[/green]")
+        self.console.print(msg("dashboard.exported", path=filepath))
     
     def _calculate_tool_stats(self) -> Dict:
         """ツール別統計を計算"""
@@ -376,4 +378,4 @@ if __name__ == "__main__":
         try:
             asyncio.run(dashboard.run_live())
         except KeyboardInterrupt:
-            print("\nExiting...")
+            print(msg("dashboard.exiting"))

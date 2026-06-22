@@ -8,6 +8,7 @@ from rich.live import Live
 from rich.spinner import Spinner
 from src.core.engine.runner import Runner
 from src.cli.commands import CommandRegistry
+from src.cli.messages import msg
 
 # readlineをインポート（入力履歴機能）
 try:
@@ -52,16 +53,13 @@ class CLI:
     
     def print_welcome(self):
         """ウェルカムメッセージ"""
-        welcome_text = f"""
-[bold cyan]CAI Clone - Cyber Security AI Agent Framework[/bold cyan]
-
-[yellow]Agent:[/yellow] {self.runner.agent.name}
-[yellow]Model:[/yellow] {self.runner.agent.model}
-[yellow]Tools:[/yellow] {', '.join([t.name for t in self.runner.agent.tools])}
-
-Type [cyan]/help[/cyan] for commands or [cyan]exit[/cyan] to quit.
-"""
-        panel = Panel(welcome_text.strip(), border_style="cyan")
+        tool_names = [t.name for t in self.runner.agent.tools]
+        welcome_text = msg("cli.welcome.body",
+            title=msg("cli.welcome.header"),
+            name=self.runner.agent.name,
+            model=self.runner.agent.model,
+            tool_list=', '.join(tool_names))
+        panel = Panel(welcome_text, border_style="cyan")
         self.console.print(panel)
         self.console.print()
     
@@ -82,14 +80,14 @@ Type [cyan]/help[/cyan] for commands or [cyan]exit[/cyan] to quit.
         if cmd_func:
             cmd_func(self, *args)
         else:
-            self.console.print(f"\n[red]Unknown command:[/red] {cmd_name}")
-            self.console.print("[dim]Type /help for available commands[/dim]\n")
+            self.console.print(msg("cli.error.unknown_command", cmd=cmd_name))
+            self.console.print(msg("cli.error.hint_help"))
     
     async def execute_agent_task(self, user_input: str):
         """エージェントタスクを実行"""
         self.runner.resume()  # 割り込みフラグをクリア
         
-        with Live(Spinner("dots", text="[cyan]Processing...[/cyan]"), console=self.console):
+        with Live(Spinner("dots", text=msg("cli.processing")), console=self.console):
             try:
                 # タスクを保存（Ctrl+Cで割り込めるように）
                 self.current_task = asyncio.create_task(
@@ -98,14 +96,14 @@ Type [cyan]/help[/cyan] for commands or [cyan]exit[/cyan] to quit.
                 response = await self.current_task
                 
             except asyncio.CancelledError:
-                response = "Task cancelled by user"
+                response = msg("cli.cancelled")
             except Exception as e:
                 response = f"Error: {e}"
             finally:
                 self.current_task = None
         
         # 応答を表示
-        self.console.print(f"\n[bold green]Agent:[/bold green] {response}\n")
+        self.console.print(msg("cli.response", response=response))
     
     async def repl(self):
         """非同期REPLループ"""
@@ -134,7 +132,7 @@ Type [cyan]/help[/cyan] for commands or [cyan]exit[/cyan] to quit.
             use_toolkit = True
         except ImportError:
             use_toolkit = False
-            self.console.print("[yellow]Note: prompt_toolkit not found. Multiline input not supported. Install it for better experience.[/yellow]")
+            self.console.print(msg("cli.prompt_toolkit_missing"))
             session = None
             
         self.print_welcome()
@@ -178,7 +176,7 @@ Type [cyan]/help[/cyan] for commands or [cyan]exit[/cyan] to quit.
             except EOFError:
                 break
             except Exception as e:
-                self.console.print(f"\n[red]Error:[/red] {e}\n")
+                self.console.print(msg("cli.error.generic", error=str(e)))
     
     def run(self):
         """CLIを起動"""
@@ -188,4 +186,4 @@ Type [cyan]/help[/cyan] for commands or [cyan]exit[/cyan] to quit.
             pass  # 正常終了
         finally:
             self._save_history()  # 履歴を保存
-            self.console.print("\n[cyan]Goodbye![/cyan]\n")
+            self.console.print(msg("cli.goodbye"))

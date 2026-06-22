@@ -1,5 +1,5 @@
 version: 1
-updated_at: '2026-06-09'
+updated_at: '2026-06-22'
 namespace: SGK
 id_rules:
   core: SGK-YYYY-NNNN
@@ -3117,13 +3117,173 @@ tasks:
   doc_type: subtask_plan
   title: InjectionManager API minimal check service 化による大規模分割
   primary_doc: docs/shigoku/subtasks/2026-06-09_injectionmanager-api-minimal-service-extraction_subtask_plan.md
-  status: active
+  status: done
   provisional: false
   task_summary: InjectionManager API minimal check service 化による大規模分割
   parent_task_id: SGK-2026-0265
   related_docs:
   - docs/shigoku/plans/2026-06-05_injection-manager-split-plan_plan.md
   - docs/shigoku/subtasks/2026-06-09_api-probe-helper-4_subtask_plan.md
+- provisional_id: DOC-0295
+  task_id: SGK-2026-0278
+  doc_type: plan
+  title: 'Ver.2 planning bundle: DEV_MODE整理・自律再認証強化・Recon再設計'
+  primary_doc: docs/shigoku/plans/2026-06-20_ver-2-planning-bundle-dev-mode-recon_plan.md
+  status: active
+  provisional: false
+  task_summary: 'Ver.2 planning bundle: DEV_MODE整理・自律再認証強化・Recon再設計'
+  parent_task_id: SGK-2026-0065
+  related_docs:
+  - docs/shigoku/roadmaps/IMPLEMENTATION_ROADMAP.md
+  - docs/shigoku/roadmaps/future_functions1.md
+  - docs/shigoku/roadmaps/bug_bounty_enhancements_2026.md
+- provisional_id: DOC-0296
+  task_id: SGK-2026-0279
+  doc_type: subtask_plan
+  title: DEV_MODEデモ経路分離とBurpIntegration削除計画
+  primary_doc: docs/shigoku/subtasks/2026-06-20_dev-mode-burpintegration_subtask_plan.md
+  status: active
+  provisional: false
+  task_summary: DEV_MODEデモ経路分離とBurpIntegration削除計画
+  parent_task_id: SGK-2026-0278
+  related_docs:
+  - docs/shigoku/plans/2026-06-20_ver-2-planning-bundle-dev-mode-recon_plan.md
+  - docs/shigoku/roadmaps/bug_bounty_enhancements_2026.md
+- provisional_id: DOC-0297
+  task_id: SGK-2026-0280
+  doc_type: subtask_plan
+  title: 自律再認証とEventBus運用明確化計画
+  primary_doc: docs/shigoku/subtasks/2026-06-20_eventbus_subtask_plan.md
+  status: active
+  provisional: false
+  task_summary: 自律再認証とEventBus運用明確化計画
+  parent_task_id: SGK-2026-0278
+  related_docs:
+  - docs/shigoku/plans/2026-06-20_ver-2-planning-bundle-dev-mode-recon_plan.md
+  - docs/shigoku/roadmaps/future_functions.md
+- provisional_id: DOC-0298
+  task_id: SGK-2026-0281
+  doc_type: subtask_plan
+  title: 'Recon運用再設計: Resume・再利用・Recipe/PhaseGate連携計画'
+  primary_doc: docs/shigoku/subtasks/2026-06-20_recon-resume-recipe-phasegate_subtask_plan.md
+  status: active
+  provisional: false
+  task_summary: 'Recon運用再設計: Resume・再利用・Recipe/PhaseGate連携計画'
+  parent_task_id: SGK-2026-0278
+  related_docs:
+  - docs/shigoku/plans/2026-06-20_ver-2-planning-bundle-dev-mode-recon_plan.md
+  - docs/shigoku/roadmaps/future_functions1.md
+- provisional_id: DOC-0299
+  task_id: SGK-2026-0282
+  doc_type: subtask_plan
+  title: Bug Bounty向けScope制御高度化計画
+  primary_doc: docs/shigoku/subtasks/2026-06-21_bug-bounty-scope-control_subtask_plan.md
+  status: active
+  provisional: false
+  task_summary: Bug Bounty向けScope制御高度化計画
+  parent_task_id: SGK-2026-0278
+  related_docs:
+  - docs/shigoku/plans/2026-06-20_ver-2-planning-bundle-dev-mode-recon_plan.md
+  - docs/shigoku/specs/bug_bounty_enhancements.md
+  - docs/shigoku/roadmaps/bug_bounty_enhancements_2026.md
+- provisional_id: DOC-0300
+  task_id: SGK-2026-0283
+  doc_type: subtask_plan
+  title: Subdomain Takeover高度化計画
+  primary_doc: docs/shigoku/subtasks/2026-06-21_subdomain-takeover-v2_subtask_plan.md
+  status: active
+  provisional: false
+  task_summary: Subdomain Takeover高度化計画
+  parent_task_id: SGK-2026-0278
+  related_docs:
+  - docs/shigoku/plans/2026-06-20_ver-2-planning-bundle-dev-mode-recon_plan.md
+  - docs/shigoku/specs/bug_bounty_enhancements.md
+  - docs/shigoku/roadmaps/bug_bounty_enhancements_2026.md
+- provisional_id: DOC-0301
+  task_id: SGK-2026-0284
+  doc_type: subtask_plan
+  title: PhaseGate細粒度化計画
+  primary_doc: docs/shigoku/subtasks/2026-06-21_phasegate-fine-grained_subtask_plan.md
+  status: active
+  provisional: false
+  task_summary: PhaseGate細粒度化計画
+  parent_task_id: SGK-2026-0278
+  related_docs:
+  - docs/shigoku/plans/2026-06-20_ver-2-planning-bundle-dev-mode-recon_plan.md
+  - docs/shigoku/subtasks/2026-06-20_recon-resume-recipe-phasegate_subtask_plan.md
+  - docs/shigoku/roadmaps/future_functions1.md
+- provisional_id: DOC-0302
+  task_id: SGK-2026-0285
+  doc_type: subtask_plan
+  title: xss_detector.py から Stored XSS placeholder を削除
+  primary_doc: docs/shigoku/subtasks/2026-06-21_xss-detector-remove-stored-placeholder_subtask_plan.md
+  status: done
+  provisional: false
+  task_summary: xss_detector.py から Stored XSS placeholder を削除
+  parent_task_id: SGK-2026-0244
+  related_docs:
+  - docs/shigoku/plans/2026-05-24_xss-hunter-enhancement_plan.md
+  - docs/shigoku/subtasks/2026-05-27_sgk-2026-0244-s01_xss-hunter-remaining-implementation_subtask_plan.md
+- provisional_id: DOC-0303
+  task_id: SGK-2026-0286
+  doc_type: subtask_plan
+  title: Agentic RAG hypothesis advisor 組み込み計画
+  primary_doc: docs/shigoku/subtasks/2026-06-21_agentic-rag-hypothesis-advisor_subtask_plan.md
+  status: active
+  provisional: false
+  task_summary: Agentic RAG hypothesis advisor 組み込み計画
+  parent_task_id: SGK-2026-0262
+  related_docs:
+  - docs/shigoku/subtasks/2026-06-03_obsidian-rag-kg-recipe_subtask_plan.md
+  - docs/shigoku/roadmaps/2026-06-03_continuous-learning-architecture-reference.md
+  - docs/shigoku/plans/2026-06-20_ver-2-planning-bundle-dev-mode-recon_plan.md
+- provisional_id: DOC-0304
+  task_id: SGK-2026-0287
+  doc_type: subtask_plan
+  title: Task Queue Pruning Policy 設計計画
+  primary_doc: docs/shigoku/subtasks/2026-06-21_task-queue-pruning-policy_subtask_plan.md
+  status: active
+  provisional: false
+  task_summary: Task Queue Pruning Policy 設計計画
+  parent_task_id: SGK-2026-0278
+  related_docs:
+  - docs/shigoku/plans/2026-06-20_ver-2-planning-bundle-dev-mode-recon_plan.md
+- provisional_id: DOC-0305
+  task_id: SGK-2026-0288
+  doc_type: subtask_plan
+  title: Discord通知日本語化 設計計画
+  primary_doc: docs/shigoku/subtasks/2026-06-21_discord-notification-ja_subtask_plan.md
+  status: active
+  provisional: false
+  task_summary: Discord通知日本語化 設計計画
+  parent_task_id: SGK-2026-0278
+  related_docs:
+  - docs/shigoku/plans/2026-06-20_ver-2-planning-bundle-dev-mode-recon_plan.md
+- provisional_id: DOC-0306
+  task_id: SGK-2026-0289
+  doc_type: plan
+  title: SHIGOKU共通化・技術的負債返済ロードマップ
+  primary_doc: docs/shigoku/plans/2026-06-21_commonization-technical-debt-roadmap_plan.md
+  status: active
+  provisional: false
+  task_summary: SHIGOKU共通化・技術的負債返済ロードマップ
+  parent_task_id: SGK-2026-0065
+  related_docs:
+  - docs/shigoku/plans/2026-06-05_master-conductor-split-plan_plan.md
+  - docs/shigoku/plans/2026-06-05_injection-manager-split-plan_plan.md
+- provisional_id: DOC-0307
+  task_id: SGK-2026-0290
+  doc_type: subtask_plan
+  title: CLI日本語化設計計画
+  primary_doc: docs/shigoku/subtasks/2026-06-22_cli-japanese-localization_subtask_plan.md
+  status: done
+  provisional: false
+  task_summary: CLI日本語化設計計画
+  parent_task_id: SGK-2026-0266
+  related_docs:
+  - docs/shigoku/plans/2026-06-05_cli-entrypoint-split-plan_plan.md
+  - docs/shigoku/plans/2026-06-21_commonization-technical-debt-roadmap_plan.md
+  - docs/shigoku/reports/2026-06-22_sgk-2026-0290_cli-japanese-localization_work_report.md
 doc_type_allowed_values:
 - spec
 - roadmap

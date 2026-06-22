@@ -1,5 +1,7 @@
 """Execution Graph for tracking agent steps"""
 
+from src.cli.messages import msg
+
 class ExecutionGraph:
     """実行フローをASCII graphで可視化"""
     
@@ -26,33 +28,33 @@ class ExecutionGraph:
     def render_ascii(self) -> str:
         """ASCII artでフローチャートを生成"""
         if not self.steps:
-            return "[yellow]No execution steps recorded[/yellow]"
+            return msg("graph.no_steps")
         
         lines = []
-        lines.append("\n[bold cyan]Execution Flow:[/bold cyan]\n")
+        lines.append("\n" + msg("graph.ascii_header") + "\n")
         
         for i, step in enumerate(self.steps):
             # ステップ番号とアクション
-            lines.append(f"  [{i}] {step['action']}")
+            lines.append("  " + msg("graph.step_line", i=i, action=step['action']))
             
             # ツールがあれば表示
             if step['tool']:
-                lines.append(f"      └─ Tool: [yellow]{step['tool']}[/yellow]")
+                lines.append("      " + msg("graph.tool_line", tool=step['tool']))
             
             # 結果プレビュー
             if step['result']:
-                lines.append(f"      └─ Result: [dim]{step['result']}...[/dim]")
+                lines.append("      " + msg("graph.result_line", preview=step['result']))
             
             # 次のステップへの矢印（最後以外）
             if i < len(self.steps) - 1:
-                lines.append("      ↓")
+                lines.append("      " + msg("graph.connector"))
         
         return "\n".join(lines)
     
     def render_mermaid(self) -> str:
         """Mermaid形式のフローチャートを生成"""
         if not self.steps:
-            return "```\ngraph TD\n  Start[No steps]\n```"
+            return msg("graph.mermaid_empty")
         
         lines = ["```mermaid", "graph TD"]
         
@@ -79,15 +81,12 @@ class ExecutionGraph:
     def get_summary(self) -> str:
         """実行サマリーを取得"""
         if not self.steps:
-            return "No steps executed"
+            return msg("graph.no_steps_summary")
         
         tool_counts = {}
         for step in self.steps:
             if step['tool']:
                 tool_counts[step['tool']] = tool_counts.get(step['tool'], 0) + 1
         
-        summary = f"Total steps: {len(self.steps)}\n"
-        if tool_counts:
-            summary += "Tools used: " + ", ".join([f"{tool}({count})" for tool, count in tool_counts.items()])
-        
-        return summary
+        tool_list = ", ".join([f"{tool}({count})" for tool, count in tool_counts.items()])
+        return msg("graph.summary", steps=len(self.steps), tools=tool_list)

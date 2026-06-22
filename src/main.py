@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 
 
 # ===== Commands Modules Import =====
+from src.cli.messages import msg
 from src.commands import print_banner, print_step, print_result
 from src.commands.rag import run_rag_ingest, run_rag_query, run_rag_stats
 from src.commands.intel import run_dns_history, run_takeover_check
@@ -169,22 +170,22 @@ def _run_focused_tests(
     """
     selected_groups, selected_tests = _resolve_focus_test_paths(groups, custom_tests)
     if not selected_tests:
-        print_result(False, "No tests selected for focused mode.")
+        print_result(False, msg("result.focus.no_tests"))
         return 2, selected_groups, selected_tests, []
 
     selected_tests, missing, repo_root_resolved_count = _resolve_focus_test_runtime_paths(selected_tests)
     if repo_root_resolved_count > 0:
         print_step(
             "📍",
-            f"Resolved {repo_root_resolved_count} focused tests via repo root: {REPO_ROOT}",
+            msg("result.focus.resolved_count", count=repo_root_resolved_count, root=str(REPO_ROOT)),
         )
     if missing:
         preview = ", ".join(missing[:3])
         suffix = " ..." if len(missing) > 3 else ""
-        print_step("⚠️", f"Skipping missing focused tests: {preview}{suffix}")
+        print_step("⚠️", msg("result.focus.skipping_missing", preview=preview, suffix=suffix))
 
     if not selected_tests:
-        print_result(False, "Focused mode selected only missing tests.")
+        print_result(False, msg("result.focus.only_missing"))
         return 2, selected_groups, selected_tests, []
 
     cmd = [sys.executable or "python3", "-m", "pytest", "-q"]
@@ -193,12 +194,12 @@ def _run_focused_tests(
     cmd.extend(selected_tests)
 
     selected_group_text = ", ".join(selected_groups) if selected_groups else "(custom only)"
-    print_step("🧪", f"Running {stage_label}: groups={selected_group_text}, tests={len(selected_tests)}")
+    print_step("🧪", msg("result.focus.running", stage=stage_label, groups=selected_group_text, count=len(selected_tests)))
     result = subprocess.run(cmd, check=False)
     if result.returncode == 0:
-        print_result(True, f"{stage_label.capitalize()} passed")
+        print_result(True, msg("result.focus.stage_passed", stage=stage_label))
     else:
-        print_result(False, f"{stage_label.capitalize()} failed (exit={result.returncode})")
+        print_result(False, msg("result.focus.stage_failed", stage=stage_label, code=result.returncode))
     return int(result.returncode), selected_groups, selected_tests, cmd
 
 
@@ -291,9 +292,9 @@ def enable_debug_mode():
     try:
         from src.core.utils.debug_logger import enable_debug_mode as _enable
         _enable()
-        print_step("🐛", "Debug mode enabled - detailed logging active")
+        print_step("🐛", msg("step.debug_enabled"))
     except ImportError as e:
-        print_result(False, f"Debug logger not available: {e}")
+        print_result(False, msg("result.debug_not_available", error=e))
 
 
 def _extract_scn_number(scenario_id: str) -> int:
@@ -1657,257 +1658,217 @@ def _build_deferred_checklist_markdown(
 def main():
     parser = argparse.ArgumentParser(
         prog="shigoku",
-        description="SHIGOKU (至極) - 自律型バグバウンティハンター\n\n"
-                    "Caidoログ解析、GitHub監視、RAGナレッジベース検索、DNS履歴取得など、\n"
-                    "バグハンティングに必要な機能を統合したCLIツール。",
+        description=msg("argparse.description"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-使用例:
-  # ハイブリッドハント（Caidoログ解析→自動攻撃）
-  %(prog)s --log caido.json              
-  %(prog)s --log caido.json --scope scope.yaml --mode vulntest
-  
-  # GitHub監視（シークレット漏洩検知）
-  %(prog)s --watch owner/repo
-  
-  # RAGナレッジベース操作
-  %(prog)s --rag-ingest ./knowledge      # ディレクトリ取り込み
-  %(prog)s --rag-ingest ./doc.pdf        # PDF取り込み
-  %(prog)s --rag-query "JWT bypass"      # 検索
-  %(prog)s --rag-stats                   # 統計表示
-  
-  # DNS履歴取得
-  %(prog)s --dns example.com
-  %(prog)s --dns example.com --json
-  
-  # 偵察フェーズ
-  %(prog)s --recon https://target.com
-  
-  # デモモード
-  %(prog)s --demo
-
-モード設定:
-  --mode bugbounty  : バグバウンティモード（デフォルト）
-                      - 高精度重視、控えめな攻撃
-  --mode vulntest   : 脆弱性診断モード
-                      - バランス型、網羅的テスト
-  --mode ctf        : CTFモード
-                      - 積極的攻撃、速度重視
-
-  # プロジェクト一覧表示
-  %(prog)s --projects
-  
-出力フォーマット:
-  --json            : JSON形式で出力（スクリプト連携用）
-        """
+        epilog=msg("argparse.epilog"),
     )
     
     parser.add_argument(
         "--log", "-l",
         metavar="FILE",
-        help="Hybrid Hunt: Analyze proxy log and execute attacks"
+        help=msg("argparse.log.help")
     )
 
     parser.add_argument(
         "--sessions-file",
         metavar="FILE",
-        help="Optional multi-account session config for cross-session IDOR testing"
+        help=msg("argparse.sessions_file.help")
     )
 
     parser.add_argument(
         "--cross-test-approved",
         action="store_true",
-        help="Enable approved IDOR cross-session confirmation (requires --sessions-file)"
+        help=msg("argparse.cross_test_approved.help")
     )
     
     parser.add_argument(
         "--scope", "-s",
         metavar="FILE",
-        help="Scope definition file (YAML)"
+        help=msg("argparse.scope.help")
     )
     
     parser.add_argument(
         "--watch", "-w",
         metavar="REPO",
-        help="Sentinel Watch: Monitor GitHub repo (owner/repo)"
+        help=msg("argparse.watch.help")
     )
     
     parser.add_argument(
         "--demo", "-d",
         action="store_true",
-        help="Grand Demo: Demonstrate all features"
+        help=msg("argparse.demo.help")
     )
     
     parser.add_argument(
         "--recon", "-r",
         metavar="URL",
-        help="Recon Phase: Map site, identify tech, and store in Neo4j"
+        help=msg("argparse.recon.help")
     )
     
     parser.add_argument(
         "--mode", "-m",
         metavar="MODE",
         choices=["bugbounty", "vulntest", "ctf"],
-        help="Hunting mode: bugbounty (default), vulntest, ctf"
+        help=msg("argparse.mode.help")
     )
 
     parser.add_argument(
         "--profile",
         metavar="PROFILE",
         choices=["bbpt", "ctf"],
-        help="Scan profile: bbpt (report-quality) or ctf (speed/aggressive)"
+        help=msg("argparse.profile.help")
     )
 
     parser.add_argument(
         "--target", "-t",
         metavar="URL",
-        help="Target: Specify target URL (alias for --recon)"
+        help=msg("argparse.target.help")
     )
 
     parser.add_argument(
         "--skip-initial-recon",
         action="store_true",
-        help="Skip the pre-MC initial recon phase (faster dev iteration)"
+        help=msg("argparse.skip_initial_recon.help")
     )
 
     parser.add_argument(
         "--recon-start-step",
         type=int,
         metavar="N",
-        help="Override recon pipeline start step for recon_master task (1-8)"
+        help=msg("argparse.recon_start_step.help")
     )
 
     parser.add_argument(
         "--recon-end-step",
         type=int,
         metavar="N",
-        help="Override recon pipeline end step for recon_master task (1-8)"
+        help=msg("argparse.recon_end_step.help")
     )
 
     parser.add_argument(
         "--fast-iterate",
         action="store_true",
-        help="Shortcut for fast iteration: --skip-initial-recon --recon-start-step 6 --recon-end-step 8"
+        help=msg("argparse.fast_iterate.help")
     )
 
     # Recipe (NEW - Phase 8)
     parser.add_argument(
         "--recipe",
         metavar="FILE",
-        help="Recipe: Specify a recipe file (YAML) to execute"
+        help=msg("argparse.recipe.help")
     )
     
     # Cookie (NEW)
     parser.add_argument(
         "--cookie",
         metavar="COOKIE",
-        help="Pass cookies for authenticated scan (e.g. 'PHPSESSID=...')"
+        help=msg("argparse.cookie.help")
     )
 
     parser.add_argument(
         "--bearer-token",
         metavar="TOKEN",
-        help="Pass bearer token for authenticated scan (raw JWT or 'Bearer <token>')"
+        help=msg("argparse.bearer_token.help")
     )
     
     # Crawl command (NEW)
     parser.add_argument(
         "--crawl", "-c",
         metavar="URL",
-        help="Crawl: Run gospider/katana via Caido proxy"
+        help=msg("argparse.crawl.help")
     )
     
     parser.add_argument(
         "--crawl-depth",
         metavar="DEPTH",
         choices=["quick", "standard", "deep"],
-        help="Crawl depth: quick(1), standard(3), deep(5)"
+        help=msg("argparse.crawl_depth.help")
     )
     
     # Analyze command (NEW)
     parser.add_argument(
         "--analyze", "-a",
         metavar="URL",
-        help="Analyze: Analyze app functions, type, architecture, vuln score"
+        help=msg("argparse.analyze.help")
     )
     
     # Debug mode (NEW)
     parser.add_argument(
         "--debug",
         action="store_true",
-        help="Debug Mode: Enable detailed logging with handoff/decision traces"
+        help=msg("argparse.debug.help")
     )
     
     # RAG commands
     parser.add_argument(
         "--rag-ingest",
         metavar="PATH",
-        help="RAG: Ingest files from path (directory or PDF)"
+        help=msg("argparse.rag_ingest.help")
     )
     
     parser.add_argument(
         "--rag-query",
         metavar="QUESTION",
-        help="RAG: Query the knowledge base"
+        help=msg("argparse.rag_query.help")
     )
     
     parser.add_argument(
         "--rag-stats",
         action="store_true",
-        help="RAG: Show knowledge base statistics"
+        help=msg("argparse.rag_stats.help")
     )
     
     parser.add_argument(
         "--pdf-only",
         action="store_true",
-        help="RAG ingest: Only process PDF files"
+        help=msg("argparse.pdf_only.help")
     )
     
     parser.add_argument(
         "--reset-db",
         action="store_true",
-        help="RAG ingest: Reset database before ingesting"
+        help=msg("argparse.reset_db.help")
     )
     
     parser.add_argument(
         "-n", "--num-results",
         type=int,
-        help="RAG query: Number of results (default: 5)"
+        help=msg("argparse.num_results.help")
     )
     
     # DNS command
     parser.add_argument(
         "--dns",
         metavar="DOMAIN",
-        help="DNS History: Get historical DNS records"
+        help=msg("argparse.dns.help")
     )
     
     # Parameter Fuzzing
     parser.add_argument(
         "--fuzz",
         metavar="URL",
-        help="Parameter Fuzzing: Discover hidden params and check reflection"
+        help=msg("argparse.fuzz.help")
     )
     
     # OpenAPI Testing
     parser.add_argument(
         "--openapi",
         metavar="URL",
-        help="OpenAPI Testing: Auto-test Swagger/OpenAPI endpoints"
+        help=msg("argparse.openapi.help")
     )
     
     # Subdomain Takeover
     parser.add_argument(
         "--takeover",
         metavar="DOMAIN",
-        help="Takeover Detection: Check subdomain takeover vulnerability"
+        help=msg("argparse.takeover.help")
     )
     
     # Export
     parser.add_argument(
         "--export",
         metavar="DIR",
-        help="Export: Export findings to file"
+        help=msg("argparse.export.help")
     )
     
     parser.add_argument(
@@ -1915,246 +1876,243 @@ def main():
         metavar="FORMAT",
         choices=["json", "csv", "pdf", "markdown", "html", "haddix"],
         default="json",
-        help="Export/Report format: json (default), csv, pdf, markdown, html, haddix"
+        help=msg("argparse.format.help")
     )
     
     # Tool Status
     parser.add_argument(
         "--tools",
         action="store_true",
-        help="Tool Status: Show all registered tools and their status"
+        help=msg("argparse.tools.help")
     )
 
     # Project List (NEW)
     parser.add_argument(
         "--projects",
         action="store_true",
-        help="List Projects: Show all available projects"
+        help=msg("argparse.projects.help")
     )
     
     # Interactive Mode (NEW - Phase 0)
     parser.add_argument(
         "--interactive", "-i",
         action="store_true",
-        help="Interactive Mode: Start interactive session with Master Conductor"
+        help=msg("argparse.interactive.help")
     )
     
     # Resume Session (NEW - Session Persistence)
     parser.add_argument(
         "--resume",
         action="store_true",
-        help="Resume Session: Continue from previous interrupted session"
+        help=msg("argparse.resume.help")
     )
 
     parser.add_argument(
         "--hitl-list",
         action="store_true",
-        help="List pending HITL tickets from session"
+        help=msg("argparse.hitl_list.help")
     )
 
     parser.add_argument(
         "--deferred-list",
         action="store_true",
-        help="List deferred scenario backlog from latest haddix_deferred artifact"
+        help=msg("argparse.deferred_list.help")
     )
 
     parser.add_argument(
         "--deferred-checklist",
         action="store_true",
-        help="Generate execution checklist markdown from deferred scenario backlog"
+        help=msg("argparse.deferred_checklist.help")
     )
 
     parser.add_argument(
         "--deferred-status",
         action="store_true",
-        help="Show deferred scenario status summary"
+        help=msg("argparse.deferred_status.help")
     )
 
     parser.add_argument(
         "--deferred-resolve",
         action="append",
         metavar="SCENARIO_ID",
-        help="Mark deferred scenario as resolved (repeatable)"
+        help=msg("argparse.deferred_resolve.help")
     )
 
     parser.add_argument(
         "--deferred-note",
         metavar="TEXT",
-        help="Resolution note recorded with --deferred-resolve"
+        help=msg("argparse.deferred_note.help")
     )
 
     parser.add_argument(
         "--deferred-resolved-by",
         metavar="NAME",
-        help="Resolved-by label recorded with --deferred-resolve (default: operator)"
+        help=msg("argparse.deferred_resolved_by.help")
     )
 
     parser.add_argument(
         "--deferred-file",
         metavar="PATH",
-        help="Explicit haddix_deferred_*.json path for --deferred-* mode"
+        help=msg("argparse.deferred_file.help")
     )
 
     parser.add_argument(
         "--deferred-checklist-output",
         metavar="PATH",
-        help="Output path for --deferred-checklist markdown (default: reports/haddix_deferred_checklist_<timestamp>.md)"
+        help=msg("argparse.deferred_checklist_output.help")
     )
 
     parser.add_argument(
         "--hitl-run",
         action="store_true",
-        help="Queue approved HITL tickets and execute them"
+        help=msg("argparse.hitl_run.help")
     )
 
     parser.add_argument(
         "--hitl-approve",
         action="append",
         metavar="TICKET_ID",
-        help="Approve HITL ticket (repeatable)"
+        help=msg("argparse.hitl_approve.help")
     )
 
     parser.add_argument(
         "--hitl-reject",
         action="append",
         metavar="TICKET_ID",
-        help="Reject HITL ticket (repeatable)"
+        help=msg("argparse.hitl_reject.help")
     )
 
     parser.add_argument(
         "--intervention-gate-mode",
         choices=["observe", "enforce_human_preferred", "enforce_hitl"],
-        help="Override intervention gate mode for this run"
+        help=msg("argparse.intervention_gate_mode.help")
     )
     
     # Report (NEW)
     parser.add_argument(
         "--report",
         action="store_true",
-        help="Show execution report from last session"
+        help=msg("argparse.report.help")
     )
 
     parser.add_argument(
         "--report-replay",
         action="store_true",
-        help="Replay pending canonical_report_payload queue after report_adapter recovery"
+        help=msg("argparse.report_replay.help")
     )
 
     parser.add_argument(
         "--report-retry-failed",
         action="store_true",
-        help="Reset failed replay queue records back to pending for manual retry"
+        help=msg("argparse.report_retry_failed.help")
     )
 
     parser.add_argument(
         "--report-replay-list",
         action="store_true",
-        help="List replay queue records for operator inspection"
+        help=msg("argparse.report_replay_list.help")
     )
 
     parser.add_argument(
         "--report-replay-platform",
         choices=["hackerone", "bugcrowd"],
         default="hackerone",
-        help="Platform to replay pending report queue entries against"
+        help=msg("argparse.report_replay_platform.help")
     )
 
     parser.add_argument(
         "--report-replay-queue",
         metavar="PATH",
-        help="Override replay queue path (default: workspace/runtime/report_adapter_replay_queue.jsonl)"
+        help=msg("argparse.report_replay_queue.help")
     )
 
     parser.add_argument(
         "--report-replay-limit",
         type=int,
         metavar="N",
-        help="Maximum number of pending replay entries to process"
+        help=msg("argparse.report_replay_limit.help")
     )
 
     parser.add_argument(
         "--report-replay-queue-id",
         metavar="QUEUE_ID",
-        help="Filter report retry-failed to a specific replay queue record"
+        help=msg("argparse.report_replay_queue_id.help")
     )
 
     parser.add_argument(
         "--report-replay-status",
         choices=["pending", "failed", "completed"],
-        help="Filter report replay list by replay status"
+        help=msg("argparse.report_replay_status.help")
     )
     
     # Output format
     parser.add_argument(
         "--json",
         action="store_true",
-        help="Output in JSON format"
+        help=msg("argparse.json.help")
     )
     
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Dry Run: Execute workflow without actual attacks (sets safe_mode=True)"
+        help=msg("argparse.dry_run.help")
     )
     
     parser.add_argument(
         "--translate-logs",
         action="store_true",
-        help="Experimental: Translate logs to Japanese using local Ollama"
+        help=msg("argparse.translate_logs.help")
     )
     
     # Phase 5: Live Dashboard (NEW)
     parser.add_argument(
         "--live-dashboard",
         action="store_true",
-        help="Phase 5: Enable real-time execution dashboard in terminal"
+        help=msg("argparse.live_dashboard.help")
     )
 
     parser.add_argument(
         "--focus-list",
         action="store_true",
-        help="List focused regression test groups and exit"
+        help=msg("argparse.focus_list.help")
     )
 
     parser.add_argument(
         "--focus-tests",
         action="store_true",
-        help="Run focused regression tests (for faster improve->verify iteration)"
+        help=msg("argparse.focus_tests.help")
     )
 
     parser.add_argument(
         "--focus-group",
         action="append",
         choices=["density", "report", "hitl", "fast_mc_recon", "all"],
-        help="Focused test group to run (repeatable)"
+        help=msg("argparse.focus_group.help")
     )
 
     parser.add_argument(
         "--focus-test",
         action="append",
         metavar="PATH",
-        help="Additional pytest test path/nodeid for focused mode (repeatable)"
+        help=msg("argparse.focus_test.help")
     )
 
     parser.add_argument(
         "--focus-fail-fast",
         action="store_true",
-        help="Fail fast (-x) when running focused tests"
+        help=msg("argparse.focus_fail_fast.help")
     )
 
     parser.add_argument(
         "--quality-loop",
         choices=["short"],
-        help=(
-            "Run standardized improve->verify loop. "
-            "'short' executes focused tests first, then short attack loop."
-        ),
+        help=msg("argparse.quality_loop.help")
     )
 
     parser.add_argument(
         "--quality-loop-full-scan",
         action="store_true",
-        help="When used with --quality-loop short, run an additional full scan after short attack loop.",
+        help=msg("argparse.quality_loop_full_scan.help"),
     )
 
     args = parser.parse_args()
@@ -2167,17 +2125,17 @@ def main():
             args.recon_end_step = 8
 
     if args.recon_start_step is not None and not (1 <= int(args.recon_start_step) <= 8):
-        parser.error("--recon-start-step must be between 1 and 8")
+        parser.error(msg("parser.error.recon_start_step_range"))
     if args.recon_end_step is not None and not (1 <= int(args.recon_end_step) <= 8):
-        parser.error("--recon-end-step must be between 1 and 8")
+        parser.error(msg("parser.error.recon_end_step_range"))
     if (
         args.recon_start_step is not None
         and args.recon_end_step is not None
         and int(args.recon_start_step) > int(args.recon_end_step)
     ):
-        parser.error("--recon-start-step must be <= --recon-end-step")
+        parser.error(msg("parser.error.recon_step_order"))
     if args.quality_loop_full_scan and not args.quality_loop:
-        parser.error("--quality-loop-full-scan requires --quality-loop")
+        parser.error(msg("parser.error.quality_loop_requires_full_scan"))
 
     if args.focus_list:
         _print_focus_test_groups()
@@ -2198,7 +2156,7 @@ def main():
 
     if args.quality_loop:
         if not args.target:
-            parser.error("--quality-loop requires --target")
+            parser.error(msg("parser.error.quality_loop_requires_target"))
 
         if args.quality_loop != "short":
             parser.error(f"Unsupported --quality-loop mode: {args.quality_loop}")
@@ -2208,7 +2166,7 @@ def main():
         if not raw_groups and not raw_custom_tests:
             raw_groups = list(DEFAULT_QUALITY_LOOP_GROUPS)
 
-        print_step("🧭", "Quality Loop 1/3: focused regression precheck")
+        print_step("🧭", msg("step.quality_loop_1"))
         focus_exit, selected_groups, selected_tests, focus_cmd = _run_focused_tests(
             groups=raw_groups,
             custom_tests=raw_custom_tests,
@@ -2225,37 +2183,36 @@ def main():
             focus_exit_code=focus_exit,
         )
         if artifact_path is not None:
-            print_step("🗃️", f"Saved precheck artifact: {artifact_path}")
+            print_step("🗃️", msg("step.quality_loop_precheck_artifact", path=artifact_path))
 
         if focus_exit != 0:
             if not selected_tests:
                 print_step(
                     "⚠️",
-                    "Focused precheck tests are unavailable in this runtime. "
-                    "Continuing with short attack loop.",
+                    msg("step.quality_loop_precheck_unavailable"),
                 )
             else:
                 raise SystemExit(focus_exit)
 
-        print_step("⚡", "Quality Loop 2/3: short attack loop")
+        print_step("⚡", msg("step.quality_loop_2"))
         short_cmd = _build_quality_loop_scan_command(args, short_mode=True)
         short_result = subprocess.run(short_cmd, check=False)
         if short_result.returncode != 0:
-            print_result(False, f"Short attack loop failed (exit={short_result.returncode})")
+            print_result(False, msg("quality.short_attack_failed", code=short_result.returncode))
             raise SystemExit(int(short_result.returncode))
 
         if args.quality_loop_full_scan:
-            print_step("🧪", "Quality Loop 3/3: full scan (explicit)")
+            print_step("🧪", msg("step.quality_loop_3"))
             full_cmd = _build_quality_loop_scan_command(args, short_mode=False)
             full_result = subprocess.run(full_cmd, check=False)
             if full_result.returncode != 0:
-                print_result(False, f"Full scan failed (exit={full_result.returncode})")
+                print_result(False, msg("quality.full_scan_failed", code=full_result.returncode))
                 raise SystemExit(int(full_result.returncode))
-            print_result(True, "Quality loop completed: focus-tests -> short attack loop -> full scan")
+            print_result(True, msg("result.quality_loop_completed_full"))
             return
 
-        print_result(True, "Quality loop completed: focus-tests -> short attack loop")
-        print("Next: run full scan only if needed.")
+        print_result(True, msg("result.quality_loop_completed_short"))
+        print(msg("next_action.after_scan"))
         return
     
     # Initialize Configuration
@@ -2278,7 +2235,7 @@ def main():
 
     if args.intervention_gate_mode:
         settings.intervention_gate_mode = str(args.intervention_gate_mode)
-        print_step("🛂", f"Intervention gate mode: {settings.intervention_gate_mode}")
+        print_step("🛂", msg("step.intervention_gate_mode", mode=settings.intervention_gate_mode))
 
     # Deferred scenario backlog management
     if args.deferred_list or args.deferred_checklist or args.deferred_status or args.deferred_resolve:
@@ -2286,7 +2243,7 @@ def main():
         from src.core.utils.json_utils import safe_json_loads
 
         print_banner()
-        print_step("🗂️", "Deferred scenario backlog mode")
+        print_step("🗂️", msg("step.deferred_mode"))
 
         deferred_file: Path | None = None
         if args.deferred_file:
@@ -2296,18 +2253,17 @@ def main():
             reports_dir = pm.get_reports_dir()
             deferred_file = _select_latest_deferred_backlog_file(reports_dir)
             if deferred_file is not None:
-                print_step("📂", f"Using latest deferred backlog for project: {args.target} ({deferred_file.name})")
+                print_step("📂", msg("deferred.using_latest", target=args.target, file=deferred_file.name))
         else:
             print_result(
                 False,
-                "--deferred-* mode requires --target or --deferred-file "
-                "(supported: --deferred-list/--deferred-checklist/--deferred-status/--deferred-resolve)",
+                msg("result.deferred.mode_requires_target"),
             )
             return
 
         if deferred_file is None or not deferred_file.exists():
-            print_result(False, "No deferred backlog artifact found.")
-            print("Hint: Generate Haddix report first with `--report --format haddix`.")
+            print_result(False, msg("result.deferred.no_artifact"))
+            print(msg("result.deferred.generate_haddix_hint"))
             return
 
         try:
@@ -2316,7 +2272,7 @@ def main():
             if not isinstance(payload, dict):
                 raise ValueError("deferred backlog is not a JSON object")
         except Exception as exc:
-            print_result(False, f"Failed to read deferred backlog: {exc}")
+            print_result(False, msg("result.deferred.read_failed", error=exc))
             return
 
         scenarios = _extract_deferred_scenarios_from_payload(payload)
@@ -2340,7 +2296,7 @@ def main():
                     encoding="utf-8",
                 )
             except Exception as exc:
-                print_result(False, f"Failed to update deferred backlog: {exc}")
+                print_result(False, msg("result.deferred.update_failed", error=exc))
                 return
             status_summary = _summarize_deferred_statuses(scenarios)
 
@@ -2362,16 +2318,16 @@ def main():
                 checklist_path.write_text(checklist_markdown, encoding="utf-8")
             except PermissionError:
                 if explicit_output:
-                    print_result(False, f"Checklist output path is not writable: {checklist_path}")
+                    print_result(False, msg("result.deferred.checklist_unwritable", path=checklist_path))
                     return
                 fallback_dir = (Path.cwd() / "reports").resolve()
                 fallback_dir.mkdir(parents=True, exist_ok=True)
                 fallback_path = fallback_dir / checklist_path.name
                 fallback_path.write_text(checklist_markdown, encoding="utf-8")
                 checklist_path = fallback_path
-                print_step("⚠️", f"Checklist output path not writable, used fallback: {checklist_path}")
+                print_step("⚠️", msg("result.deferred.checklist_fallback", path=checklist_path))
             except Exception as exc:
-                print_result(False, f"Failed to generate deferred checklist: {exc}")
+                print_result(False, msg("result.deferred.checklist_failed", error=exc))
                 return
 
         if args.json:
@@ -2389,26 +2345,27 @@ def main():
             print(json.dumps(response, indent=2, ensure_ascii=False))
             return
 
-        print(f"Deferred scenarios: {len(scenarios)}")
+        print(msg("result.deferred.scenario_count", count=len(scenarios)))
         print(
-            "Status summary: "
-            f"pending={status_summary.get('pending', 0)}, "
-            f"in_progress={status_summary.get('in_progress', 0)}, "
-            f"done={status_summary.get('done', 0)}, "
-            f"rejected={status_summary.get('rejected', 0)}, "
-            f"total={status_summary.get('total', 0)}"
+            msg("deferred.status_summary",
+                pending=status_summary.get('pending', 0),
+                in_progress=status_summary.get('in_progress', 0),
+                done=status_summary.get('done', 0),
+                rejected=status_summary.get('rejected', 0),
+                total=status_summary.get('total', 0),
+            )
         )
-        print(f"Artifact: {deferred_file}")
+        print(msg("deferred.artifact_path", path=deferred_file))
         if resolve_ids:
-            print_step("✅", f"Resolved deferred scenarios: {resolved_count}")
+            print_step("✅", msg("result.deferred.resolved_count", count=resolved_count))
             if unresolved_ids:
                 preview = ", ".join(unresolved_ids[:5])
                 suffix = " ..." if len(unresolved_ids) > 5 else ""
-                print_step("⚠️", f"Requested scenario_id not found: {preview}{suffix}")
+                print_step("⚠️", msg("result.deferred.scenario_not_found", preview=preview, suffix=suffix))
         if checklist_path is not None:
-            print_step("📝", f"Deferred checklist generated: {checklist_path}")
+            print_step("📝", msg("result.deferred.checklist_generated", path=checklist_path))
         if not scenarios:
-            print("No deferred scenarios in this artifact.")
+            print(msg("result.deferred.no_scenarios"))
             return
 
         for item in scenarios:
@@ -2444,7 +2401,7 @@ def main():
         from src.core.models.llm import LLMClient
 
         print_banner()
-        print_step("🧩", "HITL ticket management mode")
+        print_step("🧩", msg("step.hitl_mode"))
 
         session_file = "session_state.json"
         pm = None
@@ -2494,14 +2451,14 @@ def main():
                 session_file = str(selected_session)
                 print_step(
                     "📂",
-                    f"Using {selected_reason} for project: {args.target} ({selected_session.name})",
+                    msg("hitl.using_session", reason=selected_reason, target=args.target, session=selected_session.name),
                 )
             else:
-                print_result(False, f"No session found for project {args.target}")
+                print_result(False, msg("result.session.not_found", target=args.target))
                 return
 
         if not Path(session_file).exists():
-            print_result(False, f"No session file found ({session_file})")
+            print_result(False, msg("result.session.file_not_found", path=session_file))
             return
 
         llm_client = LLMClient(
@@ -2514,7 +2471,7 @@ def main():
             mc.set_project_manager(pm)
 
         if not mc.load_session(session_file):
-            print_result(False, "Failed to load session")
+            print_result(False, msg("result.session.load_failed"))
             return
 
         approved = 0
@@ -2532,13 +2489,13 @@ def main():
                 unresolved_ticket_ids.append(str(ticket_id))
 
         if approved > 0:
-            print_step("✅", f"Approved HITL tickets: {approved}")
+            print_step("✅", msg("result.hitl.approved_count", count=approved))
         if rejected > 0:
-            print_step("⛔", f"Rejected HITL tickets: {rejected}")
+            print_step("⛔", msg("result.hitl.rejected_count", count=rejected))
         if unresolved_ticket_ids:
             preview = ", ".join(unresolved_ticket_ids[:3])
             suffix = " ..." if len(unresolved_ticket_ids) > 3 else ""
-            print_step("⚠️", f"HITL ticket not found in selected session: {preview}{suffix}")
+            print_step("⚠️", msg("result.hitl.ticket_not_found", preview=preview, suffix=suffix))
 
         if args.hitl_list:
             all_tickets = mc.list_pending_hitl_tickets()
@@ -2577,7 +2534,7 @@ def main():
                 )
             else:
                 if not tickets:
-                    print("No actionable HITL tickets found.")
+                    print(msg("result.hitl.no_tickets"))
                     route_counts: dict[str, int] = {}
                     gate_mode_counts: dict[str, int] = {}
                     for task in mc.completed_tasks:
@@ -2593,10 +2550,10 @@ def main():
                     hitl_route_count = route_counts.get("shigoku_hitl", 0) + route_counts.get("human_preferred", 0)
                     observe_count = gate_mode_counts.get("observe", 0)
                     if hitl_route_count > 0 and observe_count == len(mc.completed_tasks):
-                        print("Hint: This session ran in observe mode, so HITL-route tasks were not queued as tickets.")
-                        print("Hint: Re-run mission with --intervention-gate-mode enforce_hitl, then use --hitl-list.")
+                        print(msg("result.hitl.hint_gate_mode"))
+                        print(msg("result.hitl.hint_gate_mode"))
                     elif hitl_route_count <= 0:
-                        print("Hint: No HITL-route tasks were generated in this session.")
+                        print(msg("result.hitl.hint_rerun"))
                     if done_count > 0 or rejected_count > 0:
                         print(
                             f"Status summary: done={done_count}, rejected={rejected_count}, total={len(all_tickets)}"
@@ -2620,21 +2577,21 @@ def main():
         if args.hitl_run:
             existing_pending = len(mc.task_queue)
             if existing_pending > 0:
-                print_step("⏭️", f"Ignoring {existing_pending} existing pending task(s) in --hitl-run mode")
+                print_step("⏭️", msg("result.hitl.ignoring_pending", count=existing_pending))
                 mc.task_queue.clear()
             queued = mc.enqueue_approved_hitl_tasks()
             if queued <= 0:
-                print_result(True, "No approved HITL tickets to run.")
+                print_result(True, msg("result.hitl.no_approved"))
                 mc.save_session(filepath=session_file)
             else:
-                print_step("▶️", f"Queued {queued} approved HITL task(s).")
+                print_step("▶️", msg("result.hitl.queued", count=queued))
                 result = mc.execute_with_replan()
-                print_result(True, "HITL resumed tasks completed")
+                print_result(True, msg("result.hitl.completed"))
                 if args.json:
                     print(json.dumps(result, indent=2, ensure_ascii=False))
         else:
             mc.save_session(filepath=session_file)
-            print_result(True, "HITL ticket updates saved")
+            print_result(True, msg("result.hitl.saved"))
         return
     
     # Resume セッション処理
@@ -2644,7 +2601,7 @@ def main():
         from src.core.models.llm import LLMClient
 
         print_banner()
-        print_step("🔄", "Attempting to resume previous session...")
+        print_step("🔄", msg("step.resume_attempting"))
 
         session_file = "session_state.json"
         pm = None
@@ -2655,14 +2612,14 @@ def main():
             latest_session = pm.project_dir / "sessions" / "latest.json"
             if latest_session.exists():
                 session_file = str(latest_session)
-                print_step("📂", f"Using latest session for project: {args.target}")
+                print_step("📂", msg("hitl.resume_using_latest", target=args.target))
             else:
-                print_result(False, f"No session found for project {args.target}")
+                print_result(False, msg("result.session.not_found", target=args.target))
                 return
 
         if not Path(session_file).exists():
-            print_result(False, f"No session file found ({session_file})")
-            print("💡 Tip: Run a normal mission first, then use --resume after interruption")
+            print_result(False, msg("result.session.file_not_found", path=session_file))
+            print(msg("result.resume.tip"))
             return
 
         # Initialize LLM Client for resumed session
@@ -2676,13 +2633,13 @@ def main():
             mc.set_project_manager(pm)
             
         if mc.load_session(session_file):
-            print_result(True, f"Session restored: {len(mc.task_queue)} tasks in queue")
-            print_step("▶️", "Resuming execution...")
+            print_result(True, msg("step.resume_restored", count=len(mc.task_queue)))
+            print_step("▶️", msg("step.resume_executing"))
              
             # 実行再開
             result = mc.execute_with_replan()
             
-            print_result(True, "Resumed session completed")
+            print_result(True, msg("step.resume_completed"))
             
             # 終了サマリー表示
             from src.commands.report import print_execution_summary
@@ -2691,7 +2648,7 @@ def main():
             if args.json:
                 print(json.dumps(result, indent=2, ensure_ascii=False))
         else:
-            print_result(False, "Failed to load session")
+            print_result(False, msg("result.session.load_failed"))
         return
 
     # Report Output
@@ -2711,7 +2668,7 @@ def main():
             return
 
         print_banner()
-        print_step("📋", "Report replay list mode")
+        print_step("📋", msg("step.report_list_mode"))
         print_step("🔢", f"count={list_result['count']}")
         print_step("🗂️", f"queue={list_result['queue_path']}")
         for record in list_result["records"]:
@@ -2737,8 +2694,8 @@ def main():
             return
 
         print_banner()
-        print_step("🔁", "Report retry-failed mode")
-        print_result(True, f"Failed replay records reset for {retry_result['platform']}")
+        print_step("🔁", msg("step.report_retry_mode"))
+        print_result(True, msg("result.report.replay_reset", platform=retry_result['platform'], count=retry_result['reset']))
         print_step("♻️", f"reset={retry_result['reset']}")
         print_step("⏭️", f"skipped={retry_result['skipped']}")
         print_step("🗂️", f"queue={retry_result['queue_path']}")
@@ -2747,7 +2704,7 @@ def main():
     if args.report_replay:
         if not args.json:
             print_banner()
-            print_step("🔁", "Report replay mode")
+            print_step("🔁", msg("step.report_replay_mode"))
 
         hackerone_token = (
             str(getattr(settings, "hackerone_token", "") or "").strip()
@@ -2773,10 +2730,10 @@ def main():
             )
         )
         if not hasattr(manager, "replay_pending_submissions"):
-            print_result(False, "Configured platform manager does not support replay.")
+            print_result(False, msg("result.report.replay_no_support"))
             return
         if args.report_replay_platform not in getattr(manager, "_platforms", {}):
-            print_result(False, f"Platform is not configured for replay: {args.report_replay_platform}")
+            print_result(False, msg("result.report.replay_not_configured", platform=args.report_replay_platform))
             return
 
         replay_result = asyncio.run(
@@ -2794,7 +2751,7 @@ def main():
             print(json.dumps(replay_result, indent=2, ensure_ascii=False))
             return
 
-        print_result(True, f"Replay processed for {replay_result['platform']}")
+        print_result(True, msg("result.report.replay_processed", platform=replay_result['platform'], count=replay_result['processed']))
         print_step("📦", f"processed={replay_result['processed']}")
         print_step("✅", f"replayed={replay_result['replayed']}")
         print_step("⚠️", f"failed={replay_result['failed']}")
@@ -2847,14 +2804,14 @@ def main():
 
             if latest_session and latest_session.exists():
                 session_file = str(latest_session)
-                print_step("📂", f"Using latest VALID session for project: {args.target} ({Path(session_file).name})")
+                print_step("📂", msg("hitl.resume_valid_session", target=args.target, file=Path(session_file).name))
             else:
-                print_result(False, f"No valid session found for project {args.target}")
+                print_result(False, msg("result.session.not_found", target=args.target))
                 return
         
         path_obj = Path(session_file)
         if not path_obj.exists():
-            print_result(False, f"No session file found ({session_file})")
+            print_result(False, msg("result.session.file_not_found", path=session_file))
             return
             
         if args.format == "html":
@@ -2863,7 +2820,7 @@ def main():
                 output_path = generate_report_from_file(session_file)
                 
                 abs_path = Path(output_path).resolve()
-                print_result(True, f"HTML Report generated: [bold cyan]{abs_path}[/bold cyan]")
+                print_result(True, msg("result.report.html_generated", path=abs_path))
                 
                 # Check if running in Docker
                 is_docker = Path("/.dockerenv").exists()
@@ -2871,14 +2828,14 @@ def main():
                 import webbrowser
                 try:
                     if not is_docker:
-                        print("Opening in browser...")
+                        print(msg("result.report.open_browser"))
                         webbrowser.open(f"file://{abs_path}")
                     else:
-                        print("💡 Running in Docker. Please open the report path above manually in your host browser.")
+                        print(msg("result.report.docker_hint"))
                 except Exception:
-                    print(f"💡 Could not open browser automatically. Please open: file://{abs_path}")
+                    print(msg("result.report.cannot_open_browser", path=abs_path))
             except Exception as e:
-                print_result(False, f"Failed to generate HTML report: {e}")
+                print_result(False, msg("result.report.html_failed", error=e))
         
         elif args.format == "haddix":
             try:
@@ -3019,13 +2976,13 @@ def main():
                             haddix_findings = merged
                             print_step(
                                 "🧪",
-                                f"Appended {appended} heuristic candidate finding(s) from execution telemetry",
+                                msg("finding.appended_heuristics", count=appended),
                             )
                     else:
                         haddix_findings = heuristic_candidates
                         print_step(
                             "🧪",
-                            f"Promoted {len(heuristic_candidates)} heuristic candidate finding(s) from execution telemetry",
+                            msg("finding.promoted_heuristics", count=len(heuristic_candidates)),
                         )
 
                 # report-only 経路でも重複排除を適用（特に file_upload の大量重複を統合）
@@ -3102,7 +3059,7 @@ def main():
                 if evidence_artifact_paths:
                     print_step(
                         "🧾",
-                        f"Saved finding evidence artifacts: {len(evidence_artifact_paths)} -> {evidence_output_dir.resolve()}",
+                        msg("finding.evidence_saved", count=len(evidence_artifact_paths), dir=evidence_output_dir.resolve()),
                     )
                 
                 generate_haddix_report(
@@ -3237,15 +3194,15 @@ def main():
                     )
                 
                 abs_path = output_path.resolve()
-                print_result(True, f"jHADDIX Style Report generated: [bold cyan]{abs_path}[/bold cyan]")
-                print_step("🚦", f"Initial-release gate verdict saved: {gate_output_path.resolve()}")
+                print_result(True, msg("result.report.haddix_generated", path=abs_path))
+                print_step("🚦", msg("gate.verdict_saved", path=gate_output_path.resolve()))
                 if isinstance(deferred_scenarios, list) and deferred_scenarios:
-                    print_step("🗂️", f"Deferred scenario backlog saved: {deferred_output_path.resolve()}")
+                    print_step("🗂️", msg("gate.deferred_saved", path=deferred_output_path.resolve()))
 
                 gate_status = str(gate_result.get("status", "") or "").strip().upper() or "UNKNOWN"
                 reason_codes = gate_result.get("reason_codes", [])
                 reason_codes_text = ", ".join(str(code) for code in reason_codes) if reason_codes else "-"
-                print_step("🚦", f"Initial-release gate: {gate_status} (reason_codes={reason_codes_text})")
+                print_step("🚦", msg("gate.status", status=gate_status, codes=reason_codes_text))
 
                 recommended_actions = gate_result.get("recommended_actions", [])
                 if isinstance(recommended_actions, list) and recommended_actions:
@@ -3264,10 +3221,10 @@ def main():
                             print(f"   └─ {command_hint}")
                 
                 if not Path("/.dockerenv").exists():
-                    print(f"💡 You can view the markdown report at: {abs_path}")
+                    print(msg("result.report.view_hint", path=abs_path))
                 
             except Exception as e:
-                print_result(False, f"Failed to generate jHADDIX report: {e}")
+                print_result(False, msg("result.report.haddix_failed", error=e))
                 import traceback
                 logger.error(traceback.format_exc())
         else:
@@ -3277,7 +3234,7 @@ def main():
                 from src.commands.report import print_execution_summary
                 print_execution_summary(mc.completed_tasks, mc.context)
             else:
-                print_result(False, "Failed to load session")
+                print_result(False, msg("result.session.load_failed"))
         return
 
     # モード判定と実行
@@ -3307,7 +3264,7 @@ def main():
         else:
             print_banner()
             if not projects:
-                print_result(False, "No projects found.")
+                print_result(False, msg("result.projects.none"))
             else:
                 print(f"{'Project Name':<20} | {'Target':<30} | {'Last Scan'}")
                 print("-" * 70)
@@ -3383,11 +3340,11 @@ def main():
                 await orchestrator.run_pipeline(target_assets)
         
         if args.skip_initial_recon:
-            print_step("⏭️", "Skipping Initial Reconnaissance (--skip-initial-recon)")
+            print_step("⏭️", msg("step.recon_skip"))
         else:
-            print_step("🔍", "Starting Initial Reconnaissance (Fast Phase)...")
+            print_step("🔍", msg("step.recon_start"))
             asyncio.run(run_recon())
-            print_step("✅", "Initial Recon Complete. Starting Master Conductor.")
+            print_step("✅", msg("step.recon_complete"))
         # --- Phase 3 End ---
 
         start_interactive_session(
@@ -3435,12 +3392,12 @@ def main():
             )
     elif args.rag_ingest:
         if not config.rag_enabled:
-            print_result(False, "RAG is disabled in config.")
+            print_result(False, msg("result.rag.disabled"))
             return
         run_rag_ingest(args.rag_ingest, pdf_only=args.pdf_only, reset=args.reset_db)
     elif args.rag_query:
         if not config.rag_enabled:
-            print_result(False, "RAG is disabled in config.")
+            print_result(False, msg("result.rag.disabled"))
             return
         n_results = args.num_results or 5
         run_rag_query(args.rag_query, n_results=n_results, output_json=args.json)
@@ -3460,8 +3417,8 @@ def main():
         run_tool_status(output_json=args.json)
     else:
         parser.print_help()
-        print("\n💡 Try: python -m src.main --demo")
-        print("\nAvailable modes: --mode bugbounty (default), vulntest, ctf")
+        print(msg("result.no_args_help_hint"))
+        print(msg("result.no_args_modes"))
 
 
     # Wait for background threads (e.g., ReconWorker)
@@ -3471,13 +3428,13 @@ def main():
     # メインループ終了後、バックグラウンドスレッドが残っていれば待機
     background_threads = [t for t in threading.enumerate() if t.name.startswith("ReconWorker-")]
     if background_threads:
-        print(f"\n⏳ Waiting for {len(background_threads)} background tasks to complete... (Ctrl+C to force exit)")
+        print(msg("result.background_waiting", count=len(background_threads)))
         try:
             for t in background_threads:
                 if t.is_alive():
                     t.join()
         except KeyboardInterrupt:
-            print("\n⚠️  Interrupted. Exiting immediately.")
+            print(msg("result.interrupted"))
 
 if __name__ == "__main__":
     main()

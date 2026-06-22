@@ -285,4 +285,17 @@ SGK-2026-0273,API probe 純粋 helper の追加抽出 (4関数),done,subtask_pla
 SGK-2026-0274,tool runner 結果整形の manager_internal 抽出,done,subtask_plan,SGK-2026-0265,docs/shigoku/subtasks/2026-06-09_tool-runner-manager-internal_subtask_plan.md
 SGK-2026-0275,_process_single_url branch単位分割,done,subtask_plan,SGK-2026-0265,docs/shigoku/subtasks/2026-06-09_process-single-url-branch_subtask_plan.md
 SGK-2026-0276,純粋判定/ログヘルパーの execution_policy/phase1_results への追加移動,done,subtask_plan,SGK-2026-0265,docs/shigoku/subtasks/2026-06-09_execution-policy-phase1-results_subtask_plan.md
-SGK-2026-0277,InjectionManager API minimal check service 化による大規模分割,active,subtask_plan,SGK-2026-0265,docs/shigoku/subtasks/2026-06-09_injectionmanager-api-minimal-service-extraction_subtask_plan.md
+SGK-2026-0277,InjectionManager API minimal check service 化による大規模分割,done,subtask_plan,SGK-2026-0265,docs/shigoku/subtasks/2026-06-09_injectionmanager-api-minimal-service-extraction_subtask_plan.md
+SGK-2026-0278,Ver.2 planning bundle: DEV_MODE整理・自律再認証強化・Recon再設計,active,plan,SGK-2026-0065,docs/shigoku/plans/2026-06-20_ver-2-planning-bundle-dev-mode-recon_plan.md
+SGK-2026-0279,DEV_MODEデモ経路分離とBurpIntegration削除計画,active,subtask_plan,SGK-2026-0278,docs/shigoku/subtasks/2026-06-20_dev-mode-burpintegration_subtask_plan.md
+SGK-2026-0280,自律再認証とEventBus運用明確化計画,active,subtask_plan,SGK-2026-0278,docs/shigoku/subtasks/2026-06-20_eventbus_subtask_plan.md
+SGK-2026-0281,Recon運用再設計: Resume・再利用・Recipe/PhaseGate連携計画,active,subtask_plan,SGK-2026-0278,docs/shigoku/subtasks/2026-06-20_recon-resume-recipe-phasegate_subtask_plan.md
+SGK-2026-0282,Bug Bounty向けScope制御高度化計画,active,subtask_plan,SGK-2026-0278,docs/shigoku/subtasks/2026-06-21_bug-bounty-scope-control_subtask_plan.md
+SGK-2026-0283,Subdomain Takeover高度化計画,active,subtask_plan,SGK-2026-0278,docs/shigoku/subtasks/2026-06-21_subdomain-takeover-v2_subtask_plan.md
+SGK-2026-0284,PhaseGate細粒度化計画,active,subtask_plan,SGK-2026-0278,docs/shigoku/subtasks/2026-06-21_phasegate-fine-grained_subtask_plan.md
+SGK-2026-0285,xss_detector.py から Stored XSS placeholder を削除,done,subtask_plan,SGK-2026-0244,docs/shigoku/subtasks/2026-06-21_xss-detector-remove-stored-placeholder_subtask_plan.md
+SGK-2026-0286,Agentic RAG hypothesis advisor 組み込み計画,active,subtask_plan,SGK-2026-0262,docs/shigoku/subtasks/2026-06-21_agentic-rag-hypothesis-advisor_subtask_plan.md
+SGK-2026-0287,Task Queue Pruning Policy 設計計画,active,subtask_plan,SGK-2026-0278,docs/shigoku/subtasks/2026-06-21_task-queue-pruning-policy_subtask_plan.md
+SGK-2026-0288,Discord通知日本語化 設計計画,active,subtask_plan,SGK-2026-0278,docs/shigoku/subtasks/2026-06-21_discord-notification-ja_subtask_plan.md
+SGK-2026-0289,SHIGOKU共通化・技術的負債返済ロードマップ,active,plan,SGK-2026-0065,docs/shigoku/plans/2026-06-21_commonization-technical-debt-roadmap_plan.md
+SGK-2026-0290,CLI日本語化設計計画,done,subtask_plan,SGK-2026-0266,docs/shigoku/subtasks/2026-06-22_cli-japanese-localization_subtask_plan.md

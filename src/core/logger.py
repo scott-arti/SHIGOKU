@@ -28,6 +28,8 @@ from rich.tree import Tree
 from rich.panel import Panel
 from rich import box
 
+from src.cli.messages import msg
+
 # 相互参照を避けるための遅延インポート用
 _async_writer = None
 
@@ -257,10 +259,10 @@ class ShigokuLogger:
         # コンソールへのリッチ出力
         self.console.print(f"[{style}]{icon} {message}[/{style}]")
 
-    def show_tree(self, tree_data: Dict[str, Any], title: str = "Execution Tree") -> None:
-        """
-        実行のツリー構造を表示
-        """
+    def show_tree(self, tree_data: Dict[str, Any], title: str | None = None) -> None:
+        """実行のツリー構造を表示"""
+        if title is None:
+            title = msg("logger.tree.default_title")
         tree = Tree(f"[bold blue]{title}[/bold blue]")
         
         def add_nodes(parent_tree: Tree, data: Any):
