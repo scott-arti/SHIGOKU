@@ -17,10 +17,10 @@ target: src/main.py, src/cli/, src/core/logger.py, user-facing CLI output
 # 実装計画書：CLI日本語化設計計画
 
 ## 1. 達成したいゴール（ユーザー視点）
-- [ ] ユーザー向けCLI表示を日本語で利用できること。
-- [ ] `--translate-logs` のような後翻訳ではなく、CLI本体の help、対話メッセージ、主要進行表示を正規の日本語文面で出せること。
-- [ ] 内部ログ、開発者向けデバッグログ、外部ツール生出力は分離し、ユーザー向け表示だけを日本語化対象にできること。
-- [ ] 将来的に `ja/en` 切替や message catalog 化へ拡張しやすい構造にすること。
+- [x] ユーザー向けCLI表示を日本語で利用できること。
+- [x] `--translate-logs` のような後翻訳ではなく、CLI本体の help、対話メッセージ、主要進行表示を正規の日本語文面で出せること。
+- [x] 内部ログ、開発者向けデバッグログ、外部ツール生出力は分離し、ユーザー向け表示だけを日本語化対象にできること。
+- [x] 将来的に `ja/en` 切替や message catalog 化へ拡張しやすい構造にすること。
 
 ## 2. 全体像とアーキテクチャ
 - **対象コンポーネント/ファイル一覧:**
@@ -49,48 +49,48 @@ target: src/main.py, src/cli/, src/core/logger.py, user-facing CLI output
   - 文面参照は message key ベースで行い、初期実装が `ja` のみでも key 命名規約を先に固定する。
 
 ### 3.1 スコープ外の明示
-- [ ] 通知文面の日本語化は本タスクに含めない。必要なら別タスクで `src/core/notifications/` 側を扱う。
-- [ ] `--translate-logs` の後翻訳改善は本タスクに含めない。
-- [ ] logger / 外部ツール / session / report の生出力全面翻訳は本タスクに含めない。
-- [ ] 完全な多言語切替 (`ja/en`) や message catalog の本格導入は後続タスクで扱う。
+- [x] 通知文面の日本語化は本タスクに含めない。必要なら別タスクで `src/core/notifications/` 側を扱う。
+- [x] `--translate-logs` の後翻訳改善は本タスクに含めない。
+- [x] logger / 外部ツール / session / report の生出力全面翻訳は本タスクに含めない。
+- [x] 完全な多言語切替 (`ja/en`) や message catalog の本格導入は後続タスクで扱う。
 
 ## 3.2 完了条件（Definition of Done）
-- [ ] `python -m src.main --help` の主要説明文と主要オプション help が日本語で読める。
-- [ ] interactive CLI の `/help`, `/mode`, `/sessions`, `/resume` など主要案内が日本語で読める。
-- [ ] 主要な標準出力メッセージ（成功、失敗、注意、次の操作ヒント）が日本語化されている。
-- [ ] JSON出力モードではキー構造を壊さず、機械処理互換を維持する。
-- [ ] 少なくとも文面生成または help出力の focused test が追加されるか、既存テストが更新される。
-- [ ] `--translate-logs` を使わなくてもCLI日本語化が成立している。
-- [ ] 内部 logger の英語ログ、event key、log level が変わらず、運用上の grep / アラート前提を壊していない。
-- [ ] `--help`、interactive `/help`、主要エラーパス、deferred/HITL/resume案内で日本語化対象が確認できる。
-- [ ] 80-100桁程度の端末幅でも主要 status / panel / table タイトルが過度に崩れない。
-- [ ] 主要フローで初見ユーザーが次の操作を判断できる案内文を維持している。
+- [x] `python -m src.main --help` の主要説明文と主要オプション help が日本語で読める。
+- [x] interactive CLI の `/help`, `/mode`, `/sessions`, `/resume` など主要案内が日本語で読める。
+- [x] 主要な標準出力メッセージ（成功、失敗、注意、次の操作ヒント）が日本語化されている。
+- [x] JSON出力モードではキー構造を壊さず、機械処理互換を維持する。
+- [x] 少なくとも文面生成または help出力の focused test が追加されるか、既存テストが更新される。
+- [x] `--translate-logs` を使わなくてもCLI日本語化が成立している。
+- [x] 内部 logger の英語ログ、event key、log level が変わらず、運用上の grep / アラート前提を壊していない。
+- [x] `--help`、interactive `/help`、主要エラーパス、deferred/HITL/resume案内で日本語化対象が確認できる。
+- [x] 80-100桁程度の端末幅でも主要 status / panel / table タイトルが過度に崩れない。
+- [x] 主要フローで初見ユーザーが次の操作を判断できる案内文を維持している。
 
 ### 3.3 Phase 進行の GO / NO-GO 条件
-- [ ] Phase 1 (`src/main.py` の `--help` と主要案内) から Phase 2 へ進む GO 条件: message resolver 経由への集約方針が成立し、`--help` の日本語化、JSON非汚染、内部 logger 互換、主要識別子保持の4点が確認できていること。
-- [ ] Phase 1 の NO-GO 条件: `src/main.py` の日本語化だけで domain logic への翻訳分岐、CLI option/exit code 変更、JSON出力汚染、内部 logger 改変のいずれかが必要になった場合は、その時点で実装を停止し、計画書を再レビューすること。
-- [ ] Phase 2 (interactive CLI) から Phase 3 (`src/core/logger.py` の human-facing 補助表示) へ進む GO 条件: interactive `/help` と主要エラーパスが presentation 層のみの変更で日本語化でき、文面直書きの再増殖がなく、focused test で回帰切り分け可能な状態になっていること。
-- [ ] Phase 2 の NO-GO 条件: interactive 表示の日本語化のために command dispatch、scanner 実行、report/session 生成などの業務ロジック改変が必要になった場合は、logger 周辺へ横展開せず停止し、責務境界の設計を見直すこと。
+- [x] Phase 1 (`src/main.py` の `--help` と主要案内) から Phase 2 へ進む GO 条件: message resolver 経由への集約方針が成立し、`--help` の日本語化、JSON非汚染、内部 logger 互換、主要識別子保持の4点が確認できていること。
+- [x] Phase 1 の NO-GO 条件: `src/main.py` の日本語化だけで domain logic への翻訳分岐、CLI option/exit code 変更、JSON出力汚染、内部 logger 改変のいずれかが必要になった場合は、その時点で実装を停止し、計画書を再レビューすること。
+- [x] Phase 2 (interactive CLI) から Phase 3 (`src/core/logger.py` の human-facing 補助表示) へ進む GO 条件: interactive `/help` と主要エラーパスが presentation 層のみの変更で日本語化でき、文面直書きの再増殖がなく、focused test で回帰切り分け可能な状態になっていること。
+- [x] Phase 2 の NO-GO 条件: interactive 表示の日本語化のために command dispatch、scanner 実行、report/session 生成などの業務ロジック改変が必要になった場合は、logger 周辺へ横展開せず停止し、責務境界の設計を見直すこと。
 
 ### 3.4 代表ユーザーフロー受け入れ例
-- [ ] 代表フロー例: 初見ユーザーが `python -m src.main --help` を実行したとき、主要説明文を日本語で読めて、必須オプションの意味を理解でき、次に取る操作として「対話CLIへ入る」「対象URLを指定して実行する」の少なくともどちらかを help 文面だけで判断できること。
-- [ ] 上記代表フローでは、コマンド名、オプション名、`exit code`、ファイルパス、`task_id` のような機械的識別子は英数字のまま保ち、説明文だけを日本語化して理解コストを下げること。
+- [x] 代表フロー例: 初見ユーザーが `python -m src.main --help` を実行したとき、主要説明文を日本語で読めて、必須オプションの意味を理解でき、次に取る操作として「対話CLIへ入る」「対象URLを指定して実行する」の少なくともどちらかを help 文面だけで判断できること。
+- [x] 上記代表フローでは、コマンド名、オプション名、`exit code`、ファイルパス、`task_id` のような機械的識別子は英数字のまま保ち、説明文だけを日本語化して理解コストを下げること。
 
 ## 4. 実装ステップ（AIに指示する手順）
-- [ ] ステップ1: CLIのユーザー向け文面を棚卸しし、`argparse help`、`print/console`、`rich_logger.status/show_tree`、interactive command 出力に分類する。あわせて `argparse` / interactive command / logger helper の3系統で出力経路一覧を残す。
-- [ ] ステップ2: 対象外を明確化する。内部 logger、外部ツール原文、デバッグトレース、JSONキーは原則そのままにし、翻訳対象外確認のチェックリストを作る。
-- [ ] ステップ3: 文面を message resolver 経由に寄せる。最初は `messages_ja` の固定実装でもよいが、message key 命名規約を固定し、直書き文面の残存箇所を棚卸し表でゼロ確認する。
-- [ ] ステップ4: Phase 1 として `src/main.py` の `--help`、deferred/HITL/resume/report まわりのユーザー向け出力を優先して日本語化する。説明本文と次操作ヒントを分離し、識別子は英数字のまま残す。
-- [ ] ステップ5: Phase 2 として `src/cli/cli.py` と `src/cli/commands.py` の interactive 表示を日本語化する。presentation 層だけで閉じることを確認し、ドメインロジック側へ翻訳分岐を入れない。
-- [ ] ステップ6: Phase 3 として `src/core/logger.py` の human-facing 補助表示を整理し、内部ログ互換と terminal width での表示崩れを確認する。
-- [ ] ステップ7: 主要CLIパスの focused test を追加する。全文一致だけでなく、message key・主要フレーズ・JSON非汚染を確認する粒度で `--help`、interactive `/help`、主要エラーパス、通常モード表示を検証する。
+- [x] ステップ1: CLIのユーザー向け文面を棚卸しし、`argparse help`、`print/console`、`rich_logger.status/show_tree`、interactive command 出力に分類する。あわせて `argparse` / interactive command / logger helper の3系統で出力経路一覧を残す。
+- [x] ステップ2: 対象外を明確化する。内部 logger、外部ツール原文、デバッグトレース、JSONキーは原則そのままにし、翻訳対象外確認のチェックリストを作る。
+- [x] ステップ3: 文面を message resolver 経由に寄せる。最初は `messages_ja` の固定実装でもよいが、message key 命名規約を固定し、直書き文面の残存箇所を棚卸し表でゼロ確認する。
+- [x] ステップ4: Phase 1 として `src/main.py` の `--help`、deferred/HITL/resume/report まわりのユーザー向け出力を優先して日本語化する。説明本文と次操作ヒントを分離し、識別子は英数字のまま残す。
+- [x] ステップ5: Phase 2 として `src/cli/cli.py` と `src/cli/commands.py` の interactive 表示を日本語化する。presentation 層だけで閉じることを確認し、ドメインロジック側へ翻訳分岐を入れない。
+- [x] ステップ6: Phase 3 として `src/core/logger.py` の human-facing 補助表示を整理し、内部ログ互換と terminal width での表示崩れを確認する。
+- [x] ステップ7: 主要CLIパスの focused test を追加する。全文一致だけでなく、message key・主要フレーズ・JSON非汚染を確認する粒度で `--help`、interactive `/help`、主要エラーパス、通常モード表示を検証する。
 
 ## 5. 既知のリスクと次回の申し送り（Backlog / 技術的負債）
 - ※CTO/SREレビューで「後回し可」となった懸念事項は、ここに必ず記録する。
-- [ ] [重要度:高] `src/main.py` と `src/cli/commands.py` に文面直書きが多く、単純置換だと漏れやすい - 先に棚卸し表を作り、message集約先を用意する。
-- [ ] [重要度:中] 一部のメッセージはオペレーター向けだが JSON や report 操作と混在している - human-readable path と machine-readable path を分けて扱う。
-- [ ] [重要度:中] Rich装飾つき英語文面をそのまま訳すと表示幅や可読性が崩れる - 日本語前提で短く再設計する。
-- [ ] [重要度:低] 将来の英語再対応が面倒になる - 初期でも message key を意識して構造化しておく。
+- [x] [重要度:高] `src/main.py` と `src/cli/commands.py` に文面直書きが多く、単純置換だと漏れやすい - 先に棚卸し表を作り、message集約先を用意する。
+- [x] [重要度:中] 一部のメッセージはオペレーター向けだが JSON や report 操作と混在している - human-readable path と machine-readable path を分けて扱う。
+- [x] [重要度:中] Rich装飾つき英語文面をそのまま訳すと表示幅や可読性が崩れる - 日本語前提で短く再設計する。
+- [x] [重要度:低] 将来の英語再対応が面倒になる - 初期でも message key を意識して構造化しておく。
 
 ## 5.2 視点別レビュー懸念点と具体的な計画書への修正案
 
