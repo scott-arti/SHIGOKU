@@ -13,8 +13,13 @@ import asyncio
 
 from src.config import settings
 from src.core.engine.adaptive_rate_limiter import AdaptiveRateLimiter, get_rate_limiter
+from src.core.engine.admission_policy import ActionAdmissionPolicy
 
 logger = logging.getLogger(__name__)
+
+# Phase 2 (SGK-2026-0311): Module-level admission policy instance.
+# Configured from ParallelismSettings at app startup; defaults are fail-safe.
+admission_policy = ActionAdmissionPolicy()
 
 
 
@@ -29,6 +34,18 @@ class TaskConfig:
     base_rate_limit: float = 10.0
     
     
+# Category → lane auto-inference mapping.
+# Unknown categories fall back to "read_only" (safe-side).
+CATEGORY_TO_LANE: dict[str, str] = {
+    "intel_passive": "read_only",
+    "intel_active":  "read_only",
+    "attack_auth":   "mutating",
+    "attack_inject": "mutating",
+    "local":         "read_only",
+    "default":       "read_only",
+}
+
+
 @dataclass
 class ParallelTask:
     """並列タスク"""
@@ -37,6 +54,13 @@ class ParallelTask:
     args: tuple = field(default_factory=tuple)
     kwargs: dict = field(default_factory=dict)
     category: str = "default"
+    # Phase 2 additive fields (all defaulted for backward compat)
+    origin_key: str | None = None
+    target_key: str | None = None
+    lane: str | None = None
+    scope_verdict: str = "unknown"
+    admitted: bool = True
+    reject_reason: str = ""
 
 
 @dataclass
@@ -176,26 +200,52 @@ class ParallelOrchestrator:
     ) -> List[TaskResult]:
         """
         タスクをカテゴリ別に並列実行 (Worker Loop パターン)
+
+        Phase 2 (SGK-2026-0311): Non-admitted tasks are filtered out
+        before they consume semaphore / executor slots.
         """
         if not tasks:
             return []
 
         import time
         import collections
-        
+
+        # Phase 2: Filter out admission-rejected tasks before queuing.
+        admitted_tasks: list[ParallelTask] = []
+        for ptask in tasks:
+            if ptask.admitted:
+                admitted_tasks.append(ptask)
+            else:
+                logger.debug(
+                    "Task %s rejected by admission: %s",
+                    ptask.id, ptask.reject_reason,
+                )
+
+        if not admitted_tasks:
+            return []
+
         results: List[TaskResult] = []
-        total_tasks = len(tasks)
+        total_tasks = len(admitted_tasks)
         completed_tasks = 0
         
         # 1. カテゴリ別にタスクを整理
         queue_by_category = collections.defaultdict(list)
-        for t in tasks:
+        for t in admitted_tasks:
             queue_by_category[t.category].append(t)
 
         def _execute_task_sync(ptask: ParallelTask) -> TaskResult:
             limiter = self._get_rate_limiter(ptask.category)
-            target = ptask.kwargs.get("target") or (ptask.args[0] if ptask.args else None)
-            limiter.wait(str(target) if target else None)
+            # Phase 2 (SGK-2026-0311): prefer normalized origin_key;
+            # fall back to legacy str(target) for backward compat.
+            rate_target: str | None = ptask.origin_key
+            if rate_target is None:
+                legacy_target = (
+                    ptask.kwargs.get("target")
+                    or (ptask.args[0] if ptask.args else None)
+                )
+                rate_target = str(legacy_target) if legacy_target else None
+
+            limiter.wait(rate_target)
             
             task_start_time = time.time()
             try:
@@ -205,7 +255,7 @@ class ParallelOrchestrator:
                 if isinstance(res, dict):
                     status_code = res.get("status", res.get("status_code", 200))
                 
-                limiter.on_response(status_code, target=str(target) if target else None)
+                limiter.on_response(status_code, target=rate_target)
                 return TaskResult(ptask.id, True, res, "", elapsed, ptask.category)
             except Exception as e:
                 elapsed = time.time() - task_start_time
@@ -230,7 +280,7 @@ class ParallelOrchestrator:
             return res
 
         # 2. 全タスクを開始
-        task_futures = [asyncio.create_task(_run_task(t)) for t in tasks]
+        task_futures = [asyncio.create_task(_run_task(t)) for t in admitted_tasks]
 
         # 3. 待機
         timeout_val = timeout if timeout is not None else getattr(settings, "parallel_batch_timeout", 600)
@@ -253,13 +303,42 @@ def create_parallel_task(
     func: Callable,
     *args,
     category: str = "default",
+    origin_key: str | None = None,
+    target_key: str | None = None,
+    lane: str | None = None,
+    scope_verdict: str = "unknown",
     **kwargs
 ) -> ParallelTask:
-    """並列タスク作成ヘルパー"""
+    """並列タスク作成ヘルパー
+
+    Phase 2 (SGK-2026-0311): origin_key / target_key / lane / scope_verdict
+    are optional keyword-only args that default to None/"unknown" for
+    backward compatibility with existing callers.
+
+    lane is auto-inferred from category when not explicitly provided.
+    admission check runs before returning (fail-fast, queue-slot-before-reject).
+    """
+    resolved_lane = lane or CATEGORY_TO_LANE.get(category, "read_only")
+
+    # Phase 2 admission check (fail-fast before ParallelTask enters queue).
+    # With default fail-safe settings, all tasks are admitted.
+    decision = admission_policy.check(
+        origin_key=origin_key,
+        target_key=target_key,
+        lane=resolved_lane,
+        scope_verdict=scope_verdict,
+    )
+
     return ParallelTask(
         id=task_id,
         func=func,
         args=args,
         kwargs=kwargs,
-        category=category
+        category=category,
+        origin_key=origin_key,
+        target_key=target_key,
+        lane=resolved_lane,
+        scope_verdict=scope_verdict,
+        admitted=decision.allowed,
+        reject_reason=decision.reason_code if not decision.allowed else "",
     )

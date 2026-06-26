@@ -1,9 +1,10 @@
 """
 Settings Module - Pydantic Settings based configuration management.
 """
+import os
 from pathlib import Path
-from typing import Dict, List, Optional, Type
-from pydantic import BaseModel, Field
+from typing import Any, Dict, List, Optional, Set, Type
+from pydantic import BaseModel, Field, model_validator, field_validator
 from pydantic_settings import (
     BaseSettings,
     SettingsConfigDict,
@@ -82,6 +83,192 @@ class MultiSessionSettings(BaseModel):
     sessions: List[UserSessionConfig] = Field(default_factory=list)
 
 
+# ===== LLM Config Unification (Phase 1) =====
+
+class LLMProviderSettings(BaseModel):
+    """LLMプロバイダー設定"""
+    api_key_env: str
+    base_url: Optional[str] = None
+
+
+class LLMProfileSettings(BaseModel):
+    """LLMプロファイル設定 (provider/model timing/retry/temperature)"""
+    provider: str
+    model: str
+    timeout_seconds: int = 300
+    max_retries: int = 2
+    max_concurrency: int = 4
+    rate_limit_per_minute: int = 60
+    temperature: float = 0.0
+    extra: Dict[str, Any] = Field(default_factory=dict)
+
+
+class LLMRoleSettings(BaseModel):
+    """LLMロール設定 (用途別の profile/fallback/prompt マッピング)"""
+    profile: str
+    fallback_profile: Optional[str] = None
+    system_prompt_template: Optional[str] = None
+    optional: bool = False  # Trueの時、providerのAPIキー未設定を許容
+
+
+# Security-critical roles that must be explicitly defined (fail closed)
+_SECURITY_CRITICAL_ROLES: Set[str] = {
+    "final_judgement",
+}
+
+
+def _default_prompts_dir() -> Path:
+    """Resolve the prompts directory relative to this settings module."""
+    return Path(__file__).resolve().parent.parent.parent / "prompts"
+
+
+class LLMSettings(BaseModel):
+    """LLM統合設定 (schema_version, default_role, providers, profiles, roles)"""
+    schema_version: int = 1
+    default_role: str = "specialist_light"
+    providers: Dict[str, LLMProviderSettings] = Field(default_factory=dict)
+    profiles: Dict[str, LLMProfileSettings] = Field(default_factory=dict)
+    roles: Dict[str, LLMRoleSettings] = Field(default_factory=dict)
+
+    @model_validator(mode='after')
+    def _validate_llm_config(self) -> 'LLMSettings':
+        self._check_default_role_exists()
+        self._check_provider_references()
+        self._check_profile_references()
+        self._check_fallback_cycles()
+        self._check_prompt_templates()
+        self._check_api_key_envs()
+        return self
+
+    def _check_provider_references(self):
+        for profile_name, profile in self.profiles.items():
+            if profile.provider not in self.providers:
+                raise ValueError(
+                    f"Profile '{profile_name}' references provider '{profile.provider}' "
+                    f"which is not defined in providers"
+                )
+
+    def _check_profile_references(self):
+        defined_profiles = set(self.profiles.keys())
+        for role_name, role in self.roles.items():
+            if role.profile not in defined_profiles:
+                raise ValueError(
+                    f"Role '{role_name}' references profile '{role.profile}' "
+                    f"which is not defined in profiles"
+                )
+            if role.fallback_profile and role.fallback_profile not in defined_profiles:
+                raise ValueError(
+                    f"Role '{role_name}' has fallback_profile '{role.fallback_profile}' "
+                    f"which is not defined in profiles"
+                )
+
+    def _check_fallback_cycles(self):
+        """Detect self-referencing fallback profiles (profile == fallback_profile)."""
+        for role_name, role in self.roles.items():
+            if role.fallback_profile and role.fallback_profile == role.profile:
+                raise ValueError(
+                    f"Circular fallback reference: role '{role_name}' has "
+                    f"fallback_profile '{role.fallback_profile}' which is the "
+                    f"same as its profile"
+                )
+
+    def _collect_used_providers(self) -> Set[str]:
+        """Return the set of provider names actually referenced by profiles."""
+        return {p.provider for p in self.profiles.values()}
+
+    def _collect_reachable_providers(self) -> Set[str]:
+        """Return provider names reachable from non-optional defined roles."""
+        reachable_profiles: Set[str] = set()
+        for role_name, role in self.roles.items():
+            if role.optional:
+                continue
+            reachable_profiles.add(role.profile)
+            if role.fallback_profile:
+                reachable_profiles.add(role.fallback_profile)
+        reachable_providers: Set[str] = set()
+        for profile_name in reachable_profiles:
+            profile = self.profiles.get(profile_name)
+            if profile:
+                reachable_providers.add(profile.provider)
+        return reachable_providers
+
+    def _check_api_key_envs(self):
+        """Ensure api_key_env vars are set for providers reachable from roles."""
+        used_providers = self._collect_reachable_providers()
+        for provider_name in used_providers:
+            provider = self.providers.get(provider_name)
+            if provider and not os.environ.get(provider.api_key_env):
+                raise ValueError(
+                    f"API key environment variable '{provider.api_key_env}' "
+                    f"(referenced by provider '{provider_name}') is not set"
+                )
+
+    def _check_default_role_exists(self):
+        if self.roles and self.default_role not in self.roles:
+            raise ValueError(
+                f"Default role '{self.default_role}' is not defined in roles"
+            )
+
+    def _check_prompt_templates(self):
+        """Ensure all system_prompt_template files exist."""
+        prompts_dir = _default_prompts_dir()
+        for role_name, role in self.roles.items():
+            if role.system_prompt_template:
+                template_path = prompts_dir / role.system_prompt_template
+                if not template_path.exists():
+                    raise ValueError(
+                        f"System prompt template '{role.system_prompt_template}' "
+                        f"(referenced by role '{role_name}') not found at {template_path}"
+                    )
+
+
+# ===== Phase 2 (SGK-2026-0311): Parallelism & Admission Config =====
+
+class PerOriginBudgetSettings(BaseModel):
+    """Per-origin budget (rate limit, burst, inflight)."""
+    rpm: int = Field(default=30, ge=0)
+    burst: int = Field(default=10, ge=0)
+    max_inflight: int = Field(default=2, ge=1)
+    cooldown_seconds: float = Field(default=1.0, ge=0.0)
+
+
+class MutatingLaneSettings(BaseModel):
+    """Mutating lane settings."""
+    enabled: bool = False
+    allowlist: list[str] = Field(default_factory=list)
+
+
+class AggressiveLaneSettings(BaseModel):
+    """Aggressive_exclusive lane settings."""
+    enabled: bool = False
+    allowlist: list[str] = Field(default_factory=list)
+
+
+class ParallelismSettings(BaseModel):
+    """並列化基本設定 (fail-safe defaults).
+
+    When the 'parallelism' section is absent from config/shigoku.yaml,
+    all defaults apply and the system starts safely (serial mode).
+    """
+    enabled: bool = False
+    shadow_mode: bool = True
+    default_executor: str = "serial"
+    lane_workers: dict[str, int] = Field(default_factory=dict)
+    per_origin_budget: PerOriginBudgetSettings = Field(default_factory=PerOriginBudgetSettings)
+    mutating: MutatingLaneSettings = Field(default_factory=MutatingLaneSettings)
+    aggressive_exclusive: AggressiveLaneSettings = Field(default_factory=AggressiveLaneSettings)
+
+    @field_validator("lane_workers")
+    @classmethod
+    def _validate_lane_workers(cls, v: dict[str, int]) -> dict[str, int]:
+        for lane_name, count in v.items():
+            if count < 1:
+                raise ValueError(
+                    f"lane_workers['{lane_name}'] = {count} must be >= 1"
+                )
+        return v
+
+
 # ===== Phase 3 & Extended Feature Settings =====
 
 class WafBypassSettings(BaseModel):
@@ -135,6 +322,15 @@ class FeatureNotificationsSettings(BaseModel):
     batch_interval_seconds: int = 300
     dedup_window_seconds: int = 3600
 
+    # Phase A (SGK-2026-0297): Operational protections for notification delivery
+    notify_dry_run: bool = False           # Dry-run: log but do NOT actually send
+    notify_kill_switch: bool = False       # Emergency stop: block all sends
+    notify_timeout_seconds: float = 10.0   # Per-notification timeout
+    notify_retry_count: int = 1            # Max retries on failure
+    notify_retry_backoff_seconds: float = 1.0  # Delay between retries
+    notify_provider_allowlist: List[str] = Field(default_factory=list)  # Allowed providers
+    notify_max_body_length: int = 4000     # Discord-compatible max body length
+
 
 class RetryControlSettings(BaseModel):
     """リトライ/ループ制御設定"""
@@ -148,6 +344,27 @@ class ExportSettings(BaseModel):
     default_format: str = "json"
     pdf_template: str = "default"
     include_evidence: bool = True
+
+
+class PreflightSettings(BaseModel):
+    """入口ゲート (Preflight Gate) 設定"""
+    enabled: bool = True
+    gate_policy: str = "strict-prod"  # strict-prod | strict-dev
+    caido_mandatory: bool = True
+    tool_check_enabled: bool = True
+    auth_probe_enabled: bool = True
+    ai_classifier_enabled: bool = False
+    active_phases: str = "1,2,3,4"  # comma-separated GatePhase values
+    # Phase feature flags
+    phase1_deterministic: bool = True
+    phase2_tool_update: bool = True
+    phase3_ai_classifier: bool = True
+    phase4_resume_hardening: bool = True
+    # Timeouts
+    caido_tcp_timeout: float = 2.0
+    caido_http_timeout: float = 5.0
+    auth_probe_timeout: float = 8.0
+    ai_classifier_timeout: float = 3.0
 
 
 class Settings(BaseSettings):
@@ -181,16 +398,8 @@ class Settings(BaseSettings):
 
     # LLM Settings
     model: str = "deepseek/deepseek-v4-flash"
-    model_output: str = "deepseek/deepseek-v4-pro"
-    model_lightweight: str = "deepseek/deepseek-v4-flash"
-    # model_lightweight: str = "ollama/qwen3.5:latest"
     llm_auto_route: bool = True
     llm_use_local: bool = False
-    llm_fallback_model: str = "deepseek/deepseek-v4-flash"
-    deepseek_thinking_enabled_for_output: bool = True
-    deepseek_thinking_enabled_for_lightweight: bool = False
-    deepseek_reasoning_effort_output: str = "high"
-    deepseek_reasoning_effort_lightweight: str = "high"
     llm_xss_rejudge_model: str = "openai/gpt-4o-mini"
     llm_xss_final_model: str = "openai/gpt-4o"
     llm_use_any_llm_proxy: bool = False
@@ -219,6 +428,9 @@ class Settings(BaseSettings):
     max_inflight_react_requests_global: int = 8
     react_observation_decision_event_sample_rate: float = 0.2
 
+    # LLM統合設定 (新)
+    llm: LLMSettings = Field(default_factory=LLMSettings)
+
     # サブ設定
     notification: NotificationSettings = Field(default_factory=NotificationSettings)
     wordlist: WordlistSettings = Field(default_factory=WordlistSettings)
@@ -232,7 +444,9 @@ class Settings(BaseSettings):
     retry_control: RetryControlSettings = Field(default_factory=RetryControlSettings)
     export: ExportSettings = Field(default_factory=ExportSettings)
     caido: CaidoSettings = Field(default_factory=CaidoSettings)
+    preflight: PreflightSettings = Field(default_factory=PreflightSettings)
     multi_session: MultiSessionSettings = Field(default_factory=MultiSessionSettings)
+    parallelism: ParallelismSettings = Field(default_factory=ParallelismSettings)
 
     # RAG設定
     rag_enabled: bool = True

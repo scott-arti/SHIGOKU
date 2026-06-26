@@ -12,6 +12,21 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Phase 2 (SGK-2026-0311): Blocking signal status codes.
+_BLOCKING_STATUS_CODES: frozenset[int] = frozenset({403, 406, 429})
+
+
+@dataclass
+class BlockingSignalEvent:
+    """Structured record of a blocking response signal.
+
+    Detected in on_response() for 403/406/429 status codes.
+    Circuit breaker action is deferred to Phase 7 (SGK-2026-0316).
+    """
+    status_code: int
+    origin_key: str = ""
+    timestamp: float = 0.0
+
 
 @dataclass
 class RateLimitStats:
@@ -59,6 +74,9 @@ class AdaptiveRateLimiter:
         
         # ターゲット別レート
         self._target_rates: dict[str, float] = {}
+
+        # Phase 2 (SGK-2026-0311): Blocking signal event log.
+        self.blocking_signals: list[BlockingSignalEvent] = []
     
     def wait(self, target: str = None) -> float:
         """
@@ -86,14 +104,25 @@ class AdaptiveRateLimiter:
     def on_response(self, status_code: int, target: str = None) -> None:
         """
         レスポンス受信時にレート調整
-        
+
+        Phase 2 (SGK-2026-0311): Detects blocking signals (403/406/429)
+        and records structured BlockingSignalEvent for later use.
+        Circuit breaker action is deferred to Phase 7 (SGK-2026-0316).
+
         Args:
             status_code: HTTPステータスコード
             target: ターゲット識別子（ドメイン等）
         """
         with self._lock:
             self.stats.total_requests += 1
-            
+
+            if status_code in _BLOCKING_STATUS_CODES:
+                self.blocking_signals.append(BlockingSignalEvent(
+                    status_code=status_code,
+                    origin_key=target or "",
+                    timestamp=time.time(),
+                ))
+
             if status_code == 429:
                 # レート制限検知 → 減速
                 self._decrease_rate(target)
