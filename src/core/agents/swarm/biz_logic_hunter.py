@@ -392,9 +392,10 @@ class BizLogicHunter(BaseAgent):
             
             # Agent基底クラスのllm (LLMClient) を使用
             # 自動ルーティングにより、この種の判定タスクはローカルLLMへ送られる
-            response = self.llm.generate(
+            from src.core.models.llm import LLMClient
+            vuln_client = LLMClient(role="vuln_validator")
+            response = vuln_client.generate(
                 messages=[
-                    {"role": "system", "content": "Validate vulnerability. Output JSON: {\"valid\":bool,\"confidence\":0-1}"},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.1,

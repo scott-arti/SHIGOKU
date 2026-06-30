@@ -4,11 +4,11 @@ doc_type: work_log
 status: done
 parent_task_id: SGK-2026-0065
 related_docs:
-- docs/shigoku/plans/2026-06-08_remove-secret-like-test-fixtures-blocking-github-push_plan.md
+- docs/shigoku/plans/2026-06-08_sgk-2026-0271_remove-secret-like-test-fixtures-blocking-github-push_plan.md
 - docs/shigoku/reports/2026-06-08_sgk-2026-0271_remove-secret-like-fixtures_work_report.md
 title: "作業ログ: Remove secret-like test fixtures blocking GitHub push"
 created_at: "2026-06-08"
-updated_at: '2026-06-08'
+updated_at: '2026-06-30'
 ---
 
 # 作業ログ

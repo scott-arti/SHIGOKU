@@ -19,6 +19,10 @@ class DecisionType(str, Enum):
     TARGET_ESCALATE = "target_escalate"         # ターゲットエスカレーション
     SKIP_TASK = "skip_task"                     # タスクスキップ
     FALLBACK = "fallback"                       # フォールバック戦略
+    # Phase 6 (SGK-2026-0315): Task pruning lifecycle
+    TASK_RETIRED = "task_retired"               # 価値がなくなったタスク
+    TASK_SUPERSEDED = "task_superseded"         # 別タスクが代替したタスク
+    TASK_INVALIDATED = "task_invalidated"       # 前提snapshotが古くなったタスク
 
 
 @dataclass

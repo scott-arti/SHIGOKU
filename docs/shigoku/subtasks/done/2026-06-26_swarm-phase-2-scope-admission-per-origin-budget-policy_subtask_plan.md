@@ -8,12 +8,12 @@ related_docs:
 - docs/shigoku/plans/2026-06-20_sgk-2026-0278_ver-2-planning-bundle-dev-mode-recon_plan.md
 - docs/shigoku/subtasks/done/2026-06-26_swarm-phase-0_subtask_plan.md
 - docs/shigoku/subtasks/done/2026-06-26_swarm-phase-1-additive-execution-contract-debug-metadata_subtask_plan.md
-- docs/shigoku/subtasks/2026-06-26_swarm-phase-3-dispatch-context-isolation-swarm-pool_subtask_plan.md
+- docs/shigoku/subtasks/done/2026-06-26_swarm-phase-3-dispatch-context-isolation-swarm-pool_subtask_plan.md
 - docs/shigoku/reports/2026-06-27_sgk-2026-0311_work_report.md
 - docs/shigoku/worklogs/2026-06-27_sgk-2026-0311_work_log.md
 title: 'Swarm並列化 Phase 2: scope admission と per-origin budget policy'
 created_at: '2026-06-26'
-updated_at: '2026-06-27'
+updated_at: '2026-06-30'
 tags:
 - shigoku
 target: src/core/engine/parallel_orchestrator.py, src/core/security/ethics_guard.py,
@@ -260,9 +260,9 @@ deferred_tasks:
 | D-6 | `ExecutionBudgetPolicy` の thread-safe 化 | Phase 5 (SGK-2026-0314) | Phase 2 は serial mode 前提で、per-origin counter への同時アクセスは発生しない | Phase 5 で concurrent budget enforcement test を追加 |
 
 ### 6.8 Parent Change Request（親計画へ反映提案）
-- [ ] **PCR-1:** 親計画 4.1 に `ParallelTask` と `Task` の橋渡し契約を追加する。`Task.metadata` → `ParallelTask` への origin_key/target_key/lane/scope 伝播は全 Phase の共通責務であり、`create_parallel_task()` 経由の伝播ルールを親計画に明記すべき。
-- [ ] **PCR-2:** 親計画 4.1 に `normalize_origin_key()` の仕様（scheme + host lowercase + port、default port 省略、path 含まない）を定義する。origin 正規化は Phase 2-7 全般で共有される。
-- [ ] **PCR-3:** 親計画 4.4 の Go/No-Go gate に「scope unknown で active/mutating/aggressive が admission reject される」を Go 条件として追加する。
+- [x] **PCR-1（親計画へ昇格済み: 2026-06-27）:** 親計画 4.1 に `ParallelTask` と `Task` の橋渡し契約を追加する。`Task.metadata` → `ParallelTask` への origin_key/target_key/lane/scope 伝播は全 Phase の共通責務であり、`create_parallel_task()` 経由の伝播ルールを親計画に明記すべき。→ 親計画 4.1 Target identity 節へ統合済み。
+- [x] **PCR-2（親計画へ昇格済み: 2026-06-27）:** 親計画 4.1 に `normalize_origin_key()` の仕様（scheme + host lowercase + port、default port 省略、path 含まない）を定義する。origin 正規化は Phase 2-7 全般で共有される。→ 親計画 4.1 Target identity 節へ統合済み。
+- [ ] **PCR-3（不採用: 重複）:** 親計画 4.4 の Go/No-Go gate に「scope unknown で active/mutating/aggressive が admission reject される」を Go 条件として追加する。→ 不採用。親計画 4.4 No-Go条件「scope unknown で active/mutating/aggressive が実行される」（行178相当）と同一内容であり、Phase固有の完了条件ではなく全体No-Goとして既存のため。
 
 ### 6.9 Out of Scope（本Phaseでは実装しない）
 - [ ] Protective degrade mode 回路遮断（signal 記録は Phase 2、action は Phase 7）

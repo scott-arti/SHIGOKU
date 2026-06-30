@@ -7,6 +7,7 @@ PriorityBooster: 動的優先度ブースティング
 from __future__ import annotations
 
 import logging
+import threading
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
@@ -95,6 +96,7 @@ class PriorityBooster:
     ]
     
     def __init__(self):
+        self._lock = threading.RLock()
         self._boosts: list[BoostEvent] = []
         self._task_priorities: dict[str, TaskPriority] = {}
     
@@ -110,10 +112,11 @@ class PriorityBooster:
             task_id: タスクID
             base_priority: 基本優先度
         """
-        self._task_priorities[task_id] = TaskPriority(
-            task_id=task_id,
-            base_priority=base_priority,
-        )
+        with self._lock:
+            self._task_priorities[task_id] = TaskPriority(
+                task_id=task_id,
+                base_priority=base_priority,
+            )
     
     def boost_on_discovery(self, event: BoostEvent) -> list[str]:
         """
@@ -125,15 +128,16 @@ class PriorityBooster:
         Returns:
             影響を受けたタスクIDのリスト
         """
-        self._boosts.append(event)
-        affected = []
-        
-        for task_id in event.related_tasks:
-            if task_id in self._task_priorities:
-                priority = self._task_priorities[task_id]
-                priority.boost += event.boost_amount
-                priority.boost_reasons.append(event.reason)
-                affected.append(task_id)
+        with self._lock:
+            self._boosts.append(event)
+            affected = []
+
+            for task_id in event.related_tasks:
+                if task_id in self._task_priorities:
+                    priority = self._task_priorities[task_id]
+                    priority.boost += event.boost_amount
+                    priority.boost_reasons.append(event.reason)
+                    affected.append(task_id)
         
         logger.info(
             "Priority boost: %s (+%.2f) -> %s",
@@ -212,12 +216,13 @@ class PriorityBooster:
         Returns:
             実効優先度
         """
-        self._cleanup_expired()
-        
-        if task_id not in self._task_priorities:
-            return 0.5  # デフォルト
-        
-        return self._task_priorities[task_id].effective_priority
+        with self._lock:
+            self._cleanup_expired()
+
+            if task_id not in self._task_priorities:
+                return 0.5  # デフォルト
+
+            return self._task_priorities[task_id].effective_priority
     
     def get_sorted_tasks(self) -> list[tuple[str, float]]:
         """
@@ -226,38 +231,41 @@ class PriorityBooster:
         Returns:
             (タスクID, 優先度) のリスト
         """
-        self._cleanup_expired()
-        
-        tasks = [
-            (tid, p.effective_priority)
-            for tid, p in self._task_priorities.items()
-        ]
-        return sorted(tasks, key=lambda x: x[1], reverse=True)
+        with self._lock:
+            self._cleanup_expired()
+
+            tasks = [
+                (tid, p.effective_priority)
+                for tid, p in self._task_priorities.items()
+            ]
+            return sorted(tasks, key=lambda x: x[1], reverse=True)
     
     def _cleanup_expired(self) -> None:
         """期限切れブーストをクリーンアップ"""
-        expired = [b for b in self._boosts if b.is_expired()]
-        
-        for event in expired:
-            for task_id in event.related_tasks:
-                if task_id in self._task_priorities:
-                    priority = self._task_priorities[task_id]
-                    priority.boost = max(0, priority.boost - event.boost_amount)
-            self._boosts.remove(event)
+        with self._lock:
+            expired = [b for b in self._boosts if b.is_expired()]
+
+            for event in expired:
+                for task_id in event.related_tasks:
+                    if task_id in self._task_priorities:
+                        priority = self._task_priorities[task_id]
+                        priority.boost = max(0, priority.boost - event.boost_amount)
+                self._boosts.remove(event)
     
     def get_stats(self) -> dict:
         """統計情報を取得"""
-        trigger_counts = {}
-        for trigger in BoostTrigger:
-            trigger_counts[trigger.value] = sum(
-                1 for b in self._boosts if b.trigger == trigger
-            )
-        
-        return {
-            "active_boosts": len(self._boosts),
-            "registered_tasks": len(self._task_priorities),
-            "trigger_counts": trigger_counts,
-        }
+        with self._lock:
+            trigger_counts = {}
+            for trigger in BoostTrigger:
+                trigger_counts[trigger.value] = sum(
+                    1 for b in self._boosts if b.trigger == trigger
+                )
+
+            return {
+                "active_boosts": len(self._boosts),
+                "registered_tasks": len(self._task_priorities),
+                "trigger_counts": trigger_counts,
+            }
 
 
 # シングルトンインスタンス

@@ -152,38 +152,9 @@ class Settings(BaseSettings):
     notify_on_error: bool = True  # システムエラー時の通知
     notify_critical_mention: str = ""  # CRITICAL 発見時のメンション (@channel, @here, etc.)
 
-    # Model Routing (コスト最適化)
-    # 軽量タスク (繰り返しの多い補助タスク) → ローカルまたは安価なモデル
-    # 高精度タスク (最終出力、重要判断) → 高性能モデル
-    model_lightweight: str = "deepseek/deepseek-v4-flash"  # ReAct, Critic, クエリリファイン用
-    # model_lightweight: str = "ollama/qwen3.5:latest"  # ReAct, Critic, クエリリファイン用
-    model_output: str = "deepseek/deepseek-v4-pro"  # 最終レポート、初期プランニング用
-    llm_fallback_model: str = "deepseek/deepseek-v4-flash"  # 認証失敗時などの退避先
-    deepseek_thinking_enabled_for_output: bool = True  # 重要判断は thinking 有効
-    deepseek_thinking_enabled_for_lightweight: bool = False  # 通常ループは non-thinking
-    deepseek_reasoning_effort_output: str = "high"  # high|max
-    deepseek_reasoning_effort_lightweight: str = "high"  # high|max（thinking時のみ使用）
+    # Model Routing (config/shigoku.yaml の llm.roles に移行済み)
     llm_xss_rejudge_model: str = "openai/gpt-4o-mini"  # XSS再判定用
     llm_xss_final_model: str = "openai/gpt-4o"  # XSS最終判定用
-    use_local_for_lightweight: bool = False  # 軽量タスクにローカル LLM を使用
-    # use_local_for_lightweight: bool = True  # 軽量タスクにローカル LLM を使用
-
-    # Local LLM Settings (Ollama)
-    local_llm_enabled: bool = True  # ローカル LLM 全体を有効化
-    local_llm_model: str = "qwen3.5:latest"  # Ollama モデル名
-    local_llm_base_url: str = "http://localhost:11434"  # Ollama API ベース URL
-    local_llm_auto_route: bool = True  # タスク複雑度に基づく自動ルーティング
-    local_llm_for_simple_tasks: bool = True  # 単純タスクのみローカル LLM を使用
-
-    def get_lightweight_model(self) -> str:
-        """軽量タスク用のモデル名を返す"""
-        if self.use_local_for_lightweight and self.local_llm_enabled:
-            return f"ollama/{self.local_llm_model}"
-        return self.model_lightweight
-
-    def get_output_model(self) -> str:
-        """高精度タスク用のモデル名を返す"""
-        return self.model_output
 
     # Learning Repository Settings (Phase 0: 学習リポジトリ)
     learning_db_path: str = "~/.shigoku/learning/learning.db"  # SQLite データベースパス

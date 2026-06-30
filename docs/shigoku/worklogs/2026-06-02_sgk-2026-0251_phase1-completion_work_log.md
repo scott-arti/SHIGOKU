@@ -4,11 +4,11 @@ doc_type: work_log
 status: done
 parent_task_id: SGK-2026-0131
 related_docs:
-- docs/shigoku/plans/2026-06-01_task_plan.md
+- docs/shigoku/plans/2026-06-01_sgk-2026-0251_task_plan.md
 - docs/shigoku/reports/2026-06-02_sgk-2026-0251_phase1-completion_work_report.md
 title: SGK-2026-0251 Phase1 完了作業ログ
 created_at: '2026-06-02'
-updated_at: '2026-06-02'
+updated_at: '2026-06-30'
 ---
 
 # SGK-2026-0251 Phase1 完了作業ログ

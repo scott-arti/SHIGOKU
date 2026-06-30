@@ -3,6 +3,12 @@ import pytest
 from src.core.config.settings import get_settings, Settings
 from pydantic import ValidationError
 
+# Module-level env setup: the new YAML-based LLM config requires API keys to be set
+os.environ.setdefault("DEEPSEEK_API_KEY", "test-key")
+os.environ.setdefault("OPENAI_API_KEY", "test-key")
+os.environ.setdefault("ANY_LLM_API_KEY", "test-key")
+
+
 def test_settings_default_values():
     """デフォルト値が正しく設定されるか"""
     settings = get_settings()

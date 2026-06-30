@@ -11,6 +11,7 @@ from src.core.engine.master_conductor_session_service import (
     resolve_running_task_resume_policy,
     restore_legacy_resume_session_state,
     serialize_legacy_session_task_queue,
+    deserialize_legacy_session_task_queue,
 )
 from src.core.domain.model.task import Task, TaskState
 from src.core.session.session_manager import Session
@@ -151,10 +152,17 @@ def test_build_checkpoint_session_state_serializes_pending_completed_and_metadat
                 "id": "pending-1",
                 "name": "Pending Task",
                 "agent_type": "Recon",
+                "target": "",
                 "action": "scan",
                 "params": {"target": "https://example.test"},
+                "state": "pending",
                 "priority": 10,
-                "parent_id": "parent-1",
+                "replan_depth": 0,
+                "result": None,
+                "error": None,
+                "tags": [],
+                "is_aggressive": False,
+                "metadata": {},
             },
             ensure_ascii=False,
         )
@@ -215,10 +223,17 @@ def test_serialize_legacy_session_task_queue_preserves_existing_schema() -> None
                 "id": "pending-1",
                 "name": "Pending Task",
                 "agent_type": "Recon",
+                "target": "",
                 "action": "scan",
                 "params": {"target": "https://example.test"},
+                "state": "pending",
                 "priority": 10,
-                "parent_id": "parent-1",
+                "replan_depth": 0,
+                "result": None,
+                "error": None,
+                "tags": [],
+                "is_aggressive": False,
+                "metadata": {},
             },
             ensure_ascii=False,
         )
@@ -290,3 +305,189 @@ def test_restore_legacy_resume_session_state_tracks_failed_task_deserializations
     assert restored["task_queue"] == []
     assert restored["failed_task_deserializations"] == ["{"]
     assert restored["pending_hitl"] == []
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 (SGK-2026-0310): execution contract metadata in legacy checkpoint
+# ---------------------------------------------------------------------------
+
+class TestLegacyCheckpointMetadata:
+    """serialize/deserialize legacy checkpoint must preserve Task metadata."""
+
+    def test_serialize_legacy_task_queue_includes_metadata(self) -> None:
+        task = Task(
+            id="meta-1",
+            name="Meta Task",
+            agent_type="Recon",
+            action="scan",
+            params={"target": "https://example.test"},
+            priority=10,
+            parent_id="parent-1",
+            metadata={
+                "target_key": "https://example.test",
+                "origin_key": "recon://scenario-1",
+                "schema_version": 1,
+            },
+        )
+
+        serialized = serialize_legacy_session_task_queue([task])
+
+        assert len(serialized) == 1
+        d = json.loads(serialized[0])
+        assert d["id"] == "meta-1"
+        assert "metadata" in d
+        assert d["metadata"]["target_key"] == "https://example.test"
+        assert d["metadata"]["origin_key"] == "recon://scenario-1"
+
+    def test_serialize_legacy_task_queue_without_metadata_produces_empty(self) -> None:
+        task = Task(
+            id="no-meta",
+            name="No Meta Task",
+            agent_type="Recon",
+            action="scan",
+            params={"target": "https://example.test"},
+            priority=5,
+            parent_id="parent-1",
+        )
+
+        serialized = serialize_legacy_session_task_queue([task])
+
+        d = json.loads(serialized[0])
+        assert d["metadata"] == {}
+
+    def test_deserialize_legacy_task_queue_restores_metadata(self) -> None:
+        serialized = [
+            json.dumps(
+                {
+                    "id": "meta-2",
+                    "name": "Meta Task 2",
+                    "agent_type": "Recon",
+                    "action": "scan",
+                    "params": {"target": "https://example.test"},
+                    "priority": 5,
+                    "parent_id": "parent-1",
+                    "metadata": {
+                        "target_key": "https://example.test",
+                        "correlation_id": "corr-xyz",
+                        "lifecycle_status": "admitted",
+                    },
+                },
+                ensure_ascii=False,
+            )
+        ]
+
+        tasks, failed = deserialize_legacy_session_task_queue(serialized)
+
+        assert len(tasks) == 1
+        assert failed == []
+        assert tasks[0].id == "meta-2"
+        assert tasks[0].metadata["target_key"] == "https://example.test"
+        assert tasks[0].metadata["correlation_id"] == "corr-xyz"
+        assert tasks[0].metadata["lifecycle_status"] == "admitted"
+
+    def test_deserialize_legacy_task_queue_without_metadata_defaults_to_empty(self) -> None:
+        """Legacy JSON without metadata field must deserialize with empty metadata."""
+        serialized = [
+            json.dumps(
+                {
+                    "id": "old-task",
+                    "name": "Old Task",
+                    "agent_type": "Recon",
+                    "action": "scan",
+                },
+                ensure_ascii=False,
+            )
+        ]
+
+        tasks, failed = deserialize_legacy_session_task_queue(serialized)
+
+        assert len(tasks) == 1
+        assert failed == []
+        assert tasks[0].id == "old-task"
+        assert tasks[0].metadata == {}
+
+    def test_roundtrip_legacy_checkpoint_preserves_metadata(self) -> None:
+        original = Task(
+            id="meta-rt",
+            name="Roundtrip Task",
+            agent_type="Recon",
+            action="scan",
+            params={"target": "https://example.test"},
+            priority=10,
+            parent_id="parent-1",
+            metadata={
+                "target_key": "https://example.test",
+                "origin_key": "recon://scenario-1",
+                "lifecycle_status": "admitted",
+                "lifecycle_reason": "scope_verified",
+            },
+        )
+
+        serialized = serialize_legacy_session_task_queue([original])
+        restored, failed = deserialize_legacy_session_task_queue(serialized)
+
+        assert failed == []
+        assert restored[0].id == original.id
+        assert restored[0].name == original.name
+        # Metadata preserved (schema_version auto-injected by to_dict)
+        for key in original.metadata:
+            assert restored[0].metadata[key] == original.metadata[key]
+
+    def test_legacy_checkpoint_redacts_secrets(self) -> None:
+        """F-1: cookie/token in metadata must be [REDACTED] after legacy checkpoint roundtrip."""
+        original = Task(
+            id="secret-rt",
+            name="Secret Roundtrip",
+            agent_type="Recon",
+            action="scan",
+            params={"target": "https://example.test"},
+            metadata={
+                "cookie": "session=abc123; secret=xyz",
+                "token": "Bearer eyJhbGciOiJIUzI1NiJ9.xxx",
+                "api_key": "sk-1234567890abcdef",
+                "password": "supersecret",
+                "Authorization": "Basic dXNlcjpwYXNz",
+                "session_id": "sess-001",
+                "target_key": "https://example.test",
+                "origin_key": "https://example.com",
+            },
+        )
+
+        serialized = serialize_legacy_session_task_queue([original])
+        restored, failed = deserialize_legacy_session_task_queue(serialized)
+
+        assert failed == []
+        restored_meta = restored[0].metadata
+
+        # Secret-bearing keys must be redacted
+        for secret_key in ("cookie", "token", "api_key", "password", "Authorization", "session_id"):
+            assert restored_meta.get(secret_key) == "[REDACTED]", (
+                f"Secret key '{secret_key}' was not redacted: {restored_meta.get(secret_key)!r}"
+            )
+
+        # Non-secret keys must be preserved
+        assert restored_meta.get("target_key") == "https://example.test"
+        assert restored_meta.get("origin_key") == "https://example.com"
+
+    def test_legacy_checkpoint_redacts_secrets_in_session_dict(self) -> None:
+        """F-1: serialized JSON string must contain [REDACTED] not raw secrets."""
+        original = Task(
+            id="secret-json",
+            name="Secret JSON",
+            agent_type="Recon",
+            action="scan",
+            metadata={
+                "cookie": "session=topsecret",
+                "token": "Bearer xyz",
+                "target_key": "https://example.test",
+            },
+        )
+
+        serialized = serialize_legacy_session_task_queue([original])
+        raw_json = serialized[0]
+
+        # Raw JSON string must NOT contain the original secrets
+        assert "topsecret" not in raw_json
+        assert "Bearer xyz" not in raw_json
+        # Raw JSON must contain [REDACTED]
+        assert "[REDACTED]" in raw_json

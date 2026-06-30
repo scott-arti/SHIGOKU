@@ -5,7 +5,7 @@ status: active
 parent_task_id: null
 related_docs: []
 created_at: '2026-05-19'
-updated_at: '2026-05-19'
+updated_at: '2026-06-30'
 ---
 
 # SHIGOKU Bug Bounty Optimization Roadmap
@@ -26,6 +26,11 @@ Bug Bountyの基本ルールを遵守するための基盤改修。
 2.  **PostExploit実行制御**:
     - `MasterConductor` もしくは `SwarmDispatcher` において、`--mode bugbounty` かつ Scope判定で不許可な場合、`secret_looter`, `internal_recon`, `pivot_scan` などの活動をブロック、あるいはフェイルセーフでOFFにする。
 
+### 次期Ver.での具体化メモ
+- Scope制御は単なる `allow_post_exploit` ではなく、`host横断`, `攻撃種別`, `予算`, `phase` を含む policy 化を目標にする。
+- 追跡計画:
+  - [2026-06-21_sgk-2026-0282_bug-bounty-scope-control_subtask_plan.md](../subtasks/2026-06-21_sgk-2026-0282_bug-bounty-scope-control_subtask_plan.md)
+
 ## フェーズ 2: 既存機能のブラッシュアップ (Refinement)
 
 不要なモックの排除と、中途半端な機能の整理。
@@ -37,6 +42,12 @@ Bug Bountyの基本ルールを遵守するための基盤改修。
 3.  **Recon Pipeline Mockの整理**:
     - `src/recon/tool_runner.py` や `pipeline.py` に点在する `DEV_MODE` のハードコードMock出力を、本番環境で誤動作しないようにテスト専用の仕組みとして分離・整理。
 
+### 次期Ver.での具体化メモ
+- `Recon Pipeline Mockの整理` は「DEV_MODE の本番経路混入防止」と「デモモードのコード切り出し」を明確に分けて扱う。
+- `CloudMisconfigChecker` は本格化を次期Ver.へ送る。
+- 追跡計画:
+  - <!-- [REMOVED: target not found] -->
+
 ## フェーズ 3: 高価値Specialistの新規実装 (High-Value Targets)
 
 Bug Bountyでクリティカルになりやすい領域に特化した新しいSpecialistの作成。
@@ -47,6 +58,23 @@ Bug Bountyでクリティカルになりやすい領域に特化した新しいS
     - 認証エンドポイントに対して、静的ファイルの拡張子（`.css`, `.js`等）を付与してアクセスし、非認証状態でキャッシュがヒットするか（個人情報が漏洩するか）を判定するSpecialistを実装。
 3.  **Source Map & JS Secrets Specialist**:
     - 発見された `.js` ファイルに対して `.js.map` の存在を確認し、ソースコードを復元して未公開APIやクラウドクレデンシャルを抽出するSpecialistを実装。
+
+### 次期Ver.での具体化メモ
+- `Subdomain Takeover` は dead subdomain 列挙だけでなく、`dangling CNAME`, `provider fingerprint`, `reclaimability triage` まで段階化する。
+- `Web Cache Deception` は成熟度がまだ不足しているため、次期Ver.で検証観点と false positive 抑制を含めて再設計する。
+- `Source Map & JS Secrets` は次期Ver.テーマとして維持するが、詳細設計は別議論前提。
+- 追跡計画:
+  - [2026-06-21_sgk-2026-0283_subdomain-takeover-v2_subtask_plan.md](../subtasks/done/2026-06-21_sgk-2026-0283_subdomain-takeover-v2_subtask_plan.md)
+
+## フェーズ 3.5: 今回の会話で次期Ver.送りを確定した項目
+
+- `CloudMisconfigChecker` 本格化
+- `Web Cache Deception Specialist` の成熟化
+- `Source Map & JS Secrets Specialist` の本格設計
+- Bug bounty 特化の Scope 制御高度化
+- Recon mock / demo mode 分離
+
+これらは Ver.1 で無理に広げず、追跡計画を置いたうえで次期Ver.で扱う。
 
 ## フェーズ 4: E2E検証 (Verification)
 

@@ -4,11 +4,11 @@ doc_type: work_report
 status: done
 parent_task_id: SGK-2026-0220
 related_docs:
-- docs/shigoku/plans/2026-05-23_ssrf-p0-fp_plan.md
-- docs/shigoku/plans/2026-05-19_b-2-ssrf-tester_plan.md
+- docs/shigoku/plans/2026-05-23_sgk-2026-0240_ssrf-p0-fp_plan.md
+- docs/shigoku/plans/2026-05-19_sgk-2026-0220_b-2-ssrf-tester_plan.md
 - docs/shigoku/worklogs/2026-05-23_sgk-2026-0240_ssrf-quality-gate_work_log.md
 created_at: '2026-05-23'
-updated_at: '2026-05-23'
+updated_at: '2026-06-30'
 ---
 
 # Work Report: SGK-2026-0240 SSRF P0 判定品質強化

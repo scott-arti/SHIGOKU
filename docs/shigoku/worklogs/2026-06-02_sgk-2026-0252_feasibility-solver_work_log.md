@@ -4,11 +4,11 @@ doc_type: work_log
 status: done
 parent_task_id: SGK-2026-0251
 related_docs:
-- docs/shigoku/subtasks/2026-06-02_feasibility-solver_subtask_plan.md
+- docs/shigoku/subtasks/2026-06-02_sgk-2026-0252_feasibility-solver_subtask_plan.md
 - docs/shigoku/reports/2026-06-02_sgk-2026-0252_feasibility-solver_work_report.md
 title: SGK-2026-0252 feasibility solver 実装作業ログ
 created_at: '2026-06-02'
-updated_at: '2026-06-02'
+updated_at: '2026-06-30'
 ---
 
 # SGK-2026-0252 feasibility solver 実装作業ログ

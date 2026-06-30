@@ -84,3 +84,17 @@ class TestBlockingSignalDetection:
         assert target_rps < 50.0
         # Signal should also be recorded (new behavior)
         assert len(limiter.blocking_signals) == 1
+
+    def test_repeated_blocking_signals_trigger_origin_degrade(self):
+        """T-7.6: 403/406/429 signals activate a protective per-origin degrade gate."""
+        limiter = AdaptiveRateLimiter(blocking_degrade_threshold=3)
+
+        limiter.on_response(403, target="https://example.com")
+        limiter.on_response(406, target="https://example.com")
+        assert limiter.is_origin_degraded("https://example.com") is False
+
+        limiter.on_response(429, target="https://example.com")
+
+        assert limiter.is_origin_degraded("https://example.com") is True
+        assert limiter.get_origin_degrade_reason("https://example.com") == "blocking_signal_threshold"
+        assert limiter.degrade_events[-1]["origin_key"] == "https://example.com"

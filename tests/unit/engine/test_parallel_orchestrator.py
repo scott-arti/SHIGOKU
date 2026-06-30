@@ -83,6 +83,32 @@ class TestExistingParallelOrchestratorBaseline:
         sem2 = orch._get_semaphore("default")
         assert sem1 is sem2
 
+    async def test_degraded_origin_is_suppressed_before_worker_function_runs(self):
+        """T-7.6: protective degrade suppresses future work for the same origin."""
+        orch = ParallelOrchestrator()
+        limiter = AdaptiveRateLimiter(blocking_degrade_threshold=1)
+        limiter.on_response(403, target="https://example.com")
+        orch._rate_limiters["default"] = limiter
+
+        called = False
+
+        def blocked_func():
+            nonlocal called
+            called = True
+            return {"status": 200}
+
+        results = await orch.execute_parallel([
+            create_parallel_task(
+                "degraded",
+                blocked_func,
+                origin_key="https://example.com",
+            )
+        ])
+
+        assert called is False
+        assert results[0].success is False
+        assert results[0].error == "origin_degraded:blocking_signal_threshold"
+
 
 # ---------------------------------------------------------------
 # T-1.1: origin_key bridge + category→lane mapping
@@ -170,6 +196,17 @@ class TestParallelTaskOriginKeyBridge:
             "t12", self.dummy_func, category="nonexistent_cat"
         )
         assert ptask.lane == "read_only"
+
+    def test_strict_unknown_category_rejected(self):
+        """T-7.7: strict Phase 7 mode rejects unknown category instead of read_only fallback."""
+        ptask = create_parallel_task(
+            "t12-strict",
+            self.dummy_func,
+            category="nonexistent_cat",
+            fail_closed_unknown_category=True,
+        )
+        assert ptask.admitted is False
+        assert ptask.reject_reason == "unknown_execution_category"
 
     def test_explicit_lane_overrides_category(self):
         """Explicit lane overrides category→lane inference."""

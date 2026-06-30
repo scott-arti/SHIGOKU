@@ -214,3 +214,166 @@ class TestPhase5EventTypes:
         assert hasattr(EventType, 'SPECIALIST_EXECUTE')
         assert EventType.SPECIALIST_EXECUTE.value == "specialist_execute"
 
+
+# ======================================================================
+# Phase 6 M1: EventBus reliability tests
+# ======================================================================
+
+class TestEventBusReliability:
+    """Phase 6 M1: Event reliability class and dead-letter tests."""
+
+    def test_event_default_reliability_is_best_effort(self):
+        """New Event instances default to best_effort reliability."""
+        event = Event(type=EventType.ASSET_FOUND, payload={}, source="test")
+        assert event.reliability == "best_effort"
+
+    def test_event_critical_reliability(self):
+        """Event can be created with critical reliability."""
+        event = Event(type=EventType.VULN_FOUND, payload={}, source="test",
+                      reliability="critical")
+        assert event.reliability == "critical"
+
+    def test_critical_event_not_dropped_on_queue_full(self):
+        """T-1.1: critical event survives queue full via blocking put."""
+        async def run_test():
+            bus = EventBus(max_queue_size=1)
+            received = []
+
+            async def handler(event: Event):
+                received.append(event)
+
+            bus.subscribe(EventType.VULN_FOUND, handler)
+            await bus.start()
+
+            try:
+                # Fill the queue with a best_effort event
+                fill_event = Event(
+                    type=EventType.ASSET_FOUND,
+                    payload={"fill": True},
+                    source="test",
+                    reliability="best_effort",
+                )
+                await bus.emit(fill_event)
+
+                # Now emit a critical event - should block until queue has space
+                critical_event = Event(
+                    type=EventType.VULN_FOUND,
+                    payload={"critical": True},
+                    source="test",
+                    reliability="critical",
+                )
+                await bus.emit(critical_event)
+
+                # Wait for processing
+                await asyncio.sleep(0.3)
+
+                # Both should reach the handler (critical not dropped)
+                assert len(received) >= 1
+                critical_received = [e for e in received
+                                      if e.payload.get("critical")]
+                assert len(critical_received) == 1, \
+                    "Critical event was dropped!"
+            finally:
+                await bus.stop()
+
+        asyncio.run(run_test())
+
+    def test_best_effort_event_droppable_with_dead_letter(self):
+        """T-1.2: best_effort events can be dropped, dead_letter record."""
+        async def run_test():
+            bus = EventBus(max_queue_size=1)
+            # Fill queue by NOT starting the worker
+            # Put an event via emit_sync (no consumer, queue fills)
+            e1 = Event(type=EventType.ASSET_FOUND, payload={"first": True},
+                       source="test", reliability="best_effort")
+            bus.emit_sync(e1)
+
+            # Queue is full, next best_effort should be dropped
+            e2 = Event(type=EventType.LOG_MESSAGE, payload={"second": True},
+                       source="test", reliability="best_effort")
+            bus.emit_sync(e2)
+
+            # Dead letter should contain the dropped event
+            dead = bus.dead_letters
+            assert len(dead) == 1
+            assert dead[0]["event_id"] == e2.event_id
+            assert dead[0]["reason"] == "queue_full"
+            assert "timestamp" in dead[0]
+        asyncio.run(run_test())
+
+    def test_dead_letters_accumulate(self):
+        """Multiple drops accumulate in dead_letters list."""
+        async def run_test():
+            bus = EventBus(max_queue_size=1)
+            # Fill queue
+            bus.emit_sync(Event(type=EventType.ASSET_FOUND, payload={},
+                                source="test", reliability="best_effort"))
+
+            # Drop 3 events
+            for i in range(3):
+                bus.emit_sync(Event(
+                    type=EventType.LOG_MESSAGE,
+                    payload={"i": i},
+                    source="test",
+                    reliability="best_effort",
+                ))
+
+            assert len(bus.dead_letters) == 3
+        asyncio.run(run_test())
+
+    def test_critical_event_emit_async_survives_near_full_queue(self):
+        """Critical events survive when queue is nearly full (async emit)."""
+        async def run_test():
+            bus = EventBus(max_queue_size=3)
+            received = []
+
+            async def handler(event: Event):
+                received.append(event)
+
+            bus.subscribe(EventType.VULN_FOUND, handler)
+            await bus.start()
+
+            try:
+                # Fill with 2 best_effort events (1 slot left)
+                for i in range(2):
+                    await bus.emit(Event(
+                        type=EventType.ASSET_FOUND, payload={"fill": i},
+                        source="test", reliability="best_effort",
+                    ))
+                # Critical event should squeeze in with extended timeout
+                await bus.emit(Event(
+                    type=EventType.VULN_FOUND,
+                    payload={"critical": True},
+                    source="test",
+                    reliability="critical",
+                ))
+                await asyncio.sleep(0.3)
+                critical_received = [e for e in received
+                                      if e.payload.get("critical")]
+                assert len(critical_received) == 1
+            finally:
+                await bus.stop()
+
+        asyncio.run(run_test())
+
+    def test_reliability_field_in_to_dict(self):
+        """to_dict includes reliability field."""
+        event = Event(type=EventType.VULN_FOUND, payload={},
+                      source="test", reliability="critical")
+        d = event.to_dict()
+        assert d["reliability"] == "critical"
+
+    def test_best_effort_dead_letter_has_type_and_timestamp(self):
+        """Dead letter entries include event type and timestamp."""
+        bus = EventBus(max_queue_size=1)
+        bus.emit_sync(Event(type=EventType.ASSET_FOUND, payload={},
+                            source="tester"))
+        # Queue full, drop next
+        e2 = Event(type=EventType.VULN_FOUND, payload={"x": 1},
+                   source="tester", reliability="best_effort")
+        bus.emit_sync(e2)
+
+        dead = bus.dead_letters[0]
+        assert dead["event_type"] == "vuln_found"
+        assert "timestamp" in dead
+

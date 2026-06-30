@@ -30,6 +30,7 @@ from src.core.models.llm import LLMClient
 from src.core.recon.orchestrator import ReconOrchestrator
 from src.core.domain.scope.scope_manager import ScopeManager
 from src.config import settings
+from src.core.preflight import EntryGateFacade, PreflightContext, GatePolicy
 
 logger = logging.getLogger(__name__)
 
@@ -529,6 +530,92 @@ def _resolve_scn_catalog_for_report() -> list[dict[str, Any]]:
             }
         )
     return normalized
+
+
+def _extract_findings_and_execution_notes(
+    session_data: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Extract findings and execution notes from session completed_tasks.
+
+    Shared between --format haddix and --format haddix-ja-en.
+    """
+    all_tasks = session_data.get("completed_tasks", [])
+    findings: list[dict[str, Any]] = []
+    execution_notes: list[dict[str, Any]] = []
+
+    for task in all_tasks:
+        task_result = task.get("result", {}) if isinstance(task, dict) else {}
+        task_data = task_result.get("data", {}) if isinstance(task_result, dict) else {}
+
+        task_findings = task_result.get("findings", []) if isinstance(task_result, dict) else []
+        if not task_findings and isinstance(task_data, dict):
+            task_findings = task_data.get("findings", [])
+
+        if not task_findings and isinstance(task_data, dict):
+            single_finding = task_data.get("finding")
+            if single_finding:
+                task_findings = [single_finding]
+
+        if not task_findings and isinstance(task_result, dict):
+            single_finding = task_result.get("finding")
+            if single_finding:
+                task_findings = [single_finding]
+
+        if not task_findings and isinstance(task_result, dict) and "vulnerability" in task_result:
+            task_findings = [task_result.get("vulnerability")]
+
+        for f in task_findings:
+            if f:
+                findings.append(f)
+
+        task_exec_log = task_data.get("execution_log", []) if isinstance(task_data, dict) else []
+        if isinstance(task_exec_log, list):
+            for log_entry in task_exec_log:
+                if not isinstance(log_entry, dict):
+                    continue
+                url_results = log_entry.get("url_results", [])
+                if not isinstance(url_results, list):
+                    continue
+                for item in url_results:
+                    if not isinstance(item, dict):
+                        continue
+                    tested_params = item.get("tested_params", [])
+                    blind_correlation = item.get("blind_correlation", {})
+                    status = str(item.get("status", ""))
+                    status_lower = status.lower()
+                    retry_count = int(item.get("retry_count", 0) or 0)
+                    duration_seconds = item.get("duration_seconds")
+                    has_blind_evidence = bool(blind_correlation) and (
+                        bool(blind_correlation.get("correlated"))
+                        or bool((blind_correlation.get("time_based") or {}).get("confirmed"))
+                        or bool((blind_correlation.get("oob") or {}).get("confirmed"))
+                    )
+                    should_keep_for_kpi = status_lower in {"completed", "cache_hit", "timeout", "error"}
+                    if not tested_params and not has_blind_evidence and not should_keep_for_kpi and retry_count <= 0 and duration_seconds is None:
+                        continue
+                    execution_notes.append({
+                        "url": item.get("url", ""),
+                        "vuln_type": item.get("vuln_type", ""),
+                        "status": status,
+                        "duration_seconds": duration_seconds,
+                        "retry_count": retry_count,
+                        "tested_params": tested_params,
+                        "probe_sent": item.get("probe_sent"),
+                        "probe_skipped_reason": item.get("probe_skipped_reason", ""),
+                        "poc_request": item.get("poc_request", ""),
+                        "poc_response": item.get("poc_response", ""),
+                        "blind_correlation": blind_correlation,
+                    })
+
+    if not findings:
+        findings = session_data.get("findings", [])
+
+    if not findings:
+        partial_findings = session_data.get("partial_findings", [])
+        if isinstance(partial_findings, list):
+            findings = [f for f in partial_findings if f]
+
+    return findings, execution_notes
 
 
 def _build_scenario_coverage_for_report(session_data: dict[str, Any]) -> dict[str, Any]:
@@ -1653,6 +1740,103 @@ def _build_deferred_checklist_markdown(
     return "\n".join(lines)
 
 
+# ===== Preflight Entry Gate =====
+
+def _parse_cookie_string(cookie_str: str) -> dict[str, str]:
+    """Parse a cookie string like 'a=1; b=2' into a dict."""
+    if not cookie_str:
+        return {}
+    cookies: dict[str, str] = {}
+    for part in cookie_str.split(";"):
+        part = part.strip()
+        if "=" in part:
+            key, _, value = part.partition("=")
+            key = key.strip()
+            value = value.strip()
+            if key:
+                cookies[key] = value
+    return cookies
+
+
+def _normalize_target_for_preflight(target: str) -> str:
+    """Ensure target has a scheme for preflight checks."""
+    if not target:
+        return ""
+    if "://" not in target:
+        return f"https://{target}"
+    return target
+
+
+def _derive_goal_for_preflight(args: argparse.Namespace) -> str:
+    """Derive execution goal from CLI action for tool/auth matrix checks."""
+    if getattr(args, "recon", None) or getattr(args, "target", None):
+        return "recon"
+    if getattr(args, "crawl", None):
+        return "crawl"
+    if getattr(args, "analyze", None):
+        return "analyze"
+    if getattr(args, "log", None):
+        return "hybridhunt"
+    if getattr(args, "interactive", None):
+        return "interactive"
+    if getattr(args, "attack", None):
+        return "attack"
+    if getattr(args, "auto_goal", None):
+        return str(getattr(args, "auto_goal"))
+    return "recon"
+
+
+async def _run_entry_gate(
+    *,
+    target: str = "",
+    mode: str = "bugbounty",
+    goal: str = "bugbounty",
+    profile: str = "",
+    cookies: str = "",
+    bearer_token: str = "",
+    auth_headers: dict[str, str] | None = None,
+    resume_session_id: str = "",
+    debug: bool = False,
+) -> None:
+    """Run the preflight entry gate and exit on failure."""
+    normalized_target = _normalize_target_for_preflight(target)
+    context = PreflightContext(
+        target=normalized_target,
+        mode=mode,
+        goal=goal,
+        profile=profile,
+        cookies=_parse_cookie_string(cookies),
+        bearer_token=bearer_token or "",
+        auth_headers=auth_headers or {},
+        resume_session_id=resume_session_id,
+        gate_policy=GatePolicy.STRICT_DEV if debug else GatePolicy.STRICT_PROD,
+        caido_url=_caido_url_from_settings(),
+        caido_token=_caido_token_from_settings(),
+    )
+    result = await EntryGateFacade().run_once(context)
+    if result.failed:
+        for failure in result.failures:
+            print(f"[GATE] {failure.reason_code}: {failure.remediation}")
+        print("Preflight entry gate failed — aborting execution.")
+        sys.exit(1)
+
+
+def _caido_url_from_settings() -> str:
+    """Extract caido.url from settings safely."""
+    try:
+        return getattr(settings, "caido", None).url  # type: ignore[union-attr]
+    except Exception:
+        return "http://127.0.0.1:8080"
+
+
+def _caido_token_from_settings() -> str:
+    """Extract caido.token from settings safely."""
+    try:
+        return getattr(settings, "caido", None).token  # type: ignore[union-attr]
+    except Exception:
+        return ""
+
+
 # ===== Main Entry Point =====
 
 def main():
@@ -1874,7 +2058,7 @@ def main():
     parser.add_argument(
         "--format",
         metavar="FORMAT",
-        choices=["json", "csv", "pdf", "markdown", "html", "haddix"],
+        choices=["json", "csv", "pdf", "markdown", "html", "haddix", "haddix-ja-en"],
         default="json",
         help=msg("argparse.format.help")
     )
@@ -2461,11 +2645,7 @@ def main():
             print_result(False, msg("result.session.file_not_found", path=session_file))
             return
 
-        llm_client = LLMClient(
-            model=getattr(settings, "model", None)
-            or getattr(settings, "model_output", None)
-            or "deepseek/deepseek-chat"
-        )
+        llm_client = LLMClient(role="specialist_light")
         mc = MasterConductor(llm_client=llm_client)
         if pm:
             mc.set_project_manager(pm)
@@ -2623,16 +2803,39 @@ def main():
             return
 
         # Initialize LLM Client for resumed session
-        llm_client = LLMClient(
-            model=getattr(settings, "model", None)
-            or getattr(settings, "model_output", None)
-            or "deepseek/deepseek-chat"
-        )
+        llm_client = LLMClient(role="specialist_light")
         mc = MasterConductor(llm_client=llm_client)
         if pm:
             mc.set_project_manager(pm)
-            
+
         if mc.load_session(session_file):
+            # Preflight entry gate AFTER session load — uses real session context
+            resume_session_id = Path(session_file).stem
+            target_info = mc.context.target_info if isinstance(getattr(mc.context, "target_info", {}), dict) else {}
+            session_target = str(target_info.get("target", "") or "")
+            session_cookies = target_info.get("cookies", {})
+            if isinstance(session_cookies, str):
+                session_cookies = _parse_cookie_string(session_cookies)
+            session_bearer = str(target_info.get("bearer_token", "") or "")
+            session_mode = str(target_info.get("mode", "") or mode)
+
+            gate_context = PreflightContext(
+                target=_normalize_target_for_preflight(session_target),
+                mode=session_mode,
+                goal=_derive_goal_for_preflight(args),
+                profile=str(args.profile or ""),
+                cookies=session_cookies,
+                bearer_token=session_bearer,
+                resume_session_id=resume_session_id,
+                gate_policy=GatePolicy.STRICT_DEV if args.debug else GatePolicy.STRICT_PROD,
+            )
+            gate_result = asyncio.run(EntryGateFacade().run_once(gate_context))
+            if gate_result.failed:
+                for failure in gate_result.failures:
+                    print(f"[GATE] {failure.reason_code}: {failure.remediation}")
+                print("Preflight entry gate failed — aborting execution.")
+                sys.exit(1)
+
             print_result(True, msg("step.resume_restored", count=len(mc.task_queue)))
             print_step("▶️", msg("step.resume_executing"))
              
@@ -2850,84 +3053,8 @@ def main():
                 raw_text = Path(session_file).read_text(encoding="utf-8")
                 session_data = safe_json_loads(raw_text, context="haddix_gen")
                 
-                # Findingsを抽出 (completed_tasksの中からvuln情報があるものを探す)
-                all_tasks = session_data.get("completed_tasks", [])
-                haddix_findings = []
-                execution_notes = []
-                
-                for task in all_tasks:
-                    task_result = task.get("result", {}) if isinstance(task, dict) else {}
-                    task_data = task_result.get("data", {}) if isinstance(task_result, dict) else {}
-
-                    task_findings = task_result.get("findings", []) if isinstance(task_result, dict) else []
-                    if not task_findings and isinstance(task_data, dict):
-                        task_findings = task_data.get("findings", [])
-
-                    if not task_findings and isinstance(task_data, dict):
-                        single_finding = task_data.get("finding")
-                        if single_finding:
-                            task_findings = [single_finding]
-
-                    if not task_findings and isinstance(task_result, dict):
-                        single_finding = task_result.get("finding")
-                        if single_finding:
-                            task_findings = [single_finding]
-
-                    if not task_findings and isinstance(task_result, dict) and "vulnerability" in task_result:
-                        task_findings = [task_result.get("vulnerability")]
-
-                    task_exec_log = task_data.get("execution_log", []) if isinstance(task_data, dict) else []
-                    if isinstance(task_exec_log, list):
-                        for log_entry in task_exec_log:
-                            if not isinstance(log_entry, dict):
-                                continue
-                            url_results = log_entry.get("url_results", [])
-                            if not isinstance(url_results, list):
-                                continue
-                            for item in url_results:
-                                if not isinstance(item, dict):
-                                    continue
-                                tested_params = item.get("tested_params", [])
-                                blind_correlation = item.get("blind_correlation", {})
-                                status = str(item.get("status", ""))
-                                status_lower = status.lower()
-                                retry_count = int(item.get("retry_count", 0) or 0)
-                                duration_seconds = item.get("duration_seconds")
-                                has_blind_evidence = bool(blind_correlation) and (
-                                    bool(blind_correlation.get("correlated"))
-                                    or bool((blind_correlation.get("time_based") or {}).get("confirmed"))
-                                    or bool((blind_correlation.get("oob") or {}).get("confirmed"))
-                                )
-                                should_keep_for_kpi = status_lower in {"completed", "cache_hit", "timeout", "error"}
-                                if not tested_params and not has_blind_evidence and not should_keep_for_kpi and retry_count <= 0 and duration_seconds is None:
-                                    continue
-                                execution_notes.append({
-                                    "url": item.get("url", ""),
-                                    "vuln_type": item.get("vuln_type", ""),
-                                    "status": status,
-                                    "duration_seconds": duration_seconds,
-                                    "retry_count": retry_count,
-                                    "tested_params": tested_params,
-                                    "probe_sent": item.get("probe_sent"),
-                                    "probe_skipped_reason": item.get("probe_skipped_reason", ""),
-                                    "poc_request": item.get("poc_request", ""),
-                                    "poc_response": item.get("poc_response", ""),
-                                    "blind_correlation": blind_correlation,
-                                })
-
-                    for f in task_findings:
-                        if f:
-                            haddix_findings.append(f)
-                
-                if not haddix_findings:
-                    # session_data直下にfindingsがある場合も考慮 (システム構成に依存)
-                    haddix_findings = session_data.get("findings", [])
-
-                if not haddix_findings:
-                    # 途中経過のみ保存されたFindingもレポート対象に含める
-                    partial_findings = session_data.get("partial_findings", [])
-                    if isinstance(partial_findings, list):
-                        haddix_findings = [f for f in partial_findings if f]
+                # Findingsを抽出 (completed_tasks内の共有ヘルパーを再利用)
+                haddix_findings, execution_notes = _extract_findings_and_execution_notes(session_data)
 
                 scenario_coverage = _build_scenario_coverage_for_report(session_data)
                 vulnerability_family_coverage: dict[str, Any] = {}
@@ -3227,6 +3354,289 @@ def main():
                 print_result(False, msg("result.report.haddix_failed", error=e))
                 import traceback
                 logger.error(traceback.format_exc())
+        
+        elif args.format == "haddix-ja-en":
+            import tempfile
+            import shutil
+            try:
+                from src.reporting.haddix_ja_en_formatter import generate_haddix_ja_en_report
+                from src.core.utils.json_utils import safe_json_loads
+
+                # セッションデータを読み込み
+                raw_text = Path(session_file).read_text(encoding="utf-8")
+                session_data = safe_json_loads(raw_text, context="haddix_ja_en_gen")
+
+                # 共有抽出ヘルパーで findings + execution_notes を準備
+                ja_en_findings, ja_en_exec_notes = _extract_findings_and_execution_notes(session_data)
+
+                # report_target を定義（haddix 分岐と同じ）
+                report_target = session_data.get("goal_target", args.target)
+
+                # シナリオカバレッジと脆弱性ファミリーカバレッジを構築
+                scenario_coverage = _build_scenario_coverage_for_report(session_data)
+                vulnerability_family_coverage: dict[str, Any] = {}
+                raw_coverage_gate = session_data.get("coverage_gate")
+                if not isinstance(raw_coverage_gate, dict):
+                    session_context = session_data.get("context", {})
+                    if isinstance(session_context, dict):
+                        raw_coverage_gate = session_context.get("coverage_gate") or session_context.get("vulnerability_family_coverage")
+                if isinstance(raw_coverage_gate, dict):
+                    vulnerability_family_coverage = raw_coverage_gate
+
+                # Heuristic candidate 生成・マージ（haddix 分岐と同一ロジック）
+                heuristic_budget = int(getattr(settings, "report_heuristic_max_candidates", 6) or 6)
+                if ja_en_findings:
+                    heuristic_budget = min(
+                        heuristic_budget,
+                        int(getattr(settings, "report_heuristic_append_when_confirmed", 3) or 3),
+                    )
+                heuristic_promote_privilege_probe_min = max(
+                    1,
+                    int(getattr(settings, "report_heuristic_promote_privilege_probe_min", 2) or 2),
+                )
+                heuristic_promote_completed_probe_min = max(
+                    1,
+                    int(getattr(settings, "report_heuristic_promote_completed_probe_min", 2) or 2),
+                )
+
+                heuristic_candidates = _build_heuristic_findings_from_execution_notes(
+                    ja_en_exec_notes,
+                    target=report_target,
+                    scenario_coverage=scenario_coverage,
+                    max_candidates=max(0, heuristic_budget),
+                    promote_privilege_probe_min=heuristic_promote_privilege_probe_min,
+                    promote_completed_probe_min=heuristic_promote_completed_probe_min,
+                )
+                if heuristic_candidates:
+                    if ja_en_findings:
+                        before_len = len(ja_en_findings)
+                        merged = _merge_heuristic_candidates_into_findings(
+                            confirmed_findings=ja_en_findings,
+                            heuristic_candidates=heuristic_candidates,
+                            max_append=max(0, heuristic_budget),
+                        )
+                        appended = max(0, len(merged) - before_len)
+                        if appended > 0:
+                            ja_en_findings = merged
+                    else:
+                        ja_en_findings = heuristic_candidates
+
+                # Deduplication（haddix 分岐と同一ロジック）
+                try:
+                    from src.core.deduplication.finding_deduplicator import deduplicate_findings
+                    from src.core.models.finding import Finding, VulnType, Severity
+
+                    finding_objects = []
+                    for raw in ja_en_findings:
+                        if isinstance(raw, Finding):
+                            finding_objects.append(raw)
+                            continue
+                        if not isinstance(raw, dict):
+                            continue
+
+                        vuln_raw = str(raw.get("vuln_type", raw.get("type", "other"))).lower()
+                        sev_raw = str(raw.get("severity", "low")).lower()
+
+                        try:
+                            vuln_type = VulnType(vuln_raw)
+                        except Exception:
+                            vuln_type = VulnType.OTHER
+
+                        try:
+                            severity = Severity(sev_raw)
+                        except Exception:
+                            severity = Severity.LOW
+
+                        confidence_raw = raw.get("confidence", 0.0)
+                        try:
+                            confidence = float(confidence_raw)
+                        except Exception:
+                            confidence = 0.0
+
+                        finding_objects.append(Finding(
+                            vuln_type=vuln_type,
+                            severity=severity,
+                            title=raw.get("title", "Unknown Vulnerability"),
+                            description=raw.get("description", raw.get("summary", "")),
+                            target_url=raw.get("target_url", raw.get("target", raw.get("url", report_target))),
+                            target_program=raw.get("target_program", session_data.get("program_name", "")),
+                            evidence=raw.get("evidence", {}),
+                            reproduction_steps=raw.get("reproduction_steps", raw.get("steps_to_reproduce", [])),
+                            impact=raw.get("impact", ""),
+                            source_agent=raw.get("source_agent", raw.get("discovered_by", "")),
+                            confidence=confidence,
+                            additional_info=raw.get("additional_info", {}),
+                            cwe_id=raw.get("cwe_id"),
+                            cvss_score=raw.get("cvss_score"),
+                        ))
+
+                    if len(finding_objects) > 1:
+                        deduped = deduplicate_findings(finding_objects)
+                        if len(deduped) < len(finding_objects):
+                            logger.info("Report dedup applied: %d -> %d", len(finding_objects), len(deduped))
+                        ja_en_findings = [f.to_dict() for f in deduped]
+                except Exception as _dedup_error:
+                    logger.warning("Report dedup skipped: %s", _dedup_error)
+
+                # 出力パスの決定
+                output_dir = Path(session_file).parent.parent / "reports"
+                output_dir.mkdir(parents=True, exist_ok=True)
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                output_path = output_dir / f"haddix_report_{timestamp}.md"
+                evidence_output_dir = output_dir / f"haddix_evidence_{timestamp}"
+
+                # Evidence artifact materialization（haddix 分岐と同一ロジック）
+                ja_en_findings, evidence_artifact_paths = _materialize_haddix_evidence_artifacts(
+                    findings=ja_en_findings,
+                    evidence_dir=evidence_output_dir,
+                    captured_at=datetime.now().isoformat(timespec="seconds"),
+                )
+
+                # Gate 評価（haddix 分岐と同一ロジック）
+                from src.reporting.initial_release_gate import (
+                    DEFAULT_ALLOWED_MISSING_SCENARIOS,
+                    evaluate_initial_release_gate,
+                )
+                raw_allowed_missing = getattr(
+                    settings,
+                    "report_initial_release_allowed_missing_scenarios",
+                    ",".join(DEFAULT_ALLOWED_MISSING_SCENARIOS),
+                )
+                if isinstance(raw_allowed_missing, list):
+                    allowed_missing_scenarios = [
+                        str(token or "").strip()
+                        for token in raw_allowed_missing
+                        if str(token or "").strip()
+                    ]
+                else:
+                    allowed_missing_scenarios = [
+                        str(token or "").strip()
+                        for token in str(raw_allowed_missing or "").split(",")
+                        if str(token or "").strip()
+                    ]
+                if not allowed_missing_scenarios:
+                    allowed_missing_scenarios = list(DEFAULT_ALLOWED_MISSING_SCENARIOS)
+
+                raw_required_classes = getattr(
+                    settings,
+                    "report_initial_release_required_confirmed_classes",
+                    "",
+                )
+                if isinstance(raw_required_classes, list):
+                    required_confirmed_classes = [
+                        str(token or "").strip()
+                        for token in raw_required_classes
+                        if str(token or "").strip()
+                    ]
+                else:
+                    required_confirmed_classes = [
+                        str(token or "").strip()
+                        for token in str(raw_required_classes or "").split(",")
+                        if str(token or "").strip()
+                    ]
+
+                baseline_report_path_raw = str(
+                    getattr(settings, "report_initial_release_baseline_report_path", "") or ""
+                ).strip()
+                baseline_session_path_raw = str(
+                    getattr(settings, "report_initial_release_baseline_session_path", "") or ""
+                ).strip()
+                baseline_report_path = (
+                    Path(baseline_report_path_raw).expanduser().resolve()
+                    if baseline_report_path_raw
+                    else None
+                )
+                baseline_session_path = (
+                    Path(baseline_session_path_raw).expanduser().resolve()
+                    if baseline_session_path_raw
+                    else None
+                )
+
+                # Temp file に ja-en レポートを生成（gate 評価前の初回生成）
+                with tempfile.NamedTemporaryFile(
+                    mode="w",
+                    suffix=".md",
+                    prefix="haddix_ja_en_tmp_",
+                    dir=str(output_dir),
+                    encoding="utf-8",
+                    delete=False,
+                ) as tmp_file:
+                    tmp_path = Path(tmp_file.name)
+
+                try:
+                    generate_haddix_ja_en_report(
+                        findings=ja_en_findings,
+                        target=report_target,
+                        output_path=tmp_path,
+                        program_name=session_data.get("program_name", ""),
+                        execution_notes=ja_en_exec_notes,
+                        scenario_coverage=scenario_coverage,
+                        vulnerability_family_coverage=vulnerability_family_coverage,
+                        initial_release_gate={},
+                        source_session=str(Path(session_file).resolve()),
+                    )
+
+                    if not tmp_path.exists() or tmp_path.stat().st_size == 0:
+                        raise RuntimeError("Generated report is empty")
+
+                    content = tmp_path.read_text(encoding="utf-8")
+                    if "# SHIGOKU" not in content or "# Submission Report" not in content:
+                        raise RuntimeError("Generated report missing required sections")
+
+                except Exception:
+                    if tmp_path.exists():
+                        tmp_path.unlink(missing_ok=True)
+                    raise
+
+                # Gate 評価
+                gate_result = evaluate_initial_release_gate(
+                    tmp_path,
+                    session_path=Path(session_file),
+                    baseline_report_path=baseline_report_path,
+                    baseline_session_path=baseline_session_path,
+                    allowed_missing_scenarios=allowed_missing_scenarios,
+                    confirmed_min=max(0, int(getattr(settings, "report_initial_release_confirmed_min", 3) or 3)),
+                    candidate_max=max(0, int(getattr(settings, "report_initial_release_candidate_max", 2) or 2)),
+                    confirmed_poc_missing_max=max(0, int(getattr(settings, "report_initial_release_confirmed_poc_missing_max", 0) or 0)),
+                    reason_code_missing_max=max(0, int(getattr(settings, "report_initial_release_reason_code_missing_max", 0) or 0)),
+                    required_confirmed_classes=required_confirmed_classes,
+                    required_class_confirmed_min=max(0, int(getattr(settings, "report_initial_release_required_class_confirmed_min", 1) or 1)),
+                )
+
+                # Gate 結果を埋め込んだ最終レポートを再生成
+                generate_haddix_ja_en_report(
+                    findings=ja_en_findings,
+                    target=report_target,
+                    output_path=tmp_path,
+                    program_name=session_data.get("program_name", ""),
+                    execution_notes=ja_en_exec_notes,
+                    scenario_coverage=scenario_coverage,
+                    vulnerability_family_coverage=vulnerability_family_coverage,
+                    initial_release_gate=gate_result,
+                    source_session=str(Path(session_file).resolve()),
+                )
+
+                # Atomic rename to final path
+                shutil.move(str(tmp_path), str(output_path))
+
+                abs_path = str(output_path.resolve())
+                logger.info(f"ja-en report saved: {abs_path}")
+
+                print_step("📄", f"ja-en report: {abs_path}")
+                print_result(True, msg("result.report.haddix_ja_en_generated", path=abs_path))
+
+                gate_status = str(gate_result.get("status", "") or "").strip().upper() or "UNKNOWN"
+                reason_codes = gate_result.get("reason_codes", [])
+                reason_codes_text = ", ".join(str(code) for code in reason_codes) if reason_codes else "-"
+                print_step("🚦", msg("gate.status", status=gate_status, codes=reason_codes_text))
+
+                if not Path("/.dockerenv").exists():
+                    print(msg("result.report.view_hint", path=abs_path))
+
+            except Exception as e:
+                print_result(False, msg("result.report.haddix_failed", error=e))
+                import traceback
+                logger.error(traceback.format_exc())
         else:
             # Default: Text Summary
             mc = MasterConductor()
@@ -3237,6 +3647,29 @@ def main():
                 print_result(False, msg("result.session.load_failed"))
         return
 
+    # Preflight entry gate for heavy-execution paths
+    if any([
+        args.target,
+        args.recon,
+        args.log,
+        args.crawl,
+        args.analyze,
+        args.interactive,
+    ]):
+        asyncio.run(
+            _run_entry_gate(
+                target=_normalize_target_for_preflight(
+                    str(args.target or args.recon or args.log or args.crawl or args.analyze or "")
+                ),
+                mode=str(mode),
+                goal=_derive_goal_for_preflight(args),
+                profile=str(args.profile or ""),
+                cookies=str(args.cookie or ""),
+                bearer_token=str(args.bearer_token or ""),
+                debug=bool(args.debug),
+            ),
+        )
+
     # モード判定と実行
     if args.demo:
         run_grand_demo()
@@ -3244,11 +3677,7 @@ def main():
         # Phase 1: InteractiveBridge
         from src.core.conductor.interactive_bridge import start_interactive_session
         from src.core.models.llm import LLMClient
-        llm_client = LLMClient(
-            model=getattr(settings, "model", None)
-            or getattr(settings, "model_output", None)
-            or "deepseek/deepseek-chat"
-        )
+        llm_client = LLMClient(role="specialist_light")
         start_interactive_session(
             mode=mode,
             scope_file=scope_file,
@@ -3313,11 +3742,7 @@ def main():
             
         # Initialize Shared LLM Client
         from src.core.models.llm import LLMClient
-        llm_client = LLMClient(
-            model=getattr(settings, "model", None)
-            or getattr(settings, "model_output", None)
-            or "deepseek/deepseek-chat"
-        )
+        llm_client = LLMClient(role="specialist_light")
         
         # Phase 2: MasterConductor経由
         from src.core.conductor.interactive_bridge import start_interactive_session
@@ -3375,11 +3800,7 @@ def main():
             # Phase 3: MasterConductor 経由 (旧：run_hybrid_hunt 直接呼び出し)
             from src.core.conductor.interactive_bridge import start_interactive_session
             from src.core.models.llm import LLMClient
-            llm_client = LLMClient(
-                model=getattr(settings, "model", None)
-                or getattr(settings, "model_output", None)
-                or "deepseek/deepseek-chat"
-            )
+            llm_client = LLMClient(role="specialist_light")
             start_interactive_session(
                 mode=mode,
                 scope_file=scope_file,

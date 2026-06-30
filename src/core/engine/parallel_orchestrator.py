@@ -245,6 +245,24 @@ class ParallelOrchestrator:
                 )
                 rate_target = str(legacy_target) if legacy_target else None
 
+            if rate_target and limiter.is_origin_degraded(rate_target):
+                reason = limiter.get_origin_degrade_reason(rate_target) or "unknown"
+                return TaskResult(
+                    ptask.id,
+                    False,
+                    {
+                        "audit": {
+                            "event": "origin_suppressed",
+                            "origin_key": rate_target,
+                            "degrade_reason": reason,
+                            "lane": ptask.lane,
+                        }
+                    },
+                    f"origin_degraded:{reason}",
+                    0.0,
+                    ptask.category,
+                )
+
             limiter.wait(rate_target)
             
             task_start_time = time.time()
@@ -307,6 +325,10 @@ def create_parallel_task(
     target_key: str | None = None,
     lane: str | None = None,
     scope_verdict: str = "unknown",
+    fail_closed_unknown_category: bool = False,
+    state_assertion: dict | None = None,
+    explicit_aggressive_approval: bool = False,
+    low_noise_profile: bool = False,
     **kwargs
 ) -> ParallelTask:
     """並列タスク作成ヘルパー
@@ -318,7 +340,23 @@ def create_parallel_task(
     lane is auto-inferred from category when not explicitly provided.
     admission check runs before returning (fail-fast, queue-slot-before-reject).
     """
+    category_known = category in CATEGORY_TO_LANE
     resolved_lane = lane or CATEGORY_TO_LANE.get(category, "read_only")
+
+    if fail_closed_unknown_category and not category_known:
+        return ParallelTask(
+            id=task_id,
+            func=func,
+            args=args,
+            kwargs=kwargs,
+            category=category,
+            origin_key=origin_key,
+            target_key=target_key,
+            lane=resolved_lane,
+            scope_verdict=scope_verdict,
+            admitted=False,
+            reject_reason="unknown_execution_category",
+        )
 
     # Phase 2 admission check (fail-fast before ParallelTask enters queue).
     # With default fail-safe settings, all tasks are admitted.
@@ -327,6 +365,9 @@ def create_parallel_task(
         target_key=target_key,
         lane=resolved_lane,
         scope_verdict=scope_verdict,
+        state_assertion=state_assertion,
+        explicit_aggressive_approval=explicit_aggressive_approval,
+        low_noise_profile=low_noise_profile,
     )
 
     return ParallelTask(

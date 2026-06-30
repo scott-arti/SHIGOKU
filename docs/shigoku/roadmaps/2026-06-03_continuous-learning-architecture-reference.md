@@ -4,15 +4,15 @@ doc_type: roadmap
 status: active
 parent_task_id: null
 related_docs:
-- docs/shigoku/subtasks/2026-06-03_recon-signal-mc-swarm_subtask_plan.md
-- docs/shigoku/subtasks/2026-06-03_recipe-recon-swarm_subtask_plan.md
-- docs/shigoku/subtasks/2026-06-03_obsidian-rag-kg-recipe_subtask_plan.md
+- docs/shigoku/subtasks/2026-06-03_sgk-2026-0261_recon-signal-mc-swarm_subtask_plan.md
+- docs/shigoku/subtasks/2026-06-03_sgk-2026-0260_recipe-recon-swarm_subtask_plan.md
+- docs/shigoku/subtasks/2026-06-03_sgk-2026-0262_obsidian-rag-kg-recipe_subtask_plan.md
 - docs/shigoku/specs/modules/KNOWLEDGE_GRAPH.md
 - docs/shigoku/specs/modules/RAG_SYSTEM.md
 - docs/shigoku/roadmaps/future_functions.md
 title: '継続学習リファレンス: KG・RAG・MC・Recipe・Recon の理想アーキテクチャ'
 created_at: '2026-06-03'
-updated_at: '2026-06-03'
+updated_at: '2026-06-30'
 tags:
 - shigoku
 - reference

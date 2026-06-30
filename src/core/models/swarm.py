@@ -5,7 +5,7 @@ Swarm ManagerがMasterConductorへ返す結果の統一フォーマット。
 """
 
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Optional, Dict, Any
 
 from src.core.models.finding import Finding
 
@@ -36,6 +36,9 @@ class SwarmResult:
     # タグ情報 (tag flow consistency)
     input_tags: List[str] = field(default_factory=list)  # 入力時のタグ
     output_tags: List[str] = field(default_factory=list)  # 出力時の推奨タグ (次タスク用)
+
+    # Phase 8 Step 2: Shadow parallel decisions (recording only, no execution change)
+    shadow_decisions: List[dict] = field(default_factory=list)
     
     def add_finding(self, finding: Finding) -> None:
         """Findingを追加"""
@@ -67,6 +70,8 @@ class SwarmResult:
             "execution_time_seconds": self.execution_time_seconds,
             "input_tags": self.input_tags,
             "output_tags": self.output_tags,
+            # Phase 8 Step 2: replay artifact / deterministic replay
+            "shadow_decisions": list(self.shadow_decisions),
         }
     
     def has_critical_findings(self) -> bool:
@@ -76,3 +81,59 @@ class SwarmResult:
             f.severity in [Severity.CRITICAL, Severity.HIGH]
             for f in self.findings
         )
+
+
+@dataclass
+class PerUrlSubResult:
+    """Phase 8 Step 4: Per-URL sub-result for Injection URL worker isolation.
+
+    Each URL worker returns this instead of directly mutating shared
+    current_context. Post-join deterministic merge assembles final result.
+
+    LB-5 constraint: worker は findings, url_result, tested_params,
+    request_fingerprint, payload_fingerprint, error, budget_decision を返し、
+    共有 current_context へ直接 append しない。
+    """
+    source_url: str = ""
+    origin_key: str = ""
+
+    # Results
+    findings: List[Finding] = field(default_factory=list)
+    url_result: Dict[str, Any] = field(default_factory=dict)
+    tested_params: List[str] = field(default_factory=list)
+
+    # Fingerprints for deterministic replay
+    request_fingerprint: str = ""
+    payload_fingerprint: str = ""
+
+    # Error tracking
+    error: Optional[str] = None
+
+    # Budget decision (was this URL executed, skipped, or rejected?)
+    budget_decision: Dict[str, Any] = field(default_factory=dict)
+
+    # Status
+    status: str = "pending"  # "success", "skipped", "rejected", "failed"
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "source_url": self.source_url,
+            "origin_key": self.origin_key,
+            "findings_count": len(self.findings),
+            "findings": [f.to_dict() for f in self.findings],
+            "url_result": self.url_result,
+            "tested_params": self.tested_params,
+            "request_fingerprint": self.request_fingerprint,
+            "payload_fingerprint": self.payload_fingerprint,
+            "error": self.error,
+            "budget_decision": self.budget_decision,
+            "status": self.status,
+        }
+
+    @property
+    def is_success(self) -> bool:
+        return self.status == "success"
+
+    @property
+    def is_skipped_or_rejected(self) -> bool:
+        return self.status in ("skipped", "rejected")

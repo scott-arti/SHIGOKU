@@ -341,12 +341,8 @@ class ParallelTasks:
                 )
                 
                 logger.info("Requesting LLM to generate subdomain candidates...")
-                llm_model = (
-                    getattr(settings, "model_lightweight", None)
-                    or getattr(settings, "model", None)
-                    or getattr(settings, "model_output", None)
-                    or "ollama/qwen3.5:latest"
-                )
+                from src.core.models.llm import LLMClient
+                llm_model = LLMClient(role="specialist_light").model
                 response = self.mc.llm_client.chat.completions.create(
                     model=llm_model,
                     messages=[{"role": "user", "content": prompt}],

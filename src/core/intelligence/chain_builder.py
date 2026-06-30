@@ -1914,11 +1914,7 @@ def get_chain_builder(
         if resolved_proposal_engine is None:
             chain_llm_enabled = bool(getattr(settings, "chain_llm_enabled", False))
             if chain_llm_enabled and llm_client is not None:
-                model_name = str(
-                    getattr(settings, "chain_llm_model", "")
-                    or getattr(settings, "model_output", "")
-                    or getattr(settings, "model", "")
-                ).strip()
+                model_name = str(getattr(settings, "chain_llm_model", "")).strip()
                 if model_name:
                     resolved_proposal_engine = LLMChainProposalEngine.from_llm_client(
                         llm_client=llm_client,

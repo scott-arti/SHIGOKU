@@ -4,6 +4,8 @@ T-2.1 to T-2.8: ActionAdmissionPolicy tests.
 Tests admission decisions based on lane, scope_verdict, origin_key, and allowlists.
 """
 import pytest
+from types import SimpleNamespace
+
 from src.core.engine.admission_policy import (
     AdmissionDecision,
     ActionAdmissionPolicy,
@@ -173,3 +175,78 @@ class TestActionAdmissionPolicy:
         )
         assert decision.allowed is False
         assert decision.reason_code == ReasonCode.AGGRESSIVE_DISABLED
+
+    def test_parallelism_settings_wire_mutating_and_aggressive_flags(self):
+        """T-7.2: settings.parallelism mutating/aggressive flags feed admission policy."""
+        policy = ActionAdmissionPolicy()
+        policy.apply_parallelism_settings(SimpleNamespace(
+            mutating=SimpleNamespace(enabled=True, allowlist=["https://example.com"]),
+            aggressive_exclusive=SimpleNamespace(enabled=True, allowlist=["https://example.com"]),
+        ))
+
+        assert policy.mutating_enabled is True
+        assert policy.aggressive_exclusive_enabled is True
+        assert policy.mutating_allowlist == {"https://example.com"}
+        assert policy.aggressive_allowlist == {"https://example.com"}
+
+    def test_strict_mutating_requires_state_assertion_contract(self):
+        """T-7.3: strict mutating admission requires pre/post state assertion."""
+        policy = ActionAdmissionPolicy(require_state_assertion=True)
+        policy.mutating_enabled = True
+        policy.mutating_allowlist = {"https://example.com"}
+
+        decision = policy.check(
+            origin_key="https://example.com",
+            target_key="https://example.com/login",
+            lane="mutating",
+            scope_verdict="in_scope",
+        )
+        assert decision.allowed is False
+        assert decision.reason_code == ReasonCode.STATE_ASSERTION_MISSING
+
+        allowed = policy.check(
+            origin_key="https://example.com",
+            target_key="https://example.com/login",
+            lane="mutating",
+            scope_verdict="in_scope",
+            state_assertion={
+                "precondition": "fresh_auth_context",
+                "postcondition": "no_persistent_side_effect",
+            },
+        )
+        assert allowed.allowed is True
+
+    def test_strict_aggressive_requires_explicit_flag_and_low_noise_profile(self):
+        """T-7.4: aggressive_exclusive requires explicit operator flag + low-noise profile."""
+        policy = ActionAdmissionPolicy(require_explicit_aggressive_flag=True)
+        policy.aggressive_exclusive_enabled = True
+        policy.aggressive_allowlist = {"https://example.com"}
+
+        decision = policy.check(
+            origin_key="https://example.com",
+            target_key="https://example.com/fuzz",
+            lane="aggressive_exclusive",
+            scope_verdict="in_scope",
+        )
+        assert decision.allowed is False
+        assert decision.reason_code == ReasonCode.AGGRESSIVE_EXPLICIT_FLAG_MISSING
+
+        decision = policy.check(
+            origin_key="https://example.com",
+            target_key="https://example.com/fuzz",
+            lane="aggressive_exclusive",
+            scope_verdict="in_scope",
+            explicit_aggressive_approval=True,
+        )
+        assert decision.allowed is False
+        assert decision.reason_code == ReasonCode.AGGRESSIVE_LOW_NOISE_MISSING
+
+        allowed = policy.check(
+            origin_key="https://example.com",
+            target_key="https://example.com/fuzz",
+            lane="aggressive_exclusive",
+            scope_verdict="in_scope",
+            explicit_aggressive_approval=True,
+            low_noise_profile=True,
+        )
+        assert allowed.allowed is True

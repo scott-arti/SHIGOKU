@@ -25,7 +25,7 @@ class Runner:
     """
     def __init__(self, agent: Agent):
         self.agent = agent
-        self.llm = LLMClient(model=agent.model)
+        self.llm = LLMClient(role="specialist_light")
         self.interrupted = False  # HITL用の割り込みフラグ
         
         # 実行グラフとメモリ管理

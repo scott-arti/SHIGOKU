@@ -251,6 +251,7 @@ class ParallelismSettings(BaseModel):
     all defaults apply and the system starts safely (serial mode).
     """
     enabled: bool = False
+    kill_switch: bool = False  # Phase 5 (SGK-2026-0314): immediate serial revert
     shadow_mode: bool = True
     default_executor: str = "serial"
     lane_workers: dict[str, int] = Field(default_factory=dict)

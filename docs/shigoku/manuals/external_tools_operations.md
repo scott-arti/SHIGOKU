@@ -4,11 +4,11 @@ doc_type: manual
 status: done
 parent_task_id: SGK-2026-0224
 related_docs:
-- docs/shigoku/plans/phase_e2_next_action_plan.md
-- docs/shigoku/plans/ai_tool_integration_guide.md
+- docs/shigoku/plans/done/phase_e2_next_action_plan.md
+- docs/shigoku/plans/done/ai_tool_integration_guide.md
 - docs/shigoku/reports/phase_e2_cto_review.md
 created_at: '2026-05-23'
-updated_at: '2026-05-25'
+updated_at: '2026-06-30'
 ---
 
 # 外部ツール運用マニュアル
@@ -208,8 +208,8 @@ result = await executor.execute(
 
 ## 関連ドキュメント
 
-- [AI Tool Integration Guide](../plans/ai_tool_integration_guide.md)
-- [Phase E-2 Action Plan](../plans/phase_e2_next_action_plan.md)
+- [AI Tool Integration Guide](../plans/done/ai_tool_integration_guide.md)
+- [Phase E-2 Action Plan](../plans/done/phase_e2_next_action_plan.md)
 - [CTO Review Report](../reports/phase_e2_cto_review.md)
 
 ---

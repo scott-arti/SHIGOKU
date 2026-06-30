@@ -15,7 +15,8 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from datetime import datetime
+from datetime import datetime, timezone
+import hashlib
 from src.core.utils.json_utils import robust_json_loads
 from src.tools.custom.katana import KatanaTool
 from src.tools.custom.httpx import HttpxTool
@@ -28,6 +29,11 @@ from src.core.engine.adaptive_rate_limiter import get_rate_limiter
 from src.core.engine.tag_taxonomy_registry import (
     PIPELINE_HISTORY_CANDIDATE_CATEGORIES,
     tags_for_category,
+)
+from src.core.engine.recipe_loader import TakeoverCandidate
+from src.core.adapters.external.takeover_provider_matrix_adapter import (
+    ProviderMatrixLoader,
+    TakeoverProviderMatrix,
 )
 
 logger = logging.getLogger(__name__)
@@ -200,7 +206,39 @@ class ReconPipeline:
             return raw_dir / f"{date_str}_{project}_{type_name}.{ext}"
         
         return self.workspace_root / f"{date_str}_{project}_{type_name}.{ext}"
+    
+    # ── Provider matrix loader (lazy, cached per-process) ───────────────
+
+    _provider_matrix_cache: TakeoverProviderMatrix | None = None
+    """Module-level cache for the provider matrix. Reset between test runs."""
+
+    @classmethod
+    def _resolve_provider_matrix(cls) -> TakeoverProviderMatrix | None:
+        """Load the takeover provider matrix once and cache it.
         
+        Returns None if the matrix YAML is missing or unparseable (graceful degradation).
+        """
+        if cls._provider_matrix_cache is not None:
+            return cls._provider_matrix_cache
+
+        try:
+            loader = ProviderMatrixLoader()
+            config_path = (
+                Path(__file__).resolve().parent.parent.parent
+                / "config" / "providers" / "takeover_provider_matrix.yaml"
+            )
+            if not config_path.exists():
+                logger.warning("Provider matrix not found at %s, provider_guess will be None", config_path)
+                cls._provider_matrix_cache = None
+                return None
+            loader.load(str(config_path))
+            cls._provider_matrix_cache = TakeoverProviderMatrix(loader)
+            logger.debug("Provider matrix loaded with %d providers", len(loader.entries))
+            return cls._provider_matrix_cache
+        except Exception:
+            logger.warning("Failed to load provider matrix, provider_guess will be None", exc_info=True)
+            cls._provider_matrix_cache = None
+            return None
     
     # === Step 1-2: Subdomain Discovery ===
     
@@ -719,15 +757,10 @@ class ReconPipeline:
             リゾルバーファイルのパス
         """
         resolvers_file = self._get_path("resolvers", "txt")
-        
-        if self.runner.dev_mode:
-            # DEV_MODE: モックリゾルバー
-            mock_resolvers = "\n".join([
-                "8.8.8.8",
-                "1.1.1.1",
-                "9.9.9.9",
-            ])
-            resolvers_file.write_text(mock_resolvers)
+
+        demo_provider = self.runner.get_demo_provider()
+        if demo_provider is not None:
+            demo_provider.write_resolvers_file(resolvers_file, count)
             logger.info("DEV_MODE: Created mock resolvers file")
             return resolvers_file
         
@@ -906,8 +939,9 @@ class ReconPipeline:
             logger.warning("whatweb not found, skipping")
         
         # DEV_MODE: whatweb は --log-json でファイル出力するため、mock時は手動で作成
-        if self.runner.dev_mode and not whatweb_file.exists():
-            whatweb_file.write_text(whatweb_out)
+        demo_provider = self.runner.get_demo_provider()
+        if demo_provider is not None:
+            demo_provider.ensure_whatweb_file(whatweb_file, whatweb_out)
         
         logger.info("Saved whatweb output: %s", whatweb_file)
         
@@ -916,12 +950,120 @@ class ReconPipeline:
         logger.info("[Step 3] Live Check completed: %d live, %d dead", len(live_subs), len(dead_subs))
         
         # takeover_candidates.json 生成 (recon_scenario.md 要件)
+        # SGK-2026-0283-D02: extended TakeoverCandidate schema
         import json
         if dead_subs:
             takeover_file = self._get_path("takeover_candidates", "json")
-            takeover_data = [{"subdomain": sub, "status": "NXDOMAIN"} for sub in dead_subs]
+            observed_at = datetime.now(timezone.utc)
+
+            # ── load provider matrix (lazy, cached per-process) ──────────
+            provider_matrix = self._resolve_provider_matrix()
+
+            # ── carry forward first_seen_dead from prior session ─────────
+            existing_first_seen: dict[str, str] = {}
+            if takeover_file.exists():
+                try:
+                    old_data = json.loads(takeover_file.read_text())
+                    for entry in old_data:
+                        sub = entry.get("subdomain")
+                        fsd = entry.get("first_seen_dead")
+                        if sub and fsd:
+                            existing_first_seen[sub] = fsd
+                except Exception:
+                    logger.debug("Could not read prior takeover_candidates for first_seen carry-forward")
+
+            # ── load CNAME chains from step1 dns.json (amass output) ─────
+            cname_map: dict[str, list[str]] = {}
+            dns_file = self._get_path("dns", "json")
+            if dns_file.exists():
+                try:
+                    dns_records = json.loads(dns_file.read_text())
+                    for record in dns_records:
+                        if str(record.get("record_type", "")).upper() == "CNAME":
+                            name = str(record.get("name", "")).strip()
+                            data = str(record.get("record_data", "")).strip()
+                            if name and data:
+                                cname_map.setdefault(name, []).append(data)
+                except Exception:
+                    logger.debug("Could not read dns.json for CNAME chain extraction")
+
+            # ── build TakeoverCandidate dicts ────────────────────────────
+            takeover_data: list[dict] = []
+
+            # artifact hash from dead_subs list (plan 4.10)
+            artifact_hash = hashlib.sha256(
+                json.dumps(sorted(dead_subs), sort_keys=True).encode()
+            ).hexdigest()
+
+            # session_id (if available from pipeline context)
+            session_id = getattr(self, "session_id", None)
+
+            for sub in dead_subs:
+                cname_chain = cname_map.get(sub, [])
+                full_chain = [sub] + cname_chain
+
+                # provider guess: match last CNAME suffix against matrix
+                provider_guess: str | None = None
+                if provider_matrix and cname_chain:
+                    last_cname = cname_chain[-1]
+                    entry = provider_matrix.find_by_fingerprint_domain(last_cname)
+                    if entry:
+                        provider_guess = entry.provider_id
+
+                # stable candidate_id
+                chain_str = ":".join(full_chain)
+                hash_input = f"{sub}:{chain_str}:{provider_guess or ''}"
+                hash_suffix = hashlib.sha256(hash_input.encode()).hexdigest()[:16]
+                candidate_id = f"takeover_{hash_suffix}"
+
+                # first_seen_dead: carry forward from prior session if available
+                first_seen_dead_str = existing_first_seen.get(sub)
+                if first_seen_dead_str:
+                    try:
+                        # normalize ISO string
+                        first_seen_dead = datetime.fromisoformat(
+                            first_seen_dead_str.replace("Z", "+00:00")
+                        )
+                    except ValueError:
+                        first_seen_dead = observed_at
+                else:
+                    first_seen_dead = observed_at
+
+                required_signals = {
+                    "dns_dead": True,
+                    "cname_dangling": bool(cname_chain),
+                    "provider_match": provider_guess is not None,
+                }
+
+                candidate = {
+                    "candidate_id": candidate_id,
+                    "subdomain": sub,
+                    "status": "candidate",
+                    "observed_at": observed_at.isoformat(),
+                    "first_seen_dead": first_seen_dead.isoformat(),
+                    "last_seen_dead": observed_at.isoformat(),
+                    "last_dns_probe": observed_at.isoformat(),
+                    "last_http_probe": None,
+                    "cname_chain": full_chain,
+                    "provider_guess": provider_guess,
+                    "required_signals": required_signals,
+                    "blocking_signals": [],
+                    "raw_evidence": {
+                        "dns": {},
+                        "http": {},
+                        "source_files": ["dns.json", "takeover_candidates.json"],
+                    },
+                    "manual_claim_review_required": True,
+                    # trace metadata (plan 4.10)
+                    "source_line": None,
+                    "producer_step": "recon.step3_live_check",
+                    "session_id": session_id,
+                    "artifact_hash": artifact_hash,
+                }
+                takeover_data.append(candidate)
+
             takeover_file.write_text(json.dumps(takeover_data, indent=2, ensure_ascii=False))
-            logger.info("Saved takeover candidates: %s (%d entries)", takeover_file, len(dead_subs))
+            logger.info("Saved takeover candidates: %s (%d entries)", takeover_file, len(takeover_data))
         
         # live_subs.txt 保存 (recon_scenario.md 要件)
         live_subs_file = self._get_path("live_subs", "txt")

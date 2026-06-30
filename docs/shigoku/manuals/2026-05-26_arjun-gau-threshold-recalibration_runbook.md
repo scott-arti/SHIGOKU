@@ -4,9 +4,9 @@ doc_type: manual
 status: active
 parent_task_id: SGK-2026-0239
 related_docs:
-  - docs/shigoku/plans/2026-05-26_arjun-gau-kpi_plan.md
+  - docs/shigoku/plans/2026-05-26_sgk-2026-0245_arjun-gau-kpi_plan.md
 created_at: '2026-05-26'
-updated_at: '2026-05-26'
+updated_at: '2026-06-30'
 ---
 
 # Arjun/GAU 閾値再校正 Runbook

@@ -46,6 +46,7 @@ def run_hybrid_hunt(
     from src.core.models.finding import Finding, VulnType, Severity
     from src.tools.builtin.handoff import HandoffContext
     from concurrent.futures import ThreadPoolExecutor, as_completed
+    from src.core.notifications.finding_notification_router import FindingNotificationRouter
     import logging
 
     logger = logging.getLogger(__name__)
@@ -90,6 +91,9 @@ def run_hybrid_hunt(
     except Exception as e:
         print_result(False, f"Mode configuration failed: {e}")
         return
+    
+    # Initialize notification router for this hunt run
+    finding_router = FindingNotificationRouter(run_id=f"hunt-{log_path}")
     
     # プロジェクト設定
     if not project_name:
@@ -361,20 +365,10 @@ def run_hybrid_hunt(
             if finding:
                 findings.append(finding)
     
-    # 検出されたFindingの表示と通知
+    # 検出されたFindingの表示
     if findings:
         for finding in findings:
             print_finding(finding)
-            
-            # 通知送信（Critical/High）
-            if getattr(mode_config, 'notifications_enabled', True):
-                try:
-                    from src.core.notifications.notifier import get_notifier
-                    notifier = get_notifier()
-                    if notifier.notify_finding(finding):
-                        print_step("📢", "Notification sent")
-                except Exception as e:
-                    logger.debug(f"Notification failed: {e}")
     
     # 重複排除
     if getattr(mode_config, 'deduplication_enabled', True):
@@ -384,6 +378,27 @@ def run_hybrid_hunt(
             findings = deduplicate_findings(findings)
             if len(findings) < original_count:
                 print_step("✨", f"Merged duplicates: {original_count} → {len(findings)}")
+    
+    # 通知送信（全FindingをRouter経由で統一通知）
+    if findings and getattr(mode_config, 'notifications_enabled', True):
+        try:
+            results = finding_router.process_batch(
+                findings,
+                source_component="hunt",
+                ingress_path="run_hybrid_hunt",
+            )
+            for dto in results:
+                finding_router.route_and_notify(
+                    dto,
+                    source_component="hunt",
+                    ingress_path="run_hybrid_hunt",
+                )
+            summary = finding_router.get_summary()
+            print_step("📢", f"Notifications: {summary.get('total_sent', 0)} sent, "
+                      f"{summary.get('dedup_skipped', 0)} skipped (dedup), "
+                      f"{summary.get('dto_failed', 0)} failed")
+        except Exception as e:
+            logger.warning("Notification routing failed: %s", e)
     
     # RAG Feedback: False Positive判定
     fp_candidates = []

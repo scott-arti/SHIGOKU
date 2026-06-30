@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from src.core.infra.event_bus import Event, EventType, get_event_bus
-from src.core.models.finding import Finding, Severity
+from src.core.models.finding import Finding, Severity, VulnType
 from src.core.notifications.notifier import get_notifier
 from src.core.config.feature_config import get_feature_config
 
@@ -32,23 +32,23 @@ class NotificationEntry:
 
 class NotificationService:
     """
-    Finding通知サービス
+    SECONDARY Notification Service (EventBus observer).
     
-    重要度に応じた通知戦略:
-    - Critical/High: 即時通知
-    - Medium/Low: バッチ通知（5分間隔）
+    PRIMARY NOTIFICATION PATH (Phase A / SGK-2026-0297):
+        FindingNotificationRouter → Notifier.notify_finding()
+        All severities, Japanese detailed body, mandatory redaction.
     
-    機能:
-    - 重複排除（同一Finding IDは一定時間内に再通知しない）
-    - EventBusサブスクライバとして自動登録
-    - 統計情報の追跡
-    
-    使用例:
-        service = NotificationService()
-        await service.start()
+    THIS SERVICE (secondary/audit path):
+        Subscribes to EventBus VULN_FOUND events as an observer.
+        Provides backup notification via Notifier for any findings
+        that arrive through the EventBus channel.
         
-        # または手動で通知
-        service.notify(finding)
+        Note: As of Phase A, the EventBus VULN_FOUND payload now
+        includes the full `finding` dict (not just thin event fields),
+        making this observer effective for the first time.
+    
+    Do NOT add new primary notification logic here.
+    For Finding notification, use FindingNotificationRouter.
     """
 
     def __init__(self):
@@ -72,6 +72,10 @@ class NotificationService:
         if not self.config.enabled:
             logger.info("Notification service disabled")
             return
+
+        # Phase A (SGK-2026-0297): NotificationService is now a secondary path.
+        # Primary notification uses FindingNotificationRouter directly.
+        # This EventBus subscription provides audit/backup coverage only.
 
         if self._running:
             return
@@ -106,7 +110,16 @@ class NotificationService:
         logger.info("NotificationService stopped")
 
     async def _on_finding_event(self, event: Event) -> None:
-        """VULN_FOUNDイベントハンドラ"""
+        """
+        VULN_FOUNDイベントハンドラ
+        
+        Phase C (SGK-2026-0297): Fixed Enum coercion. Now correctly handles
+        string vuln_type from VULN_FOUND event payload.
+        """
+        # Phase A (SGK-2026-0297): This is a SECONDARY notification path.
+        # The primary path is FindingNotificationRouter.route_and_notify().
+        # This observer catches any findings that arrive via EventBus for auditing
+        # and backup notification.
         finding_data = event.payload.get("finding")
         if not finding_data:
             return
@@ -117,12 +130,33 @@ class NotificationService:
         elif isinstance(finding_data, dict):
             # 簡易変換（必要に応じて拡張）
             try:
+                # Convert string vuln_type to VulnType enum safely
+                raw_vuln_type = finding_data.get("vuln_type", "other")
+                try:
+                    vuln_type_enum = VulnType(raw_vuln_type)
+                except (ValueError, TypeError):
+                    vuln_type_enum = VulnType.OTHER
+                
+                # Convert severity safely (handle case variations, unknown values)
+                raw_severity = finding_data.get("severity", "info")
+                try:
+                    severity_enum = Severity(raw_severity.lower())
+                except (ValueError, TypeError, AttributeError):
+                    severity_enum = Severity.INFO
+                    logger.debug("Unknown severity '%s' from event, defaulting to INFO", raw_severity)
+                
                 finding = Finding(
-                    vuln_type=finding_data.get("vuln_type"),
-                    severity=Severity(finding_data.get("severity", "info")),
-                    title=finding_data.get("title", "Unknown"),
-                    description=finding_data.get("description", ""),
-                    target_url=finding_data.get("target_url", ""),
+                    vuln_type=vuln_type_enum,
+                    severity=severity_enum,
+                    title=finding_data.get("title", "Unknown")[:200],
+                    description=finding_data.get("description", "")[:500],
+                    target_url=finding_data.get("target_url", finding_data.get("target", "")),
+                    impact=finding_data.get("impact", ""),
+                    confidence=finding_data.get("confidence", 0.0),
+                    source_agent=finding_data.get("source_agent", ""),
+                    reproduction_steps=finding_data.get("reproduction_steps", []),
+                    cwe_id=finding_data.get("cwe_id"),
+                    cvss_score=finding_data.get("cvss_score"),
                 )
             except Exception as e:
                 logger.error(f"Failed to parse finding from event: {e}")
@@ -164,6 +198,39 @@ class NotificationService:
     async def notify_async(self, finding: Finding) -> bool:
         """Findingを通知（非同期版）"""
         return self.notify(finding)
+
+    def notify_finding_primary(self, finding, source_component: str = "", ingress_path: str = "", run_id: str = "") -> dict:
+        """
+        Send a finding through the PRIMARY notification path (FindingNotificationRouter).
+        
+        Convenience method for components that want to use the unified router
+        without directly importing FindingNotificationRouter.
+        
+        Uses a shared router instance per NotificationService to maintain
+        dedup state within a run. When run_id changes, creates a new router
+        to ensure clean dedup boundaries between runs.
+        
+        Args:
+            finding: Finding object, dict, or DTO.
+            source_component: Component name (e.g., "hunt", "watch").
+            ingress_path: Entry path (e.g., "hunt_run", "watch_loop").
+            run_id: Run identifier. If provided and different from current,
+                    creates a new router with this run_id.
+            
+        Returns:
+            dict with normalized, dedup_skipped, notified, error keys.
+        """
+        from src.core.notifications.finding_notification_router import FindingNotificationRouter
+        
+        # Create or replace router when run_id changes
+        if run_id and (not hasattr(self, '_primary_router_run_id') or self._primary_router_run_id != run_id):
+            self._primary_router = FindingNotificationRouter(run_id=run_id)
+            self._primary_router_run_id = run_id
+        elif not hasattr(self, '_primary_router'):
+            self._primary_router = FindingNotificationRouter(run_id=run_id)
+            self._primary_router_run_id = run_id
+        
+        return self._primary_router.route_and_notify(finding, source_component, ingress_path)
 
     def _is_duplicate(self, finding: Finding) -> bool:
         """重複チェック"""

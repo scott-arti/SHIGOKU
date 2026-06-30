@@ -1035,3 +1035,356 @@ def test_ops_cli_runtime_control_gate_branch_protection_mismatch_fails(tmp_path:
     payload = json.loads(result.stdout)
     assert payload["status"] == "fail"
     assert "approval_source_branch_protection_mismatch" in payload["errors"]
+
+
+# ---------------------------------------------------------------------------
+# report narrative / report target-profile の CLI テスト
+# ---------------------------------------------------------------------------
+
+def _write_full_session(path: Path) -> None:
+    """Write a comprehensive session JSON for narrative/profile formatter testing."""
+    payload = {
+        "start_time": 1719240000.0,
+        "timestamp": 1719240360.0,
+        "session_id": "test-session-ops",
+        "completed_tasks": [
+            {
+                "id": "task_1",
+                "state": "success",
+                "target_url": "http://example.com/login",
+                "vulnerabilities_found": [
+                    {"title": "XSS on login", "severity": "high", "type": "xss"}
+                ],
+            }
+        ],
+        "task_queue": [],
+        "context": {
+            "target_info": {"url": "http://example.com", "domain": "example.com"},
+            "scenario_coverage": {
+                "missing_scenarios": [],
+                "covered_count": 12,
+                "required_count": 12,
+            },
+        },
+        "run_ledger": [
+            {
+                "event_id": "ledger_evt_run1_0001",
+                "event_type": "llm_called",
+                "timestamp": "2026-06-24T10:00:00Z",
+                "phase": "init",
+                "actor_type": "MasterConductor",
+                "actor_name": "conductor",
+                "action": "plan",
+                "result": "ok",
+            }
+        ],
+        "llm_usage_summary": {
+            "by_model": {},
+            "totals": {"input_tokens": 100, "output_tokens": 50, "input_cache_tokens": 0, "call_count": 1},
+            "cache_hit_ratio": 0.0,
+        },
+        "scenario_coverage": {
+            "missing_scenarios": [],
+            "covered_count": 12,
+            "required_count": 12,
+        },
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+
+def test_ops_cli_report_narrative_with_session(tmp_path: Path) -> None:
+    session_file = tmp_path / "session_test.json"
+    _write_full_session(session_file)
+
+    result = subprocess.run(
+        [
+            "python3",
+            "scripts/shigoku_ops_cli.py",
+            "--json",
+            "report",
+            "narrative",
+            "--session",
+            str(session_file),
+        ],
+        cwd=_repo_root(),
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+
+
+def test_ops_cli_report_target_profile_with_session(tmp_path: Path) -> None:
+    session_file = tmp_path / "session_test.json"
+    _write_full_session(session_file)
+
+    result = subprocess.run(
+        [
+            "python3",
+            "scripts/shigoku_ops_cli.py",
+            "--json",
+            "report",
+            "target-profile",
+            "--session",
+            str(session_file),
+        ],
+        cwd=_repo_root(),
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+
+
+def test_ops_cli_report_narrative_output_to_file(tmp_path: Path) -> None:
+    session_file = tmp_path / "session_test.json"
+    _write_full_session(session_file)
+    output_file = tmp_path / "narrative_output.md"
+
+    result = subprocess.run(
+        [
+            "python3",
+            "scripts/shigoku_ops_cli.py",
+            "--json",
+            "report",
+            "narrative",
+            "--session",
+            str(session_file),
+            "--output",
+            str(output_file),
+        ],
+        cwd=_repo_root(),
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert output_file.exists()
+    content = output_file.read_text(encoding="utf-8")
+    assert "SHIGOKU" in content or "Run Narrative" in content or "実行" in content
+
+
+def test_ops_cli_report_target_profile_output_to_file(tmp_path: Path) -> None:
+    session_file = tmp_path / "session_test.json"
+    _write_full_session(session_file)
+    output_file = tmp_path / "profile_output.md"
+
+    result = subprocess.run(
+        [
+            "python3",
+            "scripts/shigoku_ops_cli.py",
+            "--json",
+            "report",
+            "target-profile",
+            "--session",
+            str(session_file),
+            "--output",
+            str(output_file),
+        ],
+        cwd=_repo_root(),
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok"
+    assert output_file.exists()
+    content = output_file.read_text(encoding="utf-8")
+    assert "ターゲットプロファイル" in content or "Target Profile" in content
+
+
+def test_ops_cli_report_narrative_missing_session(tmp_path: Path) -> None:
+    nonexistent = tmp_path / "nonexistent.json"
+
+    result = subprocess.run(
+        [
+            "python3",
+            "scripts/shigoku_ops_cli.py",
+            "--json",
+            "report",
+            "narrative",
+            "--session",
+            str(nonexistent),
+        ],
+        cwd=_repo_root(),
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 2, f"Expected exit 2, got {result.returncode}: {result.stderr}"
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "blocked"
+    assert "session_not_resolved" in payload.get("reason_codes", [])
+
+
+# ---------------------------------------------------------------------------
+# report narrative / report target-profile with --report consistency gate
+# ---------------------------------------------------------------------------
+
+
+def test_ops_cli_report_narrative_with_report_inconsistent_blocks(tmp_path: Path) -> None:
+    """When --report is used and coverage mismatches, generation must be blocked."""
+    session_file = tmp_path / "session_20260412_135804.json"
+    report_file = tmp_path / "haddix_report_20260412_135807.md"
+    # Session has 11/12 coverage
+    _write_session(
+        session_file,
+        covered=11,
+        required=12,
+        missing=["scn_01_idor_bola_object_access"],
+    )
+    # Report claims 12/12 — MISMATCH with session
+    _write_report(
+        report_file,
+        source_session=str(session_file.resolve()),
+        coverage_line="Coverage: 12/12 (100%), Missing: none",
+    )
+
+    result = subprocess.run(
+        [
+            "python3",
+            "scripts/shigoku_ops_cli.py",
+            "--json",
+            "report",
+            "narrative",
+            "--report",
+            str(report_file),
+        ],
+        cwd=_repo_root(),
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0, f"Expected non-zero exit for inconsistent, got {result.returncode}: {result.stderr}"
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "blocked"
+    assert any("coverage" in rc.lower() for rc in payload.get("reason_codes", [])), (
+        f"Expected coverage-related reason code in {payload.get('reason_codes')}"
+    )
+
+
+def test_ops_cli_report_target_profile_with_report_inconsistent_blocks(tmp_path: Path) -> None:
+    """When --report is used with target-profile and coverage mismatches, block."""
+    session_file = tmp_path / "session_20260412_135804.json"
+    report_file = tmp_path / "haddix_report_20260412_135807.md"
+    _write_session(
+        session_file,
+        covered=11,
+        required=12,
+        missing=["scn_01_idor_bola_object_access"],
+    )
+    _write_report(
+        report_file,
+        source_session=str(session_file.resolve()),
+        coverage_line="Coverage: 12/12 (100%), Missing: none",
+    )
+
+    result = subprocess.run(
+        [
+            "python3",
+            "scripts/shigoku_ops_cli.py",
+            "--json",
+            "report",
+            "target-profile",
+            "--report",
+            str(report_file),
+        ],
+        cwd=_repo_root(),
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0, f"Expected non-zero exit for inconsistent, got {result.returncode}: {result.stderr}"
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "blocked"
+    assert any("coverage" in rc.lower() for rc in payload.get("reason_codes", [])), (
+        f"Expected coverage-related reason code in {payload.get('reason_codes')}"
+    )
+
+
+def test_ops_cli_report_narrative_with_report_consistent_succeeds(tmp_path: Path) -> None:
+    """When --report is used and coverage matches, generation must proceed."""
+    session_file = tmp_path / "session_20260412_135804.json"
+    report_file = tmp_path / "haddix_report_20260412_135807.md"
+    missing = ["scn_01_idor_bola_object_access"]
+    _write_session(session_file, covered=11, required=12, missing=missing)
+    _write_report(
+        report_file,
+        source_session=str(session_file.resolve()),
+        coverage_line="Coverage: 11/12 (91.7%), Missing: scn_01_idor_bola_object_access",
+    )
+
+    result = subprocess.run(
+        [
+            "python3",
+            "scripts/shigoku_ops_cli.py",
+            "--json",
+            "report",
+            "narrative",
+            "--report",
+            str(report_file),
+        ],
+        cwd=_repo_root(),
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, (
+        f"Expected exit 0 for consistent pair, got {result.returncode}: {result.stderr}"
+    )
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "ok", f"Expected ok status, got {payload}"
+
+
+def test_ops_cli_narrative_extracts_deep_findings(tmp_path: Path) -> None:
+    session_file = tmp_path / "session_deep.json"
+    payload = {
+        "completed_tasks": [
+            {
+                "id": "task_1",
+                "result": {
+                    "findings": [{"title": "Deep Finding from result.findings", "severity": "high"}],
+                },
+            },
+            {
+                "id": "task_2",
+                "result": {
+                    "data": {
+                        "findings": [{"title": "Deeper Finding from data.findings", "severity": "critical"}],
+                    },
+                },
+            },
+        ],
+        "start_time": 1719240000.0,
+        "task_queue": [],
+        "context": {},
+    }
+    session_file.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            "python3",
+            "scripts/shigoku_ops_cli.py",
+            "--json",
+            "report",
+            "narrative",
+            "--session",
+            str(session_file),
+        ],
+        cwd=_repo_root(),
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["status"] == "ok"
+    markdown = data["markdown"]
+    assert "Deep Finding from result.findings" in markdown
+    assert "Deeper Finding from data.findings" in markdown

@@ -206,7 +206,7 @@ _MESSAGES_JA: Dict[str, str] = {
         "ドライラン: 実際の攻撃なしでワークフローを実行（safe_mode=True）"
     ),
     "argparse.translate_logs.help": (
-        "実験的機能: ローカルのOllamaを使ってログを日本語に翻訳"
+        "実験的機能: ローカルLLMを使ってログを日本語に翻訳"
     ),
     "argparse.live_dashboard.help": (
         "フェーズ5: ターミナルにリアルタイム実行ダッシュボードを表示"
@@ -360,6 +360,7 @@ _MESSAGES_JA: Dict[str, str] = {
     "result.report.html_generated": "HTMLレポートを生成しました: {path}",
     "result.report.html_failed": "HTMLレポートの生成に失敗しました: {error}",
     "result.report.haddix_generated": "jHADDIXスタイルレポートを生成しました: {path}",
+    "result.report.haddix_ja_en_generated": "ja-enペアレポートを生成しました: {path}",
     "result.report.haddix_failed": "jHADDIXレポートの生成に失敗しました: {error}",
     "result.report.open_browser": "ブラウザで開いています...",
     "result.report.docker_hint": (

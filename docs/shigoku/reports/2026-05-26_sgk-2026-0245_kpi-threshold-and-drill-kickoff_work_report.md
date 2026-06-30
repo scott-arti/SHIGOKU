@@ -4,13 +4,13 @@ doc_type: work_report
 status: done
 parent_task_id: SGK-2026-0239
 related_docs:
-  - docs/shigoku/plans/2026-05-26_arjun-gau-kpi_plan.md
+  - docs/shigoku/plans/2026-05-26_sgk-2026-0245_arjun-gau-kpi_plan.md
   - docs/shigoku/plans/external_tool_migration_plan.md
   - docs/shigoku/manuals/2026-05-26_arjun-gau-threshold-recalibration_runbook.md
   - docs/shigoku/manuals/2026-05-26_arjun-gau-failure-drill_runbook.md
   - docs/shigoku/worklogs/2026-05-26_sgk-2026-0245_kpi-threshold-and-drill-kickoff_work_log.md
 created_at: 2026-05-26
-updated_at: 2026-05-26
+updated_at: '2026-06-30'
 ---
 
 # SGK-2026-0245 作業完了報告（区切り）

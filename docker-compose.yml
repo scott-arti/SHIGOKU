@@ -21,19 +21,17 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - SHIGOKU_CAIDO__TOKEN
       - SHIGOKU_CAIDO__URL
-      - OLLAMA_API_BASE=${OLLAMA_API_BASE:-http://host.docker.internal:11434}
+      # [DEPRECATED Phase 4] Legacy flat config env vars - use config/shigoku.yaml llm section instead
       - SHIGOKU_MODEL=${SHIGOKU_MODEL:-deepseek/deepseek-chat}
       - SHIGOKU_MODEL_OUTPUT=${SHIGOKU_MODEL_OUTPUT:-deepseek/deepseek-chat}
       - SHIGOKU_MODEL_LIGHTWEIGHT=${SHIGOKU_MODEL_LIGHTWEIGHT:-deepseek/deepseek-chat}
-      # - SHIGOKU_MODEL_LIGHTWEIGHT=${SHIGOKU_MODEL_LIGHTWEIGHT:-ollama/qwen3.5:latest}
-      - SHIGOKU_LOCAL_LLM_MODEL=${SHIGOKU_LOCAL_LLM_MODEL:-qwen3.5:latest}
       - SHIGOKU_GUARDRAILS=${SHIGOKU_GUARDRAILS:-true}
       - SHIGOKU_TRACING=${SHIGOKU_TRACING:-false}
       - SHIGOKU_NEO4J_PASSWORD=${SHIGOKU_NEO4J_PASSWORD:-password}
       - SHIGOKU_DEV_MODE=${SHIGOKU_DEV_MODE:-false}
     stdin_open: true
     tty: true
-    # Network mode for accessing host services (e.g., Ollama)
+    # Network mode for accessing host services
     network_mode: host
     # DNS settings for stable name resolution
     dns:

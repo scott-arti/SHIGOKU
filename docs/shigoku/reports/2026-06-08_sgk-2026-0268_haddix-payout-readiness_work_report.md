@@ -4,11 +4,11 @@ doc_type: work_report
 status: done
 parent_task_id: SGK-2026-0065
 related_docs:
-- docs/shigoku/plans/2026-06-08_haddix-report-payout-readiness-output-improvements_plan.md
+- docs/shigoku/plans/2026-06-08_sgk-2026-0268_haddix-report-payout-readiness-output-improvements_plan.md
 - docs/shigoku/roadmaps/bug_bounty_enhancements_2026.md
 title: "Haddix report payout-readiness output improvements 実施報告"
 created_at: "2026-06-08"
-updated_at: '2026-06-08'
+updated_at: '2026-06-30'
 ---
 
 # 作業報告
@@ -28,7 +28,7 @@ updated_at: '2026-06-08'
 ## 変更ファイル
 - `src/reporting/haddix_formatter.py`
 - `tests/unit/reporting/test_haddix_formatter_kpi.py`
-- `docs/shigoku/plans/2026-06-08_haddix-report-payout-readiness-output-improvements_plan.md`
+- `docs/shigoku/plans/2026-06-08_sgk-2026-0268_haddix-report-payout-readiness-output-improvements_plan.md`
 
 ## 検証
 - `.venv/bin/pytest -q tests/unit/reporting/test_haddix_formatter_kpi.py -k 'submission or baseline_attack or target_specific or split_into_confirmed'`

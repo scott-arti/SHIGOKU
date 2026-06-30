@@ -4,11 +4,11 @@ doc_type: work_report
 status: done
 parent_task_id: null
 related_docs:
-- docs/shigoku/plans/2026-05-19_b-2-ssrf-tester_plan.md
-- docs/shigoku/plans/2026-05-15_a2_b2_implementation_plan.md
+- docs/shigoku/plans/2026-05-19_sgk-2026-0220_b-2-ssrf-tester_plan.md
+- docs/shigoku/plans/2026-05-15_sgk-2026-0059_a2_b2_implementation_plan.md
 - docs/shigoku/specs/standards/vulnerability_feature_implementation_spec.md
 created_at: '2026-05-19'
-updated_at: '2026-05-19'
+updated_at: '2026-06-30'
 ---
 
 # Work Report: SGK-2026-0220 B-2 SSRF 単体 Tester 実実装

@@ -4,12 +4,12 @@ doc_type: work_report
 status: done
 parent_task_id: SGK-2026-0131
 related_docs:
-- docs/shigoku/plans/2026-06-01_task_plan.md
+- docs/shigoku/plans/2026-06-01_sgk-2026-0251_task_plan.md
 - docs/shigoku/reports/2026-06-02_sgk-2026-0251_phase1-completion_work_report.md
 - docs/shigoku/worklogs/2026-06-02_sgk-2026-0251_phase3-completion_work_log.md
 title: SGK-2026-0251 Phase3 完了報告
 created_at: '2026-06-02'
-updated_at: '2026-06-02'
+updated_at: '2026-06-30'
 ---
 
 # SGK-2026-0251 Phase3 完了報告
@@ -29,7 +29,7 @@ updated_at: '2026-06-02'
 - `tests/core/intelligence/test_phase3_risk_clearance_checklist.py`
 - `tests/core/intelligence/test_phase3_benchmark.py`
 - `tests/core/engine/test_master_conductor_phase25_shadow.py`
-- `docs/shigoku/plans/2026-06-01_task_plan.md`
+- `docs/shigoku/plans/2026-06-01_sgk-2026-0251_task_plan.md`
 
 ## 判断理由
 - Phase 3 は off -> shadow -> compare -> enforce の順序を壊さず、既存 gate / audit / dedupe を温存したまま chain builder 側へ軽量実装を寄せた。

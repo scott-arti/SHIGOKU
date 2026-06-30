@@ -4,11 +4,11 @@ doc_type: work_log
 status: done
 parent_task_id: SGK-2026-0065
 related_docs:
-- docs/shigoku/plans/2026-05-19_mock-optimizedreciperunner-discovery-graphql_plan.md
+- docs/shigoku/plans/2026-05-19_sgk-2026-0221_mock-optimizedreciperunner-discovery-graphql_plan.md
 - docs/shigoku/reports/2026-05-31_sgk-2026-0221_plan-closure_work_report.md
-- docs/shigoku/subtasks/2026-05-31_sgk-2026-0221-graphql-slo_subtask_plan.md
+- docs/shigoku/subtasks/2026-05-31_sgk-2026-0250_graphql-slo_subtask_plan.md
 created_at: '2026-05-31'
-updated_at: '2026-05-31'
+updated_at: '2026-06-30'
 ---
 
 # Work Log: SGK-2026-0221 Plan Closure

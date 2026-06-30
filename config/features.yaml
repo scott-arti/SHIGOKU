@@ -12,11 +12,10 @@ features:
       provider: "direct" # direct, brightdata, smartproxy
       api_key: "" # 環境変数 WAF_BYPASS_API_KEY を優先
 
-    # マイクロエージェント（ローカルLLMによるツール出力解析）
+    # マイクロエージェント（LLMClient role="tool_output_analysis"経由のツール出力解析）
+    # model/ollama_url は config/shigoku.yaml の llm.roles.tool_output_analysis で管理
     micro_agent:
       enabled: false
-      model: "mistral:7b"
-      ollama_url: "http://localhost:11434"
 
     # サンドボックス（Docker内コマンド実行）
     sandbox:

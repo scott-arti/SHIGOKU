@@ -547,15 +547,9 @@ class ProxyLogAnalyzer:
             return candidate.confidence
         
         try:
-            from src.core.gpu_accelerator import GPUAccelerator
+            from src.core.models.llm import LLMClient
             import logging
             logger = logging.getLogger(__name__)
-            
-            gpu = GPUAccelerator()
-            
-            if not gpu.is_ollama_available():
-                logger.debug("Ollama not available, skipping LLM ranking")
-                return candidate.confidence
             
             prompt = f"""Analyze this HTTP request/response for potential security vulnerabilities.
 
@@ -576,23 +570,25 @@ Rate the risk from 1-10 and explain briefly (max 50 words).
 Format: "RISK: X/10 - <reason>"
 """
             
-            response = gpu.query_ollama(
-                model="qwen2.5-coder:7b",
-                prompt=prompt,
-                max_tokens=100
-            )
+            client = LLMClient(role="tool_output_analysis")
+            messages = [
+                {"role": "user", "content": prompt},
+            ]
+            response = client.generate(messages)
             
-            match = re.search(r"RISK:\s*(\d+)/10", response, re.IGNORECASE)
-            if match:
-                risk_score = int(match.group(1))
-                new_confidence = min(1.0, risk_score / 10.0)
-                logger.debug("LLM ranked %s: %.2f -> %.2f (Risk: %d/10)", 
-                           candidate.id, candidate.confidence, new_confidence, risk_score)
-                return new_confidence
+            if hasattr(response, 'choices') and response.choices:
+                content = response.choices[0].message.content
+                match = re.search(r"RISK:\s*(\d+)/10", content, re.IGNORECASE)
+                if match:
+                    risk_score = int(match.group(1))
+                    new_confidence = min(1.0, risk_score / 10.0)
+                    logger.debug("LLM ranked %s: %.2f -> %.2f (Risk: %d/10)", 
+                               candidate.id, candidate.confidence, new_confidence, risk_score)
+                    return new_confidence
             
             return candidate.confidence
         
-        except (IOError, ValueError, ImportError) as e:
+        except Exception as e:
             import logging
             logger = logging.getLogger(__name__)
             logger.warning("LLM ranking failed: %s", e)

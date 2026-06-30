@@ -4,11 +4,11 @@ doc_type: work_log
 status: done
 parent_task_id: SGK-2026-0251
 related_docs:
-- docs/shigoku/subtasks/2026-06-02_program-overrides_subtask_plan.md
+- docs/shigoku/subtasks/2026-06-02_sgk-2026-0253_program-overrides_subtask_plan.md
 - docs/shigoku/reports/2026-06-03_sgk-2026-0253_program-overrides_work_report.md
 title: SGK-2026-0253 program overrides 実装作業ログ
 created_at: '2026-06-03'
-updated_at: '2026-06-03'
+updated_at: '2026-06-30'
 ---
 
 # SGK-2026-0253 program overrides 実装作業ログ
@@ -26,7 +26,7 @@ updated_at: '2026-06-03'
 
 4. Step 11 / 11A の報告反映を実施
 - `docs/shigoku/reports/2026-06-03_sgk-2026-0253_program-overrides_work_report.md` を作成し、precedence matrix、audit 観測項目、統合一致結果、切り戻し条件、事業価値、安全性、非目標、release gate 候補を記録した。
-- 親計画 `docs/shigoku/plans/2026-06-01_task_plan.md` に `SGK-2026-0253` 完了報告への参照を追記した。
+- 親計画 `docs/shigoku/plans/2026-06-01_sgk-2026-0251_task_plan.md` に `SGK-2026-0253` 完了報告への参照を追記した。
 
 5. 台帳と計画書を更新
 - subtask plan を `done` に更新し、Step 11 / 11A と関連 Done 条件、CTO懸念項目の完了を反映した。

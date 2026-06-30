@@ -48,6 +48,7 @@ from src.core.factory import AgentFactory
 from src.core.engine.attack_planner import AttackPlanner
 from src.core.engine.intervention_policy import InterventionPolicy
 from src.core.engine.recipe_contracts import validate_task_schema
+from src.core.engine.recipe_loader import TakeoverCandidate
 from src.core.engine.master_conductor_hitl_snapshot import snapshot_task_for_hitl
 from src.core.engine.master_conductor_hitl_ticket import build_pending_hitl_ticket
 from src.core.engine.master_conductor_session_service import (
@@ -67,7 +68,30 @@ from src.core.engine.master_conductor_state_snapshot import (
     restore_pending_hitl_from_session_payload,
     restore_task_queue_from_session_payload,
 )
+from src.core.engine.reauth_orchestrator import (
+    ReauthOrchestrator,
+    classify_task_for_resume,
+    apply_resume_policy,
+    ResumeDecision,
+)
+from src.core.agents.swarm.auth.reauth_contracts import (
+    generate_reauth_attempt_id,
+    AuthContext,
+)
 from src.core.waf.bypasser import WAFBypasser
+from src.core.preflight import EntryGateFacade, PreflightContext, GatePhase, GatePolicy
+from src.core.models.run_ledger import (
+    RunLedgerEventType, RunLedgerRecorder, get_run_ledger_recorder,
+)
+from src.core.engine.run_ledger_redactor import redact_for_ledger
+# Phase 4 (SGK-2026-0313): Lane Scheduler shadow mode (observation only)
+from src.core.engine.scheduling_decision import SchedulingDecision
+from src.core.engine.lane_policy import LanePolicy
+from src.core.engine.mutex_policy import MutexPolicy
+from src.core.engine.admission_policy import ActionAdmissionPolicy
+from src.core.engine.snapshot_validity import check_snapshot_validity
+from src.core.engine.task_pruning_policy import TaskPruningPolicy
+from src.core.engine.post_batch_feedback import PostBatchFeedback
 
 _SCN_CATALOG_DEFAULTS: tuple[tuple[str, str], ...] = (
     ("scn_01_idor_bola_object_access", "IDOR/BOLA Object Access"),
@@ -218,6 +242,12 @@ class MasterConductor:
             self.recipe_loader = recipe_loader
             
         self.project_manager = project_manager  # ProjectManager
+
+        # ── takeover probe guards (session-level, shared across all recipe
+        #     tasks and candidates) ─────────────────────────────────────────
+        self._takeover_probe_cache = None  # lazy init
+        self._takeover_probe_budget = None
+        self._takeover_probe_dedupe = None
         
         # Phase 2 Spec: モードの取得
         self.mode = getattr(settings, "environment", "BUG_BOUNTY") 
@@ -261,11 +291,11 @@ class MasterConductor:
         self.attack_planner = AttackPlanner(kg=self.graph)
 
         # Personaの選択
-        from src.core.engine.conductor_prompts import CTF_PLANNING_PROMPT, BB_PLANNING_PROMPT
+        from src.core.engine.conductor_prompts import get_ctf_planning_prompt, get_bb_planning_prompt
         if self.mode == "CTF":
-            self.system_prompt = CTF_PLANNING_PROMPT.format(flag_format=self.flag_format)
+            self.system_prompt = get_ctf_planning_prompt(flag_format=self.flag_format)
         else:
-            self.system_prompt = BB_PLANNING_PROMPT
+            self.system_prompt = get_bb_planning_prompt()
 
         # StrategyOptimizerの初期化
         from src.core.engine.strategy_optimizer import StrategyOptimizer
@@ -403,6 +433,13 @@ class MasterConductor:
         self._react_observation_cb_open_until = 0.0
         self._react_observation_inflight = 0
         self._react_observation_pending_queue = deque()
+        self._react_observation_lock = threading.RLock()
+        self._admission_policy = ActionAdmissionPolicy(
+            require_state_assertion=True,
+            require_explicit_aggressive_flag=True,
+        )
+        self._sync_parallelism_admission_policy(getattr(settings, "parallelism", None))
+        self._phase7_strict_category_gate = True
 
         # 5.4 Unified Event Loop Management
         self._loop = None
@@ -429,12 +466,20 @@ class MasterConductor:
         self._flaky_trackers: dict[str, FlakyQuarantineTracker] = {}
         self._quarantined_signatures: dict[str, dict[str, Any]] = {}
         self._flaky_success_streaks: dict[str, int] = {}
+        self.run_ledger_recorder = get_run_ledger_recorder()
+
+        # === SGK-2026-0280: Reauth Orchestration ===
+        self._auth_ctx = AuthContext()
+        self.reauth_orchestrator = ReauthOrchestrator(
+            cooldown_window_seconds=getattr(settings, "reauth_cooldown_seconds", 60.0),
+            max_inflight=getattr(settings, "reauth_max_inflight", 3),
+        )
 
         # === Tier 2 Phase 4-5: EventBus Wiring ===
         self.event_bus = get_event_bus()
         self.event_bus.subscribe(EventType.SESSION_EXPIRED, self._handle_session_expired)
         self.event_bus.subscribe(EventType.REAUTH_SUCCESS, self._handle_reauth_success)
-        self.event_bus.subscribe(EventType.VULN_FOUND, self._handle_vuln_found)
+        self.event_bus.subscribe(EventType.REAUTH_FAILED, self._handle_reauth_failed)
         self.event_bus.subscribe(EventType.VULN_FOUND, self._handle_vuln_found)
         # Start EventBus (Ensure it's running in background)
         # Use shared loop to support synchronous instantiation
@@ -499,7 +544,16 @@ class MasterConductor:
             ))
             
         if tasks_to_add:
-            self._add_tasks(tasks_to_add, source="vulnerability_chaining")
+            # Phase 6 M2 (C1/C2): Defer follow-up task generation to main thread
+            # via _pending_event_follow_ups (drained in _apply_post_batch_feedback).
+            # This prevents re-entrant task_queue mutation from SharedLoop thread.
+            if not hasattr(self, '_pending_event_follow_ups'):
+                self._pending_event_follow_ups = []
+            self._pending_event_follow_ups.extend(tasks_to_add)
+            logger.debug(
+                "Vuln chaining: deferred %d follow-up task(s) to main thread",
+                len(tasks_to_add),
+            )
             for t in tasks_to_add:
                 logger.info("➕ [MasterConductor] Triggered chaining task: %s", t.name)
 
@@ -509,35 +563,119 @@ class MasterConductor:
         新しいトークンをコンテキストに反映し、停止していたタスクの再開を促す。
         """
         payload = event.payload
-        new_tokens = payload.get("new_tokens", {})
-        target = payload.get("target", "unknown")
-        
-        logger.info("✅ [MasterConductor] Re-authentication SUCCEEDED for %s. Updating context.", target)
-        
+        new_tokens: dict[str, Any] = payload.get("new_tokens", {})
+        target: str = payload.get("target", "unknown")
+        reauth_attempt_id: str = payload.get("reauth_attempt_id", "")
+        updated_cookies: dict[str, str] = payload.get("updated_cookies", {})
+        new_version: int = payload.get("auth_context_version", 0)
+
+        logger.info("✅ [MasterConductor] Re-authentication SUCCEEDED for %s (attempt=%s)", target, reauth_attempt_id)
+
         with self._state_lock:
-            # トークンを更新
+            # Update auth context version
+            old_version = self._auth_ctx.auth_context_version
+            if new_version > old_version:
+                self._auth_ctx.auth_context_version = new_version
+            else:
+                self._auth_ctx.bump_version()
+
+            # Update tokens
             for k, v in new_tokens.items():
                 self.accumulated_context.auth_tokens[k] = v
-            
-            # ステータスを更新
-            self.accumulated_context.auth_tokens["last_auth_status"] = "restored"
-            self.accumulated_context.auth_tokens["reauth_completed_at"] = str(time.time())
-            
-        # TODO: 失敗して待機中のタスクがあれば再キックするロジック
+
+            # Update cookies
+            for k, v in updated_cookies.items():
+                self.accumulated_context.auth_tokens[f"cookie_{k}"] = v
+
+            self._auth_ctx.last_auth_status = "restored"
+            self._auth_ctx.reauth_completed_at = time.time()
+
+        # Unregister in-flight
+        self.reauth_orchestrator.unregister_inflight(target, new_version or self._auth_ctx.auth_context_version)
+
+        # Clear degraded status on success
+        self.reauth_orchestrator.clear_degraded(target)
+
+        # Release quarantined tasks
+        released = self.reauth_orchestrator.release_quarantine(self._auth_ctx.auth_context_version)
+        if released:
+            logger.info("➕ [MasterConductor] Releasing %d quarantined tasks after reauth success", len(released))
+            # Phase 6 M2 (C1/C2): Defer to main thread via _pending_event_follow_ups.
+            if not hasattr(self, '_pending_event_follow_ups'):
+                self._pending_event_follow_ups = []
+            self._pending_event_follow_ups.extend(released)
+            logger.debug("Reauth recovery: deferred %d task(s) to main thread", len(released))
 
     async def _handle_session_expired(self, event: Event) -> None:
         """
         401 Unauthorized検出時に実行されるコールバック。
+
+        SGK-2026-0280: single-flight, cooldown, storm suppression を適用。
         """
         payload = event.payload
-        url = payload.get("url", "unknown")
-        logger.warning("🚨 [MasterConductor] Session EXPIRED at %s. Dispatching re-auth task.", url)
-        
+        url: str = payload.get("url", "unknown")
+        method: str = payload.get("method", "GET")
+        request_headers: dict[str, Any] = payload.get("request_headers", {})
+        origin_task_id: str = payload.get("origin_task_id", "")
+        reauth_attempt_id: str = payload.get("reauth_attempt_id") or generate_reauth_attempt_id()
+        auth_context_version: int = payload.get("auth_context_version", self._auth_ctx.auth_context_version)
+
+        logger.warning("🚨 [MasterConductor] Session EXPIRED at %s (attempt=%s origin=%s)",
+                       url, reauth_attempt_id, origin_task_id)
+
+        # === Storm detection ===
+        if self.reauth_orchestrator.record_expired_event():
+            logger.warning("[MasterConductor] Reauth storm detected — suppressing reauth dispatch")
+            # Record reason code for audit trail (Section 3.6)
+            try:
+                self.run_ledger_recorder.record(
+                    event_type=RunLedgerEventType.ERROR_OCCURRED,
+                    phase="reauth",
+                    actor_type="MasterConductor",
+                    actor_name="reauth_orchestrator",
+                    task_id=reauth_attempt_id,
+                    error="reauth_storm_suppressed",
+                    action="storm_suppress",
+                    source_refs={
+                        "url": url,
+                        "reason_code": "reauth_storm_suppressed",
+                        "origin_task_id": origin_task_id,
+                    },
+                )
+            except Exception as ledger_err:
+                logger.debug("Run ledger storm record error: %s", ledger_err)
+            return
+
+        # === Degradation check ===
+        if self.reauth_orchestrator.is_degraded(url):
+            logger.info("[MasterConductor] Target %s is degraded — skipping reauth", url)
+            return
+
+        # === Cooldown check ===
+        if self.reauth_orchestrator.is_in_cooldown(url):
+            logger.info("[MasterConductor] Target %s is in cooldown — skipping reauth", url)
+            return
+
+        # === Single-flight ===
+        if not self.reauth_orchestrator.can_launch_reauth(url, auth_context_version):
+            logger.info("[MasterConductor] Single-flight blocked reauth for %s", url)
+            return
+
+        # === Register in-flight ===
+        self.reauth_orchestrator.register_inflight(url, reauth_attempt_id, auth_context_version)
+
         # 1. コンテキストにエラー情報を記録
         with self._state_lock:
+            self._auth_ctx.last_auth_error = "401_unauthorized"
+            self._auth_ctx.reauth_triggered_at = time.time()
             self.accumulated_context.auth_tokens["last_auth_error"] = "401_unauthorized"
             self.accumulated_context.auth_tokens["reauth_triggered_at"] = str(time.time())
-        
+
+        # Update auth context version
+        current_version = self._auth_ctx.auth_context_version
+        if auth_context_version > current_version:
+            self._auth_ctx.auth_context_version = auth_context_version
+
         # 2. SwarmDispatcher を取得
         from src.core.engine.swarm_dispatcher import get_swarm_dispatcher
         dispatcher = get_swarm_dispatcher(
@@ -547,25 +685,117 @@ class MasterConductor:
             loop=self._get_loop(),
             event_bus=self.event_bus
         )
-        
+
         # 3. 再認証タスクをディスパッチ (AuthManagerAgent -> AutoReauthSpecialist)
-        # AuthManagerAgent は 'auth' タグに反応する
         try:
-            # 過去のログインリクエスト情報があればコンテキストから取得
             login_req = self.accumulated_context.auth_tokens.get("login_request")
-            
+
             await dispatcher.dispatch(
                 tags=["auth", "reauth"],
                 target=url,
                 task_name="autonomous_reauth",
                 params={
-                    "auth_tokens": self.accumulated_context.auth_tokens,
-                    "login_request": login_req
+                    "auth_tokens": dict(self.accumulated_context.auth_tokens),
+                    "login_request": login_req,
+                    "reauth_attempt_id": reauth_attempt_id,
                 }
             )
-            logger.info("✅ [MasterConductor] Re-auth task dispatched via Swarm.")
+            logger.info("✅ [MasterConductor] Re-auth task dispatched via Swarm: %s", reauth_attempt_id)
         except Exception as e:
             logger.error("❌ [MasterConductor] Failed to dispatch re-auth task: %s", e)
+            self.reauth_orchestrator.unregister_inflight(url, auth_context_version)
+
+    async def _handle_reauth_failed(self, event: Event) -> None:
+        """
+        REAUTH_FAILED 時に実行されるコールバック。
+
+        SGK-2026-0280:
+          - cooldown 適用
+          - 必要に応じて degradation 遷移
+          - 待機中タスクの隔離
+          - 運用ログ記録
+        """
+        payload = event.payload
+        target: str = payload.get("target", "unknown")
+        reauth_attempt_id: str = payload.get("reauth_attempt_id", "")
+        reason_code: str = payload.get("reason_code", "unknown")
+        reason_detail: str = payload.get("reason_detail", "")
+        attempted_strategies: list[str] = payload.get("attempted_strategies", [])
+        cooldown_until: float = payload.get("cooldown_until", time.time() + 60.0)
+        auth_context_version: int = payload.get("auth_context_version", self._auth_ctx.auth_context_version)
+
+        logger.error(
+            "❌ [MasterConductor] Re-authentication FAILED for %s: code=%s detail=%s strategies=%s",
+            target, reason_code, reason_detail, attempted_strategies,
+        )
+
+        # Unregister in-flight
+        self.reauth_orchestrator.unregister_inflight(target, auth_context_version)
+
+        # Apply cooldown
+        self.reauth_orchestrator.apply_cooldown(target, reason_code, cooldown_until)
+
+        with self._state_lock:
+            self._auth_ctx.last_auth_error = reason_code
+            self._auth_ctx.last_auth_status = "failed"
+            self.accumulated_context.auth_tokens["last_auth_error"] = reason_code
+            self.accumulated_context.auth_tokens["last_auth_status"] = "failed"
+
+        # Degradation gate: consecutive failures trigger degradation
+        if self.reauth_orchestrator._reauth_count_failed >= 3:
+            self.reauth_orchestrator.mark_degraded(target)
+            logger.warning(
+                "[MasterConductor] Target %s DEGRADED: %d consecutive reauth failures",
+                target, self.reauth_orchestrator._reauth_count_failed,
+            )
+
+        # Quarantine pending tasks for this target
+        # Iterate the task queue (pending tasks that haven't run yet) and
+        # quarantine any auth-sensitive / stateful tasks that would fail
+        # with stale credentials. This matches Section 3.2 requirement:
+        # "待機中タスクの隔離".
+        with self._state_lock:
+            try:
+                pending_tasks = self.task_queue.get_all() if hasattr(self, "task_queue") else []
+            except Exception:
+                pending_tasks = []
+            for task in list(pending_tasks):
+                task_target = getattr(task, "target", "")
+                if not task_target:
+                    continue
+                # Match against target domain or exact URL prefix
+                if target not in str(task_target) and not any(
+                    target_domain in str(task_target)
+                    for target_domain in [target, target.split("/")[2] if "://" in target else target]
+                ):
+                    continue
+                classification = classify_task_for_resume(task)
+                decision = apply_resume_policy(
+                    classification, self._auth_ctx.auth_context_version, 0
+                )
+                if decision in (ResumeDecision.REQUIRE_STATE_CHECK, ResumeDecision.DISCARD):
+                    self.reauth_orchestrator.quarantine_task(
+                        task, f"reauth_failed:{reason_code}"
+                    )
+
+        # Run ledger record
+        try:
+            self.run_ledger_recorder.record(
+                event_type=RunLedgerEventType.ERROR_OCCURRED,
+                phase="reauth",
+                actor_type="MasterConductor",
+                actor_name="reauth_orchestrator",
+                task_id=reauth_attempt_id,
+                error=f"reauth_failed: {reason_code}",
+                action="handle_reauth_failed",
+                source_refs={
+                    "target": target,
+                    "reason_code": reason_code,
+                    "attempted_strategies": attempted_strategies,
+                },
+            )
+        except Exception as ledger_err:
+            logger.debug("Run ledger reauth_failed record error: %s", ledger_err)
 
     def _get_loop(self):
         """共有イベントループを取得（必要に応じて開始）"""
@@ -2999,30 +3229,65 @@ class MasterConductor:
             )
 
     def _process_findings(self, findings: list, target_url: str) -> None:
-        """Findings を処理（通知、is_aggressive継承、レポート生成トリガー）"""
+        """Findings を処理（通知、is_aggressive継承）"""
+        if not findings:
+            return
+        
+        # Phase A (SGK-2026-0297): Route ALL findings through unified notification router
+        if not hasattr(self, '_finding_router'):
+            from src.core.notifications.finding_notification_router import FindingNotificationRouter
+            run_id = getattr(self, 'current_run_id', '') or getattr(self.context, 'run_id', '') or ''
+            self._finding_router = FindingNotificationRouter(run_id=run_id)
+        
+        try:
+            # Step 1: Normalize + dedup via router
+            dtos = self._finding_router.process_batch(
+                findings,
+                source_component="master_conductor",
+                ingress_path="_process_findings",
+            )
+            
+            # Step 2: Actually send each DTO that passed dedup
+            for dto in dtos:
+                try:
+                    self._finding_router.route_and_notify(
+                        dto,
+                        source_component="master_conductor",
+                        ingress_path="_process_findings",
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "[%s] _process_findings: notify failed for id=%s type=%s: %s",
+                        getattr(self._finding_router, 'run_id', '?'),
+                        getattr(dto, 'finding_id', '?'),
+                        type(e).__name__,
+                        e,
+                    )
+        except Exception as e:
+            logger.warning(
+                "[%s] _process_findings: batch processing failed: %s:%s",
+                getattr(self, '_finding_router', None) and getattr(self._finding_router, 'run_id', '?') or '?',
+                type(e).__name__,
+                e,
+            )
+        
+        # Handle is_aggressive inheritance (keep existing logic)
         for finding_data in findings:
-            # オブジェクトの場合は辞書に変換 (Phase 2.1 互換)
+            fd = None
             if hasattr(finding_data, 'to_dict') and callable(finding_data.to_dict):
-                finding_data = finding_data.to_dict()
-            elif not isinstance(finding_data, dict):
-                continue
-
-            severity = finding_data.get("severity", "low").lower()
-            is_aggressive = finding_data.get("is_aggressive", False)
+                fd = finding_data.to_dict()
+            elif isinstance(finding_data, dict):
+                fd = finding_data
             
-            # 1. Critical/High 通知
-            if severity in ["critical", "high"]:
-                self._send_notification_from_dict(finding_data)
-                # NOTE: レポート生成タスクの自動追加はここで行うか ReAct で行うか要検討
-                # 現状は通知のみ
-            
-            # 2. is_aggressive 継承
-            if is_aggressive:
+            if fd and fd.get("is_aggressive", False):
                 self._mark_target_as_aggressive(target_url)
-                logger.info("Target marked as aggressive based on finding: %s", target_url)
 
     def _send_notification_from_dict(self, finding_data: dict) -> None:
-        """辞書形式の Finding から通知を送信"""
+        """
+        DEPRECATED (SGK-2026-0297): Replaced by FindingNotificationRouter.
+        Kept for backward compatibility only. New code should use
+        self._finding_router.route_and_notify() instead.
+        """
         if not self.notify_tool:
             return
             
@@ -3144,6 +3409,10 @@ class MasterConductor:
             scenario_coverage = self._evaluate_intervention_scenario_coverage()
             # データの準備
             now = time.time()
+            # --- Resolve spool directory for run ledger ---
+            spool_dir = None
+            if self.project_manager and hasattr(self.project_manager, "project_dir"):
+                spool_dir = str(Path(self.project_manager.project_dir) / "sessions" / "run_ledger")
             session_data = build_async_session_payload(
                 task_queue=list(self.task_queue),
                 completed_tasks=self.completed_tasks,
@@ -3153,7 +3422,13 @@ class MasterConductor:
                 scenario_coverage=scenario_coverage,
                 timestamp=now,
                 default_start_time=now,
-            )
+                decision_traces=(
+                    (self.decision_tracer.to_list() if hasattr(self, 'decision_tracer') and self.decision_tracer else [])
+                    + (getattr(self, '_shadow_decisions', None) or [])
+                ),
+                task_execution_records=self.execution_log.to_list() if hasattr(self, 'execution_log') and self.execution_log else [],
+            run_ledger_payload=self.run_ledger_recorder.prepare_for_session(spool_dir=spool_dir),
+        )
 
             if self.project_manager:
                 filename = None
@@ -3445,12 +3720,8 @@ class MasterConductor:
             prompt = get_dynamic_question_prompt(mode, self.context.target_info)
             
             # LLM呼び出し
-            llm_model = (
-                getattr(settings, "model_lightweight", None)
-                or getattr(settings, "model", None)
-                or getattr(settings, "model_output", None)
-                or "ollama/qwen3.5:latest"
-            )
+            from src.core.models.llm import LLMClient
+            llm_model = LLMClient(role="specialist_light").model
             response = self.llm_client.chat.completions.create(
                 model=llm_model,  # コスト効率の良いモデル
                 messages=[{"role": "user", "content": prompt}],
@@ -4783,7 +5054,6 @@ class MasterConductor:
             # LLM呼び出し
             response = self.llm_client.generate(
                 messages=[
-                    {"role": "system", "content": "You are a smart security planner. Output JSON only."},
                     {"role": "user", "content": prompt}
                 ],
                 force_cloud=True,
@@ -4948,24 +5218,226 @@ class MasterConductor:
         self.task_queue.add_batch(tasks, source="plan_static")
         return tasks
     
+    def _build_takeover_candidates_from_recon(self) -> list[TakeoverCandidate]:
+        """Load takeover_candidates.json from recon output and parse into TakeoverCandidate list.
+        
+        Resolution order:
+          1. ``project_manager.project_dir/scans/raw/*_takeover_candidates.json``
+          2. ``project_manager.project_dir/*_takeover_candidates.json``
+          3. Return empty list if no file is found.
+
+        Handles both the new extended schema (has ``candidate_id`` field) and the
+        legacy format (``{"subdomain": "...", "status": "NXDOMAIN"}``).
+        """
+        from pathlib import Path
+        from datetime import datetime, timezone
+        import json
+        import hashlib
+        import glob as glob_module
+        
+        candidates: list[TakeoverCandidate] = []
+        takeover_files: list[Path] = []
+        
+        # Resolve project directory
+        project_dir: Optional[Path] = None
+        if self.project_manager and hasattr(self.project_manager, "project_dir"):
+            project_dir = Path(self.project_manager.project_dir)
+        
+        if project_dir is None:
+            logger.debug("_build_takeover_candidates_from_recon: no project_dir available")
+            return candidates
+        
+        # Search scan/raw subdirectory first (where ReconPipeline saves)
+        scan_raw_dir = project_dir / "scans" / "raw"
+        if scan_raw_dir.exists():
+            takeover_files.extend(
+                Path(p) for p in glob_module.glob(str(scan_raw_dir / "*_takeover_candidates.json"))
+            )
+        
+        # Fallback: direct project_dir
+        if not takeover_files:
+            takeover_files.extend(
+                Path(p) for p in glob_module.glob(str(project_dir / "*_takeover_candidates.json"))
+            )
+        
+        if not takeover_files:
+            logger.debug("_build_takeover_candidates_from_recon: no takeover_candidates.json found")
+            return candidates
+        
+        # Sort by modification time (most recent first) and pick the first
+        takeover_files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        takeover_file = takeover_files[0]
+        logger.debug("_build_takeover_candidates_from_recon: loading %s", takeover_file)
+        
+        # Parse JSON
+        try:
+            raw_data = json.loads(takeover_file.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            logger.warning("_build_takeover_candidates_from_recon: malformed JSON in %s", takeover_file)
+            return candidates
+        except Exception:
+            logger.warning("_build_takeover_candidates_from_recon: could not read %s", takeover_file)
+            return candidates
+        
+        if not isinstance(raw_data, list):
+            logger.warning("_build_takeover_candidates_from_recon: expected a JSON array in %s", takeover_file)
+            return candidates
+        
+        now = datetime.now(timezone.utc)
+        
+        for entry in raw_data:
+            if not isinstance(entry, dict):
+                continue
+            
+            # ── new extended schema: has candidate_id ────────────────────
+            if "candidate_id" in entry:
+                try:
+                    # Parse datetimes, with fallbacks
+                    def _parse_dt(val: Optional[str]) -> datetime:
+                        if val is None:
+                            return now
+                        try:
+                            return datetime.fromisoformat(val.replace("Z", "+00:00"))
+                        except (ValueError, AttributeError):
+                            return now
+                    
+                    first_seen = _parse_dt(entry.get("first_seen_dead"))
+                    last_seen = _parse_dt(entry.get("last_seen_dead"))
+                    last_dns = _parse_dt(entry.get("last_dns_probe"))
+                    last_http = _parse_dt(entry.get("last_http_probe"))
+                    
+                    tc = TakeoverCandidate(
+                        subdomain=str(entry.get("subdomain", "")),
+                        candidate_id=str(entry["candidate_id"]),
+                        observed_at=_parse_dt(entry.get("observed_at")),
+                        first_seen_dead=first_seen,
+                        last_seen_dead=last_seen,
+                        cname_chain=entry.get("cname_chain") or [],
+                        provider_guess=entry.get("provider_guess"),
+                        freshness_score=float(entry.get("freshness_score", 0.0)),
+                        required_signals=entry.get("required_signals") or {},
+                        blocking_signals=set(entry.get("blocking_signals") or []),
+                        raw_evidence=entry.get("raw_evidence") or {},
+                        manual_claim_review_required=bool(entry.get("manual_claim_review_required", False)),
+                        last_dns_probe=last_dns if entry.get("last_dns_probe") else None,
+                        last_http_probe=last_http if entry.get("last_http_probe") else None,
+                        source_line=entry.get("source_line"),
+                        producer_step=entry.get("producer_step"),
+                        session_id=entry.get("session_id"),
+                        artifact_hash=entry.get("artifact_hash"),
+                    )
+                    candidates.append(tc)
+                except Exception as exc:
+                    logger.warning(
+                        "_build_takeover_candidates_from_recon: failed to parse new-schema entry: %s",
+                        exc,
+                    )
+                continue
+            
+            # ── legacy format: {"subdomain": ..., "status": "NXDOMAIN"} ──
+            subdomain = str(entry.get("subdomain", "")).strip()
+            if not subdomain:
+                continue
+            
+            # Generate a stable candidate_id from subdomain
+            hash_suffix = hashlib.sha256(subdomain.encode()).hexdigest()[:16]
+            candidate_id = f"takeover_legacy_{hash_suffix}"
+            
+            tc = TakeoverCandidate(
+                subdomain=subdomain,
+                candidate_id=candidate_id,
+                observed_at=now,
+                first_seen_dead=now,
+                last_seen_dead=now,
+                cname_chain=[],
+                provider_guess=None,
+                freshness_score=1.0,
+                required_signals={"dns_dead": True},
+                blocking_signals=set(),
+                raw_evidence={},
+                manual_claim_review_required=False,
+                last_dns_probe=None,
+                last_http_probe=None,
+            )
+            candidates.append(tc)
+        
+        if candidates:
+            logger.info(
+                "_build_takeover_candidates_from_recon: loaded %d takeover candidates",
+                len(candidates),
+            )
+        return candidates
+    
     def _load_recipe_tasks(self) -> list[Task]:
-        """RecipeLoaderからRecipeを取得し、OptimizedRecipeRunnerで実行"""
+        """RecipeLoaderからRecipeCandidateを取得し、OptimizedRecipeRunnerで実行"""
         if not self.recipe_loader:
             return []
+        
+        # ── kill-switch / feature-flag gate ──────────────────────────────
+        from src.core.engine.takeover_feature_flags import should_use_v2
+        if not should_use_v2():
+            logger.info(
+                "takeover v2 disabled (feature flag / kill switch), "
+                "skipping takeover recipe injection"
+            )
+            # ── still allow non-takeover recipes ────────────────────────
+            context_dict = {
+                "tech_stack": self.context.target_info.get("tech_stack", []),
+                "target": self.context.target_info.get("target", ""),
+                "takeover_candidates": [],
+            }
+            matched = self.recipe_loader.match_recipes_to_context(context_dict)
+            tasks = []
+            if matched:
+                target = self.context.target_info.get("target", "")
+                for rc in matched:
+                    recipe = rc.recipe
+                    recipe_task = Task(
+                        id=f"recipe_exec_{recipe.name}_{uuid.uuid4().hex[:8]}",
+                        name=f"Optimized Recipe: {recipe.name}",
+                        agent_type="swarm",
+                        action="run_recipe",
+                        params={
+                            "recipe_name": recipe.name,
+                            "target": target,
+                            "selector_score": rc.score,
+                            "selector_reasons": rc.reasons,
+                            "candidate_id": rc.supporting_evidence.get("candidate_id"),
+                            "manual_review_required": rc.manual_review_required,
+                        },
+                        priority=100
+                    )
+                    task_contract = validate_task_schema(recipe_task)
+                    if not task_contract.get("ok", False):
+                        logger.warning(
+                            "Skip invalid recipe task contract for %s: %s",
+                            recipe.name,
+                            task_contract.get("errors", []),
+                        )
+                        continue
+                    tasks.append(recipe_task)
+            if tasks:
+                logger.info(f"Injected {len(tasks)} optimized recipe execution tasks")
+            return tasks
+        
+        # ── takeover_candidates を recon 出力から読み込み ──────────────────
+        takeover_candidates = self._build_takeover_candidates_from_recon()
         
         # コンテキスト情報を準備
         context_dict = {
             "tech_stack": self.context.target_info.get("tech_stack", []),
             "target": self.context.target_info.get("target", ""),
+            "takeover_candidates": takeover_candidates,
         }
         
-        # マッチするRecipeを検索
-        matched_recipes = self.recipe_loader.match_recipes_to_context(context_dict)
+        # マッチするRecipeCandidateを検索
+        matched = self.recipe_loader.match_recipes_to_context(context_dict)
         
         tasks = []
-        if matched_recipes:
+        if matched:
             target = self.context.target_info.get("target", "")
-            for recipe in matched_recipes:
+            for rc in matched:
+                recipe = rc.recipe
                 recipe_task = Task(
                     id=f"recipe_exec_{recipe.name}_{uuid.uuid4().hex[:8]}",
                     name=f"Optimized Recipe: {recipe.name}",
@@ -4974,6 +5446,13 @@ class MasterConductor:
                     params={
                         "recipe_name": recipe.name,
                         "target": target,
+                        "subdomain": rc.supporting_evidence.get("subdomain", target),
+                        "provider_guess": rc.supporting_evidence.get("provider_guess"),
+                        # ── selector metadata for traceability ───────────
+                        "selector_score": rc.score,
+                        "selector_reasons": rc.reasons,
+                        "candidate_id": rc.supporting_evidence.get("candidate_id"),
+                        "manual_review_required": rc.manual_review_required,
                     },
                     priority=100
                 )
@@ -4992,6 +5471,28 @@ class MasterConductor:
         
         return tasks
 
+    def _ensure_takeover_probe_guards(self):
+        """Lazy-init session-level takeover probe guards.
+
+        Creates ProbeCache/ProbeBudget/DedupeWindow once per MasterConductor
+        instance so that budget, dedupe, and cache are shared across all
+        recipe task executions and candidates.
+
+        Uses ``hasattr`` guard because some test paths construct
+        MasterConductor via ``__new__`` without calling ``__init__``.
+        """
+        if not hasattr(self, "_takeover_probe_cache"):
+            self._takeover_probe_cache = None
+            self._takeover_probe_budget = None
+            self._takeover_probe_dedupe = None
+        if self._takeover_probe_cache is None:
+            from src.core.engine.takeover_probe_budget import (
+                ProbeCache, ProbeBudget, DedupeWindow,
+            )
+            self._takeover_probe_cache = ProbeCache(ttl_seconds=3600)
+            self._takeover_probe_budget = ProbeBudget(max_probes=10, window_seconds=3600)
+            self._takeover_probe_dedupe = DedupeWindow(window_seconds=300)
+
     async def _execute_recipe_task(self, task: Task) -> dict:
         from src.core.engine.optimized_runner import OptimizedRecipeRunner
 
@@ -5008,7 +5509,99 @@ class MasterConductor:
         if not recipe:
             return {"success": False, "error": f"Recipe not found: {recipe_name}"}
 
+        # ── session-level takeover probe guards (lazy-init, shared across
+        #     all recipe tasks and candidates for this target session) ──────
+        self._ensure_takeover_probe_guards()
+        _probe_cache = self._takeover_probe_cache
+        _probe_budget = self._takeover_probe_budget
+        _probe_dedupe = self._takeover_probe_dedupe
+        from src.core.engine.takeover_probe_budget import check_probe_allowed
+
         async def _step_executor(step, step_target):
+            # ── takeover step executor dispatch (plan 4.4, 4.12) ──
+            # NOTE: shadow mode (shadow_compare_results) is implemented in
+            # takeover_feature_flags.py but NOT wired into runtime because
+            # it requires legacy results which are not available in the
+            # current codebase. Wiring is deferred until a legacy path
+            # exists to produce comparison data.
+            # See SGK-2026-0283 deferred item: "shadow_mode_runtime_wiring".
+            _takeover_actions = {"cname_resolve", "http_probe", "check_takeover"}
+            if step.action in _takeover_actions:
+                from src.core.engine.takeover_step_executors import dispatch_takeover_step
+
+                # ── probe budget / dedupe gate ───────────────────────
+                candidate_id = str(task.params.get("candidate_id", step_target))
+                probe_check = check_probe_allowed(
+                    candidate_id=candidate_id,
+                    target=str(step_target),
+                    provider=str(task.params.get("provider_guess") or "unknown"),
+                    probe_type=str(step.action),
+                    budget=_probe_budget,
+                    cache=_probe_cache,
+                    dedupe=_probe_dedupe,
+                )
+                # ── check cached result first (before blocked check) ──
+                if probe_check["cached_result"] is not None:
+                    return {
+                        "status": "success",
+                        "reason": "cache_hit",
+                        "retryable": False,
+                        "data": probe_check["cached_result"],
+                    }
+                if not probe_check["allowed"]:
+                    logger.warning(
+                        "Probe blocked: %s for %s/%s: %s",
+                        step.action, candidate_id, step_target, probe_check["reason"],
+                    )
+                    return {
+                        "status": "blocked",
+                        "reason": probe_check["reason"],
+                        "retryable": True,
+                        "data": {},
+                    }
+
+                takeover_context = {
+                    "target": step_target,
+                    "subdomain": str(task.params.get("subdomain", step_target) or step_target),
+                    "provider_id": task.params.get("provider_guess"),
+                }
+                takeover_result = await dispatch_takeover_step(
+                    action=step.action,
+                    params=step.params or {},
+                    context=takeover_context,
+                )
+                # ── populate cache after successful probe ────────────
+                if takeover_result.status == "success":
+                    probe_key = _probe_cache.make_key(
+                        candidate_id,
+                        str(task.params.get("provider_guess") or "unknown"),
+                        str(step.action),
+                    )
+                    _probe_cache.set(probe_key, takeover_result.output)
+                state = takeover_result.infrastructure_state
+                result_dict: dict = {
+                    "status": takeover_result.status,
+                    "reason": takeover_result.error or "takeover_step_executed",
+                    "retryable": False,
+                    "data": takeover_result.output,
+                    "infrastructure_state": state,
+                }
+                # ── map infrastructure_state to error_code for classify_infrastructure_state ──
+                if takeover_result.status == "failed":
+                    if state == "timeout":
+                        result_dict["error_code"] = "TOOL_TIMEOUT"
+                    elif state == "missing_binary":
+                        result_dict["error_code"] = "MISSING_BINARY"
+                    elif state == "probe_failed":
+                        result_dict["error_code"] = "TOOL_ERROR"
+                    elif state == "resolver_degraded":
+                        result_dict["error_code"] = "TOOL_ERROR"
+                    elif state == "tool_unavailable":
+                        result_dict["error_code"] = "TOOL_ERROR"
+                    else:
+                        result_dict["error_code"] = "TOOL_ERROR"
+                return result_dict
+
             step_params = dict(step.params or {})
             step_tags = step_params.get("tags", [])
             if not isinstance(step_tags, list):
@@ -5053,6 +5646,445 @@ class MasterConductor:
             "data": result_bundle,
         }
     
+    def _ensure_react_observation_lock(self):
+        lock = getattr(self, "_react_observation_lock", None)
+        if lock is None:
+            lock = threading.RLock()
+            self._react_observation_lock = lock
+        return lock
+
+    def _ensure_origin_suppressor(self):
+        """Lazy-init the OriginSuppressor for Phase 7 control-plane (SGK-2026-0316)."""
+        suppressor = getattr(self, "_origin_suppressor", None)
+        if suppressor is None:
+            from src.core.engine.origin_suppressor import OriginSuppressor
+            suppressor = OriginSuppressor()
+            self._origin_suppressor = suppressor
+        return suppressor
+
+    def _sync_parallelism_admission_policy(self, parallelism_settings) -> None:
+        policy = getattr(self, "_admission_policy", None)
+        if policy is None:
+            policy = ActionAdmissionPolicy(
+                require_state_assertion=True,
+                require_explicit_aggressive_flag=True,
+            )
+            self._admission_policy = policy
+
+        policy.apply_parallelism_settings(parallelism_settings)
+
+        try:
+            from src.core.engine import parallel_orchestrator
+            parallel_orchestrator.admission_policy = policy
+        except Exception as exc:
+            logger.debug("Failed to sync parallel admission policy: %s", exc)
+
+    def _get_current_snapshot_versions(self) -> tuple[int, int]:
+        target_info = getattr(getattr(self, "context", None), "target_info", {}) or {}
+        recon_version = int(
+            target_info.get("recon_snapshot_version")
+            or getattr(self, "_current_recon_snapshot_version", 0)
+            or 0
+        )
+        auth_ctx = getattr(self, "_auth_ctx", None)
+        auth_version = int(
+            getattr(auth_ctx, "auth_context_version", 0)
+            or target_info.get("auth_context_version", 0)
+            or 0
+        )
+        return recon_version, auth_version
+
+    def _sync_task_queue_snapshot_versions(self) -> None:
+        queue = getattr(self, "task_queue", None)
+        setter = getattr(queue, "set_snapshot_versions", None)
+        if not callable(setter):
+            return
+
+        recon_version, auth_version = self._get_current_snapshot_versions()
+        setter(
+            current_recon_version=recon_version,
+            current_auth_version=auth_version,
+        )
+
+    def _mark_task_invalidated(self, task: Task, reason: str, point: str) -> None:
+        metadata = task.metadata if isinstance(getattr(task, "metadata", None), dict) else {}
+        task.metadata = metadata
+        metadata["lifecycle_status"] = "invalidated"
+        metadata["lifecycle_reason"] = reason
+        metadata["invalidated_by"] = f"validity_check:{point}"
+
+    def _reject_invalid_task_snapshot_at_start(self, task: Task) -> dict | None:
+        recon_version, auth_version = self._get_current_snapshot_versions()
+        valid, reason = check_snapshot_validity(task, recon_version, auth_version)
+        if valid:
+            return None
+
+        self._mark_task_invalidated(task, reason, "start")
+        try:
+            task.state = TaskState.SKIPPED
+        except Exception:
+            pass
+        return {
+            "success": False,
+            "skipped": True,
+            "task_id": task.id,
+            "skip_reason": reason,
+        }
+
+    def _evaluate_phase7_state_assertion_before_start(self, task: Task) -> dict | None:
+        """Phase 7 (SGK-2026-0316): Evaluate state assertion before task RUNNING.
+
+        Called between snapshot validity check and TaskState.RUNNING.
+        Mutating/aggressive lanes require precondition/postcondition assertion.
+        Stale auth context or missing assertion → skip with lifecycle_status=rejected.
+        Read-only/stateful_read lanes are not evaluated (return None).
+        """
+        from src.core.engine.state_assertion import evaluate_state_assertion
+
+        metadata = task.metadata if isinstance(getattr(task, "metadata", None), dict) else {}
+        lane = str(metadata.get("lane") or metadata.get("authority_lane") or "")
+        if lane not in {"mutating", "aggressive_exclusive"}:
+            return None
+
+        _, auth_version = self._get_current_snapshot_versions()
+        result = evaluate_state_assertion(
+            lane=lane,
+            assertion=metadata.get("state_assertion"),
+            task_metadata=metadata,
+            current_versions={"auth_context_version": auth_version},
+        )
+        metadata["state_assertion_audit"] = result.audit
+        task.metadata = metadata
+        if result.allowed:
+            return None
+
+        metadata["lifecycle_status"] = "rejected"
+        metadata["lifecycle_reason"] = result.reason_code
+        try:
+            task.state = TaskState.SKIPPED
+        except Exception:
+            pass
+        return {
+            "success": False,
+            "skipped": True,
+            "task_id": task.id,
+            "skip_reason": result.reason_code,
+        }
+
+    def _dispatch_batch(self, batch_tasks: list, force_serial: bool = False) -> dict:
+        """Route batch tasks to serial or gated parallel execution. (SGK-2026-0314 Phase 5)
+
+        LB-1/LB-5/LB-0: When force_serial is True or a task's lane is not
+        read_only+parallel_safe, the task is executed serially via
+        _execute_single_task_full_flow.  Only read_only+parallel_safe tasks
+        are dispatched to the parallel orchestrator.
+
+        LB-3: origin_key / target_key / lane / scope_verdict are propagated
+        from Task.metadata into ParallelTask so per-origin budget enforcement works.
+
+        Returns: dict with keys 'parallel_tasks' and 'serial_task_ids'
+        for the caller to handle async execution and post-batch feedback.
+        """
+        from src.core.engine.parallel_orchestrator import CATEGORY_TO_LANE, create_parallel_task
+
+        self._sync_parallelism_admission_policy(getattr(settings, "parallelism", None))
+
+        parallel_tasks = []
+        serial_task_ids = []
+        serial_results: list = []
+        rejected_task_ids: list[str] = []
+
+        if not force_serial:
+            lane_policy = getattr(self, '_lane_policy', None)
+            for task in batch_tasks:
+                if lane_policy is not None:
+                    lane, parallel_safe, _, _, _, _ = lane_policy.classify(
+                        task.agent_type or "",
+                        task.metadata if task.metadata else None,
+                    )
+                else:
+                    lane, parallel_safe = "sequential_required", False
+
+                # Phase 7 (SGK-2026-0316): Origin suppressor check for all non-aggressive lanes.
+                # If an aggressive_exclusive task owns this origin, suppress.
+                metadata = task.metadata or {}
+                task.metadata = metadata
+                origin_key = metadata.get("origin_key")
+                if origin_key and lane != "aggressive_exclusive":
+                    suppressor = self._ensure_origin_suppressor()
+                    suppress_decision = suppressor.check(
+                        origin_key, lane=lane, task_id=task.id,
+                    )
+                    if not suppress_decision.allowed:
+                        metadata["lifecycle_status"] = "rejected"
+                        metadata["lifecycle_reason"] = suppress_decision.reason_code
+                        metadata["suppressed_by"] = suppress_decision.owner_task_id
+                        rejected_task_ids.append(task.id)
+                        continue
+
+                if lane == "read_only" and parallel_safe:
+                    strict_category_gate = bool(getattr(self, "_phase7_strict_category_gate", False))
+                    if strict_category_gate and (task.agent_type or "default") not in CATEGORY_TO_LANE:
+                        task.metadata = metadata
+                        metadata["lifecycle_status"] = "rejected"
+                        metadata["lifecycle_reason"] = "unknown_execution_category"
+                        rejected_task_ids.append(task.id)
+                        continue
+
+                    p_task = create_parallel_task(
+                        task.id,
+                        self._execute_single_task_full_flow,
+                        task,
+                        category=task.agent_type or "default",
+                        origin_key=metadata.get("origin_key"),
+                        target_key=metadata.get("target_key"),
+                        lane=lane,
+                        scope_verdict=metadata.get("scope_verdict", "unknown"),
+                        fail_closed_unknown_category=strict_category_gate,
+                        state_assertion=metadata.get("state_assertion"),
+                        explicit_aggressive_approval=bool(metadata.get("explicit_aggressive_approval", False)),
+                        low_noise_profile=bool(metadata.get("low_noise_profile", False)),
+                    )
+                    if p_task.admitted:
+                        parallel_tasks.append(p_task)
+                    else:
+                        metadata["lifecycle_status"] = "rejected"
+                        metadata["lifecycle_reason"] = p_task.reject_reason
+                        rejected_task_ids.append(task.id)
+                else:
+                    # Phase 7 (SGK-2026-0316): If aggressive_exclusive lane,
+                    # enter origin suppress before serial execution and release after.
+                    metadata = task.metadata or {}
+                    task.metadata = metadata
+                    origin_key = metadata.get("origin_key")
+                    is_aggressive = lane == "aggressive_exclusive"
+                    if is_aggressive and origin_key:
+                        self._ensure_origin_suppressor().enter(
+                            origin_key, lane=lane, owner_task_id=task.id,
+                        )
+                    try:
+                        res = self._execute_single_task_full_flow(task)
+                        res["task_id"] = task.id
+                        serial_results.append(res)
+                        serial_task_ids.append(task.id)
+                    finally:
+                        if is_aggressive and origin_key:
+                            self._ensure_origin_suppressor().release(
+                                origin_key, owner_task_id=task.id,
+                            )
+        else:
+            for task in batch_tasks:
+                res = self._execute_single_task_full_flow(task)
+                res["task_id"] = task.id
+                serial_results.append(res)
+                serial_task_ids.append(task.id)
+
+        # Dispatch parallel-eligible tasks via orchestrator
+        if parallel_tasks:
+            # Async execution is handled by the caller (_run_async_safe in
+            # execute_with_replan).  Here we only build and classify.
+            pass
+
+        return {
+            'parallel_tasks': parallel_tasks,
+            'serial_task_ids': serial_task_ids,
+            'serial_results': serial_results,
+            'rejected_task_ids': rejected_task_ids,
+        }
+
+    def _apply_post_batch_feedback(self, batch_tasks: list, results: list) -> None:
+        """Apply deferred shared-state mutations after batch join. (SGK-2026-0314 LB-2)
+
+        Phase 5 LB-2 (6.3.1): All shared-state mutations from
+        _execute_single_task_full_flow are collected into
+        result['_post_batch_feedback'] and replayed here in batch order
+        (not completion order) on the main thread under _state_lock.
+        This eliminates lock contention during parallel execution.
+
+        Must be called after execute_parallel returns and before
+        the next batch starts.
+        """
+        if not batch_tasks:
+            return
+
+        task_map = {t.id: t for t in batch_tasks}
+
+        with self._state_lock:
+            # Process in dispatch order, not completion order
+            for task in batch_tasks:
+                # Find the result for this task
+                result = None
+                for r in results:
+                    if isinstance(r, dict):
+                        rid = r.get("task_id") or r.get("id", "")
+                    else:
+                        rid = getattr(r, "task_id", getattr(r, "id", ""))
+                    if str(rid) == str(task.id):
+                        result = r
+                        # Convert TaskResult to dict if needed
+                        if hasattr(result, 'data'):
+                            result = result.data if isinstance(result.data, dict) else {}
+                        break
+
+                if result is None:
+                    continue
+
+                fb_raw = result.get("_post_batch_feedback")
+                if not fb_raw:
+                    continue
+
+                # Phase 6 M3 (C3): Accept both PostBatchFeedback dataclass
+                # and legacy dict. Prefer attribute access for type safety.
+                if isinstance(fb_raw, PostBatchFeedback):
+                    fb = fb_raw
+                    fb_is_empty = fb.is_empty()
+                elif isinstance(fb_raw, dict):
+                    fb = fb_raw
+                    fb_is_empty = not fb
+                else:
+                    continue
+
+                if fb_is_empty:
+                    continue
+
+                # --- Typed attribute access (PostBatchFeedback) ---
+                def _get_fb(attr, default=None):
+                    if isinstance(fb, PostBatchFeedback):
+                        return getattr(fb, attr, default)
+                    return fb.get(attr, default)
+
+                # Replay DecisionEnhancer retry tasks → task_queue.add
+                for new_task in _get_fb("deferred_decision_enhancer_tasks", []):
+                    try:
+                        self.task_queue.add(new_task)
+                    except Exception as e:
+                        logger.warning("Post-batch decision_enhancer add failed: %s", e)
+
+                # Replay findings → handle_finding
+                for finding in _get_fb("deferred_findings", []):
+                    try:
+                        self.handle_finding(finding)
+                    except Exception as e:
+                        logger.warning("Post-batch handle_finding failed: %s", e)
+
+                # Replay critical path → boost_priority
+                for action in _get_fb("deferred_critical_actions", []):
+                    try:
+                        if action.get("action_type") == "boost_priority":
+                            target_tags = action.get("target_tags", [])
+                            new_priority = action.get("priority", 999)
+
+                            def _condition_fn(t, tt=target_tags):
+                                t_tags = getattr(t, 'params', {}).get('tags', [])
+                                return any(tag in tt for tag in t_tags)
+
+                            self.task_queue.boost_priority(
+                                condition=_condition_fn,
+                                new_priority=new_priority,
+                            )
+                    except Exception as e:
+                        logger.warning("Post-batch critical action failed: %s", e)
+
+                # Replay boost events from PriorityBooster
+                boost_event = _get_fb("deferred_boost_event")
+                if boost_event:
+                    try:
+                        affected_ids = boost_event.get("affected_ids", [])
+                        boost_val = boost_event.get("boost_val", 0)
+                        if affected_ids and boost_val:
+                            self.task_queue.boost_priority(
+                                lambda t, aids=affected_ids: t.id in aids,
+                                boost_val,
+                            )
+                    except Exception as e:
+                        logger.warning("Post-batch boost_event failed: %s", e)
+
+                # Replay new_assets → _expand_plan_for_assets
+                new_assets = _get_fb("deferred_new_assets")
+                if new_assets:
+                    try:
+                        self._expand_plan_for_assets(new_assets)
+                    except Exception as e:
+                        logger.warning("Post-batch expand_plan failed: %s", e)
+
+                # Replay react_tasks → _add_tasks
+                react_tasks = _get_fb("deferred_react_tasks")
+                if react_tasks:
+                    try:
+                        self._add_tasks(react_tasks, source="react")
+                    except Exception as e:
+                        logger.warning("Post-batch add_tasks failed: %s", e)
+
+                # Replay handoff payload
+                handoff = _get_fb("deferred_handoff")
+                if handoff:
+                    try:
+                        self._process_handoff(task, handoff)
+                    except Exception as e:
+                        logger.warning("Post-batch handoff failed: %s", e)
+
+                # Replay context propagation
+                new_ctx = _get_fb("deferred_new_context")
+                if new_ctx and hasattr(new_ctx, 'is_empty') and not new_ctx.is_empty():
+                    try:
+                        self.accumulated_context.merge(new_ctx)
+                        if hasattr(new_ctx, 'discovered_params') and new_ctx.discovered_params:
+                            self.wordlist_manager.learn_params(new_ctx.discovered_params)
+                        self.task_queue.inject_context(new_ctx)
+                    except Exception as e:
+                        logger.warning("Post-batch context merge failed: %s", e)
+
+            # ---- SGK-2026-0287: Pruning policy evaluation ----
+            # Evaluate the queue after all feedback has been applied.
+            # Decisions are shadow-only by default (no actual deletion).
+            self._evaluate_pruning_policy(batch_tasks)
+
+            # ---- Phase 6 M2 (C1/C2): Drain deferred event follow-ups ----
+            # EventBus handlers (vuln_found, reauth_success) defer follow-up
+            # task generation here instead of calling _add_tasks directly from
+            # the SharedLoop thread. This prevents re-entrant task_queue
+            # mutation during _apply_post_batch_feedback iteration.
+            if hasattr(self, '_pending_event_follow_ups') and self._pending_event_follow_ups:
+                follow_ups = self._pending_event_follow_ups
+                self._pending_event_follow_ups = []
+                self._add_tasks(follow_ups, source="event_chaining")
+
+    def _evaluate_pruning_policy(self, batch_tasks: list) -> None:
+        """Evaluate TaskPruningPolicy and record shadow decisions.
+        
+        SGK-2026-0287 Step 3: Called after post-batch feedback to evaluate
+        the current queue for prune candidates. Results are appended to
+        _shadow_decisions for session persistence.
+        """
+        try:
+            if not hasattr(self, '_pruning_policy'):
+                self._pruning_policy = TaskPruningPolicy(shadow_only=True)
+            
+            if not hasattr(self, '_shadow_decisions'):
+                self._shadow_decisions = []
+            
+            # Collect recent findings from the batch results
+            recent_findings = []
+            if hasattr(self, 'accumulated_context'):
+                recent_findings = getattr(self.accumulated_context, 'critical_findings', []) or []
+            
+            decisions = self._pruning_policy.evaluate(
+                queue_snapshot=self.task_queue,
+                completed_task=batch_tasks[-1] if batch_tasks else None,
+                findings=recent_findings,
+            )
+            
+            for decision in decisions:
+                self._shadow_decisions.append(decision.to_dict())
+            
+            if decisions:
+                logger.debug(
+                    "Pruning policy evaluated: %d candidate(s) found (shadow_only=True)",
+                    len(decisions),
+                )
+        except Exception as e:
+            logger.warning("Pruning policy evaluation failed: %s", e)
+
     def execute_with_replan(self, max_tasks: int = None) -> dict:
         """
         再帰的実行ループ (並列化対応版)
@@ -5060,7 +6092,60 @@ class MasterConductor:
         if max_tasks is None:
             max_tasks = getattr(settings, "max_session_tasks", 1000)
         executed = 0
-        from src.core.engine.parallel_orchestrator import create_parallel_task
+
+        # ---- Preflight entry gate (lightweight, idempotent) ----
+        # Run the entry gate once. If already gated via resume_session, the
+        # singleton facade returns the cached result instantly. If not yet
+        # gated, this is the first (and only) call.
+        try:
+            gate_context = PreflightContext(
+                target=str(self.context.target_info.get("target", "") or ""),
+                mode=self.mode.lower() if self.mode else "bugbounty",
+                goal=getattr(self.context, "goal", "") or "",
+                profile=getattr(self.context, "profile", "") or "",
+                cookies=self._normalize_cookies_for_gate(self.context.target_info.get("cookies")),
+                bearer_token=str(self.context.target_info.get("bearer_token", "") or ""),
+                auth_headers=self.context.target_info.get("auth_headers", {}) if isinstance(self.context.target_info.get("auth_headers"), dict) else {},
+                gate_policy=GatePolicy.STRICT_PROD,
+            )
+            gate_result = self._run_async_safe(
+                EntryGateFacade().run_once(gate_context),
+                timeout_override=60,
+            )
+            if gate_result.failed:
+                logger.error(
+                    "Preflight gate FAILED — aborting execution (%d failure(s)):",
+                    len(gate_result.failures),
+                )
+                for failure in gate_result.failures:
+                    logger.error(
+                        "  [%s] %s: %s",
+                        failure.reason_code,
+                        failure.category,
+                        failure.remediation,
+                    )
+                return {
+                    "status": "gate_failed",
+                    "errors": [f.reason_code for f in gate_result.failures],
+                }
+        except Exception as exc:
+            logger.error("Preflight gate exception: %s", exc)
+            return {"status": "gate_failed", "errors": [str(exc)]}
+
+        # Phase 4 (SGK-2026-0313): Lane Scheduler shadow mode — initialize policies (lazy, once).
+        # Shadow decisions are observation-only and do not affect execution.
+        if not hasattr(self, '_lane_policy'):
+            try:
+                self._lane_policy = LanePolicy()
+            except Exception:
+                self._lane_policy = None
+        if not hasattr(self, '_mutex_policy'):
+            try:
+                self._mutex_policy = MutexPolicy()
+            except Exception:
+                self._mutex_policy = None
+        if not hasattr(self, '_shadow_decisions'):
+            self._shadow_decisions = []
 
         # 実行開始時間を記録
         if self.context.metrics["start_time"] is None:
@@ -5139,6 +6224,7 @@ class MasterConductor:
             full_parallel_injection = bool(getattr(settings, "injection_full_parallel_dispatch", False))
             
             # キューの先頭タスクを確認して InjectionManagerAgent ならバッチサイズ 1 に制限
+            self._sync_task_queue_snapshot_versions()
             first_task = self.task_queue.peek()
             first_agent_type = (first_task.agent_type or "") if first_task else ""
             has_injection_in_queue = "injection" in first_agent_type.lower()
@@ -5172,13 +6258,6 @@ class MasterConductor:
                     continue
                 break
 
-            # 2. 並列実行用の ParallelTask オブジェクトに変換
-            p_tasks = []
-            for t in batch_tasks:
-                p_tasks.append(create_parallel_task(
-                    t.id, self._execute_single_task_full_flow, t, category=t.agent_type or "default"
-                ))
-            
             # 3. オーケストレーターで実行
             rich_logger.show_tree(
                 {f"Task: {t.name}": {"agent": t.agent_type, "priority": t.priority} for t in batch_tasks},
@@ -5190,6 +6269,13 @@ class MasterConductor:
             has_injection = any("injection" in (t.agent_type or "").lower() for t in batch_tasks)
             try:
                 if has_injection:
+                    force_serial = (
+                        (not full_parallel_injection)
+                        or (not getattr(getattr(settings, 'parallelism', None), 'enabled', False))
+                        or getattr(getattr(settings, 'parallelism', None), 'kill_switch', False)
+                    )
+                    batch_info = self._dispatch_batch(batch_tasks, force_serial=force_serial)
+                    p_tasks = batch_info['parallel_tasks']
                     batch_timeout = getattr(settings, "injection_manager_timeout", 1800)
                     chunk_size = max(1, int(getattr(settings, "injection_batch_parallelism", 2)))
                     mixed_agents = any("injection" not in (t.agent_type or "").lower() for t in batch_tasks)
@@ -5209,7 +6295,7 @@ class MasterConductor:
                     )
 
                     # 制限付き並列実行（チャンク単位）
-                    results = []
+                    results = list(batch_info.get('serial_results', []))
                     for i in range(0, len(p_tasks), chunk_size):
                         chunk = p_tasks[i:i + chunk_size]
                         result = self._run_async_safe(
@@ -5218,21 +6304,34 @@ class MasterConductor:
                         )
                         results.extend(result)
                 else:
-                    batch_timeout = int(getattr(settings, "parallel_batch_timeout", 600))
-                    has_recon_master = any(
-                        "recon_master" in (t.agent_type or "").lower()
-                        for t in batch_tasks
+                    # Phase 5 (SGK-2026-0314): gated parallel dispatch
+                    # LB-1/LB-5/LB-0: lane gate + kill switch routing
+                    # LB-3: origin_key/lane/scope_verdict propagation
+                    force_serial = (
+                        (not getattr(getattr(settings, 'parallelism', None), 'enabled', False))
+                        or getattr(getattr(settings, 'parallelism', None), 'kill_switch', False)
                     )
-                    if has_recon_master:
-                        # recon_master は long-running のため、バッチ側タイムアウトが先に切れないよう揃える
-                        batch_timeout = max(
-                            batch_timeout,
-                            int(getattr(settings, "recon_master_timeout", 900)),
+                    batch_info = self._dispatch_batch(batch_tasks, force_serial=force_serial)
+                    parallel_tasks = batch_info['parallel_tasks']
+
+                    results = list(batch_info.get('serial_results', []))
+                    if parallel_tasks:
+                        batch_timeout = int(getattr(settings, "parallel_batch_timeout", 600))
+                        has_recon_master = any(
+                            "recon_master" in (t.agent_type or "").lower()
+                            for t in batch_tasks
                         )
-                    results = self._run_async_safe(
-                        self.orchestrator.execute_parallel(p_tasks, timeout=batch_timeout),
-                        timeout_override=batch_timeout
-                    )
+                        if has_recon_master:
+                            # recon_master は long-running のため、バッチ側タイムアウトが先に切れないよう揃える
+                            batch_timeout = max(
+                                batch_timeout,
+                                int(getattr(settings, "recon_master_timeout", 900)),
+                            )
+                        parallel_results = self._run_async_safe(
+                            self.orchestrator.execute_parallel(parallel_tasks, timeout=batch_timeout),
+                            timeout_override=batch_timeout
+                        )
+                        results.extend(parallel_results)
             except Exception as batch_exc:
                 failure_reason = "timeout_batch" if self._is_timeout_related(batch_exc) else type(batch_exc).__name__
                 logger.error("Batch execution failed (%s): %r", failure_reason, batch_exc)
@@ -5243,11 +6342,13 @@ class MasterConductor:
                         "Batch timeout detected. Retrying unfinished tasks sequentially (count=%d).",
                         sum(1 for t in batch_tasks if t.state not in [TaskState.SUCCESS, TaskState.FAILED]),
                     )
+                    recovery_results = []
                     for task in batch_tasks:
                         if task.state in [TaskState.SUCCESS, TaskState.FAILED]:
                             continue
                         try:
-                            self._execute_single_task_full_flow(task)
+                            rec_result = self._execute_single_task_full_flow(task)
+                            recovery_results.append(rec_result)
                         except Exception as recovery_exc:
                             logger.error("Sequential recovery failed for %s: %r", task.id, recovery_exc)
                             with self._state_lock:
@@ -5260,6 +6361,10 @@ class MasterConductor:
                                         else type(recovery_exc).__name__
                                     )
                                     self._record_failure_context(task, "orchestrator_batch_recovery", recovery_reason)
+                    # Apply deferred feedback from recovery tasks
+                    if recovery_results:
+                        with self._state_lock:
+                            self._apply_post_batch_feedback(batch_tasks, recovery_results)
 
                 with self._state_lock:
                     for task in batch_tasks:
@@ -5277,16 +6382,26 @@ class MasterConductor:
             # Update completed_tasks and handle timeouts/errors from orchestrator
             task_map = {t.id: t for t in batch_tasks}
             for res in results:
-                task = task_map.get(res.task_id)
+                res_task_id = getattr(res, "task_id", None)
+                if res_task_id is None and isinstance(res, dict):
+                    res_task_id = res.get("task_id")
+                task = task_map.get(res_task_id)
                 if task:
-                     if not res.success and task.state not in [TaskState.SUCCESS, TaskState.FAILED, TaskState.SKIPPED]:
+                     res_success = getattr(res, "success", None)
+                     if res_success is None and isinstance(res, dict):
+                         res_success = bool(res.get("success", False))
+                     if not res_success and task.state not in [TaskState.SUCCESS, TaskState.FAILED, TaskState.SKIPPED]:
                          # Update task if orchestrator reported error but task state wasn't updated (e.g. timeout/cancel)
                          task.state = TaskState.FAILED
-                         task.error = res.error
-                         failure_reason = "timeout_orchestrator" if self._is_timeout_related(res.error) else (res.error or "orchestrator_failed")
+                         res_error = getattr(res, "error", None)
+                         if res_error is None and isinstance(res, dict):
+                             res_error = res.get("error")
+                         task.error = res_error
+                         failure_reason = "timeout_orchestrator" if self._is_timeout_related(res_error) else (res_error or "orchestrator_failed")
                          self._record_failure_context(task, "orchestrator_batch", str(failure_reason))
             
             with self._state_lock:
+                 self._apply_post_batch_feedback(batch_tasks, results)
                  self.completed_tasks.extend(batch_tasks)
 
             # セッション保存 (チェックポイント)
@@ -5367,13 +6482,54 @@ class MasterConductor:
         from src.core.infra.event_bus import get_event_bus, Event, EventType
         from src.core.notifications.notifier import get_notifier
 
+        invalid_snapshot_result = self._reject_invalid_task_snapshot_at_start(task)
+        if invalid_snapshot_result is not None:
+            return invalid_snapshot_result
+
+        # Phase 7 (SGK-2026-0316): State assertion before TaskState.RUNNING
+        assertion_result = self._evaluate_phase7_state_assertion_before_start(task)
+        if assertion_result is not None:
+            return assertion_result
+
         # 1. 事前準備 (Enrichment)
         with self._state_lock:
             task.state = TaskState.RUNNING
             if not self.accumulated_context.is_empty():
                 task.params["_context"] = self.accumulated_context.to_dict()
             task = self.context_designer.enrich_task(task, self.context, self.accumulated_context, workspace=self.workspace)
-            
+
+        # Phase 4 (SGK-2026-0313): Shadow decision computation (observation only)
+        _decision = None
+        _lane_policy = getattr(self, '_lane_policy', None)
+        _mutex_policy = getattr(self, '_mutex_policy', None)
+        try:
+            if _lane_policy is not None and _mutex_policy is not None:
+                _lane, _ps, _rl, _compat, _disagree, _reason = _lane_policy.classify(
+                    task.agent_type or "", task.metadata if task.metadata else None
+                )
+                _mutex_key, _mutation_surf, _would_wait, _would_reject = _mutex_policy.decide(
+                    task.metadata if task.metadata else None
+                )
+                _origin_key = (task.metadata or {}).get("origin_key", "")
+                _auth_version = int((task.metadata or {}).get("auth_context_version", 0))
+                _decision = SchedulingDecision(
+                    lane=_lane,
+                    parallel_safe=_ps,
+                    rate_limited=_rl,
+                    compat_lane=_compat,
+                    lane_disagreement=_disagree if _disagree else False,
+                    reason_code=_reason,
+                    mutex_key=_mutex_key,
+                    mutation_surface=_mutation_surf,
+                    would_wait=_would_wait,
+                    would_reject=_would_reject,
+                    shadow_only=True,
+                    origin_key=_origin_key,
+                    auth_context_version=_auth_version,
+                )
+        except Exception:
+            _decision = None
+
         # 2. イベント通知
         event_bus = get_event_bus()
         correlation = self.context.target_info.get("correlation", {})
@@ -5493,8 +6649,21 @@ class MasterConductor:
             result = self._dispatch_with_timeout_retry(task, timeout_override=timeout_override)
             task.result = result
             logger.info(f"📥 Received result from {task.agent_type} (task {task.id})")
-                
-            # 5. 結果処理とリプラン (ロックを保持して安全に)
+
+            # Phase 4 (SGK-2026-0313): Emit DECISION_MADE event for shadow decision
+            if _decision is not None:
+                try:
+                    # Store shadow decision for session persistence
+                    with self._state_lock:
+                        if hasattr(self, '_shadow_decisions'):
+                            self._shadow_decisions.append(_decision)
+                except Exception:
+                    pass
+
+            # 5. 結果処理 (Phase 5 LB-2: minimal lock for state changes only)
+            # State mutations that MUST be atomic are inside the lock;
+            # all heavy computation and shared-state mutations are deferred
+            # to _post_batch_feedback, applied on main thread after batch join.
             logger.debug(f"🔑 Thread {threading.get_ident()} attempting to acquire _state_lock for task {task.id} result processing")
             with self._state_lock:
                 logger.debug(f"🔓 Thread {threading.get_ident()} acquired _state_lock for task {task.id} result processing")
@@ -5508,62 +6677,6 @@ class MasterConductor:
                     exec_record.add_vulnerability(f)
                 
                 self.execution_log.add_record(exec_record)
-            
-                # 🧠 HOOK: 意思決定強化 (DecisionEnhancer)
-                try:
-                    from src.core.intelligence import DecisionContext, Decision
-                    waf_detected = "waf" in str(result.get("message", "")).lower() or result.get("data", {}).get("waf_blocked", False)
-                    rate_limited = "rate limit" in str(result.get("message", "")).lower() or result.get("status") == 429
-                    
-                    d_ctx = DecisionContext(
-                        action_type=task.agent_type or "unknown",
-                        target_url=task.params.get("target", ""),
-                        previous_attempts=getattr(task, "replan_depth", 0),
-                        waf_detected=waf_detected,
-                        rate_limit_active=rate_limited
-                    )
-                    enhanced_decision = self.decision_enhancer.decide(d_ctx)
-                    
-                    if enhanced_decision.decision in [Decision.RETRY, Decision.MODIFY]:
-                        logger.info("💡 DecisionEnhancer: %s requested. Reason: %s", 
-                                    enhanced_decision.decision.value, enhanced_decision.reasoning)
-                        # タスクを再スケジュール (回数制限あり)
-                        if getattr(task, "replan_depth", 0) < 3:
-                            new_task = task.clone()
-                            new_task.id = f"{task.id}_retry_{int(time.time())}"
-                            new_task.replan_depth = getattr(task, "replan_depth", 0) + 1
-                            if enhanced_decision.modifications:
-                                new_task.params["_modifications"] = enhanced_decision.modifications
-                                logger.info("🔧 Applying modifications: %s", enhanced_decision.modifications)
-                            self.task_queue.add(new_task)
-                except Exception as e:
-                    logger.warning("DecisionEnhancer: Failed to enhance decision: %s", e)
-
-                # 📸 HOOK: 実行後スナップショット & 差分分析 (DiffAnalyzer)
-                if before_snap_id:
-                    try:
-                        target = task.params.get("target", "default")
-                        current_data = {
-                            "urls": [n.url for n in self.graph.get_nodes_by_type("Page") if hasattr(n, "url")],
-                            "endpoints": [n.url for n in self.graph.get_nodes_by_type("Endpoint") if hasattr(n, "url")]
-                        }
-                        _, after_snap_id = self.diff_analyzer.take_snapshot(target, current_data, label=f"after_{task.id}")
-                        
-                        # 差分比較
-                        diffs = self.diff_analyzer.compare(
-                            self.diff_analyzer.snapshots[after_snap_id],
-                            self.diff_analyzer.snapshots[before_snap_id]
-                        )
-                        
-                        has_changes = any(d.has_changes() for d in diffs.values())
-                        if has_changes:
-                            logger.info("🔍 State changes detected after %s!", task.id)
-                            # 差分をKnowledgeGraphへ記録 (重要なもの)
-                            for cat, d in diffs.items():
-                                if d.added:
-                                    logger.info("  [+] Added in %s: %s", cat, d.added[:5])
-                    except Exception as e:
-                        logger.warning("DiffAnalyzer: Failed to perform post-execution diff: %s", e)
 
                 if result.get("success", False):
                     task.state = TaskState.SUCCESS
@@ -5579,84 +6692,8 @@ class MasterConductor:
                         result=result,
                     )
                     self._update_flaky_quarantine(task, success=True)
-                    
-                    # 📈 HOOK 2: 成功時フィードバック (SelfReflection & PriorityBooster)
-                    try:
-                        from src.core.intelligence import ExecutionRecord, ExecutionOutcome
-                        def _get_finding_title(f):
-                            return f.title if hasattr(f, 'title') else f.get('title', 'Unknown')
-                        def _get_finding_type(f):
-                            vt = f.vuln_type if hasattr(f, 'vuln_type') else f.get('vuln_type', f.get('type', 'Unknown'))
-                            return vt.value if hasattr(vt, 'value') else str(vt)
 
-                        self.self_reflection.record(ExecutionRecord(
-                            task_id=task.id,
-                            action_type=task.agent_type or "unknown",
-                            target=task.params.get("target", ""),
-                            outcome=ExecutionOutcome.SUCCESS,
-                            duration_seconds=exec_record.duration_seconds() or 0.0,
-                            findings=[f"[{_get_finding_type(f)}] {_get_finding_title(f)}" for f in result.get("findings", [])],
-                            response_code=result.get("data", {}).get("status_code") or result.get("status_code"),
-                            payload_used=str(task.params.get("payload", "")) if task.params.get("payload") else None
-                        ))
-                        
-                        # PriorityBooster: レスポンス内容から重要資産を見つけて後続タスクをブースト
-                        response_body = result.get("output", "") or result.get("data", {}).get("response_body", "")
-                        if response_body:
-                            # 待機中のタスクを対象にする
-                            boost_event = self.priority_booster.auto_detect_boost(
-                                target=task.params.get("target", ""),
-                                content=str(response_body),
-                                related_tasks=self.task_queue.get_pending_task_ids()
-                            )
-                            if boost_event:
-                                affected_ids = self.priority_booster.boost_on_discovery(boost_event)
-                                # キューの優先度にも反映 (0-100にスケーリング)
-                                boost_val = int(boost_event.boost_amount * 50) # 最大50ポイント上昇
-                                if affected_ids:
-                                    logger.info("🔥 Discovery triggered priority boost for tasks: %s (+%d)", affected_ids, boost_val)
-                                    self.task_queue.boost_priority(lambda t, aids=affected_ids: t.id in aids, boost_val)
-                    except Exception as e:
-                        logger.warning(f"Intelligence: Success feedback failed (non-critical): {e}")
-
-                    # 資産発見時のプラン拡張
-                    if result.get("new_assets"):
-                        self._expand_plan_for_assets(result["new_assets"])
-                    
-                    # Finding フィードバック
-                    for finding in result.get("findings", []):
-                        self.handle_finding(finding)
-                        # クリティカルパス分析
-                        critical_actions = self.critical_path_analyzer.analyze(finding)
-                        for action in critical_actions:
-                            if action.action_type == "boost_priority":
-                                target_tags = action.target_filter.get("tags", [])
-                                def condition_fn(t, tt=target_tags):
-                                    t_tags = getattr(t, 'params', {}).get('tags', [])
-                                    return any(tag in tt for tag in t_tags)
-                                    
-                                self.task_queue.boost_priority(
-                                    condition=condition_fn,
-                                    new_priority=action.params.get("priority", 999)
-                                )
-                    
-                    # 再帰的計画 (ReThink)
-                    react_tasks = self._observe_and_rethink(task, result)
-                    self._add_tasks(react_tasks, source="react")
-
-                    # Handoff 処理
-                    self._process_handoff(task, result)
-                    
-                    # コンテキスト伝搬
-                    new_context = self.context_propagator.extract(result)
-                    if not new_context.is_empty():
-                        self.accumulated_context.merge(new_context)
-                        if new_context.discovered_params:
-                            self.wordlist_manager.learn_params(new_context.discovered_params)
-                        self.task_queue.inject_context(new_context)
-
-                    # ExecutionContext (TargetInfo) の直接更新
-                    # ScopeParserなどが返した target_info (Cookie等) を反映
+                    # ExecutionContext (TargetInfo) の直接更新 (light, atomic under lock)
                     result_ctx = result.get("context", {})
                     if isinstance(result_ctx, dict):
                         target_info_update = result_ctx.get("target_info", {})
@@ -5676,41 +6713,182 @@ class MasterConductor:
                         task=task,
                         result=result,
                     )
-                    flaky_verdict = self._update_flaky_quarantine(task, success=False)
-                    
-                    # 🔍 HOOK 3: 失敗時分析 (ErrorAnalyzer & SelfReflection)
-                    root_cause = None
-                    try:
-                        from src.core.intelligence import ErrorRecord, ExecutionOutcome, ExecutionRecord
-                        error_record = ErrorRecord(
-                            error_message=result.get("error", "Unknown error"),
-                            status_code=result.get("data", {}).get("status_code"),
-                            target_url=task.params.get("target", ""),
-                            action_type=task.agent_type,
-                        )
-                        root_cause = self.error_analyzer.analyze(error_record)
-                        
-                        # SelfReflection に記録（WAFブロック等は BLOCKED 扱い）
-                        outcome = ExecutionOutcome.FAILURE
-                        if root_cause and root_cause.category.value in ["waf_blocked", "ip_blocked", "rate_limited"]:
-                            outcome = ExecutionOutcome.BLOCKED
-                        
-                        self.self_reflection.record(ExecutionRecord(
-                            task_id=task.id,
-                            action_type=task.agent_type or "unknown",
-                            target=task.params.get("target", ""),
-                            outcome=outcome,
-                            duration_seconds=exec_record.duration_seconds() or 0.0,
-                            error_message=result.get("error"),
-                            response_code=result.get("data", {}).get("status_code"),
-                        ))
-                    except Exception as e:
-                        logger.warning(f"Intelligence: Error analysis failed (non-critical): {e}")
+                    self._update_flaky_quarantine(task, success=False)
+            # ---- _state_lock released — all following code runs lock-free ----
 
-                    # 失敗時のリプランニング
+            # --- Phase 5 LB-2: compute all feedback data outside lock ---
+            # Phase 6 M3 (C3/N4): PostBatchFeedback dataclass — producer MUST emit
+            # the typed object so the consumer's attribute-access path is live
+            # and typo bugs raise AttributeError instead of silently creating keys.
+            _post_fb = PostBatchFeedback()
+
+            if result.get("success", False):
+                # 🧠 DecisionEnhancer: compute decision outside lock, defer task_queue.add
+                try:
+                    from src.core.intelligence import DecisionContext, Decision
+                    waf_detected = "waf" in str(result.get("message", "")).lower() or result.get("data", {}).get("waf_blocked", False)
+                    rate_limited = "rate limit" in str(result.get("message", "")).lower() or result.get("status") == 429
+
+                    d_ctx = DecisionContext(
+                        action_type=task.agent_type or "unknown",
+                        target_url=task.params.get("target", ""),
+                        previous_attempts=getattr(task, "replan_depth", 0),
+                        waf_detected=waf_detected,
+                        rate_limit_active=rate_limited
+                    )
+                    enhanced_decision = self.decision_enhancer.decide(d_ctx)
+
+                    if enhanced_decision.decision in [Decision.RETRY, Decision.MODIFY]:
+                        logger.info("💡 DecisionEnhancer: %s requested. Reason: %s",
+                                    enhanced_decision.decision.value, enhanced_decision.reasoning)
+                        if getattr(task, "replan_depth", 0) < 3:
+                            new_task = task.clone()
+                            new_task.id = f"{task.id}_retry_{int(time.time())}"
+                            new_task.replan_depth = getattr(task, "replan_depth", 0) + 1
+                            if enhanced_decision.modifications:
+                                new_task.params["_modifications"] = enhanced_decision.modifications
+                                logger.info("🔧 Applying modifications: %s", enhanced_decision.modifications)
+                            _post_fb.deferred_decision_enhancer_tasks = [new_task]
+                except Exception as e:
+                    logger.warning("DecisionEnhancer: Failed to enhance decision: %s", e)
+
+                # 📸 DiffAnalyzer (graph access, lock-free)
+                if before_snap_id:
+                    try:
+                        target = task.params.get("target", "default")
+                        current_data = {
+                            "urls": [n.url for n in self.graph.get_nodes_by_type("Page") if hasattr(n, "url")],
+                            "endpoints": [n.url for n in self.graph.get_nodes_by_type("Endpoint") if hasattr(n, "url")]
+                        }
+                        _, after_snap_id = self.diff_analyzer.take_snapshot(target, current_data, label=f"after_{task.id}")
+
+                        diffs = self.diff_analyzer.compare(
+                            self.diff_analyzer.snapshots[after_snap_id],
+                            self.diff_analyzer.snapshots[before_snap_id]
+                        )
+
+                        has_changes = any(d.has_changes() for d in diffs.values())
+                        if has_changes:
+                            logger.info("🔍 State changes detected after %s!", task.id)
+                            for cat, d in diffs.items():
+                                if d.added:
+                                    logger.info("  [+] Added in %s: %s", cat, d.added[:5])
+                    except Exception as e:
+                        logger.warning("DiffAnalyzer: Failed to perform post-execution diff: %s", e)
+
+                # Capture findings for deferred handle_finding + critical path
+                deferred_findings = list(result.get("findings", []))
+                deferred_critical_actions: list[dict] = []
+                for finding in deferred_findings:
+                    try:
+                        critical_actions = self.critical_path_analyzer.analyze(finding)
+                    except Exception:
+                        critical_actions = []
+                    for action in critical_actions:
+                        deferred_critical_actions.append({
+                            "action_type": getattr(action, "action_type", ""),
+                            "target_tags": getattr(action, "target_filter", {}).get("tags", []),
+                            "priority": getattr(action, "params", {}).get("priority", 999),
+                        })
+                _post_fb.deferred_findings = deferred_findings
+                _post_fb.deferred_critical_actions = deferred_critical_actions
+
+                # Capture boost event from PriorityBooster
+                try:
+                    response_body = result.get("output", "") or result.get("data", {}).get("response_body", "")
+                    if response_body:
+                        boost_event = self.priority_booster.auto_detect_boost(
+                            target=task.params.get("target", ""),
+                            content=str(response_body),
+                            related_tasks=self.task_queue.get_pending_task_ids(),
+                        )
+                        if boost_event:
+                            affected_ids = self.priority_booster.boost_on_discovery(boost_event)
+                            boost_val = int(boost_event.boost_amount * 50)
+                            if affected_ids:
+                                logger.info("🔥 Discovery triggered priority boost for tasks: %s (+%d)", affected_ids, boost_val)
+                                _post_fb.deferred_boost_event = {
+                                    "affected_ids": affected_ids,
+                                    "boost_val": boost_val,
+                                }
+                except Exception as e:
+                    logger.warning("Intelligence: Success feedback failed (non-critical): %s", e)
+
+                # Capture new_assets
+                if result.get("new_assets"):
+                    _post_fb.deferred_new_assets = result["new_assets"]
+
+                # Capture react_tasks from ReThink
+                try:
+                    react_tasks = self._observe_and_rethink(task, result)
+                    _post_fb.deferred_react_tasks = react_tasks
+                except Exception as e:
+                    logger.warning("ReThink failed (non-critical): %s", e)
+
+                # Capture handoff
+                _post_fb.deferred_handoff = result
+
+                # Capture context propagation
+                try:
+                    new_context = self.context_propagator.extract(result)
+                    _post_fb.deferred_new_context = new_context
+                except Exception as e:
+                    logger.warning("Context extraction failed: %s", e)
+
+            else:
+                # Failure path: capture decision enhancer retry tasks
+                try:
+                    from src.core.intelligence import DecisionContext, Decision
+                    waf_detected = "waf" in str(result.get("message", "")).lower() or result.get("data", {}).get("waf_blocked", False)
+                    rate_limited = "rate limit" in str(result.get("message", "")).lower() or result.get("status") == 429
+                    d_ctx = DecisionContext(
+                        action_type=task.agent_type or "unknown",
+                        target_url=task.params.get("target", ""),
+                        previous_attempts=getattr(task, "replan_depth", 0),
+                        waf_detected=waf_detected,
+                        rate_limit_active=rate_limited
+                    )
+                    enhanced_decision = self.decision_enhancer.decide(d_ctx)
+                    if enhanced_decision.decision in [Decision.RETRY, Decision.MODIFY]:
+                        if getattr(task, "replan_depth", 0) < 3:
+                            new_task = task.clone()
+                            new_task.id = f"{task.id}_retry_{int(time.time())}"
+                            new_task.replan_depth = getattr(task, "replan_depth", 0) + 1
+                            if enhanced_decision.modifications:
+                                new_task.params["_modifications"] = enhanced_decision.modifications
+                            _post_fb.deferred_decision_enhancer_tasks = [new_task]
+                except Exception:
+                    pass
+
+                # Failure path: ErrorAnalyzer (lock-free)
+                try:
+                    from src.core.intelligence import ErrorRecord, ExecutionOutcome, ExecutionRecord
+                    error_record = ErrorRecord(
+                        error_message=result.get("error", "Unknown error"),
+                        status_code=result.get("data", {}).get("status_code"),
+                        target_url=task.params.get("target", ""),
+                        action_type=task.agent_type,
+                    )
+                    root_cause = self.error_analyzer.analyze(error_record)
+
+                    outcome = ExecutionOutcome.FAILURE
+                    if root_cause and root_cause.category.value in ["waf_blocked", "ip_blocked", "rate_limited"]:
+                        outcome = ExecutionOutcome.BLOCKED
+
+                    self.self_reflection.record(ExecutionRecord(
+                        task_id=task.id,
+                        action_type=task.agent_type or "unknown",
+                        target=task.params.get("target", ""),
+                        outcome=outcome,
+                        duration_seconds=exec_record.duration_seconds() or 0.0,
+                        error_message=result.get("error"),
+                        response_code=result.get("data", {}).get("status_code"),
+                    ))
+
+                    # Failure replanning (quarantine, sleep)
                     if task.replan_depth < self.max_replan_depth:
-                        # ErrorAnalyzer がリトライを奨励する場合のみ実行（デフォルトTrue）
                         should_replan = root_cause.retry_recommended if root_cause else True
+                        flaky_verdict = getattr(task, '_flaky_verdict', {})
                         if flaky_verdict.get("status") == "quarantine":
                             should_replan = False
                             task.params["_quarantine"] = {
@@ -5720,19 +6898,15 @@ class MasterConductor:
                                 "failure_rate": flaky_verdict.get("failure_rate"),
                                 "reason": "flaky_auto_quarantine",
                             }
-                        
                         if should_replan:
                             if root_cause and root_cause.wait_seconds:
-                                logger.info(f"Intelligence: ErrorAnalyzer suggests waiting {root_cause.wait_seconds}s before replan")
-                                time.sleep(min(root_cause.wait_seconds, 15.0)) # 最大15秒待機
+                                logger.info("Intelligence: ErrorAnalyzer suggests waiting %ss before replan", root_cause.wait_seconds)
+                                time.sleep(min(root_cause.wait_seconds, 15.0))
+                except Exception as e:
+                    logger.warning("Intelligence: Error analysis failed (non-critical): %s", e)
 
-                            failure_replan = self.replan(task, result.get("error", "Unknown error"), root_cause=root_cause)
-                            for alt in failure_replan:
-                                alt.replan_depth = task.replan_depth + 1
-                                alt.parent_id = task.id
-                            self._add_tasks(failure_replan, source="failure_replan")
-                        else:
-                            logger.info(f"Intelligence: ErrorAnalyzer suggests NOT retrying task {task.id} (Category: {root_cause.category if root_cause else 'unknown'})")
+            # Store feedback in result (accessed by _apply_post_batch_feedback)
+            result["_post_batch_feedback"] = _post_fb
 
             # HITL チェック (並列中でもスレッドセーフに実行)
             hitl_info = self.check_hitl_required(task, result)
@@ -5902,6 +7076,34 @@ class MasterConductor:
         
         target_url = finding.target_url
         
+        # Phase A (SGK-2026-0297): Route finding through unified notification router
+        # Must happen before save_finding so notification fires regardless of save success
+        try:
+            if not hasattr(self, '_finding_router'):
+                from src.core.notifications.finding_notification_router import FindingNotificationRouter
+                run_id = getattr(self, 'current_run_id', '') or getattr(self.context, 'run_id', '') or ''
+                self._finding_router = FindingNotificationRouter(run_id=run_id)
+            
+            notify_result = self._finding_router.route_and_notify(
+                finding,
+                source_component="master_conductor",
+                ingress_path="handle_finding",
+            )
+            if notify_result.get("error"):
+                logger.debug("Finding notification skipped: %s (error=%s)", 
+                            getattr(finding, 'id', '?'), notify_result["error"])
+        except Exception as e:
+            logger.warning(
+                "[%s] handle_finding: notification routing failed for finding_id=%s "
+                "source=%s ingress=%s exception=%s: %s",
+                getattr(getattr(self, '_finding_router', None), 'run_id', '?'),
+                getattr(finding, 'id', '?'),
+                'master_conductor',
+                'handle_finding',
+                type(e).__name__,
+                e,
+            )
+        
         # DB書き込みフェーズ (バッチ)
         self.save_finding(finding)
         
@@ -5916,6 +7118,7 @@ class MasterConductor:
                 "vuln_type": finding.vuln_type.value if hasattr(finding.vuln_type, 'value') else str(finding.vuln_type),
                 "source_agent": finding.source_agent,
                 "schema_severity": str((finding.additional_info or {}).get("schema_severity", "none")),
+                "finding": finding.to_dict() if hasattr(finding, 'to_dict') else {"title": finding.title},
             },
             correlation=correlation,
             endpoint=target_url,
@@ -5930,17 +7133,6 @@ class MasterConductor:
                 payload=vuln_payload,
                 source="master_conductor",
             )
-        )
-        
-        # Phase 6.2: 通知イベント送信
-        get_notifier().notify_event(
-            event_type="vuln_found",
-            target=target_url,
-            details={
-                "title": finding.title,
-                "severity": finding.severity.value if hasattr(finding.severity, 'value') else str(finding.severity),
-                "type": finding.vuln_type.value if hasattr(finding.vuln_type, 'value') else str(finding.vuln_type),
-            },
         )
         
         # Phase 4.1: Finding 永続化 (Fixing missing findings)
@@ -5960,13 +7152,7 @@ class MasterConductor:
             logger.info("Finding escalated: boosted priority for %s", target_url)
         
         elif finding.recommended_followup == "report":
-            # 即時通知
-            get_notifier().notify(
-                f"🚨 **Critical Finding**: {finding.title}\n"
-                f"Target: {finding.target_url}\n"
-                f"Severity: {finding.severity.value}",
-                bulk=False,  # 即時送信
-            )
+            # Notification already sent via route_and_notify() above; do not duplicate
             
             # レポート生成タスク追加
             report_task = Task(
@@ -6370,16 +7556,19 @@ class MasterConductor:
             logger.debug("[ReAct] skipped for task=%s reason=%s", task.id, reason.value)
             return []
         queue_token = f"{task.id}:{time.time_ns()}"
-        self._react_observation_pending_queue.append(queue_token)
-        self._react_observation_inflight += 1
-        self._react_observation_executed_total += 1
+        react_lock = self._ensure_react_observation_lock()
+        with react_lock:
+            self._react_observation_pending_queue.append(queue_token)
+            self._react_observation_inflight += 1
+            self._react_observation_executed_total += 1
         target = ""
         if isinstance(getattr(task, "params", None), dict):
             target = str(task.params.get("target", "") or "")
         if target:
-            self._react_observation_executed_by_target[target] = (
-                self._react_observation_executed_by_target.get(target, 0) + 1
-            )
+            with react_lock:
+                self._react_observation_executed_by_target[target] = (
+                    self._react_observation_executed_by_target.get(target, 0) + 1
+                )
         
         additional_tasks = []
         
@@ -6431,9 +7620,10 @@ class MasterConductor:
                 for _attempt in range(max(1, retry_max + 1)):
                     started = time.time()
                     try:
-                        response = self.llm_client.generate(
+                        from src.core.models.llm import LLMClient
+                        import_client = LLMClient(role="attack_suggester")
+                        response = import_client.generate(
                             messages=[
-                                {"role": "system", "content": "You are a security analyst. Suggest additional attack vectors based on the result. Output JSON only."},
                                 {"role": "user", "content": prompt}
                             ],
                             response_format={"type": "json_object"},
@@ -6442,12 +7632,14 @@ class MasterConductor:
                         )
                         elapsed = time.time() - started
                         if elapsed > latency_threshold:
-                            self._react_observation_cb_failures += 1
+                            with react_lock:
+                                self._react_observation_cb_failures += 1
                         break
                     except Exception as exc:
                         last_exc = exc
-                        self._react_observation_retry_used += 1
-                        self._react_observation_cb_failures += 1
+                        with react_lock:
+                            self._react_observation_retry_used += 1
+                            self._react_observation_cb_failures += 1
                         if _attempt >= retry_max:
                             raise
                 if response is None and last_exc is not None:
@@ -6485,27 +7677,33 @@ class MasterConductor:
                         next_steps=[t.name for t in additional_tasks]
                     )
             # 成功経路では breaker 失敗カウンタをリセット
-            self._react_observation_cb_failures = 0
+            with react_lock:
+                self._react_observation_cb_failures = 0
             
         except Exception as e:
-            self._react_observation_retry_used += 1
-            self._react_observation_cb_failures += 1
+            with react_lock:
+                self._react_observation_retry_used += 1
+                self._react_observation_cb_failures += 1
             cb_threshold = int(self._react_setting("react_observation_circuit_breaker_threshold", 5))
-            if self._react_observation_cb_failures >= cb_threshold:
+            with react_lock:
+                cb_failures = self._react_observation_cb_failures
+            if cb_failures >= cb_threshold:
                 cooldown = int(self._react_setting("react_observation_circuit_breaker_cooldown_seconds", 120))
-                self._react_observation_cb_open_until = time.time() + max(1, cooldown)
+                with react_lock:
+                    self._react_observation_cb_open_until = time.time() + max(1, cooldown)
                 logger.warning(
                     "[ReAct] circuit breaker opened cooldown=%ss failures=%s",
                     cooldown,
-                    self._react_observation_cb_failures,
+                    cb_failures,
                 )
             logger.warning(f"[ReAct] Observation failed: {e}")
         finally:
-            if self._react_observation_inflight > 0:
-                self._react_observation_inflight -= 1
-            if queue_token in self._react_observation_pending_queue:
-                self._react_observation_pending_queue.remove(queue_token)
-            self._sync_react_observation_metrics_snapshot()
+            with react_lock:
+                if self._react_observation_inflight > 0:
+                    self._react_observation_inflight -= 1
+                if queue_token in self._react_observation_pending_queue:
+                    self._react_observation_pending_queue.remove(queue_token)
+                self._sync_react_observation_metrics_snapshot()
         
         return additional_tasks
     
@@ -6617,6 +7815,17 @@ class MasterConductor:
                         priority=dynamic_priority + 8,
                     ))
         
+        self.run_ledger_recorder.record(
+            event_type=RunLedgerEventType.DECISION_MADE,
+            phase="replan",
+            actor_type="MC",
+            actor_name="MasterConductor",
+            task_id=getattr(failed_task, "id", None),
+            input_summary=f"Replan after error: {error[:200]}",
+            action="replan",
+            result="success" if alternative_tasks else "no_alternative",
+            source_refs={"task_count": len(alternative_tasks)} if alternative_tasks else None,
+        )
         return alternative_tasks
 
     def _map_agent_to_action_type(self, agent_type: str, action: str = "") -> "ActionType":
@@ -6662,6 +7871,8 @@ class MasterConductor:
 
     def _select_next_task_from_queue(self) -> Optional[Task]:
         """TaskPrioritizer があれば選択に使い、失敗時は通常 pop にフォールバックする。"""
+        self._sync_task_queue_snapshot_versions()
+
         def _pop_non_quarantined() -> Optional[Task]:
             while True:
                 candidate = self.task_queue.pop()
@@ -6701,6 +7912,16 @@ class MasterConductor:
                 if self._is_task_quarantined(selected):
                     logger.info("Skip quarantined selected task: %s", selected_id)
                     return _pop_non_quarantined()
+                self.run_ledger_recorder.record(
+                    event_type=RunLedgerEventType.DECISION_MADE,
+                    phase="planning",
+                    actor_type="MC",
+                    actor_name="MasterConductor",
+                    task_id=getattr(selected, "id", None),
+                    input_summary="Task selected from queue" + (" (via prioritizer)" if prioritizer else ""),
+                    action="select_task",
+                    result="selected",
+                )
                 return selected
 
             return _pop_non_quarantined()
@@ -7080,6 +8301,8 @@ class MasterConductor:
                             "execution_log": result.execution_log,
                             "total_specialists": result.total_specialists,
                             "successful_specialists": result.successful_specialists,
+                            # Phase 8: shadow decisions for replay artifact
+                            "shadow_decisions": list(result.shadow_decisions),
                         },
                         "findings": result.findings,  # Finding オブジェクトも含む
                     }
@@ -9422,6 +10645,17 @@ class MasterConductor:
 
         logger.info(f"Generated {len(tasks)} base attack tasks from recon results")
         
+        self.run_ledger_recorder.record(
+            event_type=RunLedgerEventType.DECISION_MADE,
+            phase="coverage_backfill",
+            actor_type="MC",
+            actor_name="MasterConductor",
+            input_summary=f"Coverage backfill created {len(tasks)} tasks from recon results",
+            action="coverage_backfill",
+            result="created" if tasks else "none_needed",
+            source_refs={"task_count": len(tasks)} if tasks else None,
+        )
+        
         # --- Task Expansion Phase ---
         # 巨大な targets_file を個別タスクに展開してキューに追加
         expander = TaskExpander(self.workspace)
@@ -9751,9 +10985,79 @@ class MasterConductor:
         if session.target_url:
             self.initialize_workspace(session.target_url)
         
+        # ---- Preflight entry gate (resume hardening) ----
+        # Only run if preflight is enabled.
+        # Env var SHIGOKU_PREFLIGHT__ENABLED=false forces disable (for testing).
+        import os
+        env_override = os.environ.get("SHIGOKU_PREFLIGHT__ENABLED", "").lower()
+        if env_override == "false":
+            preflight_enabled = False
+        elif env_override == "true":
+            preflight_enabled = True
+        else:
+            try:
+                from src.core.config.settings import get_settings
+                preflight_enabled = get_settings().preflight.enabled
+            except Exception:
+                preflight_enabled = True
+
+        if preflight_enabled:
+            # Build context from restored session before executing any tasks.
+            gate_context = PreflightContext(
+                target=str(self.context.target_info.get("target", "") or getattr(session, "target_url", "") or ""),
+                mode=self.mode.lower() if self.mode else "bugbounty",
+                goal=getattr(self.context, "goal", "") or "",
+                profile=getattr(self.context, "profile", "") or "",
+                cookies=self._normalize_cookies_for_gate(self.context.target_info.get("cookies")),
+                bearer_token=str(self.context.target_info.get("bearer_token", "") or ""),
+                auth_headers=self.context.target_info.get("auth_headers", {}) if isinstance(self.context.target_info.get("auth_headers"), dict) else {},
+                resume_session_id=session_id,
+                gate_policy=GatePolicy.STRICT_PROD,
+            )
+            try:
+                gate_result = self._run_async_safe(
+                    EntryGateFacade().run_once(gate_context),
+                    timeout_override=60,
+                )
+            except Exception as exc:
+                logger.error("Preflight gate exception during resume: %s", exc)
+                return False
+
+            if gate_result.failed:
+                logger.error(
+                    "Preflight gate FAILED for resume of session %s (%d failure(s)):",
+                    session_id,
+                    len(gate_result.failures),
+                )
+                for failure in gate_result.failures:
+                    logger.error(
+                        "  [%s] %s: %s",
+                        failure.reason_code,
+                        failure.category,
+                        failure.remediation,
+                    )
+                return False
+
         logger.info(f"Session resumed: {session_id} with {len(self.task_queue)} pending tasks")
         return True
     
+    @staticmethod
+    def _normalize_cookies_for_gate(cookies_val) -> dict:
+        """Parse cookies from dict or string to dict for preflight gate."""
+        if cookies_val is None:
+            return {}
+        if isinstance(cookies_val, dict):
+            return cookies_val
+        if isinstance(cookies_val, str):
+            result = {}
+            for part in cookies_val.split(";"):
+                part = part.strip()
+                if "=" in part:
+                    k, v = part.split("=", 1)
+                    result[k.strip()] = v.strip()
+            return result
+        return {}
+
     def _serialize_task_queue(self) -> list[str]:
         """タスクキューをJSON文字列リストにシリアライズ"""
         return serialize_legacy_session_task_queue(self.task_queue)

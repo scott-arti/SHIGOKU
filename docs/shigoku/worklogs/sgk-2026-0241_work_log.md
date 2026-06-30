@@ -4,10 +4,10 @@ doc_type: work_log
 status: done
 parent_task_id: null
 related_docs:
-- docs/shigoku/plans/2026-05-23_toolregistry-phase-e-3_plan.md
+- docs/shigoku/plans/2026-05-23_sgk-2026-0241_toolregistry-phase-e-3_plan.md
 - docs/shigoku/reports/sgk-2026-0241_work_report.md
 created_at: '2026-05-23'
-updated_at: '2026-05-25'
+updated_at: '2026-06-30'
 ---
 
 # SGK-2026-0241 作業ログ
@@ -133,7 +133,7 @@ def _get_system_binary_path(self, tool_name: str) -> Optional[Path]:
 
 ## 参照
 
-- 計画書: `docs/shigoku/plans/2026-05-23_toolregistry-phase-e-3_plan.md`
+- 計画書: `docs/shigoku/plans/2026-05-23_sgk-2026-0241_toolregistry-phase-e-3_plan.md`
 - 報告書: `docs/shigoku/reports/sgk-2026-0241_work_report.md`
 - 詳細ログ: `docs/shigoku/worklogs/sgk-2026-0231-s02_work_log.md`
 
@@ -147,7 +147,7 @@ def _get_system_binary_path(self, tool_name: str) -> Optional[Path]:
 - `FuzzResult` を `src/core/models/fuzzing.py` に移設し、wrapper依存を解消。
 
 ### 参照先
-- 計画書: `docs/shigoku/plans/2026-05-23_toolregistry-phase-e-3_plan.md`
+- 計画書: `docs/shigoku/plans/2026-05-23_sgk-2026-0241_toolregistry-phase-e-3_plan.md`
 - 報告書: `docs/shigoku/reports/sgk-2026-0241_work_report.md`
 - 関連計画: `docs/shigoku/plans/phase_e2_next_action_plan.md`
 

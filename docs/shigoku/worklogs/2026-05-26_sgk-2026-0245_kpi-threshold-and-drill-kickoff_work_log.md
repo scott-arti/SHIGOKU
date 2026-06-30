@@ -4,11 +4,11 @@ doc_type: work_log
 status: active
 parent_task_id: SGK-2026-0239
 related_docs:
-  - docs/shigoku/plans/2026-05-26_arjun-gau-kpi_plan.md
+  - docs/shigoku/plans/2026-05-26_sgk-2026-0245_arjun-gau-kpi_plan.md
   - docs/shigoku/manuals/2026-05-26_arjun-gau-threshold-recalibration_runbook.md
   - docs/shigoku/manuals/2026-05-26_arjun-gau-failure-drill_runbook.md
 created_at: '2026-05-26'
-updated_at: '2026-05-26'
+updated_at: '2026-06-30'
 ---
 
 # SGK-2026-0245 作業ログ（KPI再校正・演習キックオフ）

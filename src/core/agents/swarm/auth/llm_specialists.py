@@ -31,16 +31,7 @@ class LLMAuthEscalator(Specialist):
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         super().__init__(config)
-        cfg = config or {}
-        from src.config import settings
-        default_model = getattr(settings, "model_output", None) or getattr(settings, "model", "deepseek/deepseek-chat")
-        # configがAgentConfigオブジェクトの場合とdictの場合の両方に対応
-        if hasattr(cfg, "model"):
-             model = cfg.model
-        else:
-             model = cfg.get("model", default_model)
-             
-        self.llm = LLMClient(model=model)
+        self.llm = LLMClient(role="specialist_light")
 
     async def execute(self, task: Task) -> List[Finding]:
         """

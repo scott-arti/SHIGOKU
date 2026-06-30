@@ -23,9 +23,7 @@ class Agent(BaseAgent):
         project_manager: Any = None,
         **kwargs,
     ):
-        from src.config import settings
-
-        resolved_model = model or getattr(settings, "model_output", None) or getattr(settings, "model", "deepseek/deepseek-chat")
+        resolved_model = model or "deepseek/deepseek-chat"
         # Adapt legacy init to Config
         config = AgentConfig(
             name=name,

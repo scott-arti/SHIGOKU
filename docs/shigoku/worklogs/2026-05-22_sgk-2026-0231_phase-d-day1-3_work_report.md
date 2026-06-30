@@ -4,11 +4,11 @@ doc_type: work_report
 status: done
 parent_task_id: SGK-2026-0025
 related_docs:
-  - docs/shigoku/plans/2026-05-22_juice-shop-phase-d-continuous-improvement_plan.md
+  - docs/shigoku/plans/2026-05-22_sgk-2026-0231_juice-shop-phase-d-continuous-improvement_plan.md
   - src/core/agents/swarm/injection/smart_sqli.py
   - src/core/agents/swarm/injection/smart_xss.py
 created_at: '2026-05-22'
-updated_at: '2026-05-22'
+updated_at: '2026-06-30'
 ---
 
 # Phase D Day 1-3 作業報告書 (SGK-2026-0231)

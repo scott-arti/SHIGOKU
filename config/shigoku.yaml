@@ -34,6 +34,124 @@ scan:
   # Proxy Configuration (Caido/Burp) - leave empty to run without mandatory proxy
   proxy: ""
 
+# LLM統合設定 (Phase 1)
+llm:
+  schema_version: 1
+  default_role: specialist_light
+  providers:
+    deepseek:
+      api_key_env: DEEPSEEK_API_KEY
+      base_url: null
+    openai:
+      api_key_env: OPENAI_API_KEY
+      base_url: null
+    any_llm:
+      api_key_env: ANY_LLM_API_KEY
+      base_url: http://localhost:8000/v1
+
+  profiles:
+    cheap_api:
+      provider: deepseek
+      model: deepseek/deepseek-v4-flash
+      timeout_seconds: 300
+      max_retries: 2
+      max_concurrency: 4
+      rate_limit_per_minute: 60
+      temperature: 0.0
+    reasoning_api:
+      provider: deepseek
+      model: deepseek/deepseek-v4-pro
+      timeout_seconds: 300
+      max_retries: 2
+      max_concurrency: 2
+      rate_limit_per_minute: 30
+      temperature: 0.0
+      extra:
+        thinking:
+          type: enabled
+        reasoning_effort: high
+    vision_api:
+      provider: openai
+      model: openai/gpt-4o
+      timeout_seconds: 300
+
+  roles:
+    planner:
+      profile: reasoning_api
+      fallback_profile: cheap_api
+      system_prompt_template: conductor/planning.md
+    swarm_manager:
+      profile: cheap_api
+      fallback_profile: reasoning_api
+      system_prompt_template: agents/manager_base.md
+    tool_output_analysis:
+      profile: cheap_api
+      fallback_profile: reasoning_api
+      system_prompt_template: roles/tool_output_analysis.md
+    rag_compression:
+      profile: cheap_api
+      system_prompt_template: roles/rag_compression.md
+    final_judgement:
+      profile: reasoning_api
+      fallback_profile: cheap_api
+      system_prompt_template: roles/final_judgement.md
+    specialist_light:
+      profile: cheap_api
+      fallback_profile: reasoning_api
+      system_prompt_template: roles/specialist_light.md
+    xss_specialist:
+      profile: cheap_api
+      fallback_profile: reasoning_api
+      system_prompt_template: roles/xss_specialist.md
+    sqli_specialist:
+      profile: cheap_api
+      fallback_profile: reasoning_api
+      system_prompt_template: roles/sqli_specialist.md
+    lfi_specialist:
+      profile: cheap_api
+      fallback_profile: reasoning_api
+      system_prompt_template: roles/lfi_specialist.md
+    cmd_ssrf_specialist:
+      profile: cheap_api
+      fallback_profile: reasoning_api
+      system_prompt_template: roles/cmd_ssrf_specialist.md
+    actor_critic:
+      profile: cheap_api
+      fallback_profile: reasoning_api
+      system_prompt_template: roles/actor_critic.md
+    recipe_generator:
+      profile: cheap_api
+      fallback_profile: reasoning_api
+      system_prompt_template: roles/recipe_generator.md
+    attack_suggester:
+      profile: cheap_api
+      fallback_profile: reasoning_api
+      system_prompt_template: roles/attack_suggester.md
+    response_classifier:
+      profile: cheap_api
+      fallback_profile: reasoning_api
+      system_prompt_template: roles/response_classifier.md
+    vuln_validator:
+      profile: cheap_api
+      fallback_profile: reasoning_api
+      system_prompt_template: roles/vuln_validator.md
+    chain_proposer:
+      profile: cheap_api
+      fallback_profile: reasoning_api
+      system_prompt_template: roles/chain_proposer.md
+    vision_analysis:
+      profile: vision_api
+      fallback_profile: cheap_api
+      system_prompt_template: roles/vision_analysis.md
+      optional: true
+
 # 外部API設定
 api:
   shodan_api_key: ${SHODAN_API_KEY}
+
+# レポート設定
+reporting:
+  attack_paths:
+    max_mermaid_nodes: 25
+    max_mermaid_edges: 40
+    max_top_paths: 5

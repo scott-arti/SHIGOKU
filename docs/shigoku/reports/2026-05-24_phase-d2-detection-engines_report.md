@@ -4,10 +4,10 @@ doc_type: work_report
 status: done
 parent_task_id: SGK-2026-0231
 related_docs:
-  - docs/shigoku/plans/2026-05-22_juice-shop-phase-d-continuous-improvement_plan.md
+  - docs/shigoku/plans/2026-05-22_sgk-2026-0231_juice-shop-phase-d-continuous-improvement_plan.md
   - docs/shigoku/reports/2026-05-24_phase-d1-infrastructure-implementation_report.md
 created_at: '2026-05-24'
-updated_at: '2026-05-24'
+updated_at: '2026-06-30'
 ---
 
 # Phase D-2 Detection Engines Implementation Report

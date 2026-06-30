@@ -1,7 +1,7 @@
 """XCTO-10 (confidence bandit/UCB1) RED tests.
 
 These tests codify the target behavior described in:
-`docs/shigoku/plans/2026-05-24_xss-hunter-enhancement_plan.md` section 5.3.6.
+`docs/shigoku/plans/2026-05-24_sgk-2026-0244_xss-hunter-enhancement_plan.md` section 5.3.6.
 They are expected to fail until XCTO-10 is implemented.
 """
 

@@ -2,21 +2,18 @@ import logging
 import threading
 import queue
 import time
-import requests
-import json
 import os
 
 class OllamaLogTranslator(logging.Handler):
     """
-    Experimental Log Translator using Ollama.
+    Log Translator using LLMClient (role=tool_output_analysis).
     Translates logs to Japanese when not using local LLM for main tasks.
     """
-    def __init__(self, ollama_url="http://localhost:11434", model="qwen3:8b"):
+    def __init__(self):
         super().__init__()
-        self.ollama_url = ollama_url
-        self.model = model
         self.log_queue = queue.Queue()
         self.stop_event = threading.Event()
+        self._llm_client = None
         self.worker_thread = threading.Thread(target=self._worker, daemon=True)
         self.worker_thread.start()
         
@@ -56,24 +53,24 @@ class OllamaLogTranslator(logging.Handler):
                 # Silently fail to avoid spamming stderr
                 pass
 
+    def _get_llm_client(self):
+        """Lazy-initialize LLMClient."""
+        if self._llm_client is None:
+            from src.core.models.llm import LLMClient
+            self._llm_client = LLMClient(role="tool_output_analysis")
+        return self._llm_client
+
     def _translate(self, text):
-        """Call Ollama API to translate text."""
+        """Call LLMClient to translate text."""
         try:
             prompt = f"Translate the following log message to Japanese concisely. Do not add explanations. Log: {text}"
-            
-            payload = {
-                "model": self.model,
-                "prompt": prompt,
-                "stream": False
-            }
-            
-            # 5 second timeout to avoid hanging
-            response = requests.post(f"{self.ollama_url}/api/generate", json=payload, timeout=5)
-            if response.status_code == 200:
-                data = response.json()
-                return data.get("response", "").strip()
+            messages = [{"role": "user", "content": prompt}]
+            response = self._get_llm_client().generate(messages)
+            if hasattr(response, 'choices') and response.choices:
+                return response.choices[0].message.content.strip()
+            return text  # fallback to original
         except Exception:
-            return None
+            return text  # fallback to original on failure
             
     def close(self):
         self.stop_event.set()

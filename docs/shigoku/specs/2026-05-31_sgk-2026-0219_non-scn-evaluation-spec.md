@@ -4,10 +4,10 @@ doc_type: spec
 status: active
 parent_task_id: null
 related_docs:
-- docs/shigoku/plans/2026-05-19_non-scn-vulnerability-discovery-evaluation-plan-juice-shop-dvwa-crapi_plan.md
+- docs/shigoku/plans/2026-05-19_sgk-2026-0219_non-scn-vulnerability-discovery-evaluation-plan-juice-shop-dvwa-crapi_plan.md
 - docs/shigoku/worklogs/sgk-2026-0219_baseline_manifest_20260531_0121.md
 created_at: '2026-05-31'
-updated_at: '2026-05-31'
+updated_at: '2026-06-30'
 ---
 
 # SGK-2026-0219 Non-SCN Evaluation Spec (Step 2-5)

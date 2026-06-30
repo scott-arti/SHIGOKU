@@ -12,3 +12,8 @@
 - `session`: the raw execution artifact such as `session_*.json`; this is the closest record of what the run actually produced.
 - `primary source of truth`: the report path explicitly provided by the user for the current turn, together with the session resolved from the consistency checker.
 - `backfill`: report-time or gate-time enrichment derived from scenario coverage or heuristics rather than directly from raw findings; do not present backfill as raw evidence unless clearly labeled.
+
+## Canonical extraction rules
+
+- Raw findings must be extracted via `src/reporting/finding_extractor.extract_all_findings()`. Do not rely on ad hoc fields such as `vulnerabilities_found` or `task["vulnerabilities_found"]`.
+- When `shigoku-ops --report ...` or `verify_report_session_consistency()` resolves a session, the resolved session path alone is not enough. If the checker verdict is anything other than `consistent`, stop and report the inconsistency instead of generating or summarizing output.

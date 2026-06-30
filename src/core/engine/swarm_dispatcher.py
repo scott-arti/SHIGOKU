@@ -7,7 +7,9 @@ MasterConductor から呼び出され、タスクのタグに基づいて
 Implementation Plan Section 3.4 準拠
 """
 
+import asyncio
 import logging
+import threading
 from typing import Dict, Any, Optional, List, Type
 
 from src.core.agents.swarm.base import SwarmManager, Task as SwarmTask
@@ -17,6 +19,9 @@ from src.core.engine.tag_taxonomy_registry import (
     SUBDOMAIN_TAG_TO_SWARM,
     URL_TAG_TO_SWARM,
     TAG_TO_SWARM,
+)
+from src.core.models.run_ledger import (
+    RunLedgerEventType, get_run_ledger_recorder,
 )
 
 logger = logging.getLogger(__name__)
@@ -73,6 +78,7 @@ class SwarmDispatcher:
         self._recipe_loader = None
         self._rag = None
         self._aggressive_limiter: AggressiveLimiter = get_aggressive_limiter()
+        self.run_ledger_recorder = get_run_ledger_recorder()
     
     def set_recipe_loader(self, recipe_loader) -> None:
         """RecipeLoader を設定（Swarm で使用）"""
@@ -87,10 +93,11 @@ class SwarmDispatcher:
             swarm.set_rag(rag)
     
     def _get_or_create_swarm(self, swarm_name: str) -> Any:
-        """Swarm Manager を取得または作成（プールを利用）"""
-        if swarm_name in self._swarm_pool:
-            return self._swarm_pool[swarm_name]
+        """Swarm Manager を新規生成（Phase 3: per-dispatch instance / pool 再利用廃止）。
 
+        shared service (network/llm/event_bus/recipe/rag) を注入するが、インスタンスは
+        キャッシュしない。呼び出し元は dispatch 後に try/finally で close() すること。
+        """
         swarm = None
         swarm_classes = _get_swarm_classes()
         if swarm_name in swarm_classes:
@@ -127,9 +134,9 @@ class SwarmDispatcher:
             if self._rag:
                 swarm.set_rag(self._rag)
 
-            self._swarm_pool[swarm_name] = swarm
+            # Phase 3: self._swarm_pool[swarm_name] = swarm は行わない（キャッシュ廃止）
 
-        return self._swarm_pool.get(swarm_name)
+        return swarm  # NOTE: 呼び出し元が try/finally で close() する
     
     def determine_swarms(self, tags: List[str]) -> List[str]:
         """
@@ -173,6 +180,51 @@ class SwarmDispatcher:
         """
         swarms = self.determine_swarms(tags)
         return swarms[0] if swarms else None
+
+    def _classify_swarm_shadow(self, swarm_name: str) -> Dict[str, Any]:
+        """Phase 8 Step 2: Classify swarm for inner parallelism shadow decision.
+
+        Returns a shadow decision entry (type='shadow_parallel_decision').
+        This is RECORDING ONLY; execution order is unchanged.
+        """
+        swarm_classes = _get_swarm_classes()
+        swarm_class = swarm_classes.get(swarm_name)
+        if not swarm_class:
+            return {
+                "type": "shadow_parallel_decision",
+                "source_layer": "swarm_dispatcher",
+                "source_unit": swarm_name,
+                "candidate": False,
+                "parallelism_type": None,
+                "state_isolation": None,
+                "rejection_reason": "unknown_swarm_class",
+            }
+        try:
+            from src.core.agents.swarm.base_manager import BaseManagerAgent
+            is_stateful = issubclass(swarm_class, BaseManagerAgent)
+        except Exception:
+            is_stateful = True
+
+        if is_stateful:
+            return {
+                "type": "shadow_parallel_decision",
+                "source_layer": "swarm_dispatcher",
+                "source_unit": swarm_name,
+                "candidate": False,
+                "parallelism_type": None,
+                "state_isolation": "per_dispatch",
+                "rejection_reason": "stateful_manager (BaseManagerAgent subclass)",
+            }
+        else:
+            return {
+                "type": "shadow_parallel_decision",
+                "source_layer": "swarm_dispatcher",
+                "source_unit": swarm_name,
+                "candidate": True,
+                "parallelism_type": "read_only",
+                "state_isolation": "stateless",
+                "rejection_reason": None,
+            }
 
     async def close(self) -> None:
         """全 Swarm インスタンスのリソースを解放"""
@@ -229,60 +281,254 @@ class SwarmDispatcher:
             len(swarm_names), swarm_names, tags
         )
         
+        # --- Phase 8 Step 2: Shadow parallel decision ---
+        shadow_decisions: List[Dict[str, Any]] = []
+        for sn in swarm_names:
+            shadow_decisions.append(self._classify_swarm_shadow(sn))
+        
+        # --- Phase 8 Step 3: Limited inner parallel (read_only/stateless only) ---
+        if self._is_inner_parallelism_enabled():
+            return await self._dispatch_with_limited_parallel(
+                swarm_names, tags, target, task_name, params, shadow_decisions
+            )
+        
         # 全ての該当 Swarm に順次ディスパッチ
+        return await self._dispatch_serial(
+            swarm_names, tags, target, task_name, params, shadow_decisions
+        )
+
+    def _is_inner_parallelism_enabled(self) -> bool:
+        """Phase 8 Step 3: Check if inner parallelism is enabled (not killed)."""
+        p = self.config.get("parallelism", {}) if isinstance(self.config, dict) else {}
+        if p.get("kill_switch", False):
+            return False
+        return p.get("enabled", False)
+
+    async def _dispatch_serial(
+        self,
+        swarm_names: List[str],
+        tags: List[str],
+        target: str,
+        task_name: str,
+        params: Optional[Dict[str, Any]],
+        shadow_decisions: List[Dict[str, Any]],
+    ) -> SwarmResult:
+        """Original serial dispatch path (kept intact for regression safety)."""
         all_findings = []
         all_execution_logs = []
         total_specialists = 0
         successful_specialists = 0
         statuses = []
-        
+
         for swarm_name in swarm_names:
-            try:
-                swarm = self._get_or_create_swarm(swarm_name)
-                
-                # SwarmTask を作成
-                swarm_task = SwarmTask(
-                    id=f"swarm_{swarm_name}_{hash(target) % 10000}",
-                    name=f"{task_name} ({swarm_name})",
-                    target=target,
-                    tags=tags,
-                    params=params or {},
-                )
-                
-                result = await swarm.dispatch(swarm_task)
-                
-                if result:
-                    all_findings.extend(result.findings)
-                    all_execution_logs.extend(result.execution_log)
-                    total_specialists += result.total_specialists
-                    successful_specialists += result.successful_specialists
-                    statuses.append(result.status)
-                    logger.info(
-                        "[SwarmDispatcher] %s completed: %d findings",
-                        swarm_name, len(result.findings)
-                    )
-                
-            except Exception as e:
-                logger.error("[SwarmDispatcher] Error dispatching to %s: %s", swarm_name, e)
-                all_execution_logs.append({"swarm": swarm_name, "error": str(e)})
+            swarm_result = await self._dispatch_one_swarm(
+                swarm_name, tags, target, task_name, params,
+            )
+            if swarm_result is not None:
+                all_findings.extend(swarm_result.findings)
+                all_execution_logs.extend(swarm_result.execution_log)
+                total_specialists += swarm_result.total_specialists
+                successful_specialists += swarm_result.successful_specialists
+                statuses.append(swarm_result.status)
+            else:
+                all_execution_logs.append({"swarm": swarm_name, "error": "dispatch_failed"})
                 statuses.append("failed")
-        
-        # 結果をマージ
-        if "success" in statuses:
-            merged_status = "success"
-        elif "partial_success" in statuses:
-            merged_status = "partial_success"
-        else:
-            merged_status = "failed"
-        
+
+        merged_status = self._merge_status(statuses)
         return SwarmResult(
             findings=all_findings,
             status=merged_status,
             execution_log=all_execution_logs,
-            swarm_name=",".join(swarm_names),  # 複数 Swarm 名をカンマ区切り
+            swarm_name=",".join(swarm_names),
             total_specialists=total_specialists,
             successful_specialists=successful_specialists,
+            shadow_decisions=shadow_decisions,
         )
+
+    async def _dispatch_with_limited_parallel(
+        self,
+        swarm_names: List[str],
+        tags: List[str],
+        target: str,
+        task_name: str,
+        params: Optional[Dict[str, Any]],
+        shadow_decisions: List[Dict[str, Any]],
+    ) -> SwarmResult:
+        """Phase 8 Step 3: Limited parallel dispatch for stateless/read_only swarms.
+
+        Deterministic merge order: results assembled in swarm_names order.
+        Partial failure: failed swarms produce error entries, not dropped.
+        """
+        # Classify swarms: parallel (stateless) vs serial (stateful)
+        parallel_names: List[str] = []
+        serial_names: List[str] = []
+        for sn in swarm_names:
+            shadow = self._classify_swarm_shadow(sn)
+            if shadow.get("candidate") is True:
+                parallel_names.append(sn)
+            else:
+                serial_names.append(sn)
+
+        # Execute parallel group via asyncio.gather with return_exceptions=True
+        parallel_results: Dict[str, Optional[SwarmResult]] = {}
+        if parallel_names:
+            tasks = [
+                self._dispatch_one_swarm(sn, tags, target, task_name, params)
+                for sn in parallel_names
+            ]
+            raw_results = await asyncio.gather(*tasks, return_exceptions=True)
+            for sn, raw in zip(parallel_names, raw_results):
+                if isinstance(raw, Exception):
+                    logger.error("[SwarmDispatcher] Parallel %s failed: %s", sn, raw)
+                    parallel_results[sn] = SwarmResult(
+                        findings=[],
+                        status="failed",
+                        execution_log=[{"swarm": sn, "error": str(raw)}],
+                        swarm_name=sn,
+                    )
+                else:
+                    parallel_results[sn] = raw
+
+        # Execute serial group sequentially
+        serial_results: Dict[str, Optional[SwarmResult]] = {}
+        for sn in serial_names:
+            serial_results[sn] = await self._dispatch_one_swarm(
+                sn, tags, target, task_name, params,
+            )
+
+        # Deterministic merge in swarm_names order
+        all_findings = []
+        all_execution_logs = []
+        total_specialists = 0
+        successful_specialists = 0
+        statuses = []
+
+        for sn in swarm_names:
+            swarm_result = parallel_results.get(sn) or serial_results.get(sn)
+            if swarm_result is not None:
+                all_findings.extend(swarm_result.findings)
+                all_execution_logs.extend(swarm_result.execution_log)
+                total_specialists += swarm_result.total_specialists
+                successful_specialists += swarm_result.successful_specialists
+                statuses.append(swarm_result.status)
+            else:
+                all_execution_logs.append({"swarm": sn, "error": "no_result"})
+                statuses.append("failed")
+
+        merged_status = self._merge_status(statuses)
+        self._record_swarm_merged(statuses, len(all_findings))
+        return SwarmResult(
+            findings=all_findings,
+            status=merged_status,
+            execution_log=all_execution_logs,
+            swarm_name=",".join(swarm_names),
+            total_specialists=total_specialists,
+            successful_specialists=successful_specialists,
+            shadow_decisions=shadow_decisions,
+        )
+
+    async def _dispatch_one_swarm(
+        self,
+        swarm_name: str,
+        tags: List[str],
+        target: str,
+        task_name: str,
+        params: Optional[Dict[str, Any]],
+    ) -> Optional[SwarmResult]:
+        """Dispatch a single swarm and return its SwarmResult (or None on failure).
+
+        Closes the swarm in finally. Ledger recording is attempted but never
+        affects the core flow.
+        """
+        swarm = None
+        try:
+            swarm = self._get_or_create_swarm(swarm_name)
+
+            swarm_task = SwarmTask(
+                id=f"swarm_{swarm_name}_{hash(target) % 10000}",
+                name=f"{task_name} ({swarm_name})",
+                target=target,
+                tags=tags,
+                params=params or {},
+            )
+
+            try:
+                self.run_ledger_recorder.record(
+                    event_type=RunLedgerEventType.SWARM_DISPATCHED,
+                    phase="attack",
+                    actor_type="SwarmDispatcher",
+                    actor_name=swarm_name,
+                    task_id=getattr(swarm_task, "id", None) if swarm_task else None,
+                    input_summary=f"Dispatch to {swarm_name}",
+                    action="dispatch",
+                    result="dispatched",
+                )
+            except Exception:
+                pass
+
+            result = await swarm.dispatch(swarm_task)
+
+            if result:
+                logger.info(
+                    "[SwarmDispatcher] %s completed: %d findings",
+                    swarm_name, len(result.findings),
+                )
+                try:
+                    self.run_ledger_recorder.record(
+                        event_type=RunLedgerEventType.SWARM_COMPLETED,
+                        phase="attack",
+                        actor_type="SwarmDispatcher",
+                        actor_name=swarm_name,
+                        result="completed",
+                        source_refs={"findings_count": len(result.findings)}
+                        if result.findings else {"findings_count": 0},
+                    )
+                except Exception:
+                    pass
+            return result
+
+        except Exception as e:
+            logger.error("[SwarmDispatcher] Error dispatching to %s: %s", swarm_name, e)
+            try:
+                self.run_ledger_recorder.record(
+                    event_type=RunLedgerEventType.SWARM_FAILED,
+                    phase="attack",
+                    actor_type="SwarmDispatcher",
+                    actor_name=swarm_name,
+                    result="failed",
+                    error=str(e)[:500],
+                )
+            except Exception:
+                pass
+            return None
+        finally:
+            if swarm is not None and hasattr(swarm, "close"):
+                try:
+                    await swarm.close()
+                except Exception as ce:
+                    logger.error("[SwarmDispatcher] Error closing swarm %s: %s", swarm_name, ce)
+
+    @staticmethod
+    def _merge_status(statuses: List[str]) -> str:
+        """Merge statuses: any success → success, any partial → partial, else failed."""
+        if "success" in statuses:
+            return "success"
+        elif "partial_success" in statuses:
+            return "partial_success"
+        return "failed"
+
+    def _record_swarm_merged(self, statuses, total_findings):
+        try:
+            self.run_ledger_recorder.record(
+                event_type=RunLedgerEventType.SWARM_MERGED,
+                phase="attack",
+                actor_type="SwarmDispatcher",
+                actor_name="all",
+                result="merged",
+                source_refs={"statuses": statuses, "total_findings": total_findings},
+            )
+        except Exception:
+            pass
     
     async def dispatch_rich_url(
         self,
@@ -415,6 +661,7 @@ class SwarmDispatcher:
         if approved:
             params["user_approved"] = True
         
+        swarm = None
         try:
             swarm_class = swarm_classes[swarm_name]
             # プールにある場合はそれを使用、ない場合は作成
@@ -434,12 +681,48 @@ class SwarmDispatcher:
                 is_aggressive=is_aggressive,
             )
             
+            try:
+                self.run_ledger_recorder.record(
+                    event_type=RunLedgerEventType.SWARM_DISPATCHED,
+                    phase="attack",
+                    actor_type="SwarmDispatcher",
+                    actor_name=swarm_name,
+                    task_id=getattr(task, "id", None),
+                    input_summary=f"Dispatch to {swarm_name}",
+                    action="dispatch",
+                    result="dispatched",
+                )
+            except Exception:
+                pass  # ledger recording must not affect core flow
+            
             result = await swarm.execute(task)
             logger.info("[_dispatch_to_single_swarm] %s completed: %d findings", swarm_name, len(result.findings))
+            try:
+                self.run_ledger_recorder.record(
+                    event_type=RunLedgerEventType.SWARM_COMPLETED,
+                    phase="attack",
+                    actor_type="SwarmDispatcher",
+                    actor_name=swarm_name,
+                    result="completed",
+                    source_refs={"findings_count": len(result.findings)} if result.findings else {"findings_count": 0},
+                )
+            except Exception:
+                pass  # ledger recording must not affect core flow
             return result
             
         except Exception as e:
             logger.error("[_dispatch_to_single_swarm] %s error: %s", swarm_name, e)
+            try:
+                self.run_ledger_recorder.record(
+                    event_type=RunLedgerEventType.SWARM_FAILED,
+                    phase="attack",
+                    actor_type="SwarmDispatcher",
+                    actor_name=swarm_name,
+                    result="failed",
+                    error=str(e)[:500],
+                )
+            except Exception:
+                pass  # ledger recording must not affect core flow
             return SwarmResult(
                 findings=[],
                 status="failed",
@@ -449,6 +732,11 @@ class SwarmDispatcher:
         finally:
             # セマフォ解放
             await self._aggressive_limiter.release(is_aggressive)
+            if swarm is not None and hasattr(swarm, "close"):
+                try:
+                    await swarm.close()
+                except Exception as ce:
+                    logger.error("[_dispatch_to_single_swarm] Error closing %s: %s", swarm_name, ce)
     
     async def dispatch_to_all(
         self,
@@ -471,6 +759,7 @@ class SwarmDispatcher:
         swarm_classes = _get_swarm_classes()
         
         for swarm_name in swarm_classes:
+            swarm = None
             try:
                 swarm = self._get_or_create_swarm(swarm_name)
                 swarm_task = SwarmTask(
@@ -484,12 +773,19 @@ class SwarmDispatcher:
                 results.append(result)
             except Exception as e:
                 logger.error(f"[SwarmDispatcher] Error in {swarm_name}: {e}")
+            finally:
+                if swarm is not None and hasattr(swarm, "close"):
+                    try:
+                        await swarm.close()
+                    except Exception as ce:
+                        logger.error("[dispatch_to_all] Error closing %s: %s", swarm_name, ce)
         
         return results
 
 
 # シングルトンインスタンス
 _dispatcher: Optional[SwarmDispatcher] = None
+_dispatcher_lock = threading.Lock()  # Phase 5 (SGK-2026-0314 LB-7)
 
 
 def get_swarm_dispatcher(config: Optional[Dict[str, Any]] = None, network_client: Any = None, llm_client: Any = None, loop: Any = None, event_bus: Any = None) -> SwarmDispatcher:
@@ -498,24 +794,27 @@ def get_swarm_dispatcher(config: Optional[Dict[str, Any]] = None, network_client
     初回呼び出し時に渡されたパラメータで初期化され、以降は同じインスタンスを返す。
     2 回目以降の呼び出しでパラメータが指定された場合、常に上書き更新する。
     これにより、並列実行時のレースコンディションを防止する。
+
+    Thread-safe (Phase 5 LB-7): _dispatcher_lock protects singleton access.
     """
     global _dispatcher
-    if _dispatcher is None:
-        # 初回：新規作成
-        _dispatcher = SwarmDispatcher(config, network_client=network_client, llm_client=llm_client, loop=loop, event_bus=event_bus)
-        
-        # llm_client が None の場合は警告（InjectionSwarm が機能しなくなる）
-        if llm_client is None:
-            logger.warning("[get_swarm_dispatcher] Initialized with llm_client=None. InjectionSwarm may not function correctly.")
-    else:
-        # 2 回目以降：常に上書き更新（並列実行時のレースコンディション防止）
-        if network_client is not None:
-            _dispatcher.network_client = network_client
-        if llm_client is not None:
-            _dispatcher.llm_client = llm_client
-        if loop is not None:
-            _dispatcher.loop = loop
-        if event_bus is not None:
-            _dispatcher.event_bus = event_bus
+    with _dispatcher_lock:
+        if _dispatcher is None:
+            # 初回：新規作成
+            _dispatcher = SwarmDispatcher(config, network_client=network_client, llm_client=llm_client, loop=loop, event_bus=event_bus)
+            
+            # llm_client が None の場合は警告（InjectionSwarm が機能しなくなる）
+            if llm_client is None:
+                logger.warning("[get_swarm_dispatcher] Initialized with llm_client=None. InjectionSwarm may not function correctly.")
+        else:
+            # 2 回目以降：常に上書き更新（並列実行時のレースコンディション防止）
+            if network_client is not None:
+                _dispatcher.network_client = network_client
+            if llm_client is not None:
+                _dispatcher.llm_client = llm_client
+            if loop is not None:
+                _dispatcher.loop = loop
+            if event_bus is not None:
+                _dispatcher.event_bus = event_bus
 
-    return _dispatcher
+        return _dispatcher

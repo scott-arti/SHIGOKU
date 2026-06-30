@@ -27,6 +27,9 @@ from src.reporting.report_session_consistency import verify_report_session_consi
 from src.reporting.report_loop_orchestrator import run_report_loop  # noqa: E402
 from src.reporting.session_finding_inspector import inspect_session_findings  # noqa: E402
 from src.reporting.runtime_control_release_gate import evaluate_gate_evidence_bundle  # noqa: E402
+from src.reporting.run_narrative_formatter import RunNarrativeFormatter  # noqa: E402
+from src.reporting.target_profile_formatter import TargetProfileFormatter  # noqa: E402
+from src.reporting.attack_path_formatter import AttackPathFormatter  # noqa: E402
 from src.core.observability.phase1_contracts import (  # noqa: E402
     REQUIRED_OBSERVABILITY_FIELDS,
     evaluate_minimum_sample_size,
@@ -46,6 +49,9 @@ from src.core.observability.flaky_quarantine import (  # noqa: E402
 VALIDATION_SUITES: dict[str, list[str]] = {
     "report": [
         "tests/unit/reporting/test_report_session_consistency.py",
+        "tests/unit/reporting/test_run_narrative_formatter.py",
+        "tests/unit/reporting/test_target_profile_formatter.py",
+        "tests/unit/reporting/test_attack_path_formatter.py",
         "tests/unit/main/test_main_report_haddix.py",
     ],
     "session": [
@@ -232,6 +238,245 @@ def _run_report_loop(args: argparse.Namespace) -> int:
     if status == "failed":
         return 3
     return 2
+
+
+def _resolve_session_from_args(
+    args: argparse.Namespace,
+) -> tuple[dict | None, str | None, list[str]]:
+    """Resolve session data from --session or --report arguments.
+
+    Returns:
+        (session_data, consistency_status, reason_codes)
+
+        - session_data: parsed session JSON dict, or None
+        - consistency_status: None if --session used directly; otherwise
+          the verdict status ("consistent", "inconsistent", "blocked", ...)
+        - reason_codes: list of reason codes (empty for direct --session)
+    """
+    import json as _json
+
+    if args.session:
+        session_path = Path(args.session).expanduser().resolve()
+        if not session_path.exists():
+            return (None, None, [])
+        try:
+            return (
+                _json.loads(session_path.read_text(encoding="utf-8")),
+                None,
+                [],
+            )
+        except Exception:
+            return (None, None, [])
+
+    if args.report:
+        consistency = verify_report_session_consistency(
+            Path(args.report),
+            session_path=Path(args.session) if args.session else None,
+            sessions_dir=Path(args.sessions_dir) if args.sessions_dir else None,
+        )
+        status = consistency.get("status")
+        reason_codes = list(consistency.get("reason_codes", []))
+
+        session_info = consistency.get("session", {})
+        if isinstance(session_info, dict):
+            resolved_path = session_info.get("path")
+            if resolved_path:
+                try:
+                    return (
+                        _json.loads(Path(resolved_path).read_text(encoding="utf-8")),
+                        status,
+                        reason_codes,
+                    )
+                except Exception:
+                    return (None, status, reason_codes + ["session_parse_failed"])
+        # No session path resolved
+        return (None, status, reason_codes)
+
+    return (None, None, [])
+
+
+def _run_report_narrative(args: argparse.Namespace) -> int:
+    session_data, consistency_status, reason_codes = _resolve_session_from_args(args)
+
+    if session_data is None:
+        payload: dict[str, Any] = {
+            "status": "blocked",
+            "reason_codes": reason_codes
+            if reason_codes
+            else ["session_not_resolved"],
+            "hint": "Provide --session or a valid --report path.",
+        }
+        _emit_command_payload(args, payload)
+        return 2
+
+    # Block if consistency status is explicitly set and not "consistent"
+    if consistency_status is not None and consistency_status != "consistent":
+        payload = {
+            "status": "blocked",
+            "reason_codes": reason_codes,
+            "hint": (
+                "Report-session consistency check failed. "
+                "Use --session directly if you want to force generation, "
+                "or rerun the scan to produce a consistent report."
+            ),
+        }
+        _emit_command_payload(args, payload)
+        return 2
+
+    formatter = RunNarrativeFormatter()
+    markdown = formatter.format(session_data)
+
+    if args.output:
+        output_path = Path(args.output).expanduser().resolve()
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(markdown, encoding="utf-8")
+        payload = {"status": "ok", "output": str(output_path)}
+    else:
+        output_json = bool(getattr(args, "json", False))
+        if output_json:
+            payload = {"status": "ok", "output": "stdout", "markdown": markdown}
+        else:
+            print(markdown)
+            payload = {"status": "ok", "output": "stdout"}
+    _emit_command_payload(args, payload)
+    return 0
+
+
+def _run_report_target_profile(args: argparse.Namespace) -> int:
+    session_data, consistency_status, reason_codes = _resolve_session_from_args(args)
+
+    if session_data is None:
+        payload: dict[str, Any] = {
+            "status": "blocked",
+            "reason_codes": reason_codes
+            if reason_codes
+            else ["session_not_resolved"],
+            "hint": "Provide --session or a valid --report path.",
+        }
+        _emit_command_payload(args, payload)
+        return 2
+
+    # Block if consistency status is explicitly set and not "consistent"
+    if consistency_status is not None and consistency_status != "consistent":
+        payload = {
+            "status": "blocked",
+            "reason_codes": reason_codes,
+            "hint": (
+                "Report-session consistency check failed. "
+                "Use --session directly if you want to force generation, "
+                "or rerun the scan to produce a consistent report."
+            ),
+        }
+        _emit_command_payload(args, payload)
+        return 2
+
+    formatter = TargetProfileFormatter()
+    markdown = formatter.format(session_data)
+
+    if args.output:
+        output_path = Path(args.output).expanduser().resolve()
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(markdown, encoding="utf-8")
+        payload = {"status": "ok", "output": str(output_path)}
+    else:
+        output_json = bool(getattr(args, "json", False))
+        if output_json:
+            payload = {"status": "ok", "output": "stdout", "markdown": markdown}
+        else:
+            print(markdown)
+            payload = {"status": "ok", "output": "stdout"}
+    _emit_command_payload(args, payload)
+    return 0
+
+
+def _run_report_attack_paths(args: argparse.Namespace) -> int:
+    """Generate attack_paths.md Markdown + optional attack_paths.json from session data."""
+    session_data, consistency_status, reason_codes = _resolve_session_from_args(args)
+
+    if session_data is None:
+        payload: dict[str, Any] = {
+            "status": "blocked",
+            "reason_codes": reason_codes
+            if reason_codes
+            else ["session_not_resolved"],
+            "hint": "Provide --session or a valid --report path.",
+        }
+        _emit_command_payload(args, payload)
+        return 2
+
+    # Block if consistency status is explicitly set and not "consistent"
+    if consistency_status is not None and consistency_status != "consistent":
+        payload = {
+            "status": "blocked",
+            "reason_codes": reason_codes,
+            "hint": (
+                "Report-session consistency check failed. "
+                "Use --session directly if you want to force generation, "
+                "or rerun the scan to produce a consistent report."
+            ),
+        }
+        _emit_command_payload(args, payload)
+        return 2
+
+    # Load reporting config from shigoku.yaml if available
+    config = _load_attack_paths_config()
+
+    formatter = AttackPathFormatter(config=config)
+    markdown = formatter.format(session_data)
+
+    output_path = None
+    payload: dict[str, Any]
+    if args.output:
+        output_path = Path(args.output).expanduser().resolve()
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(markdown, encoding="utf-8")
+        payload = {"status": "ok", "output": str(output_path)}
+    elif args.output_dir:
+        output_dir = Path(args.output_dir).expanduser().resolve()
+        output_dir.mkdir(parents=True, exist_ok=True)
+        # Derive filename from session id or fallback timestamp
+        session_id = str(session_data.get("session_id", "unknown"))
+        safe_id = re.sub(r"[^a-zA-Z0-9._-]", "_", session_id)
+        output_path = output_dir / f"attack_paths_{safe_id}.md"
+        output_path.write_text(markdown, encoding="utf-8")
+        payload = {"status": "ok", "output": str(output_path)}
+    else:
+        output_json = bool(getattr(args, "json", False))
+        if output_json:
+            payload = {"status": "ok", "output": "stdout", "markdown": markdown}
+        else:
+            print(markdown)
+            payload = {"status": "ok", "output": "stdout"}
+
+    if output_path is not None and args.json_output:
+        json_path = output_path.with_suffix(".json")
+        formatter.export_json(session_data, json_path)
+        payload["json_output"] = str(json_path)
+
+    _emit_command_payload(args, payload)
+    return 0
+
+
+def _load_attack_paths_config() -> dict | None:
+    """Load reporting.attack_paths config from config/shigoku.yaml."""
+    try:
+        import yaml as _yaml  # noqa: F811
+    except ImportError:
+        return None
+    config_path = PROJECT_ROOT / "config" / "shigoku.yaml"
+    if not config_path.exists():
+        return None
+    try:
+        with open(config_path, encoding="utf-8") as fh:
+            cfg = _yaml.safe_load(fh)
+    except Exception:
+        return None
+    if not isinstance(cfg, dict):
+        return None
+    reporting = cfg.get("reporting")
+    if not isinstance(reporting, dict):
+        return None
+    return reporting.get("attack_paths")
 
 
 def _run_session_findings(args: argparse.Namespace) -> int:
@@ -722,6 +967,38 @@ def build_parser() -> argparse.ArgumentParser:
         default=3,
     )
     report_loop.set_defaults(handler=_run_report_loop)
+
+    report_narrative = report_sub.add_parser(
+        "narrative",
+        help="Generate a run_narrative.md Markdown report from a session.",
+    )
+    report_narrative.add_argument("--session", help="Path to session_*.json")
+    report_narrative.add_argument("--report", help="Path to haddix_report_*.md (resolves source session)")
+    report_narrative.add_argument("--sessions-dir", help="Optional sessions directory for --report resolution")
+    report_narrative.add_argument("--output", help="Optional output file path (default: stdout)")
+    report_narrative.set_defaults(handler=_run_report_narrative)
+
+    report_target_profile = report_sub.add_parser(
+        "target-profile",
+        help="Generate a target_profile.md Markdown report from a session.",
+    )
+    report_target_profile.add_argument("--session", help="Path to session_*.json")
+    report_target_profile.add_argument("--report", help="Path to haddix_report_*.md (resolves source session)")
+    report_target_profile.add_argument("--sessions-dir", help="Optional sessions directory for --report resolution")
+    report_target_profile.add_argument("--output", help="Optional output file path (default: stdout)")
+    report_target_profile.set_defaults(handler=_run_report_target_profile)
+
+    report_attack_paths = report_sub.add_parser(
+        "attack-paths",
+        help="Generate an attack_paths.md Markdown + Mermaid report from a session.",
+    )
+    report_attack_paths.add_argument("--session", help="Path to session_*.json")
+    report_attack_paths.add_argument("--report", help="Path to haddix_report_*.md (resolves source session)")
+    report_attack_paths.add_argument("--sessions-dir", help="Optional sessions directory for --report resolution")
+    report_attack_paths.add_argument("--output", help="Optional output file path (default: stdout)")
+    report_attack_paths.add_argument("--output-dir", help="Optional output directory (filename derived from session ID)")
+    report_attack_paths.add_argument("--json-output", action="store_true", help="Also export attack_paths.json for Neo4j ingest")
+    report_attack_paths.set_defaults(handler=_run_report_attack_paths)
 
     session_parser = top.add_parser("session", help="Session-related operations")
     session_sub = session_parser.add_subparsers(dest="action", required=True)

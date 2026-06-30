@@ -47,3 +47,38 @@ def test_pipeline_null_context_safety():
     # Should safely return None
     header = pipeline._get_cookie_header()
     assert header is None
+
+
+@pytest.mark.asyncio
+async def test_tool_runner_uses_demo_provider_for_mock_output():
+    """Verify ToolRunner delegates DEV_MODE mock behavior to the injected demo provider."""
+
+    class DemoProviderStub:
+        def get_command_output(self, cmd, mock_output=""):
+            return "provider-output"
+
+        def is_tool_available(self, tool_name):
+            return True
+
+        def check_tools(self, tools):
+            return None
+
+    runner = ToolRunner(dev_mode=True, demo_provider=DemoProviderStub())
+
+    output = await runner.run(["subfinder", "-d", "example.com"], timeout=1)
+
+    assert output == "provider-output"
+
+
+@pytest.mark.asyncio
+async def test_tool_runner_env_var_controls_demo_mode(monkeypatch):
+    """Verify ToolRunner picks production or demo path from SHIGOKU_DEV_MODE."""
+
+    monkeypatch.delenv("SHIGOKU_DEV_MODE", raising=False)
+    prod_runner = ToolRunner()
+    assert prod_runner.dev_mode is False
+
+    monkeypatch.setenv("SHIGOKU_DEV_MODE", "true")
+    demo_runner = ToolRunner()
+    assert demo_runner.dev_mode is True
+    assert await demo_runner.run(["subfinder", "-d", "example.com"], timeout=1) != ""

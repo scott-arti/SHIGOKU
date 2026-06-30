@@ -4,13 +4,13 @@ doc_type: subtask_plan
 status: active
 parent_task_id: SGK-2026-0244
 related_docs:
-  - docs/shigoku/plans/2026-05-24_xss-hunter-enhancement_plan.md
+  - docs/shigoku/plans/2026-05-24_sgk-2026-0244_xss-hunter-enhancement_plan.md
   - src/core/detection/xss_detector.py
   - src/core/agents/swarm/injection/smart_xss.py
   - src/core/detection/browser_pool.py
   - src/core/detection/xss_pipeline.py
 created_at: '2026-05-27'
-updated_at: '2026-05-27'
+updated_at: '2026-06-30'
 ---
 
 # SGK-2026-0244-S01: XSS Hunter未実装項目の完了計画

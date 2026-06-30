@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import logging
 import asyncio
+import os
 import re
 from typing import Dict, Any, Tuple, Optional, List
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
@@ -140,17 +141,15 @@ INPUT: [Input]
         ThoughtLoop.__init__(self, max_turns=8)
 
         mode = "ctf"  # CTF モードで POST リクエストを許可
-        from src.config import settings as app_settings
-        model = getattr(app_settings, "model", None) or getattr(app_settings, "model_output", "deepseek/deepseek-chat")
-        rejudge_model = getattr(app_settings, "llm_xss_rejudge_model", "openai/gpt-4o-mini")
-        final_model = getattr(app_settings, "llm_xss_final_model", "openai/gpt-4o")
+        model = os.getenv("SHIGOKU_MODEL") or "deepseek/deepseek-chat"
         try:
             from src.core.config.settings import get_settings
             settings = get_settings()
-            rejudge_model = getattr(settings, "llm_xss_rejudge_model", rejudge_model)
-            final_model = getattr(settings, "llm_xss_final_model", final_model)
+            rejudge_model = getattr(settings, "llm_xss_rejudge_model", "openai/gpt-4o-mini")
+            final_model = getattr(settings, "llm_xss_final_model", "openai/gpt-4o")
         except Exception:
-            pass
+            rejudge_model = "openai/gpt-4o-mini"
+            final_model = "openai/gpt-4o"
         if config and isinstance(config, dict):
             mode = config.get("mode", mode)
             model = config.get("model", model) if isinstance(config, dict) else getattr(config, "model", model)
@@ -160,7 +159,7 @@ INPUT: [Input]
         self.primary_model = model
         self.rejudge_model = rejudge_model
         self.final_model = final_model
-        self.llm = LLMClient(model=self.primary_model, use_local=False)
+        self.llm = LLMClient(role="xss_specialist")
 
         # Network Setup
         proxy_manager = None

@@ -4,11 +4,11 @@ doc_type: work_report
 status: done
 parent_task_id: SGK-2026-0266
 related_docs:
-  - docs/shigoku/subtasks/2026-06-22_cli-japanese-localization_subtask_plan.md
-  - docs/shigoku/plans/2026-06-05_cli-entrypoint-split-plan_plan.md
+  - docs/shigoku/subtasks/2026-06-22_sgk-2026-0290_cli-japanese-localization_subtask_plan.md
+  - docs/shigoku/plans/2026-06-05_sgk-2026-0266_cli-entrypoint-split-plan_plan.md
 title: CLI日本語化 作業完了報告書
 created_at: '2026-06-22'
-updated_at: '2026-06-22'
+updated_at: '2026-06-30'
 tags:
   - shigoku
   - localization

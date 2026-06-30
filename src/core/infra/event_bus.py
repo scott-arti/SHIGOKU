@@ -10,10 +10,10 @@ import asyncio
 import logging
 import time
 import uuid
+from collections import OrderedDict, defaultdict
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Coroutine, Optional
-from collections import defaultdict
+from typing import Any, Callable, Coroutine, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +85,7 @@ class Event:
     source: str = "unknown"
     timestamp: float = field(default_factory=time.time)
     event_id: str = field(default_factory=lambda: f"evt_{int(time.time() * 1000)}_{uuid.uuid4().hex[:6]}")
+    reliability: str = "best_effort"  # Phase 6: critical | important | best_effort
     
     def to_dict(self) -> dict:
         """辞書形式に変換"""
@@ -94,6 +95,7 @@ class Event:
             "payload": self.payload,
             "source": self.source,
             "timestamp": self.timestamp,
+            "reliability": self.reliability,
         }
 
 
@@ -122,8 +124,15 @@ class EventBus:
         self._queue: asyncio.Queue[Event] = asyncio.Queue(maxsize=max_queue_size)
         self._running: bool = False
         self._worker_task: Optional[asyncio.Task] = None
-        self._processed_ids: set[str] = set()  # 重複排除用
-        self._max_processed_ids: int = 10000  # メモリ制限
+        # Phase 6: Replace set-based dedupe with OrderedDict for FIFO eviction (D-3 avoidance)
+        self._processed_ids: OrderedDict[str, None] = OrderedDict()
+        self._max_processed_ids: int = 10000
+        # Phase 6: Dead-letter tracking for dropped events
+        self._dead_letters: List[dict] = []
+        # Phase 6: Reliability timeouts
+        self._critical_timeout: float = 30.0
+        self._important_timeout: float = 15.0
+        self._best_effort_timeout: float = 5.0
     
     def subscribe(self, event_type: EventType, handler: EventHandler) -> None:
         """
@@ -152,7 +161,16 @@ class EventBus:
     async def emit(self, event: Event) -> None:
         """
         イベントを発行
+
+        Phase 6 (LB-2): Reliability-class-aware emit.
+        - critical/important: blocking put with extended timeout (no silent drop).
+        - best_effort: shorter timeout, dropped events go to dead_letter.
         
+        Design choice: blocking put with per-class timeout.
+        Rationale: Avoids disk persistence complexity (out of scope for Phase 6),
+        and backpressure from blocking producers is acceptable for critical events.
+        Phase 7+ may add persistence fallback if needed (D-2).
+
         Args:
             event: 発行するイベント
         """
@@ -161,22 +179,35 @@ class EventBus:
             logger.warning(f"Duplicate event ignored: {event.event_id}")
             return
         
+        timeout = self._get_reliability_timeout(event.reliability)
+        
         try:
             await asyncio.wait_for(
                 self._queue.put(event),
-                timeout=5.0
+                timeout=timeout,
             )
             logger.debug(f"Event emitted: {event.type.value} from {event.source}")
         except asyncio.TimeoutError:
-            logger.error(f"Event queue full, dropping event: {event.event_id}")
+            if event.reliability in ("critical", "important"):
+                logger.error(
+                    f"CRITICAL: {event.reliability} event dropped after "
+                    f"{timeout}s timeout: {event.event_id} (type={event.type.value})"
+                )
+            self._record_dead_letter(event, "queue_full")
     
     def emit_sync(self, event: Event) -> None:
         """
         同期的にイベントを発行（非asyncコンテキスト用）
         
+        Phase 6 (LB-2): Reliability-aware blocking put.
+        critical/important events use put_nowait with retry loop (blocking).
+        best_effort events attempt put_nowait, drop to dead_letter on QueueFull.
+
         Args:
             event: 発行するイベント
         """
+        reliability = getattr(event, 'reliability', 'best_effort')
+        
         try:
             self._queue.put_nowait(event)
             logger.debug(f"Event emitted (sync): {event.type.value}")
@@ -189,7 +220,25 @@ class EventBus:
                     except Exception as e:
                         logger.debug(f"Sync observer error: {e}")
         except asyncio.QueueFull:
-            logger.error(f"Event queue full, dropping event: {event.event_id}")
+            if reliability in ("critical", "important"):
+                # Blocking retry loop for critical/important events
+                timeout = self._get_reliability_timeout(reliability)
+                deadline = time.time() + timeout
+                while time.time() < deadline:
+                    try:
+                        self._queue.put_nowait(event)
+                        logger.debug(
+                            f"Event emitted (sync, retry): {event.type.value}"
+                        )
+                        return
+                    except asyncio.QueueFull:
+                        time.sleep(0.05)
+                logger.error(
+                    f"CRITICAL: {reliability} event dropped (sync, "
+                    f"{timeout}s timeout): {event.event_id}"
+                )
+            # Record dead letter regardless of reliability
+            self._record_dead_letter(event, "queue_full")
     
     async def start(self) -> None:
         """イベント処理ワーカーを開始"""
@@ -232,16 +281,15 @@ class EventBus:
                     timeout=1.0
                 )
                 
-                # 重複排除
+                # 重複排除 (Phase 6: OrderedDict for FIFO eviction)
                 if event.event_id in self._processed_ids:
                     continue
                 
-                self._processed_ids.add(event.event_id)
+                self._processed_ids[event.event_id] = None
                 
-                # メモリ制限
-                if len(self._processed_ids) > self._max_processed_ids:
-                    # 古いIDを削除（簡易実装）
-                    self._processed_ids = set(list(self._processed_ids)[-5000:])
+                # メモリ制限: FIFO eviction (pop oldest)
+                while len(self._processed_ids) > self._max_processed_ids:
+                    self._processed_ids.popitem(last=False)
                 
                 # ハンドラ実行
                 handlers = self._subscribers.get(event.type, [])
@@ -260,6 +308,31 @@ class EventBus:
             except Exception as e:
                 logger.error(f"Error processing event: {e}", exc_info=True)
     
+    def _get_reliability_timeout(self, reliability: str) -> float:
+        """Get the queue-put timeout for a given reliability class."""
+        if reliability == "critical":
+            return self._critical_timeout
+        elif reliability == "important":
+            return self._important_timeout
+        return self._best_effort_timeout
+
+    def _record_dead_letter(self, event: Event, reason: str) -> None:
+        """Record a dropped event in the dead-letter log."""
+        entry = {
+            "event_id": event.event_id,
+            "event_type": event.type.value if isinstance(event.type, EventType) else str(event.type),
+            "reason": reason,
+            "reliability": getattr(event, 'reliability', 'best_effort'),
+            "timestamp": time.time(),
+        }
+        self._dead_letters.append(entry)
+        logger.debug(f"Dead letter recorded: {event.event_id} ({reason})")
+
+    @property
+    def dead_letters(self) -> List[dict]:
+        """Return the dead-letter log for dropped events."""
+        return list(self._dead_letters)
+
     @property
     def pending_count(self) -> int:
         """未処理イベント数"""

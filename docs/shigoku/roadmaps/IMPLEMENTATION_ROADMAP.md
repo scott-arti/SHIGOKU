@@ -9,7 +9,7 @@ related_docs:
 - docs/shigoku/subtasks/phase1_tasks.md
 - docs/shigoku/reports/REPORT_OUTPUTS.md
 created_at: '2026-05-19'
-updated_at: '2026-05-19'
+updated_at: '2026-06-30'
 ---
 
 # SHIGOKU 実装ロードマップ
@@ -138,6 +138,16 @@ updated_at: '2026-05-19'
 - [ ] **Advanced Visualization**:
   - [ ] 攻撃パスのグラフ化 (Neo4j -> UI)。
   - [ ] リアルタイム・タイムライン・ダッシュボード。
+
+### 次期Ver.メモ
+
+- `HackerOne/Bugcrowd API` は次期Ver.で扱う。
+- `Caido API` も次期Ver.で扱う。
+- `Replay / HITL 通知` は同じく次期Ver.の運用改善テーマとして扱う。
+- `VisualReconWorker` は継続候補だが、今回の判断では次期Ver.送りとする。
+- 関連計画:
+  - [2026-06-20_sgk-2026-0280_reauth_subtask_plan.md](../subtasks/done/2026-06-20_sgk-2026-0280_reauth_subtask_plan.md)
+  - <!-- [REMOVED: target not found] -->
 
 目的: 侵入後の価値最大化と、CTFにおける勝利条件の自動達成。
 

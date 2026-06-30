@@ -4,13 +4,13 @@ doc_type: work_report
 status: done
 parent_task_id: null
 related_docs:
-- docs/shigoku/plans/2026-05-19_non-scn-vulnerability-discovery-evaluation-plan-juice-shop-dvwa-crapi_plan.md
-- docs/shigoku/subtasks/2026-05-31_sgk-2026-0219-non-scn_subtask_plan.md
+- docs/shigoku/plans/2026-05-19_sgk-2026-0219_non-scn-vulnerability-discovery-evaluation-plan-juice-shop-dvwa-crapi_plan.md
+- docs/shigoku/subtasks/2026-05-31_sgk-2026-0249_non-scn_subtask_plan.md
 - docs/shigoku/specs/2026-05-31_sgk-2026-0219_non-scn-evaluation-spec.md
 - docs/shigoku/worklogs/sgk-2026-0219_baseline_manifest_20260531_0121.md
 - docs/shigoku/worklogs/2026-05-31_sgk-2026-0219_non-scn-eval_work_log.md
 created_at: '2026-05-31'
-updated_at: '2026-05-31'
+updated_at: '2026-06-30'
 ---
 
 # Work Report: SGK-2026-0219 Step1-7

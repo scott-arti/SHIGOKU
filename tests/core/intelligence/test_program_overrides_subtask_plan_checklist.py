@@ -8,7 +8,7 @@ PLAN_PATH = (
     / "docs"
     / "shigoku"
     / "subtasks"
-    / "2026-06-02_program-overrides_subtask_plan.md"
+    / "2026-06-02_sgk-2026-0253_program-overrides_subtask_plan.md"
 )
 
 

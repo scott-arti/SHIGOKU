@@ -5,10 +5,10 @@ status: done
 parent_task_id: SGK-2026-0221
 related_docs:
 - docs/shigoku/subtasks/2026-05-20_sgk-2026-0221-s01_groupa_execution-path_subtask_plan.md
-- docs/shigoku/plans/2026-05-19_mock-optimizedreciperunner-discovery-graphql_plan.md
+- docs/shigoku/plans/2026-05-19_sgk-2026-0221_mock-optimizedreciperunner-discovery-graphql_plan.md
 - docs/shigoku/specs/bug_bounty_enhancements.md
 created_at: '2026-05-21'
-updated_at: '2026-05-21'
+updated_at: '2026-06-30'
 ---
 
 # Work Report: SGK-2026-0221-S01 GroupA 実行経路モック除去

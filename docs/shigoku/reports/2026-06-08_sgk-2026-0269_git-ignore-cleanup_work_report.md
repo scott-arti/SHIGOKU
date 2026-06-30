@@ -4,11 +4,11 @@ doc_type: work_report
 status: done
 parent_task_id: SGK-2026-0065
 related_docs:
-- docs/shigoku/plans/2026-06-08_git-ignore-cleanup-for-fresh-github-repository_plan.md
+- docs/shigoku/plans/2026-06-08_sgk-2026-0269_git-ignore-cleanup-for-fresh-github-repository_plan.md
 - docs/shigoku/roadmaps/IMPLEMENTATION_ROADMAP.md
 title: "Git ignore cleanup for fresh GitHub repository 実施報告"
 created_at: "2026-06-08"
-updated_at: '2026-06-08'
+updated_at: '2026-06-30'
 ---
 
 # 作業報告
@@ -26,7 +26,7 @@ updated_at: '2026-06-08'
 
 ## 変更ファイル
 - `.gitignore`
-- `docs/shigoku/plans/2026-06-08_git-ignore-cleanup-for-fresh-github-repository_plan.md`
+- `docs/shigoku/plans/2026-06-08_sgk-2026-0269_git-ignore-cleanup-for-fresh-github-repository_plan.md`
 
 ## 検証
 - `git diff -- .gitignore`

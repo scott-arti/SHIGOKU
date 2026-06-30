@@ -5,7 +5,7 @@ import json
 from typing import Callable
 from pathlib import Path
 
-from src.core.domain.model.task import Task
+from src.core.domain.model.task import Task, _redact_secrets
 from src.core.utils.json_utils import safe_json_loads
 
 
@@ -55,6 +55,21 @@ def await_session_save_future(future, timeout: int = 15) -> None:
         future.result(timeout=timeout)
 
 
+def _sanitize_metadata_for_session_payload(task: Task) -> dict:
+    """Redact secrets and inject schema_version, matching Task.to_dict() contract.
+
+    Returns a safe deep copy suitable for disk persistence in session payloads.
+    """
+    md = task.metadata if hasattr(task, "metadata") and task.metadata else {}
+    if not md:
+        return {}
+    safe = _redact_secrets(md)
+    # Auto-inject schema_version when metadata is present but version is missing
+    if "schema_version" not in safe:
+        safe["schema_version"] = 1
+    return safe
+
+
 def build_async_session_payload(
     task_queue,
     completed_tasks,
@@ -64,6 +79,9 @@ def build_async_session_payload(
     scenario_coverage,
     timestamp: float,
     default_start_time: float,
+    decision_traces=None,
+    task_execution_records=None,
+    run_ledger_payload=None,
 ):
     payload = {
         "task_queue": [
@@ -78,6 +96,7 @@ def build_async_session_payload(
                 "priority": task.priority,
                 "parent_id": task.parent_id,
                 "replan_depth": task.replan_depth,
+                "metadata": _sanitize_metadata_for_session_payload(task),
             }
             for task in task_queue
         ],
@@ -97,6 +116,7 @@ def build_async_session_payload(
                 "failure_reason": getattr(task, "failure_reason", None),
                 "failure_reason_code": getattr(task, "failure_reason_code", None),
                 "timeout_retry_count": int(getattr(task, "timeout_retry_count", 0) or 0),
+                "metadata": _sanitize_metadata_for_session_payload(task),
             }
             for task in completed_tasks
         ],
@@ -116,6 +136,24 @@ def build_async_session_payload(
         "scenario_coverage": scenario_coverage,
         "pending_hitl": copy.deepcopy(pending_hitl),
     }
+
+    # --- S1: Run Ledger fields (optional, backward-compatible) ---
+    if decision_traces is not None:
+        payload["decision_traces"] = copy.deepcopy(decision_traces)
+    if task_execution_records is not None:
+        payload["task_execution_records"] = copy.deepcopy(task_execution_records)
+    if run_ledger_payload is not None:
+        # Merge run ledger fields into payload root
+        payload["run_ledger_schema_version"] = run_ledger_payload.get(
+            "run_ledger_schema_version", 1
+        )
+        payload["run_ledger"] = copy.deepcopy(run_ledger_payload.get("run_ledger", []))
+        payload["llm_usage_summary"] = copy.deepcopy(
+            run_ledger_payload.get("llm_usage_summary", {})
+        )
+        payload["spool_path"] = run_ledger_payload.get("spool_path")
+        payload["spool_sha256"] = run_ledger_payload.get("spool_sha256")
+        payload["spool_event_count"] = run_ledger_payload.get("spool_event_count", 0)
 
     adjacency_list = {}
     all_tasks = list(task_queue) + list(completed_tasks)
@@ -152,17 +190,7 @@ def build_checkpoint_session_state(
 
 def serialize_legacy_session_task_queue(task_queue) -> list[str]:
     return [
-        safe_json_dumps(
-            {
-                "id": task.id,
-                "name": task.name,
-                "agent_type": task.agent_type,
-                "action": task.action,
-                "params": task.params,
-                "priority": task.priority,
-                "parent_id": task.parent_id,
-            }
-        )
+        safe_json_dumps(task.to_dict())
         for task in task_queue
     ]
 
@@ -192,15 +220,7 @@ def deserialize_legacy_session_task_queue(serialized: list[str]) -> tuple[list[T
     for s in serialized:
         try:
             d = json.loads(s)
-            task = Task(
-                id=d["id"],
-                name=d["name"],
-                agent_type=d["agent_type"],
-                action=d["action"],
-                params=d.get("params", {}),
-                priority=d.get("priority", 0),
-                parent_id=d.get("parent_id"),
-            )
+            task = Task.from_dict(d)
             tasks.append(task)
         except (json.JSONDecodeError, KeyError):
             failed_ids.append(s[:50] if len(s) > 50 else s)

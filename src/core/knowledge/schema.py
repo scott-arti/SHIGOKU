@@ -32,6 +32,12 @@ class GraphSchema:
 
             # Finding Constraints
             "CREATE CONSTRAINT finding_id_unique IF NOT EXISTS FOR (f:Finding) REQUIRE f.id IS UNIQUE",
+
+            # Attack Path / Decision / Task / ToolRun Constraints (SGK-2026-0302 Neo4j contract)
+            "CREATE CONSTRAINT attack_path_id_unique IF NOT EXISTS FOR (ap:AttackPath) REQUIRE ap.id IS UNIQUE",
+            "CREATE CONSTRAINT decision_id_unique IF NOT EXISTS FOR (d:Decision) REQUIRE d.id IS UNIQUE",
+            "CREATE CONSTRAINT task_id_unique IF NOT EXISTS FOR (t:Task) REQUIRE t.id IS UNIQUE",
+            "CREATE CONSTRAINT toolrun_id_unique IF NOT EXISTS FOR (tr:ToolRun) REQUIRE tr.id IS UNIQUE",
         ]
         
         with driver.session() as session:

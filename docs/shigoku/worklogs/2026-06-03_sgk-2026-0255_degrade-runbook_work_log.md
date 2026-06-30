@@ -4,11 +4,11 @@ doc_type: work_log
 status: done
 parent_task_id: SGK-2026-0251
 related_docs:
-  - docs/shigoku/subtasks/2026-06-02_degrade-runbook_subtask_plan.md
+  - docs/shigoku/subtasks/2026-06-02_sgk-2026-0255_degrade-runbook_subtask_plan.md
   - docs/shigoku/reports/2026-06-03_sgk-2026-0255_degrade-runbook_work_report.md
 title: SGK-2026-0255 degrade 設計と運用 Runbook 作業ログ
 created_at: '2026-06-03'
-updated_at: '2026-06-03'
+updated_at: '2026-06-30'
 ---
 
 # SGK-2026-0255 degrade 設計と運用 Runbook 作業ログ
@@ -69,6 +69,6 @@ updated_at: '2026-06-03'
 - registry / ledger を `done` へ更新した。
 
 10. クローズ確認
-- 参照先: `docs/shigoku/subtasks/2026-06-02_degrade-runbook_subtask_plan.md`, `docs/shigoku/reports/2026-06-03_sgk-2026-0255_degrade-runbook_work_report.md`
+- 参照先: `docs/shigoku/subtasks/2026-06-02_sgk-2026-0255_degrade-runbook_subtask_plan.md`, `docs/shigoku/reports/2026-06-03_sgk-2026-0255_degrade-runbook_work_report.md`
 - 変更要約: degrade 契約、submit block、replay queue、retry/list CLI、Runbook、drill 証跡、回帰テストまで反映済み。
 - 次アクション: 本 task は `done` とし、追加改善は必要時に follow-up task として分離起票する。

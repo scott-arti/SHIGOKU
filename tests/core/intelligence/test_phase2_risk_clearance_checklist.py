@@ -14,7 +14,7 @@ PLAN_PATH = (
     / "docs"
     / "shigoku"
     / "plans"
-    / "2026-06-01_task_plan.md"
+    / "2026-06-01_sgk-2026-0251_task_plan.md"
 )
 
 

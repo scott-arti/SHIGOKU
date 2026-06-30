@@ -1,0 +1,962 @@
+# =============================================================================
+# Phase 0 Concurrency Inventory: Swarm Parallelization Baseline
+# =============================================================================
+# Task:        SGK-2026-0309
+# Parent:      SGK-2026-0291 (Swarm Parallelism Review)
+# Status:      done
+# Generated:   2026-06-26
+# Constraint:  NO code behavior changes. Documentation/inventory only.
+#
+# This file is the canonical inventory for Phase 0. It is validated by:
+#   tests/unit/swarm/test_phase0_inventory.py
+#
+# Sections map to parent plan SGK-2026-0291:
+#   4.1 -> contract_candidates, adaptiveskip_protection
+#   4.2 -> blockers_and_nontargets.initial_nontargets
+#   4.4 -> blockers_and_nontargets.phase1_4_go_conditions / nogo_conditions
+# =============================================================================
+
+meta:
+  task_id: "SGK-2026-0309"
+  parent_task_id: "SGK-2026-0291"
+  generated_at: "2026-06-26"
+  description: >
+    Phase 0 canonical inventory of swarm parallelization state.
+    Covers 4 layers: MC outer, SwarmDispatcher, SwarmManager, specialist internal.
+    All entries backed by code references (file/function/line).
+  target_files:
+    - "src/core/engine/master_conductor.py"
+    - "src/core/engine/parallel_orchestrator.py"
+    - "src/core/engine/swarm_dispatcher.py"
+    - "src/core/agents/swarm/base.py"
+    - "src/core/agents/swarm/base_manager.py"
+    - "src/core/agents/swarm/injection/manager.py"
+
+# =============================================================================
+# 1. Execution Flow: 4-layer audit of concurrency primitives
+# =============================================================================
+execution_flow:
+  mc_outer:
+    - file: "src/core/engine/master_conductor.py"
+      function: "MasterConductor._execute_parallel_phase"
+      line: 5738
+      primitive: "batch_tasks fill loop (while len(batch_tasks) < suggested_batch)"
+      description: >
+        Batch of tasks selected for parallel dispatch via ParallelOrchestrator.
+        Non-injection tasks: batch_size up to config value via SmartScheduler.
+        Injection tasks: default suggested_batch=1 (effectively serial), or
+        injection_batch_parallelism if full_parallel mode.
+      parallel_degree: "configurable batch (non-injection: config, injection: 1 default)"
+      sequential_guarantee: "injection tasks batched at 1 (guard at line 5746-5756)"
+
+    - file: "src/core/engine/master_conductor.py"
+      function: "MasterConductor._execute_parallel_phase"
+      line: 5817
+      primitive: "self.orchestrator.execute_parallel(chunk, ...) — injection tasks chunked"
+      description: >
+        Injection tasks dispatched in chunks of chunk_size=max(1, injection_batch_parallelism).
+        Chunks executed sequentially.
+      parallel_degree: "chunked (per-chunk parallel, chunks sequential)"
+      sequential_guarantee: "injection chunks sequential, within-chunk parallel"
+
+    - file: "src/core/engine/master_conductor.py"
+      function: "MasterConductor._execute_parallel_phase"
+      line: 5834
+      primitive: "self.orchestrator.execute_parallel(p_tasks, ...) — non-injection tasks"
+      description: >
+        Non-injection tasks dispatched in one parallel batch with
+        parallel_batch_timeout (default 600s).
+      parallel_degree: "full parallel batch"
+      sequential_guarantee: "single batch for non-injection tasks"
+
+    - file: "src/core/engine/parallel_orchestrator.py"
+      function: "ParallelOrchestrator.execute_parallel / _run_task"
+      line: 233
+      primitive: "asyncio.create_task(_run_task(t)) per task"
+      description: >
+        One asyncio.Task created per task. All submitted and awaited
+        via asyncio.wait() at line 238. Category throttling via
+        per-category asyncio.Semaphore (line 164-168, acquired at line 217).
+      parallel_degree: "per-category semaphore (config.workers per category)"
+      sequential_guarantee: "within-category limited by semaphore"
+
+    - file: "src/core/engine/parallel_orchestrator.py"
+      function: "ParallelOrchestrator._run_task"
+      line: 196
+      primitive: "rate limiter acquire (limiter.wait())"
+      description: >
+        Per-category AdaptiveRateLimiter applied before task execution.
+        on_response() feedback at line 208 after task completes.
+      parallel_degree: "rate-limited"
+      sequential_guarantee: "rate limit serializes excessive requests"
+
+  swarm_dispatcher:
+    - file: "src/core/engine/swarm_dispatcher.py"
+      function: "SwarmDispatcher.dispatch"
+      line: 243
+      primitive: "for swarm_name in swarm_names"
+      description: >
+        Multiple swarms matching tags are executed SEQUENTIALLY
+        via a for loop. Results merged after all complete.
+      parallel_degree: "none (sequential)"
+      sequential_guarantee: "swarms execute one after another"
+
+    - file: "src/core/engine/swarm_dispatcher.py"
+      function: "SwarmDispatcher.dispatch_to_all"
+      line: 561
+      primitive: "for swarm_name in swarm_classes"
+      description: >
+        Full-scan mode dispatches to ALL swarms SEQUENTIALLY.
+      parallel_degree: "none (sequential)"
+      sequential_guarantee: "all swarms invoked in order"
+
+    - file: "src/core/engine/swarm_dispatcher.py"
+      function: "SwarmDispatcher._get_or_create_swarm"
+      line: 93
+      primitive: "pool reuse (_swarm_pool dict)"
+      description: >
+        Swarm singleton pool. First access creates, subsequent reuse.
+        Shared mutable state: same SwarmManager instance reused across dispatches.
+      parallel_degree: "n/a (pool management)"
+      sequential_guarantee: "pool state shared across dispatches"
+
+  swarm_manager:
+    - file: "src/core/agents/swarm/base.py"
+      function: "SwarmManager.dispatch"
+      line: 332
+      primitive: "for specialist in specialists"
+      description: >
+        All specialists for a task are executed SEQUENTIALLY
+        within a single dispatch call.
+      parallel_degree: "none (sequential)"
+      sequential_guarantee: "one specialist at a time"
+
+    - file: "src/core/agents/swarm/base.py"
+      function: "SwarmManager.dispatch"
+      line: 336
+      primitive: "async with self.semaphore"
+      description: >
+        Semaphore (asyncio.Semaphore, default max_concurrent=5) wraps each
+        specialist execution. Limits concurrent dispatches across
+        tasks, not within a single dispatch.
+      parallel_degree: "cross-dispatch limit (max 5)"
+      sequential_guarantee: "intra-dispatch remains sequential"
+
+    - file: "src/core/agents/swarm/base.py"
+      function: "SwarmManager.dispatch"
+      line: 356
+      primitive: "break (adaptive skip)"
+      description: >
+        High/Critical finding triggers early exit. Remaining
+        specialists recorded as 'skipped'. PROTECTED BEHAVIOR.
+      parallel_degree: "n/a (control flow)"
+      sequential_guarantee: "early exit preserves finding escalation"
+
+    - file: "src/core/agents/swarm/base_manager.py"
+      function: "BaseManagerAgent.dispatch"
+      line: 218
+      primitive: "while turn < self.max_turns"
+      description: >
+        Think-Act-Observe loop: LLM query → parse → tool execute.
+        Each iteration waits for the previous to complete.
+        Sequential by design (ReAct pattern).
+      parallel_degree: "none (sequential loop)"
+      sequential_guarantee: "each turn depends on prior context"
+
+    - file: "src/core/agents/swarm/base_manager.py"
+      function: "BaseManagerAgent.dispatch"
+      line: 209
+      primitive: "LLMClient(role=selected_role)"
+      description: >
+        Fresh LLMClient created per dispatch to avoid model
+        override conflicts on shared client.
+      parallel_degree: "n/a (client lifecycle)"
+      sequential_guarantee: "dispatch-local client instance"
+
+  specialist_internal:
+    - file: "src/core/agents/swarm/base.py"
+      function: "Specialist.run_with_timeout"
+      line: 184
+      primitive: "asyncio.wait_for"
+      description: >
+        Single specialist execution wrapped in timeout.
+        No internal parallelism in base class.
+      parallel_degree: "none (single coroutine)"
+      sequential_guarantee: "single request stream (base)"
+
+    - file: "src/core/agents/swarm/injection/manager.py"
+      function: "InjectionManagerAgent"
+      line: 143
+      primitive: "PARALLEL_BATCH_SIZE: int = 3"
+      description: >
+        Comment-only: parallel batch size declared but URL processing
+        within manager is still sequentially dispatched per specialist.
+        Actual parallelism not activated.
+      parallel_degree: "none (declared, not activated)"
+      sequential_guarantee: "sequential dispatch of specialist tools"
+
+    - file: "src/core/agents/swarm/retry_engine.py"
+      function: "SwarmRetryEngine.execute_with_retry"
+      line: null
+      primitive: "await self.execute(...)"
+      description: >
+        Retry logic with WAF bypass mutations. Sequential retries
+        with backoff. No parallel retry.
+      parallel_degree: "none (sequential retry)"
+      sequential_guarantee: "retries are serial with backoff"
+
+# =============================================================================
+# 2. Parallel / Sequential Classification (4 layers)
+# =============================================================================
+parallel_sequential_classification:
+  mc_outer:
+    - file: "src/core/engine/master_conductor.py"
+      function: "MasterConductor._execute_parallel_phase"
+      line: 5834
+      primitive: "batch_tasks → execute_parallel() for non-injection"
+      classification: "parallel_safe"
+      rationale: >
+        MC outer layer dispatches non-injection tasks to ParallelOrchestrator
+        in a single parallel batch. Read-only tasks with independent targets
+        are parallel-safe.
+      code_evidence: "Line 5834: self.orchestrator.execute_parallel(p_tasks, ...)"
+
+    - file: "src/core/engine/master_conductor.py"
+      function: "MasterConductor._execute_parallel_phase"
+      line: 5746
+      primitive: "injection batch_size gate (suggested_batch=1)"
+      classification: "sequential_required"
+      rationale: >
+        Injection tasks default to batch_size=1 (sequential).
+        Only injection_batch_parallelism > 1 enables batching.
+      code_evidence: "Line 5746-5756: suggested_batch clamped to 1 for injection"
+
+    - file: "src/core/engine/parallel_orchestrator.py"
+      function: "ParallelOrchestrator._run_task"
+      line: 233
+      primitive: "asyncio.create_task + asyncio.wait fan-out"
+      classification: "rate_limited"
+      rationale: >
+        Per-category asyncio.Semaphore (line 217) limits concurrent tasks
+        within each category. AdaptiveRateLimiter (line 196) applies
+        host-level rate control.
+      code_evidence: "Line 233: asyncio.create_task, line 217: semaphore, line 196: limiter"
+
+  swarm_dispatcher:
+    - file: "src/core/engine/swarm_dispatcher.py"
+      function: "SwarmDispatcher.dispatch"
+      line: 243
+      primitive: "for swarm_name in swarm_names"
+      classification: "sequential_required"
+      rationale: >
+        Swarms are dispatched one after another via a for loop.
+        _swarm_pool is shared across dispatches (pool reuse).
+        Parallelizing this would require dispatch context isolation (Phase 3).
+      code_evidence: "Line 243: for swarm_name in swarm_names:"
+
+    - file: "src/core/engine/swarm_dispatcher.py"
+      function: "SwarmDispatcher._get_or_create_swarm"
+      line: 93
+      primitive: "pool reuse (_swarm_pool)"
+      classification: "stateful"
+      rationale: >
+        Swarm instances are cached in _swarm_pool dict and reused.
+        Stateful managers (BaseManagerAgent) carry current_context
+        that can be polluted across dispatches. Phase 3 must address this.
+      code_evidence: "Line 75: self._swarm_pool: Dict[str, SwarmManager]"
+
+  swarm_manager:
+    - file: "src/core/agents/swarm/base.py"
+      function: "SwarmManager.dispatch"
+      line: 332
+      primitive: "for specialist in specialists"
+      classification: "sequential_required"
+      rationale: >
+        Specialists execute sequentially. Adaptive skip on High/Critical
+        findings depends on this ordering. Parallelizing would require
+        solving adaptive skip semantics (Phase 8).
+      code_evidence: "Line 332: for specialist in specialists:"
+
+    - file: "src/core/agents/swarm/base.py"
+      function: "SwarmManager.dispatch"
+      line: 336
+      primitive: "async with self.semaphore"
+      classification: "rate_limited"
+      rationale: >
+        asyncio.Semaphore(max_concurrent=5) limits concurrent dispatches
+        across tasks at the SwarmManager level.
+      code_evidence: "Line 241: asyncio.Semaphore(max_concurrent)"
+
+    - file: "src/core/agents/swarm/base_manager.py"
+      function: "BaseManagerAgent.dispatch"
+      line: 218
+      primitive: "while turn < self.max_turns"
+      classification: "sequential_required"
+      rationale: >
+        Think-Act-Observe loop depends on sequential context
+        accumulation. Each turn builds on prior LLM context.
+      code_evidence: "Line 218: while turn < self.max_turns and status == 'running':"
+
+    - file: "src/core/agents/swarm/base_manager.py"
+      function: "BaseManagerAgent.dispatch"
+      line: 180
+      primitive: "self.current_context overwrite"
+      classification: "stateful"
+      rationale: >
+        current_context dict is overwritten on each dispatch().
+        Concurrent dispatches would corrupt context. Phase 3
+        dispatch context isolation required before parallelizing.
+      code_evidence: "Line 180: self.current_context = {...}"
+
+  specialist_internal:
+    - file: "src/core/agents/swarm/base.py"
+      function: "Specialist.run_with_timeout"
+      line: 184
+      primitive: "asyncio.wait_for"
+      classification: "parallel_safe"
+      rationale: >
+        Base specialist execution is a single coroutine with timeout.
+        No shared mutable state beyond self (per-instance).
+        Individual specialists may add internal parallelism.
+      code_evidence: "Line 184: return await asyncio.wait_for(self.execute(task, **kwargs), timeout=...)"
+
+    - file: "src/core/agents/swarm/injection/manager.py"
+      function: "InjectionManagerAgent"
+      line: 143
+      primitive: "PARALLEL_BATCH_SIZE = 3"
+      classification: "unknown"
+      rationale: >
+        PARALLEL_BATCH_SIZE declared but actual URL processing is
+        sequential. Comment suggests parallel intent but implementation
+        is sequential. Activation state unclear.
+      blocker_reason: "Declared but not activated. Need to confirm activation path."
+      next_step: "Phase 8 evaluation: verify if any code path actually parallelizes URL processing"
+
+    - file: "src/core/agents/swarm/retry_engine.py"
+      function: "SwarmRetryEngine"
+      line: null
+      primitive: "sequential retry with backoff"
+      classification: "sequential_required"
+      rationale: >
+        Retries are sequential with exponential backoff. WAF bypass
+        mutations depend on previous attempt feedback.
+      code_evidence: "Sequential retry loop with backoff_factor"
+
+# =============================================================================
+# 3. Responsibility Assignment Table
+# =============================================================================
+responsibility_assignment:
+  - component: "MasterConductor"
+    task_generation: "owner (recon→task, expansion, replan)"
+    admission: "partial (batch selection, pruning policy input)"
+    scheduling: "owner (SmartScheduler, priority, category routing)"
+    execution: "delegates to ParallelOrchestrator"
+    observation: "session/report/ledger events"
+    notes: "Pruning policy (SGK-2026-0287) influences admission decisions"
+
+  - component: "ParallelOrchestrator"
+    task_generation: "none"
+    admission: "none"
+    scheduling: "category worker pool management"
+    execution: "owner (per-category task execution with rate limiting)"
+    observation: "rate limit events, task completion events"
+    notes: "Category workers: each category has dedicated worker pool"
+
+  - component: "SwarmDispatcher"
+    task_generation: "none (routing only)"
+    admission: "aggressive limiter (HITL for POST/PUT/DELETE)"
+    scheduling: "tag→swarm routing, pool lifecycle"
+    execution: "owner (sequential swarm dispatch)"
+    observation: "SWARM_DISPATCHED/SWARM_COMPLETED ledger events"
+    notes: "Singleton pool with shared mutable state. Phase 3 concern."
+
+  - component: "SwarmManager"
+    task_generation: "none"
+    admission: "none"
+    scheduling: "specialist ordering, semaphore control"
+    execution: "owner (sequential specialists, adaptive skip)"
+    observation: "execution log per specialist"
+    notes: "Semaphore: max_concurrent=5 across dispatches"
+
+  - component: "BaseManagerAgent"
+    task_generation: "none (delegates to tools)"
+    admission: "none"
+    scheduling: "Think-Act-Observe loop turn management"
+    execution: "owner (LLM-driven tool dispatch)"
+    observation: "current_context, history, turn log"
+    notes: "current_context overwritten per dispatch. Phase 3 isolation needed."
+
+  - component: "Specialist"
+    task_generation: "none"
+    admission: "none"
+    scheduling: "none (called sequentially)"
+    execution: "owner (single attack, retry, timeout)"
+    observation: "findings returned to manager"
+    notes: "Internal parallelism varies. Some use asyncio.gather internally."
+
+# =============================================================================
+# 4. Mutable State Inventory
+# =============================================================================
+mutable_state_inventory:
+  - name: "current_context"
+    location: "BaseManagerAgent.current_context (base_manager.py:66, 180)"
+    state_classification: "shared_mutable"
+    protection_reason: >
+      Overwritten per dispatch. Concurrent dispatches would corrupt
+      each other's context (findings, params, auth_headers).
+      Phase 3 must introduce dispatch-local context isolation.
+    readers:
+      - "BaseManagerAgent.dispatch (writer)"
+      - "_execute_tool (reader: auth_headers, cookies)"
+      - "report_finding (reader/writer: findings)"
+    protection_phase: "Phase 3"
+
+  - name: "swarm_pool (_swarm_pool)"
+    location: "SwarmDispatcher._swarm_pool (swarm_dispatcher.py:75, 93)"
+    state_classification: "shared_mutable"
+    protection_reason: >
+      Swarm instances are cached and reused across dispatches.
+      Stateful managers (BaseManagerAgent) carry mutable state.
+      Phase 3: classify stateless_reusable vs dispatch_scoped.
+    readers:
+      - "SwarmDispatcher.dispatch (reader/writer)"
+      - "SwarmDispatcher.dispatch_to_all (reader/writer)"
+      - "SwarmDispatcher._get_or_create_swarm (reader/writer)"
+    protection_phase: "Phase 3"
+
+  - name: "semaphore"
+    location: "SwarmManager.semaphore (base.py:241, 336)"
+    state_classification: "shared_mutable"
+    protection_reason: >
+      asyncio.Semaphore(max_concurrent=5) shared across dispatches.
+      Cross-dispatch coordination point. Not a hazard but must be
+      documented for Phase 5 parallelism planning.
+    readers:
+      - "SwarmManager.dispatch (acquires/releases)"
+      - "BaseManagerAgent.dispatch (acquires/releases for LLM/tools)"
+    protection_phase: "Phase 5"
+
+  - name: "event_bus"
+    location: "SwarmDispatcher.event_bus (swarm_dispatcher.py:74)"
+    state_classification: "external_state"
+    protection_reason: >
+      EventBus used for cross-component communication.
+      Queue full/drop behavior, retry, dead-letter not yet inventoried.
+      Phase 6: event classification (critical/important/best_effort).
+    readers:
+      - "SwarmDispatcher (writer: SWARM_DISPATCHED events)"
+      - "EventBus subscribers (readers)"
+    protection_phase: "Phase 6"
+
+  - name: "rate_limiter"
+    location: "ParallelOrchestrator / AdaptiveRateLimiter"
+    state_classification: "external_state"
+    protection_reason: >
+      Host/task unit rate limiting. Target extraction logic (string-based
+      from Task object). Per-origin budget not yet implemented.
+      Phase 2: origin_key normalization, per-origin budget policy.
+    readers:
+      - "ParallelOrchestrator (reader/writer)"
+      - "AggressiveLimiter (reader/writer)"
+    protection_phase: "Phase 2"
+
+  - name: "_aggressive_limiter"
+    location: "SwarmDispatcher._aggressive_limiter (swarm_dispatcher.py:78)"
+    state_classification: "shared_mutable"
+    protection_reason: >
+      AggressiveLimiter controls HITL approval and semaphore for
+      POST/PUT/DELETE mutations. Shared across dispatches.
+    readers:
+      - "SwarmDispatcher._dispatch_to_single_swarm (acquires/releases)"
+    protection_phase: "Phase 2"
+
+  - name: "_dispatcher (singleton)"
+    location: "swarm_dispatcher.py:580 (module-level)"
+    state_classification: "shared_mutable"
+    protection_reason: >
+      SwarmDispatcher is a global singleton. Concurrent access to
+      _swarm_pool, llm_client, network_client through this singleton.
+    readers:
+      - "get_swarm_dispatcher (reader/writer)"
+      - "MasterConductor (reader)"
+    protection_phase: "Phase 3"
+
+  - name: "cookie / auth_headers / temp artifacts"
+    location: "BaseManagerAgent.current_context.params (various)"
+    state_classification: "dispatch_local"
+    protection_reason: >
+      Currently stored in current_context (shared mutable).
+      Should be dispatch-local. Cookie sharing across specialists
+      within same dispatch is intentional; across dispatches is the risk.
+    readers:
+      - "BaseManagerAgent._execute_tool"
+      - "InjectionManagerAgent._refresh_auth_context_on_timeout"
+    protection_phase: "Phase 3"
+
+  - name: "network_client"
+    location: "SwarmManager.network_client (base.py:232)"
+    state_classification: "shared_mutable"
+    protection_reason: >
+      Shared across all specialists within a SwarmManager.
+      Connection pool, cookies, headers are shared state.
+    readers:
+      - "All specialists via set_network_client"
+      - "BaseManagerAgent._resolve_request_client"
+    protection_phase: "Phase 2"
+
+# =============================================================================
+# 5. Specialist / Task Classification
+# =============================================================================
+specialist_classification:
+  - name: "SmartSQLiHunter"
+    file: "src/core/agents/swarm/injection/smart_sqli.py"
+    classification: "rate_limited"
+    rationale: "SQL injection probes send multiple requests per target. Rate-limited by design."
+    code_references: ["smart_sqli.py"]
+    is_aggressive: false
+
+  - name: "SmartXSSHunter"
+    file: "src/core/agents/swarm/injection/smart_xss.py"
+    classification: "rate_limited"
+    rationale: "XSS probes with reflection detection. Multiple payload variants per parameter."
+    code_references: ["smart_xss.py"]
+    is_aggressive: false
+
+  - name: "SmartSSRFHunter"
+    file: "src/core/agents/swarm/injection/smart_ssrf.py"
+    classification: "rate_limited"
+    rationale: "SSRF probes require out-of-band callback. Rate-limited and safety-checked."
+    code_references: ["smart_ssrf.py"]
+    is_aggressive: false
+
+  - name: "SmartLFIHunter"
+    file: "src/core/agents/swarm/injection/smart_lfi.py"
+    classification: "rate_limited"
+    rationale: "Path traversal probes with moderate request volume."
+    code_references: ["smart_lfi.py"]
+    is_aggressive: false
+
+  - name: "SmartSSTIHunter"
+    file: "src/core/agents/swarm/injection/smart_ssti.py"
+    classification: "rate_limited"
+    rationale: "SSTI deterministic scan. Template payload evaluation is stateless."
+    code_references: ["smart_ssti.py"]
+    is_aggressive: false
+
+  - name: "SmartCORSHunter"
+    file: "src/core/agents/swarm/injection/smart_cors.py"
+    classification: "parallel_safe"
+    rationale: "CORS check is a single cross-origin request per URL. Read-only, safe to parallelize."
+    code_references: ["smart_cors.py"]
+    is_aggressive: false
+
+  - name: "SmartCRLFHunter"
+    file: "src/core/agents/swarm/injection/smart_crlf.py"
+    classification: "rate_limited"
+    rationale: "CRLF injection probes with header injection. Moderate request volume."
+    code_references: ["smart_crlf.py"]
+    is_aggressive: false
+
+  - name: "SmartGraphQLHunter"
+    file: "src/core/agents/swarm/injection/smart_graphql.py"
+    classification: "parallel_safe"
+    rationale: "GraphQL introspection check is a single read-only query."
+    code_references: ["smart_graphql.py"]
+    is_aggressive: false
+
+  - name: "SmartCmdSSRFHunter"
+    file: "src/core/agents/swarm/injection/smart_cmd_ssrf.py"
+    classification: "rate_limited"
+    rationale: "OS command injection + SSRF hybrid. Higher risk, requires OOB callback."
+    code_references: ["smart_cmd_ssrf.py"]
+    is_aggressive: false
+
+  - name: "OpenRedirectSpecialist"
+    file: "src/core/agents/swarm/injection/open_redirect.py"
+    classification: "parallel_safe"
+    rationale: "Redirect check is a single request per URL. Read-only verification."
+    code_references: ["open_redirect.py"]
+    is_aggressive: false
+
+  - name: "ActorCriticFuzzer"
+    file: "src/core/agents/swarm/injection/actor_critic_fuzzer.py"
+    classification: "aggressive_exclusive"
+    rationale: "High-volume payload fuzzing. Internal parallelism via asyncio.gather for payload sending."
+    code_references: ["actor_critic_fuzzer.py"]
+    is_aggressive: true
+
+  - name: "StoredXSSDetector"
+    file: "src/core/agents/swarm/injection/stored_xss_detector.py"
+    classification: "stateful"
+    rationale: "Stored XSS requires payload injection + reflection check (two-phase, stateful)."
+    code_references: ["stored_xss_detector.py"]
+    is_aggressive: false
+
+  - name: "AuthNinja (JWTInspector)"
+    file: "src/core/agents/swarm/auth/auth_ninja.py"
+    classification: "stateful"
+    rationale: "JWT inspection uses auth context. Stateful relative to session."
+    code_references: ["auth/auth_ninja.py"]
+    is_aggressive: false
+
+  - name: "AuthNinja (OAuthDancer)"
+    file: "src/core/agents/swarm/auth/auth_ninja.py"
+    classification: "stateful"
+    rationale: "OAuth flow is inherently stateful (redirects, token exchange)."
+    code_references: ["auth/auth_ninja.py"]
+    is_aggressive: false
+
+  - name: "AuthNinja (MFABypasser)"
+    file: "src/core/agents/swarm/auth/auth_ninja.py"
+    classification: "stateful"
+    rationale: "MFA bypass attempts modify session state."
+    code_references: ["auth/auth_ninja.py"]
+    is_aggressive: false
+
+  - name: "LLMAuthEscalator"
+    file: "src/core/agents/swarm/auth/llm_specialists.py"
+    classification: "stateful"
+    rationale: "LLM-driven privilege escalation depends on auth context progression."
+    code_references: ["auth/llm_specialists.py"]
+    is_aggressive: false
+
+  - name: "IDORSpecialist"
+    file: "src/core/agents/swarm/logic/idor.py"
+    classification: "rate_limited"
+    rationale: "IDOR probing sends multiple requests per parameter. Rate-limited."
+    code_references: ["logic/idor.py"]
+    is_aggressive: false
+
+  - name: "FileUploadSpecialist"
+    file: "src/core/agents/swarm/logic/file_upload.py"
+    classification: "aggressive_exclusive"
+    rationale: "File upload is mutating (creates files on server). Requires explicit admission."
+    code_references: ["logic/file_upload.py"]
+    is_aggressive: true
+
+  - name: "BizLogicHunter"
+    file: "src/core/agents/swarm/biz_logic_hunter.py"
+    classification: "stateful"
+    rationale: "Business logic testing requires context verification and state progression."
+    code_references: ["biz_logic_hunter.py"]
+    is_aggressive: false
+
+  - name: "ScannerSwarm specialists"
+    file: "src/core/agents/swarm/scanner/"
+    classification: "parallel_safe"
+    rationale: "Port/service scanning is read-only. Each target independent."
+    code_references: ["scanner/"]
+    is_aggressive: false
+
+  - name: "DiscoverySwarm specialists (visual_recon, github_recon)"
+    file: "src/core/agents/swarm/discovery/"
+    classification: "rate_limited"
+    rationale: "External API calls (GitHub, visual recon). Rate-limited by third-party APIs."
+    code_references: ["discovery/"]
+    is_aggressive: false
+
+  - name: "SecretSwarm specialists"
+    file: "src/core/agents/swarm/secret/"
+    classification: "parallel_safe"
+    rationale: "Sourcemap/secret scanning is read-only analysis of downloaded assets."
+    code_references: ["secret/"]
+    is_aggressive: false
+
+  - name: "IntelligenceSwarm specialists"
+    file: "src/core/agents/swarm/intelligence/"
+    classification: "rate_limited"
+    rationale: "OSINT queries to external services. Rate-limited by third-party APIs."
+    code_references: ["intelligence/"]
+    is_aggressive: false
+
+  - name: "FuzzingSwarm specialists"
+    file: "src/core/agents/swarm/fuzzing/"
+    classification: "aggressive_exclusive"
+    rationale: "High-volume fuzzing generates many requests. Requires admission gate."
+    code_references: ["fuzzing/"]
+    is_aggressive: true
+
+# =============================================================================
+# 6. Contract Candidates (for Phase 1-4)
+# =============================================================================
+contract_candidates:
+  - name: "target_identity"
+    description: "Rate limit, mutex, queue fairness use normalized origin_key/target_key/canonical_endpoint_key"
+    traces_to: "parent plan 4.1 Target identity"
+    depends_on: "Phase 2 origin normalization"
+    protection_target: "rate limiter accuracy, mutex key correctness"
+    implementation_phase: 2
+
+  - name: "task_lifecycle_metadata"
+    description: "lifecycle_status/reason/superseded_by/invalidated_by/retired_by_event_id as additive metadata"
+    traces_to: "parent plan 4.1 Task lifecycle"
+    depends_on: "Phase 1 additive contract"
+    protection_target: "existing TaskState enum, session reader compatibility"
+    implementation_phase: 1
+
+  - name: "event_reliability"
+    description: "critical/important events never silently dropped. best_effort events may drop."
+    traces_to: "parent plan 4.1 Event reliability"
+    depends_on: "Phase 6 EventBus classification"
+    protection_target: "event-driven chaining correctness"
+    implementation_phase: 6
+
+  - name: "swarm_instance_lifecycle"
+    description: "Separate shared immutable services from dispatch-local mutable state"
+    traces_to: "parent plan 4.1 Swarm instance lifecycle"
+    depends_on: "Phase 3 context isolation"
+    protection_target: "current_context, findings, auth_headers, cookies isolation"
+    implementation_phase: 3
+
+  - name: "ordering_model"
+    description: "Predecessor-result events spawn successor tasks instead of giant DAGs"
+    traces_to: "parent plan 4.1 Ordering model"
+    depends_on: "Phase 6 Event-Driven Chaining"
+    protection_target: "auth/session/mutation state via mutex"
+    implementation_phase: 6
+
+  - name: "pruning_model"
+    description: "Unneeded tasks get decision records: retired/superseded/invalidated/skipped"
+    traces_to: "parent plan 4.1 Pruning model"
+    depends_on: "SGK-2026-0287 TaskQueuePruningPolicy"
+    protection_target: "coverage guard, report accuracy (not-failed vs not-needed)"
+    implementation_phase: 6
+
+  - name: "safety_default"
+    description: "parallelism.enabled=false, shadow_mode=true, mutating.enabled=false, aggressive_exclusive.enabled=false"
+    traces_to: "parent plan 4.1 Safety default"
+    depends_on: "Phase 2 config"
+    protection_target: "safe rollout with kill switch"
+    implementation_phase: 2
+
+  - name: "debug_metadata_keys"
+    description: "correlation_id, auth_context_version, recon_snapshot_version for Phase 1 observability"
+    traces_to: "parent plan 4.5 Phase 1"
+    depends_on: "Phase 1 additive metadata"
+    protection_target: "debug bundle replay fidelity"
+    implementation_phase: 1
+
+  - name: "operator_control_keys"
+    description: "lane_pause, queue_drain, kill_switch, invalidation_summary for operator visibility"
+    traces_to: "parent plan 4.4 Go/No-Go"
+    depends_on: "Phase 2 config + Phase 4 shadow mode"
+    protection_target: "operator ability to disable parallelism"
+    implementation_phase: 2
+
+# =============================================================================
+# 7. Blockers and Non-Targets
+# =============================================================================
+blockers_and_nontargets:
+  initial_nontargets:
+    - id: "swarm_manager_specialist_full_parallelization"
+      description: "SwarmManager specialist全面並列化"
+      reason: "Adaptive skip意味論を壊す。Phase 8まで保留。"
+      traces_to: "parent plan 4.2"
+      unblock_phase: 8
+
+    - id: "injectionmanager_phase1_url_full_parallelization"
+      description: "InjectionManager Phase 1 URL処理の全面並列化"
+      reason: "current_context汚染リスク、per-origin budget未定義"
+      traces_to: "parent plan 4.2"
+      unblock_phase: 8
+
+    - id: "mutating_aggressive_lane_default_enable"
+      description: "mutating/aggressive_exclusive laneのdefault有効化"
+      reason: "明示gate + allowlist + audit trailが揃うまで無効"
+      traces_to: "parent plan 4.2"
+      unblock_phase: 7
+
+    - id: "session_report_schema_delete_rename"
+      description: "既存session/report schema field の削除・改名"
+      reason: "下位互換性。Phase 1ではadditive metadataのみ"
+      traces_to: "parent plan 4.2"
+      unblock_phase: null
+
+    - id: "external_dependency_addition"
+      description: "外部依存ライブラリの追加"
+      reason: "依存最小化。既存のstdlib/asyncio範囲で実装"
+      traces_to: "parent plan 4.2"
+      unblock_phase: null
+
+    - id: "scope_unknown_active_mutating_aggressive_execution"
+      description: "scope不明targetへのactive/mutating/aggressive実行"
+      reason: "fail-closed。scope確認済みのread_onlyのみ解禁"
+      traces_to: "parent plan 4.2"
+      unblock_phase: null
+
+    - id: "adaptive_skip_semantics_change"
+      description: "High/Critical finding時のadaptive skip意味論変更"
+      reason: "保護対象。Phase 8で再設計するまで現状維持"
+      traces_to: "parent plan 4.2"
+      unblock_phase: 8
+
+  phase1_4_go_conditions:
+    - id: "go_phase0_complete"
+      description: "Phase 0完了（本ファイル）: 全層の並列/直列棚卸し、mutable state inventory、specialist分類表がコード参照付きで揃っている"
+      traces_to: "parent plan 4.4"
+
+    - id: "go_no_behavior_change"
+      description: "Phase 0-4: 挙動変更ゼロでlane/mutex/budget/pruning shadow decision記録ができている"
+      traces_to: "parent plan 4.4"
+
+    - id: "go_finding_parity_100"
+      description: "read_only outer task並列化のserial baseline比較でHigh/Critical finding parity 100%"
+      traces_to: "parent plan 4.4"
+      target_phase: 5
+
+    - id: "go_scope_violation_zero"
+      description: "scope violation 0"
+      traces_to: "parent plan 4.4"
+      target_phase: 5
+
+    - id: "go_origin_budget_zero"
+      description: "origin budget violation 0"
+      traces_to: "parent plan 4.4"
+      target_phase: 5
+
+    - id: "go_event_reliability"
+      description: "EventBus critical/important event がqueue full時に失われない設計とテストがある"
+      traces_to: "parent plan 4.4"
+      target_phase: 6
+
+    - id: "go_dispatch_isolation"
+      description: "dispatch context isolation testあり: 同時dispatchでcurrent_context/findings/auth_headers/cookies混ざらず"
+      traces_to: "parent plan 4.4"
+      target_phase: 3
+
+    - id: "go_kill_switch"
+      description: "parallelism.enabled=false または kill switch で即serial互換に戻せる"
+      traces_to: "parent plan 4.4"
+      target_phase: 2
+
+  phase1_4_nogo_conditions:
+    - id: "nogo_scope_unknown"
+      description: "scope unknown で active/mutating/aggressive が実行される"
+      traces_to: "parent plan 4.4"
+
+    - id: "nogo_finding_missing"
+      description: "High/Critical findingの欠落が1件でもある"
+      traces_to: "parent plan 4.4"
+
+    - id: "nogo_adaptive_skip_broken"
+      description: "adaptive skip意味論の破壊"
+      traces_to: "parent plan 4.4"
+
+    - id: "nogo_reader_compat_broken"
+      description: "session/report reader互換性破壊"
+      traces_to: "parent plan 4.4"
+
+    - id: "nogo_event_drop"
+      description: "event dropによる後続task欠落が1件でもある"
+      traces_to: "parent plan 4.4"
+
+    - id: "nogo_operator_control_missing"
+      description: "mutating/aggressive_exclusive laneにoperator control/audit trail/rollbackがない"
+      traces_to: "parent plan 4.4"
+
+# =============================================================================
+# 8. Adaptive Skip Protection (High/Critical)
+# =============================================================================
+adaptiveskip_protection:
+  protected: true
+  location: "src/core/agents/swarm/base.py SwarmManager.dispatch() lines 354-369"
+  semantics: >
+    After each specialist completes, findings are inspected for
+    Severity.CRITICAL or Severity.HIGH. If found AND adaptive_skip_enabled
+    (default True), remaining specialists are skipped and recorded
+    with status='skipped', reason='critical_finding_detected'.
+    This is PROTECTED BEHAVIOR: Phase 8 may redesign but must
+    preserve the meaning that critical findings trigger escalation.
+  trigger_condition: "critical_findings list non-empty + adaptive_skip_enabled=True"
+  observation_point: "specialist findings after each iteration of the for loop"
+  result_aggregation: "remaining specialists recorded in execution_log as skipped"
+  protection_boundary: "Phase 0-7: semantics unchanged. Phase 8: may redesign internal parallelization but must preserve skip semantics"
+  causal_memo: >
+    Input: specialist findings (List[Finding]) after each specialist execution
+    Check: any(f.severity in [CRITICAL, HIGH] for f in findings)
+    Action: break out of for loop, mark remaining specialists as skipped
+    Output: execution_log entries for skipped specialists
+
+# =============================================================================
+# 9. Traceability Map (parent plan sections)
+# =============================================================================
+traceability:
+  "4.1":
+    description: "実装前に固定する契約"
+    mapped_items:
+      - contract_candidates.target_identity
+      - contract_candidates.task_lifecycle_metadata
+      - contract_candidates.event_reliability
+      - contract_candidates.swarm_instance_lifecycle
+      - contract_candidates.ordering_model
+      - contract_candidates.pruning_model
+      - contract_candidates.safety_default
+
+  "4.2":
+    description: "初期非対象（Go後も最初に実装しない）"
+    mapped_items:
+      - blockers_and_nontargets.initial_nontargets
+
+  "4.4":
+    description: "Go / No-Go gate"
+    mapped_items:
+      - blockers_and_nontargets.phase1_4_go_conditions
+      - blockers_and_nontargets.phase1_4_nogo_conditions
+
+# =============================================================================
+# 10. Classification Rules Table
+# =============================================================================
+classification_rules:
+  - classification: "parallel_safe"
+    definition: "独立したtarget、副作用なし、読み取り専用。並列化して安全。"
+    criteria:
+      - "targetが他タスクと独立"
+      - "副作用（POST/PUT/DELETE）なし"
+      - "認証状態を変更しない"
+      - "rate limit超過リスクが低い"
+    unknown_treatment: "N/A"
+
+  - classification: "sequential_required"
+    definition: "順序依存があるか、前段の結果に依存する処理。直列実行が必要。"
+    criteria:
+      - "先行タスク/先行specialistの結果に依存"
+      - "adaptive skip が順序前提"
+      - "LLMコンテキストが順次蓄積（Think-Act-Observe loop）"
+    unknown_treatment: "N/A"
+
+  - classification: "rate_limited"
+    definition: "リクエスト量が多く、レート制限が必要。制限内であれば並列化可能。"
+    criteria:
+      - "同一originへの複数リクエスト"
+      - "per-origin budget 管理下で実行可能"
+      - "タイムアウトやcooldownが実装済み"
+    unknown_treatment: "N/A"
+
+  - classification: "stateful"
+    definition: "認証状態、セッション、コンテキストに依存する処理。dispatch-local isolationが必要。"
+    criteria:
+      - "auth_headers に依存"
+      - "セッション状態を読み書き"
+      - "current_context を変更"
+      - "同一セッション内の排他制御が必要"
+    unknown_treatment: "N/A"
+
+  - classification: "aggressive_exclusive"
+    definition: "破壊的操作または高負荷操作。明示gate、allowlist、audit trailが必須。"
+    criteria:
+      - "POST/PUT/DELETE による状態変更"
+      - "高負荷リクエスト（fuzzing等）"
+      - "防御機構（WAF/FW）をトリガーするリスク"
+    unknown_treatment: "N/A"
+
+  - classification: "unknown"
+    definition: "分類が未確定。安全側に倒してsequential_required相当で扱う。"
+    criteria:
+      - "コード参照による判定根拠が不足"
+      - "internal parallelism の活性化状態が不明"
+    default_treatment: "sequential_required 相当として扱い、並列化しない"
+    promotion_criteria:
+      - "コード参照によるroot cause確認"
+      - "該当コードパスの活性化状態確認"
+      - "テストによる並列安全性の検証"
+      - "Phase 評価での再分類"

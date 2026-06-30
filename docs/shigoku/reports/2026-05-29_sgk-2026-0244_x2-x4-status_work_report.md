@@ -4,14 +4,14 @@ doc_type: work_report
 status: done
 parent_task_id: SGK-2026-0244
 related_docs:
-  - docs/shigoku/plans/2026-05-24_xss-hunter-enhancement_plan.md
+  - docs/shigoku/plans/2026-05-24_sgk-2026-0244_xss-hunter-enhancement_plan.md
   - docs/shigoku/subtasks/2026-05-27_sgk-2026-0244-s01_xss-hunter-remaining-implementation_subtask_plan.md
   - src/core/agents/swarm/injection/stored_xss_detector.py
   - src/core/detection/browser_pool.py
   - src/core/detection/xss_pipeline.py
   - src/core/payloads/xss_waf_evasion.py
 created_at: '2026-05-29'
-updated_at: '2026-05-29'
+updated_at: '2026-06-30'
 ---
 
 # SGK-2026-0244 X2/X3/X4 対応状況報告
@@ -70,7 +70,7 @@ updated_at: '2026-05-29'
   - `test_pool_exhaustion_handling`
 
 ## 4. 反映内容
-- 計画書 `docs/shigoku/plans/2026-05-24_xss-hunter-enhancement_plan.md` に以下を反映:
+- 計画書 `docs/shigoku/plans/2026-05-24_sgk-2026-0244_xss-hunter-enhancement_plan.md` に以下を反映:
   - X2/X3/X4 の実装ステータス追記
   - XCTO-1/2/3/7/8 を実装済みとしてチェック更新
 

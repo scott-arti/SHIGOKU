@@ -15,3 +15,5 @@
 - When adding error handling, add a test that triggers the handled error path.  
 - When adding conditional branches, test each meaningful branch.  
 - Do not commit code that breaks existing tests.
+- For CLI/report entrypoints, prefer asserting generated artifacts and content over `main()` return codes when the production path is documented to return `None`.
+- Before using `pytest.raises(match=...)` for a new failure path, inspect the actual emitted message once and match the exact substring or regex that the code really raises.

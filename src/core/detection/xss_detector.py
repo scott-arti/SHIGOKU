@@ -252,28 +252,6 @@ class XSSDetectionEngine:
             finally:
                 await page.close()
     
-    async def detect_stored_xss(
-        self,
-        storage_url: str,
-        display_url: str,
-        param: str,
-        payload: str
-    ) -> Optional[XSSFinding]:
-        """
-        Detect stored XSS by:
-        1. Submitting payload to storage endpoint
-        2. Checking if payload executes when viewing display endpoint
-        """
-        # Step 1: Store payload (requires HTTP client)
-        # This is a placeholder - actual implementation would use HTTP client
-        logger.info(f"Stored XSS detection: submitting to {storage_url}")
-        
-        # Step 2: Wait and check display endpoint
-        await asyncio.sleep(1)  # Give time for storage
-        
-        # Step 3: Check with browser
-        return await self.detect_dom_xss(display_url, param, payload)
-    
     async def close(self):
         """Cleanup resources"""
         await self.browser_pool.close()

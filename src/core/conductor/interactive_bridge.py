@@ -9,7 +9,9 @@ import logging
 import asyncio
 from src.core.engine.master_conductor import MasterConductor, Task, TaskState
 from src.core.config_manager import get_config_manager
+from src.core.config.settings import get_settings
 from src.core.project.project_manager import ProjectManager
+from src.core.preflight import EntryGateFacade, PreflightContext, GatePolicy
 from src.commands import print_banner, print_step, print_result
 
 logger = logging.getLogger(__name__)
@@ -52,6 +54,38 @@ class InteractiveBridge:
             print("\nAction denied.")
             return False
 
+def _normalize_target_for_preflight(target: str) -> str:
+    """Ensure target has a scheme for preflight checks.
+
+    AuthProbe+urlparse returns UNKNOWN for targets without a scheme,
+    causing false gate failures. This helper prepends ``https://``
+    when no scheme is present so that the entire preflight pipeline
+    receives a well-formed URL.
+    """
+    if not target:
+        return ""
+    if "://" not in target:
+        return f"https://{target}"
+    return target
+
+
+def _parse_cookies(cookies):
+    """Parse cookies from string or dict to dict."""
+    if cookies is None:
+        return {}
+    if isinstance(cookies, dict):
+        return cookies
+    if isinstance(cookies, str):
+        result = {}
+        for part in cookies.split(";"):
+            part = part.strip()
+            if "=" in part:
+                k, v = part.split("=", 1)
+                result[k.strip()] = v.strip()
+        return result
+    return {}
+
+
 def start_interactive_session(
     mode="bugbounty",
     scope_file=None,
@@ -85,7 +119,34 @@ def start_interactive_session(
     """
     print_banner()
     print_step("🚀", f"Starting session (Mode: {mode})")
-    
+
+    # --- Entry Gate Preflight Check ---
+    settings = get_settings()
+    context = PreflightContext(
+        target=_normalize_target_for_preflight(auto_target or ""),
+        mode=mode,
+        goal=auto_goal or "recon",
+        profile=profile or "",
+        cookies=_parse_cookies(cookies),
+        bearer_token=bearer_token or "",
+        scope_file=scope_file or "",
+        gate_policy=GatePolicy.STRICT_PROD,
+        caido_url=settings.caido.url,
+        caido_token=settings.caido.token,
+    )
+    result = asyncio.run(EntryGateFacade().run_once(context))
+    if result.failed:
+        for failure in result.failures:
+            print(f"\n[GATE FAIL] {failure.reason_code}")
+            if failure.remediation:
+                print(f"  Remediation: {failure.remediation}")
+        print("\n❌ Entry gate check failed. Aborting session.\n")
+        return
+
+    auth_required = bool(cookies or bearer_token)
+    if auth_required:
+        print_step("🔐", "Authentication credentials detected")
+
     # 1. Config初期化 & スコープ読み込み
     cm = get_config_manager()
     if scope_file:

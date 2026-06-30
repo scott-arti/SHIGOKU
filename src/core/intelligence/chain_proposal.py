@@ -80,12 +80,12 @@ class LLMChainProposalEngine:
     ) -> "LLMChainProposalEngine":
         def _provider(findings: list[Finding], runtime_context: Optional[dict[str, Any]]) -> str:
             prompt = _build_chain_proposal_prompt(findings, runtime_context)
-            response = llm_client.generate(
+            from src.core.models.llm import LLMClient
+            resp_client = LLMClient(role="chain_proposer")
+            response = resp_client.generate(
                 messages=[
-                    {"role": "system", "content": _CHAIN_PROPOSAL_SYSTEM_PROMPT},
                     {"role": "user", "content": prompt},
                 ],
-                model=model_name,
                 response_format={"type": "json_object"},
                 temperature=0.1,
                 timeout=max(0.001, float(timeout_ms) / 1000.0),
@@ -194,13 +194,6 @@ class LLMChainProposalEngine:
             "recommended_probe": str(candidate.get("recommended_probe", "")).strip(),
             "reasoning_summary": str(candidate.get("reasoning_summary", "")).strip(),
         }
-
-
-_CHAIN_PROPOSAL_SYSTEM_PROMPT = (
-    "You are a security chain proposal engine. "
-    "Output strict JSON only with top-level key 'candidates'. "
-    "Do not include markdown."
-)
 
 
 def _build_chain_proposal_prompt(

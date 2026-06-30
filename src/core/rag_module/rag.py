@@ -522,7 +522,7 @@ class KnowledgeIngester:
     
     def compress_context(self, question: str, results: list[RAGResult]) -> str:
         """
-        ローカルLLMを使用して検索結果を圧縮・要約する（同期）
+         クラウドLLMを使用して検索結果を圧縮・要約する（同期）
         
         Args:
             question: ユーザーの質問
@@ -535,26 +535,18 @@ class KnowledgeIngester:
             return ""
             
         try:
-            # 循環参照を避けるための動的インポート
-            from src.core.llm.local_provider import LocalLLMProvider
-            local_llm = LocalLLMProvider()
-            
-            # Ollamaが利用可能かチェック
-            if not local_llm.is_available():
-                logger.warning("Local LLM not available for compression, falling back to raw context.")
-                return "\n---\n".join([r.content for r in results])
+            from src.core.models.llm import LLMClient
+            client = LLMClient(role="rag_compression")
             
             context_text = "\n---\n".join([f"Source: {r.source}\nContent: {r.content}" for r in results])
             
             prompt = [
-                {"role": "system", "content": "You are a specialized security context compressor. Extract only key information relevant to the question."},
                 {"role": "user", "content": f"### Question\n{question}\n\n### Documentation Snippets\n{context_text}\n\n### Instructions\nProvide a concise summary of technical facts relevant to the question. No chatter."}
             ]
             
-            # Qwen等の高速モデルを使用
-            response = local_llm.generate(prompt, temperature=0.0)
-            if response and hasattr(response, 'choices') and response.choices:
-                compressed = response.choices[0].message.content.strip()
+            response = client.generate(prompt)
+            if response and response.get("choices"):
+                compressed = response["choices"][0]["message"]["content"].strip()
                 if compressed:
                     logger.info(f"Context compressed from {len(context_text)} to {len(compressed)} chars.")
                     return compressed

@@ -25,10 +25,7 @@ class LLMBizLogicHunter(Specialist):
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         super().__init__(config)
-        from src.config import settings
-        default_model = getattr(settings, "model_output", None) or getattr(settings, "model", "deepseek/deepseek-chat")
-        model = config.get("model", default_model) if isinstance(config, dict) else getattr(config, "model", default_model)
-        self.llm = LLMClient(model=model)
+        self.llm = LLMClient(role="specialist_light")
 
     async def execute(self, task: Task, quick_mode: bool = False) -> List[Finding]:
         findings = []

@@ -28,7 +28,11 @@ class ToolRunner:
     本番モードでは実際の外部ツールを subprocess で実行。
     """
     
-    def __init__(self, dev_mode: bool | None = None) -> None:
+    def __init__(
+        self,
+        dev_mode: bool | None = None,
+        demo_provider: Any | None = None,
+    ) -> None:
         """初期化
         
         Args:
@@ -38,7 +42,20 @@ class ToolRunner:
             dev_mode = os.getenv("SHIGOKU_DEV_MODE", "").lower() == "true"
         
         self.dev_mode = dev_mode
+        self.demo_provider = demo_provider
         logger.info("ToolRunner initialized (DEV_MODE=%s)", self.dev_mode)
+
+    def get_demo_provider(self) -> Any | None:
+        """Return the active demo provider, creating the default one lazily."""
+        if not self.dev_mode:
+            return None
+
+        if self.demo_provider is None:
+            from src.recon.demo import ReconDemoProvider
+
+            self.demo_provider = ReconDemoProvider()
+
+        return self.demo_provider
     
     def check_tools(self, tools: list[str]) -> None:
         """必須ツールの存在確認
@@ -49,8 +66,10 @@ class ToolRunner:
         Raises:
             ToolNotFoundError: ツールが見つからない場合
         """
-        if self.dev_mode:
+        demo_provider = self.get_demo_provider()
+        if demo_provider is not None:
             logger.info("DEV_MODE: Skipping tool check for %s", ", ".join(tools))
+            demo_provider.check_tools(tools)
             return
         
         missing = []
@@ -76,8 +95,9 @@ class ToolRunner:
         Returns:
             bool: 利用可能な場合 True
         """
-        if self.dev_mode:
-            return True
+        demo_provider = self.get_demo_provider()
+        if demo_provider is not None:
+            return demo_provider.is_tool_available(tool_name)
         return shutil.which(tool_name) is not None
     
     async def run(
@@ -100,11 +120,10 @@ class ToolRunner:
         """
         cmd_str = " ".join(cmd)
         
-        if self.dev_mode:
+        demo_provider = self.get_demo_provider()
+        if demo_provider is not None:
             logger.info("DEV_MODE: Mocking command: %s", cmd_str)
-            if not mock_output:
-                mock_output = self._get_default_mock(cmd[0], cmd)
-            return mock_output
+            return demo_provider.get_command_output(cmd, mock_output)
         
         logger.info("Executing: %s (timeout=%ds)", cmd_str, timeout)
         
@@ -148,36 +167,6 @@ class ToolRunner:
             logger.error("Command execution failed: %s - %s", cmd_str, e)
             raise
 
-    def _get_default_mock(self, tool: str, cmd: list[str]) -> str:
-        """ツールに応じたデフォルトのモック出力を生成"""
-        # ドメイン特定用の簡易ロジック
-        domain = "example.com"
-        for i, part in enumerate(cmd):
-            if part in ["-d", "--domain", "-u", "--url"]:
-                if i + 1 < len(cmd):
-                    domain = cmd[i+1].lstrip("*.")
-
-        if tool in ["subfinder", "amass", "assetfinder"]:
-            return f"www.{domain}\napi.{domain}\ndev.{domain}\n"
-        
-        if tool == "httpx":
-            import json
-            return json.dumps({
-                "url": f"https://www.{domain}",
-                "status_code": 200,
-                "title": "Example Domain",
-                "webserver": "nginx",
-                "tech": ["React", "Cloudflare"]
-            }) + "\n"
-        
-        if tool == "katana":
-            return f"https://www.{domain}/api/v1\nhttps://www.{domain}/login\n"
-        
-        if tool == "whatweb":
-            return f'[ {{"target":"https://www.{domain}","plugins":{{"HTTPServer":{{"string":["nginx"]}}}}}}]'
-
-        return ""
-    
     async def run_json(
         self,
         cmd: list[str],

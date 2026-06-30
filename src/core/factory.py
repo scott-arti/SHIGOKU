@@ -28,7 +28,7 @@ class AgentFactory:
             "src.core" 
         ])
 
-        model = model or settings.model or settings.model_output or "deepseek/deepseek-chat"
+        model = model or "deepseek/deepseek-chat"
         effective_workspace = workspace_root or os.getcwd()
         
         # Registry Lookup
@@ -69,7 +69,7 @@ class AgentFactory:
         logger.warning("Agent '%s' not found in registry. Attempting fallback mapping.", agent_name)
         
         # Map specific names to GeneralAgent if not found
-        if agent_name in ["SecurityBot", "web_scanner", "http_client", "vuln_scanner", "agent", "general"]:
+        if agent_name in ["SecurityBot", "web_scanner", "http_client", "vuln_scanner", "agent", "general", "code", "command"]:
             from src.core.agent import Agent as GenAgent
             from src.tools import ToolRegistry
             effective_tools = tools if tools else ToolRegistry.get_all()

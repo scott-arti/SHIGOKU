@@ -4,11 +4,11 @@ doc_type: work_log
 status: done
 parent_task_id: SGK-2026-0065
 related_docs:
-- docs/shigoku/plans/2026-06-08_haddix-report-payout-readiness-output-improvements_plan.md
+- docs/shigoku/plans/2026-06-08_sgk-2026-0268_haddix-report-payout-readiness-output-improvements_plan.md
 - docs/shigoku/reports/2026-06-08_sgk-2026-0268_haddix-payout-readiness_work_report.md
 title: "作業ログ: Haddix report payout-readiness output improvements"
 created_at: "2026-06-08"
-updated_at: '2026-06-08'
+updated_at: '2026-06-30'
 ---
 
 # 作業ログ

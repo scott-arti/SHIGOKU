@@ -129,6 +129,97 @@ def test_inject_context_priority_boost():
     # t1 (100) > t2 (50)
     assert q.pop().id == "1"
 
+def test_remove_by_ids():
+    """複数IDの一括削除確認"""
+    q = DynamicTaskQueue()
+    t1 = MockTask(id="1", priority=10)
+    t2 = MockTask(id="2", priority=20)
+    t3 = MockTask(id="3", priority=5)
+
+    q.add(t1)
+    q.add(t2)
+    q.add(t3)
+
+    removed = q.remove_by_ids(["1", "3"])
+    assert removed == 2
+
+    # only t2 remains
+    assert q.pop().id == "2"
+    assert q.pop() is None
+
+    # re-removing non-existent returns 0
+    assert q.remove_by_ids(["1", "999"]) == 0
+
+
+def test_remove_matching():
+    """条件に合致するタスクの一括削除確認"""
+    q = DynamicTaskQueue()
+    t1 = MockTask(id="t_low", priority=5, params={"category": "low_value"})
+    t2 = MockTask(id="t_high", priority=50, params={"category": "critical"})
+    t3 = MockTask(id="t_low2", priority=3, params={"category": "low_value"})
+
+    q.add(t1)
+    q.add(t2)
+    q.add(t3)
+
+    # Remove all tasks where params.category == "low_value"
+    removed = q.remove_matching(
+        lambda t: getattr(t, "params", {}).get("category") == "low_value"
+    )
+    assert removed == 2
+
+    # Only t_high remains
+    assert q.pop().id == "t_high"
+    assert q.pop() is None
+
+
+def test_remove_matching_no_match():
+    """条件に合致するタスクがない場合remove_matchingは0を返す"""
+    q = DynamicTaskQueue()
+    q.add(MockTask(id="1", priority=10))
+    removed = q.remove_matching(lambda t: False)
+    assert removed == 0
+    assert len(q) == 1
+
+
+def test_remove_matching_empty_queue():
+    """空キューでのremove_matchingは0を返す"""
+    q = DynamicTaskQueue()
+    removed = q.remove_matching(lambda t: True)
+    assert removed == 0
+
+
+def test_remove_by_ids_empty_list():
+    """空リストでのremove_by_idsは0を返す"""
+    q = DynamicTaskQueue()
+    q.add(MockTask(id="1"))
+    removed = q.remove_by_ids([])
+    assert removed == 0
+    assert len(q) == 1
+
+
+def test_remove_by_ids_with_mixed_priorities():
+    """異なる優先度の複数タスクの一括削除とpop検証"""
+    q = DynamicTaskQueue()
+    t1 = MockTask(id="a", priority=100)
+    t2 = MockTask(id="b", priority=50)
+    t3 = MockTask(id="c", priority=200)
+    t4 = MockTask(id="d", priority=150)
+
+    for t in [t1, t2, t3, t4]:
+        q.add(t)
+
+    assert len(q) == 4
+    removed = q.remove_by_ids(["a", "c"])
+    assert removed == 2
+    assert len(q) == 2
+
+    # remaining should be d (150) then b (50)
+    assert q.pop().id == "d"
+    assert q.pop().id == "b"
+    assert q.pop() is None
+
+
 def test_performance_simulation():
     """大量タスクでの基本動作確認"""
     q = DynamicTaskQueue()

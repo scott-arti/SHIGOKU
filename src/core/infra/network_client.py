@@ -66,6 +66,11 @@ class NetworkResponse:
 import contextvars
 current_scan_cookies: contextvars.ContextVar[Optional[Dict[str, str]]] = contextvars.ContextVar("current_scan_cookies", default=None)
 
+# Reauth context for 401 detection — set by MasterConductor before task execution
+current_reauth_context: contextvars.ContextVar[Optional[dict[str, Any]]] = contextvars.ContextVar(
+    "current_reauth_context", default=None
+)
+
 class AsyncNetworkClient:
     """
     非同期ネットワーククライアント
@@ -473,12 +478,23 @@ class AsyncNetworkClient:
                     # 401 Unauthorized 検知 -> EventBusに通知
                     if response.status == 401 and self.event_bus:
                         from src.core.infra.event_bus import Event, EventType
+                        from src.core.agents.swarm.auth.reauth_contracts import (
+                            generate_reauth_attempt_id,
+                        )
+                        reauth_ctx = current_reauth_context.get() or {}
+                        reauth_attempt_id = generate_reauth_attempt_id()
+                        origin_task_id = reauth_ctx.get("origin_task_id", "unknown")
+                        auth_context_version = reauth_ctx.get("auth_context_version", 0)
+
                         self.event_bus.emit_sync(Event(
                             type=EventType.SESSION_EXPIRED,
                             payload={
                                 "url": url,
                                 "method": method,
-                                "headers": headers
+                                "request_headers": headers or {},
+                                "origin_task_id": origin_task_id,
+                                "reauth_attempt_id": reauth_attempt_id,
+                                "auth_context_version": auth_context_version,
                             },
                             source="AsyncNetworkClient"
                         ))

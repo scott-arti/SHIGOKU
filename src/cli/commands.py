@@ -1,8 +1,34 @@
 """CLIコマンドレジストリとコマンド実装"""
+import asyncio
 from typing import Dict, Callable, Any
 import json
 
 from src.cli.messages import msg
+from src.core.preflight import (
+    EntryGateFacade,
+    PreflightContext,
+    GatePolicy,
+    PreflightFailure,
+    PreflightResult,
+    PreflightStatus,
+)
+
+
+def _parse_cookie_string(cookie_str: str) -> dict[str, str]:
+    """Parse a cookie string like 'a=1; b=2' into a dict."""
+    if not cookie_str:
+        return {}
+    cookies: dict[str, str] = {}
+    for part in cookie_str.split(";"):
+        part = part.strip()
+        if "=" in part:
+            key, _, value = part.partition("=")
+            key = key.strip()
+            value = value.strip()
+            if key:
+                cookies[key] = value
+    return cookies
+
 
 class CommandRegistry:
     """CLIコマンドの登録と管理"""
@@ -73,8 +99,7 @@ def cmd_model(cli, *args):
         models = {
             "OpenAI": ["gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo"],
             "Anthropic": ["claude-3-5-sonnet-20240620", "claude-3-opus-20240229"],
-            "Local (Ollama)": ["ollama/llama3", "ollama/deepseek-coder", "ollama/mistral"],
-            "DeepSeek": ["deepseek/deepseek-coder", "deepseek/deepseek-chat"]
+            "DeepSeek": ["deepseek/deepseek-v4-flash", "deepseek/deepseek-coder", "deepseek/deepseek-chat"]
         }
         
         for provider, model_list in models.items():
@@ -454,7 +479,88 @@ def cmd_resume(cli, *args):
     # SessionManagerインスタンス取得
     project_dir = Path.cwd()
     session_manager = SessionManager(project_dir)
-    
+
+    # Load session first to validate completeness
+    saved_session = session_manager.load_session(session_id)
+
+    # Fail-close: session must exist and have target_url
+    if saved_session is None or not str(getattr(saved_session, "target_url", "") or "").strip():
+        result = PreflightResult(
+            status=PreflightStatus.FAIL,
+            failures=[
+                PreflightFailure(
+                    reason_code="RESUME_CONTEXT_INCOMPLETE",
+                    severity="critical",
+                    category="session",
+                    remediation=(
+                        "The saved session has no target_url. "
+                        "Provide a target with --target or use /sessions "
+                        "to select a complete session."
+                    ),
+                )
+            ],
+        )
+        for failure in result.failures:
+            cli.console.print(f"[red][GATE] {failure.reason_code}: {failure.remediation}[/red]")
+        cli.console.print("[red]Preflight entry gate failed — aborting resume.[/red]")
+        return
+
+    # Preflight gate check before resume — extract context from saved session
+    try:
+        resume_mode = str(getattr(saved_session, "mode", "") or "").strip() or "bugbounty"
+        resume_target = str(getattr(saved_session, "target_url", "") or "").strip()
+        session_metadata: dict = getattr(saved_session, "metadata", {}) or {}
+        # Checkpoint saves cookies/auth in metadata["context"]
+        ctx: dict = session_metadata.get("context", {}) or {}
+        session_cookies = str(
+            ctx.get("cookies", "")
+            or session_metadata.get("cookies", "")
+            or ""
+        )
+        session_bearer = str(
+            ctx.get("bearer_token", "")
+            or session_metadata.get("bearer_token", "")
+            or ""
+        )
+        session_auth_headers: dict = (
+            ctx.get("auth_headers", {})
+            or session_metadata.get("auth_headers", {})
+            or {}
+        )
+        session_goal = str(
+            ctx.get("goal", "")
+            or session_metadata.get("goal", "")
+            or resume_mode
+        ).strip() or "recon"
+        session_profile = str(session_metadata.get("profile", "") or "").strip()
+
+        gate_context = PreflightContext(
+            target=resume_target,
+            mode=resume_mode,
+            goal=session_goal,
+            profile=session_profile,
+            cookies=_parse_cookie_string(session_cookies),
+            bearer_token=session_bearer,
+            auth_headers=session_auth_headers,
+            resume_session_id=session_id,
+            gate_policy=GatePolicy.STRICT_PROD,
+        )
+        result = asyncio.run(EntryGateFacade().run_once(gate_context))
+        if result.failed:
+            from src.core.preflight.reporter import format_failures_for_cli
+            cli.console.print(format_failures_for_cli(result))
+            return
+    except ImportError:
+        # reporter module not available, fallback to simple output
+        result = asyncio.run(EntryGateFacade().run_once(
+            PreflightContext(resume_session_id=session_id, gate_policy=GatePolicy.STRICT_PROD)
+        ))
+        if result.failed:
+            for failure in result.failures:
+                cli.console.print(f"[red][GATE] {failure.reason_code}: {failure.remediation}[/red]")
+            cli.console.print("[red]Preflight entry gate failed — aborting resume.[/red]")
+            return
+
     # MasterConductorを作成してセッション復元
     conductor = MasterConductor(session_manager=session_manager)
     

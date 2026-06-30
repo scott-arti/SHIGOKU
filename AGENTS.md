@@ -97,6 +97,9 @@ You are a careful coding agent. Follow this workflow strictly:
 - ドキュメントは用途別に配置する:
   - `specs/`, `roadmaps/`, `plans/`, `subtasks/`, `reports/`, `worklogs/`, `manuals/`, `registry/`
   - `archive/`, `misc/` は移行用ディレクトリであり、通常運用では新規格納しない
+  - `active` な `plan` は `docs/shigoku/plans/`、`active` な `subtask_plan` は `docs/shigoku/subtasks/` に置く
+  - `done` になった `plan` は `docs/shigoku/plans/done/`、`done` になった `subtask_plan` は `docs/shigoku/subtasks/done/` に移動する
+  - 計画書ファイル名は `YYYY-MM-DD_<task_id lowercase>_<slug>.md` を標準とし、`status` はファイル名ではなくディレクトリで表現する
 - `doc_type` の許可値は `spec|roadmap|plan|subtask_plan|work_report|work_log|manual` とする。
 - `docs/shigoku/registry/task_registry.yaml` にタスクIDを登録する。
 - タスク関連ドキュメントは YAML Front Matter に `task_id`, `doc_type`, `created_at`, `updated_at` を必須で含める（`YYYY-MM-DD`）。
@@ -111,6 +114,7 @@ You are a careful coding agent. Follow this workflow strictly:
   5. 作業完了報告書 (`work_report`) を作成/更新
   6. 作業ログ (`work_log`) を作成/更新
 - 主要ドキュメントは `parent_task_id` と `related_docs` を必須で設定する。
+- `plan` / `subtask_plan` の status を `done` に変える際は、対応ファイルを `done/` ディレクトリへ移動し、台帳・関連リンクも同時更新する。
 - 変更後は必ず `python3 scripts/validate_shigoku_docs.py` を実行し、0エラーであることを確認する。
 - 変更後は必ず `python3 scripts/sync_shigoku_updated_at.py` を先に実行し、変更した Markdown の `updated_at` を当日付に揃えてから `python3 scripts/validate_shigoku_docs.py` を実行する。
 
@@ -125,8 +129,11 @@ You are a careful coding agent. Follow this workflow strictly:
 
 コンテキストを節約するため、以下のトピックに関する作業を行う場合は、思考プロセスの最初（コードを触る前）に必ず指定されたルールファイルを `read` ツールで読み込み、その指示を完全に遵守せよ。
 
+また、非 trivial なコード変更・ドキュメント変更・設計判断では、常に `rules/lessons.md` も先に読み、該当する再発防止ルールを適用すること。
+
 | 対象のトピック | 読み込むべきルールファイル |
 |---|---|
+| プロジェクト固有の落とし穴、重大レビュー指摘、再発防止ルール | `rules/lessons.md` |
 | コード品質、エラーハンドリング、非同期処理、サブプロセス、シークレット管理 | `rules/codingrules.md` |
 | レポートとセッションの整合性、Haddixレポート、ゲート判定のロジック | `rules/report-session-consistency.md` |
 | レポートのフォーマット、検証ゲートの実装、品質ポリシー | `rules/reporting.md` |
@@ -138,6 +145,37 @@ You are a careful coding agent. Follow this workflow strictly:
 **実行ルール:**
 - 該当するファイルが存在する場合は、推測で動かず必ず中身をロードすること。
 - ユーザーへの最終報告時に、本タスクのために「どのルールファイルを参考にしたか」を必ず明記して報告せよ。
+
+## 18) LLM設定統一ルール（SGK-2026-0292以降）
+
+LLMの利用に関する設定は `config/shigoku.yaml` の `llm` セクションに一元化されている。以下のルールを遵守すること。
+
+### 設定正本
+- LLMの provider / profile / role の正本は `config/shigoku.yaml` の `llm:` ブロックである。
+- `src/config.py` の flat config (`model_lightweight`, `model_output` 等) は [DEPRECATED]。新規コードでは参照しない。
+- API key の生値は YAML に置かず、必ず `api_key_env` で環境変数参照する。
+
+### LLMClient の使用方法
+- **新規コード**: `LLMClient(role="<role名>")` で role ベースの呼び出しを行う。
+- **非推奨**: `LLMClient(model="...")` での直接モデル指定。互換コード以外では使用禁止。
+- role が未定義の場合は `default_role` にフォールバックする。
+- `final_judgement` は security-critical role（未定義時 fail closed）。
+
+### Role と Prompt Template
+- role と system prompt の対応は `config/shigoku.yaml` の `llm.roles.<role>.system_prompt_template` で管理する。
+- prompt 本文は `src/prompts/` 配下に置く。
+- コード内に `{"role": "system", "content": "..."}` の直書きをしない（非推奨）。
+- `LLMClient._maybe_inject_system_prompt()` が role の template を自動注入する（caller が system message を渡さなかった場合のみ）。
+
+### Role の追加手順
+1. `src/prompts/roles/<role>.md` に template を作成
+2. `config/shigoku.yaml` の `llm.roles` に role 定義を追加（profile / system_prompt_template を指定）
+3. コードでは `LLMClient(role="<role>")` で呼び出す
+
+### Ollama 非推奨
+- Ollama (`localhost:11434`, `/api/generate`) への直接呼び出しは [DEPRECATED]。
+- `LocalLLMProvider` / `TaskComplexityClassifier` は [DEPRECATED]。
+- 新規機能はすべてクラウド API 経由で role ベースに実装する。
 
 ## graphify
 

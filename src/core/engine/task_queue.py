@@ -14,11 +14,14 @@ import logging
 import heapq
 import sqlite3
 import pickle
+import threading
 import time
 import uuid
 from pathlib import Path
 from dataclasses import dataclass, field, asdict
 from typing import List, Dict, Any, Optional, Callable, Iterator, Set, Tuple
+
+from src.core.engine.snapshot_validity import check_snapshot_validity
 
 logger = logging.getLogger(__name__)
 
@@ -262,6 +265,8 @@ class DynamicTaskQueue:
         # メトリクス
         self._spill_count = 0
         self._load_count = 0
+        self._current_recon_version = 0
+        self._current_auth_version = 0
 
     def _init_disk_storage(self) -> None:
         """SQLite ディスクストレージを初期化"""
@@ -343,14 +348,49 @@ class DynamicTaskQueue:
         except Exception as e:
             logger.error(f"Error loading task {task_id} from disk: {e}")
         return None
+
+    def set_snapshot_versions(
+        self,
+        *,
+        current_recon_version: int = 0,
+        current_auth_version: int = 0,
+    ) -> None:
+        """Set current snapshot versions used for enqueue/dequeue validity checks."""
+        self._current_recon_version = int(current_recon_version or 0)
+        self._current_auth_version = int(current_auth_version or 0)
+
+    def _invalidate_if_stale(self, task: Any, point: str) -> bool:
+        valid, reason = check_snapshot_validity(
+            task,
+            self._current_recon_version,
+            self._current_auth_version,
+        )
+        if valid:
+            return False
+
+        metadata = getattr(task, "metadata", None)
+        if not isinstance(metadata, dict):
+            metadata = {}
+            setattr(task, "metadata", metadata)
+        metadata["lifecycle_status"] = "invalidated"
+        metadata["lifecycle_reason"] = reason
+        metadata["invalidated_by"] = f"validity_check:{point}"
+        return True
     
     def add(self, task: Any) -> None:
         """
+        assert threading.current_thread() is threading.main_thread(), (
+            "PCR-P1: task_queue mutation must be on main thread"
+        )
+
         タスクを優先度付きで追加 (O(log n))
         
         Args:
             task: 追加するタスク
         """
+        if self._invalidate_if_stale(task, "enqueue"):
+            return
+
         # メモリ制限チェック
         if len(self._task_index) >= self.max_memory_size:
             self._spill_lowest_priority_task()
@@ -383,6 +423,10 @@ class DynamicTaskQueue:
     
     def add_batch(self, tasks: List[Any], source: str = "unknown") -> int:
         """
+        assert threading.current_thread() is threading.main_thread(), (
+            "PCR-P1: task_queue mutation must be on main thread"
+        )
+
         複数タスクを一括追加 (O(k log n))
         
         Args:
@@ -433,12 +477,17 @@ class DynamicTaskQueue:
                     # 新しい優先度のものは別途ヒープにあるはずなので、これは捨てる
                     continue
                 
+                if self._invalidate_if_stale(task, "dequeue"):
+                    continue
+
                 return task
             else:
                 # ディスクから読み込み
                 task = self._load_from_disk(task_id)
                 if task:
                     self._load_count += 1
+                    if self._invalidate_if_stale(task, "dequeue"):
+                        continue
                     return task
                 # ロードに失敗した、または既にpop済みの場合はスキップ
             
@@ -502,6 +551,10 @@ class DynamicTaskQueue:
 
     def inject_context(self, context: TaskContext) -> int:
         """
+        assert threading.current_thread() is threading.main_thread(), (
+            "PCR-P1: task_queue mutation must be on main thread"
+        )
+
         キュー内タスクにコンテキストを反映
         """
         if context.is_empty():
@@ -547,6 +600,10 @@ class DynamicTaskQueue:
         new_priority: int,
     ) -> int:
         """
+        assert threading.current_thread() is threading.main_thread(), (
+            "PCR-P1: task_queue mutation must be on main thread"
+        )
+
         条件にマッチするタスクの優先度を変更
         """
         return self._modify_priority(condition, lambda t: setattr(t, 'priority', new_priority))
@@ -588,6 +645,10 @@ class DynamicTaskQueue:
 
     def remove_tasks_for_assets(self, asset_ids: List[str]) -> int:
         """
+        assert threading.current_thread() is threading.main_thread(), (
+            "PCR-P1: task_queue mutation must be on main thread"
+        )
+
         指定された資産に関連する未実行タスクをキューから削除
         """
         if not asset_ids:
@@ -696,6 +757,10 @@ class DynamicTaskQueue:
 
     def boost_priority_for_assets(self, asset_ids: List[str], boost_value: int) -> int:
         """
+        assert threading.current_thread() is threading.main_thread(), (
+            "PCR-P1: task_queue mutation must be on main thread"
+        )
+
         指定された資産に関連するタスクの優先度をブースト
         """
         if not asset_ids:
@@ -748,6 +813,10 @@ class DynamicTaskQueue:
     
     def remove_by_id(self, task_id: str) -> bool:
         """ID でタスクを削除 (O(N))"""
+        assert threading.current_thread() is threading.main_thread(), (
+            "PCR-P1: task_queue mutation must be on main thread"
+        )
+
         if task_id not in self._task_index:
             return False
         
@@ -767,6 +836,30 @@ class DynamicTaskQueue:
     def get_pending_task_ids(self) -> List[str]:
         """待機中のタスクIDリストを取得"""
         return list(self._task_index.keys())
+
+    def remove_by_ids(self, task_ids: List[str]) -> int:
+        """複数IDのタスクを一括削除 (O(N*K))。削除成功数を返す。"""
+        assert threading.current_thread() is threading.main_thread(), (
+            "PCR-P1: task_queue mutation must be on main thread"
+        )
+        removed = 0
+        for tid in task_ids:
+            if self.remove_by_id(tid):
+                removed += 1
+        return removed
+
+    def remove_matching(self, condition: Callable[[Any], bool]) -> int:
+        """条件に合致するタスクを全て削除。削除数を返す。"""
+        assert threading.current_thread() is threading.main_thread(), (
+            "PCR-P1: task_queue mutation must be on main thread"
+        )
+        removed = 0
+        for task_id in list(self._task_index.keys()):
+            task = self._task_index.get(task_id)
+            if task is not None and condition(task):
+                if self.remove_by_id(task_id):
+                    removed += 1
+        return removed
     
     def get_all(self) -> List[Any]:
         """全タスクを取得（デバッグ用） - 優先度順にソートされた状態のリストを返す"""

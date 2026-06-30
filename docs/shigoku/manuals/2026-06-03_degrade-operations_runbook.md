@@ -4,11 +4,11 @@ doc_type: manual
 status: active
 parent_task_id: SGK-2026-0251
 related_docs:
-  - docs/shigoku/subtasks/2026-06-02_degrade-runbook_subtask_plan.md
+  - docs/shigoku/subtasks/2026-06-02_sgk-2026-0255_degrade-runbook_subtask_plan.md
   - docs/shigoku/manuals/2026-06-03_degrade-drill-evidence_template.md
-  - docs/shigoku/plans/2026-06-01_task_plan.md
+  - docs/shigoku/plans/2026-06-01_sgk-2026-0251_task_plan.md
 created_at: '2026-06-03'
-updated_at: '2026-06-03'
+updated_at: '2026-06-30'
 ---
 
 # 脆弱性チェーン degrade 運用 Runbook

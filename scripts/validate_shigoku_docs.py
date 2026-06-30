@@ -156,7 +156,8 @@ def check_registry(docs_root: Path, repo_root: Path) -> tuple[list[str], int, in
             continue
         p = repo_root / str(rel)
         if not p.exists():
-            issues.append(f"task_{i}_missing_file:{rel}")
+            if not t.get("provisional", False):
+                issues.append(f"task_{i}_missing_file:{rel}")
             continue
 
         text = p.read_text(encoding="utf-8", errors="ignore")

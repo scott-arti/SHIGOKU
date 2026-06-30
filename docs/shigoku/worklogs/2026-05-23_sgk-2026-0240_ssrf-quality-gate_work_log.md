@@ -4,10 +4,10 @@ doc_type: work_log
 status: done
 parent_task_id: SGK-2026-0220
 related_docs:
-- docs/shigoku/plans/2026-05-23_ssrf-p0-fp_plan.md
+- docs/shigoku/plans/2026-05-23_sgk-2026-0240_ssrf-p0-fp_plan.md
 - docs/shigoku/reports/2026-05-23_sgk-2026-0240_ssrf-quality-gate_work_report.md
 created_at: '2026-05-23'
-updated_at: '2026-05-23'
+updated_at: '2026-06-30'
 ---
 
 # Work Log: SGK-2026-0240
@@ -24,7 +24,7 @@ updated_at: '2026-05-23'
 - ドキュメント整合ブロッカー（manual front matter 不備）を修正
 
 ## 参照
-- 計画書: `docs/shigoku/plans/2026-05-23_ssrf-p0-fp_plan.md`
+- 計画書: `docs/shigoku/plans/2026-05-23_sgk-2026-0240_ssrf-p0-fp_plan.md`
 - 報告書: `docs/shigoku/reports/2026-05-23_sgk-2026-0240_ssrf-quality-gate_work_report.md`
 
 ## 次アクション

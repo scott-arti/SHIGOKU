@@ -75,15 +75,15 @@ Use these features for bug bounty and penetration testing."""
                         },
                         "ai_provider": {
                             "type": "string",
-                            "description": "AI provider: 'openai' (default) or 'ollama'."
+                            "description": "AI provider: 'openai' (default) or custom provider name."
                         },
                         "ai_model": {
                             "type": "string",
-                            "description": "AI model to use (e.g., 'gpt-4o', 'llama3')."
+                            "description": "AI model to use (e.g., 'gpt-4o', 'deepseek/deepseek-chat')."
                         },
                         "ai_endpoint": {
                             "type": "string",
-                            "description": "Custom AI API endpoint (essential for local Ollama)."
+                            "description": "Custom AI API endpoint."
                         },
                         "ua_rotate": {
                             "type": "boolean",

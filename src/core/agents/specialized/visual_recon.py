@@ -1,8 +1,8 @@
 """
 VisualReconAgent: GPU-Accelerated Screenshot Analysis
 
-LLaVA/BakLLaVAをOllama経由で使用し、スクリーンショットを自動解析する。
-GPT-4 Visionと異なり、ローカルGPUで無制限・無料で実行可能。
+LLMClient経由でvision APIを使用し、スクリーンショットを自動解析する。
+GPT-4 Vision等のvision-capableモデルで実行可能。
 """
 
 import logging
@@ -32,46 +32,51 @@ class VisualAnalysisResult:
 )
 class VisualReconAgent:
     """
-    視覚偵察エージェント (GPU Accelerated)
-    
+    視覚偵察エージェント (Vision API powered)
+
     機能:
     - スクリーンショットから管理者パネルを検出
     - エラーメッセージの識別
     - デフォルト インストールページの検出
     - 機密情報の露出チェック
     """
-    
+
     def __init__(self, model: str = "llava:7b", workspace_root: Optional[str] = None):
         """
         Args:
-            model: 使用するLLaVAモデル (llava:7b, bakllava など)
+            model: Deprecated. Model is resolved via LLMClient role resolution.
             workspace_root: ワークスペースルート（結果保存用）
         """
         self.model = model
         self.workspace_root = workspace_root
-        self._check_ollama_availability()
-    
-    def _check_ollama_availability(self) -> bool:
-        """Ollamaの利用可能性をチェック"""
+        self._llm_client = None
+        self._check_vision_availability()
+
+    def _check_vision_availability(self) -> bool:
+        """Vision LLMの利用可能性をチェック（LLMClient role=vision_analysis）
+        
+        Returns False if vision_analysis role is not explicitly configured,
+        since fallback to default_role would use a non-vision-optimized model.
+        On failure, _llm_client is set to None to prevent accidental use.
+        """
         try:
-            from src.core.gpu_accelerator import GPUAccelerator
-            gpu = GPUAccelerator()
-            if not gpu.is_ollama_available():
-                logger.warning("Ollama is not available. VisualReconAgent will fail.")
-                return False
-            
-            # LLaVAモデルの存在確認
-            models = gpu.list_ollama_models()
-            if not any("llava" in m.lower() or "bakllava" in m.lower() for m in models):
-                logger.warning("LLaVA/BakLLaVA model not found. Pulling %s...", self.model)
-                success = gpu.pull_ollama_model(self.model)
-                if not success:
-                    logger.error("Failed to pull LLaVA model")
+            from src.core.models.llm import LLMClient
+            self._llm_client = LLMClient(role="vision_analysis")
+            # Verify the role was explicitly resolved, not silently fell back to default
+            if self._llm_client._role_result is not None:
+                resolved_role = self._llm_client._role_result.role_name
+                if resolved_role != "vision_analysis":
+                    logger.warning(
+                        "vision_analysis role not configured (resolved to '%s'). "
+                        "Add vision_analysis to config/shigoku.yaml llm.roles to enable visual recon.",
+                        resolved_role
+                    )
+                    self._llm_client = None
                     return False
-            
             return True
         except Exception as e:
-            logger.error("Failed to check Ollama availability: %s", e)
+            logger.error("Failed to initialize vision LLM: %s", e)
+            self._llm_client = None
             return False
     
     def _encode_image(self, image_path: str) -> str:
@@ -81,48 +86,36 @@ class VisualReconAgent:
     
     async def _query_llava(self, image_base64: str, prompt: str) -> str:
         """
-        LLaVAモデルにクエリを送信
-        
+        Vision APIにクエリを送信（LLMClient role=vision_analysis）
+
         Args:
             image_base64: Base64エンコードされた画像
             prompt: 質問プロンプト
-        
+
         Returns:
-            LLaVAの応答テキスト
+            Vision APIの応答テキスト
         """
         try:
-            from src.core.infra.network_client import AsyncNetworkClient
-            import os
-            
-            ollama_base = os.getenv("OLLAMA_API_BASE", "http://localhost:11434")
-            url = f"{ollama_base}/api/generate"
-            
-            payload = {
-                "model": self.model,
-                "prompt": prompt,
-                "images": [image_base64],
-                "stream": False
-            }
-            
-            # Use AsyncNetworkClient (no proxy for local)
-            async with AsyncNetworkClient() as client:
-                response = await client.request(
-                    "POST", 
-                    url, 
-                    json=payload, 
-                    timeout=30,
-                    use_proxy=False  # Localhost interaction
-                )
+            if self._llm_client is None:
+                logger.error("Vision LLM client not initialized")
+                return "Error: Vision LLM client not available"
 
-            if response.status_code != 200:
-                logger.error("LLaVA API error: %s", response.text)
-                return f"Error: {response.status_code}"
-            
-            result = response.json()
-            return result.get("response", "")
-        
+            messages = [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_base64}"}}
+                ]
+            }]
+
+            response = await self._llm_client.agenerate(messages, timeout=30)
+
+            if hasattr(response, 'choices') and response.choices:
+                return response.choices[0].message.content.strip()
+            return f"Error: No response"
+
         except Exception as e:
-            logger.error("LLaVA query failed: %s", e)
+            logger.error("Vision query failed: %s", e)
             return f"Error: {e}"
     
     async def analyze_screenshot(self, image_path: str) -> VisualAnalysisResult:

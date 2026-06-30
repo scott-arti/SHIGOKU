@@ -143,3 +143,126 @@ async def test_step3_takeover_candidates_saved(tmp_path):
     assert len(takeover_files) == 1
     content = json.loads(takeover_files[0].read_text())
     assert any(item["subdomain"] == "dead.example.com" for item in content)
+
+
+@pytest.mark.asyncio
+async def test_step3_writes_whatweb_fixture_in_dev_mode(tmp_path):
+    """Step 3: DEV_MODE では whatweb のファイル出力が fixture helper 経由で維持される"""
+
+    pipeline = ReconPipeline(
+        config={"recon": {"max_concurrent_tasks": 4}},
+        project_manager=None,
+        target="*.example.com",
+        workspace_root=tmp_path,
+    )
+    pipeline.runner.dev_mode = True
+
+    with patch.object(pipeline.runner, "run_json", new=AsyncMock(return_value=[
+        {"url": "https://www.example.com", "status_code": 200},
+    ])):
+        with patch.object(
+            pipeline.runner,
+            "run",
+            new=AsyncMock(side_effect=[
+                "www.example.com\n",
+                '[ {"target":"https://www.example.com","plugins":{"HTTPServer":{"string":["nginx"]}}}]',
+            ]),
+        ):
+            await pipeline.step3_live_check(["www.example.com"])
+
+    whatweb_files = list(tmp_path.glob("*_example_com_whatweb.json"))
+    assert len(whatweb_files) == 1
+    assert "HTTPServer" in whatweb_files[0].read_text()
+
+
+@pytest.mark.asyncio
+async def test_step3_fetch_resolvers_uses_demo_provider(tmp_path):
+    """Step 3: resolver fixture 生成は demo provider に委譲される"""
+
+    class DemoProviderStub:
+        def __init__(self):
+            self.called = False
+
+        def write_resolvers_file(self, output_path, count):
+            self.called = True
+            output_path.write_text("10.0.0.1\n10.0.0.2\n")
+            return output_path
+
+        def ensure_whatweb_file(self, output_path, output):
+            output_path.write_text(output)
+            return output_path
+
+        def get_command_output(self, cmd, mock_output=""):
+            return mock_output
+
+        def is_tool_available(self, tool_name):
+            return True
+
+        def check_tools(self, tools):
+            return None
+
+    pipeline = ReconPipeline(
+        config={"recon": {"max_concurrent_tasks": 4}},
+        project_manager=None,
+        target="*.example.com",
+        workspace_root=tmp_path,
+    )
+    demo_provider = DemoProviderStub()
+    pipeline.runner.dev_mode = True
+    pipeline.runner.demo_provider = demo_provider
+
+    resolvers_file = await pipeline.fetch_resolvers(count=2)
+
+    assert demo_provider.called is True
+    assert resolvers_file.read_text() == "10.0.0.1\n10.0.0.2\n"
+
+
+@pytest.mark.asyncio
+async def test_step3_uses_demo_provider_for_whatweb_file(tmp_path):
+    """Step 3: whatweb fixture 保存は demo provider に委譲される"""
+
+    class DemoProviderStub:
+        def __init__(self):
+            self.called = False
+
+        def write_resolvers_file(self, output_path, count):
+            output_path.write_text("8.8.8.8\n")
+            return output_path
+
+        def ensure_whatweb_file(self, output_path, output):
+            self.called = True
+            output_path.write_text(output)
+            return output_path
+
+        def get_command_output(self, cmd, mock_output=""):
+            return mock_output
+
+        def is_tool_available(self, tool_name):
+            return True
+
+        def check_tools(self, tools):
+            return None
+
+    pipeline = ReconPipeline(
+        config={"recon": {"max_concurrent_tasks": 4}},
+        project_manager=None,
+        target="*.example.com",
+        workspace_root=tmp_path,
+    )
+    pipeline.runner.dev_mode = True
+    pipeline.runner.demo_provider = DemoProviderStub()
+
+    with patch.object(pipeline.runner, "run_json", new=AsyncMock(return_value=[
+        {"url": "https://www.example.com", "status_code": 200},
+    ])):
+        with patch.object(
+            pipeline.runner,
+            "run",
+            new=AsyncMock(side_effect=[
+                "www.example.com\n",
+                '[ {"target":"https://www.example.com","plugins":{"HTTPServer":{"string":["nginx"]}}}]',
+            ]),
+        ):
+            await pipeline.step3_live_check(["www.example.com"])
+
+    assert pipeline.runner.demo_provider.called is True

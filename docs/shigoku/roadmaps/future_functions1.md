@@ -5,7 +5,7 @@ status: active
 parent_task_id: null
 related_docs: []
 created_at: '2026-05-19'
-updated_at: '2026-05-19'
+updated_at: '2026-06-30'
 ---
 
 # Future Functions & Improvements
@@ -93,6 +93,9 @@ MasterConductor レベルでの Resume（タスク単位）は実装されたが
   - 「スコープ外アクセス検知時（EthicsGuard アラート）に全タスクをロック」
   - 「予算（時間・リクエスト数）超過時に Attack フェーズをスキップして Report へ」
 
+**追跡計画:**
+- [2026-06-21_sgk-2026-0284_phasegate-fine-grained_subtask_plan.md](../subtasks/2026-06-21_sgk-2026-0284_phasegate-fine-grained_subtask_plan.md)
+
 ### 7. CLI 機能拡張
 
 **現状の課題:**
@@ -118,3 +121,53 @@ SQLi, XSS, Oauthなど。
 
 
 ## 12. Swarmで検出できるものの強化
+
+## 13. 自律再認証と EventBus 運用の明確化
+
+**現状の課題:**
+EventBus は MC に接続され始めているが、長時間実行時の `401 -> 再認証 -> 再開` を製品機能として安定運用するには、trigger / ownership / fallback がまだ粗い。
+
+**実装案:**
+
+- `SESSION_EXPIRED`, `REAUTH_SUCCESS`, `REAUTH_FAILED` の扱いを MC 中心で固定する。
+- Auth 系 Swarm は再認証の実行担当、MC は再開可否と再計画の担当に分ける。
+- scope / budget / HITL を破らない自律再認証フローを設計する。
+
+**追跡計画:**
+- [2026-06-20_sgk-2026-0280_reauth_subtask_plan.md](../subtasks/done/2026-06-20_sgk-2026-0280_reauth_subtask_plan.md)
+
+## 14. Replay / HITL 通知の次期Ver.整理
+
+**現状の課題:**
+Replay と HITL 通知は placeholder や部分導線があるが、運用機能としては未完成。
+
+**実装案:**
+
+- Replay を「どの証拠・どの再現フローに使うか」で用途別に整理する。
+- HITL 通知は pending ticket / delivery / retry / fallback を含めて運用設計する。
+- EventBus / dashboard / CLI handler の責務を揃える。
+
+## 15. MultiSessionManager
+
+**現状の課題:**
+複数アカウントを跨いだ検証ロジックの芽はあるが、UserA/UserB/Admin などの実セッション管理基盤がない。
+
+**実装案:**
+
+- `alt_sessions` の実データ供給基盤を導入する。
+- セッションごとの role, freshness, auth scope を管理する。
+- cross-account 系タスクへ安全に handoff する。
+
+## 16. Agentic RAG の hypothesis advisor 化
+
+**現状の課題:**
+今の Agentic RAG は `retrieve -> confidence 評価 -> query 改善` が中心で、MC がどう仮説へ取り込むかの契約が弱い。
+
+**実装案:**
+
+- MC が `chain state` と `hypothesis set` を持つ。
+- RAG は `primary lane` を決めず、`alternative hypothesis`, `checklist`, `caution`, `counter-example hint` を返す補助層へ寄せる。
+- `RAG にないから却下` を禁止し、runtime facts を正本にする。
+
+**追跡計画:**
+- <!-- [REMOVED: target not found] -->

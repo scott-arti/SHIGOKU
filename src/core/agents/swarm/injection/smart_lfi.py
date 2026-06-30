@@ -66,13 +66,10 @@ INPUT: [Input]
         ThoughtLoop.__init__(self, max_turns=8)
 
         mode = "ctf"  # CTF モードで POST リクエストを許可
-        from src.config import settings
-        model = getattr(settings, "model", None) or getattr(settings, "model_output", "deepseek/deepseek-chat")
         if config and isinstance(config, dict):
              mode = config.get("mode", mode)
-             model = config.get("model", model) if isinstance(config, dict) else getattr(config, "model", model)
 
-        self.llm = LLMClient(model=model, use_local=False)
+        self.llm = LLMClient(role="lfi_specialist")
         # SmartRequest requires an AsyncNetworkClient instance
         self.network_client = AsyncNetworkClient()
         self.smart_client = SmartRequest(network_client=self.network_client)

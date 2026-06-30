@@ -53,7 +53,7 @@ INPUT: [Input]
         super().__init__(max_turns=10)
         self.target_request = target_request
         self.config = config or {}
-        self.client = LLMClient()
+        self.client = LLMClient(role="actor_critic")
         self.ethics = EthicsGuard()
         self.payloads_queue: List[str] = []
         self.system_prompt = self.SYSTEM_PROMPT

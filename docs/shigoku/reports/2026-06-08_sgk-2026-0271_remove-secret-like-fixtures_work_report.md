@@ -4,11 +4,11 @@ doc_type: work_report
 status: done
 parent_task_id: SGK-2026-0065
 related_docs:
-- docs/shigoku/plans/2026-06-08_remove-secret-like-test-fixtures-blocking-github-push_plan.md
+- docs/shigoku/plans/2026-06-08_sgk-2026-0271_remove-secret-like-test-fixtures-blocking-github-push_plan.md
 - docs/shigoku/roadmaps/IMPLEMENTATION_ROADMAP.md
 title: "Remove secret-like test fixtures blocking GitHub push 実施報告"
 created_at: "2026-06-08"
-updated_at: '2026-06-08'
+updated_at: '2026-06-30'
 ---
 
 # 作業報告
@@ -26,7 +26,7 @@ updated_at: '2026-06-08'
 ## 変更ファイル
 - `tests/unit/engine/test_context_propagator.py`
 - `tests/test_pii_masker.py`
-- `docs/shigoku/plans/2026-06-08_remove-secret-like-test-fixtures-blocking-github-push_plan.md`
+- `docs/shigoku/plans/2026-06-08_sgk-2026-0271_remove-secret-like-test-fixtures-blocking-github-push_plan.md`
 
 ## 検証
 - `.venv/bin/pytest -q tests/unit/engine/test_context_propagator.py -k api_key`

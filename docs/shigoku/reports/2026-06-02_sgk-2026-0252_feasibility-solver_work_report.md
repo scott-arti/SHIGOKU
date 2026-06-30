@@ -4,12 +4,12 @@ doc_type: work_report
 status: done
 parent_task_id: SGK-2026-0251
 related_docs:
-- docs/shigoku/subtasks/2026-06-02_feasibility-solver_subtask_plan.md
-- docs/shigoku/plans/2026-06-01_task_plan.md
+- docs/shigoku/subtasks/2026-06-02_sgk-2026-0252_feasibility-solver_subtask_plan.md
+- docs/shigoku/plans/2026-06-01_sgk-2026-0251_task_plan.md
 - docs/shigoku/worklogs/2026-06-02_sgk-2026-0252_feasibility-solver_work_log.md
 title: SGK-2026-0252 feasibility solver 実装完了報告
 created_at: '2026-06-02'
-updated_at: '2026-06-02'
+updated_at: '2026-06-30'
 ---
 
 # SGK-2026-0252 feasibility solver 実装完了報告
@@ -32,7 +32,7 @@ updated_at: '2026-06-02'
 - `tests/core/intelligence/test_chain_builder.py`
 - `tests/core/intelligence/test_phase2_benchmark.py`
 - `tests/core/engine/test_master_conductor_phase25_shadow.py`
-- `docs/shigoku/subtasks/2026-06-02_feasibility-solver_subtask_plan.md`
+- `docs/shigoku/subtasks/2026-06-02_sgk-2026-0252_feasibility-solver_subtask_plan.md`
 
 ## 判断理由
 - feasibility 判定は rule 候補と AI 候補で別実装にすると差分事故が起きやすいため、`evaluate_feasibility()` に集約した。

@@ -54,7 +54,9 @@ class AdaptiveRateLimiter:
         max_rps: float = 50.0,
         backoff_factor: float = 0.5,
         recovery_factor: float = 1.1,
-        window_seconds: float = 1.0
+        window_seconds: float = 1.0,
+        blocking_degrade_threshold: int = 3,
+        blocking_degrade_window_seconds: float = 60.0,
     ):
         self.initial_rps = initial_rps
         self.min_rps = min_rps
@@ -62,6 +64,8 @@ class AdaptiveRateLimiter:
         self.backoff_factor = backoff_factor
         self.recovery_factor = recovery_factor
         self.window_seconds = window_seconds
+        self.blocking_degrade_threshold = max(1, int(blocking_degrade_threshold))
+        self.blocking_degrade_window_seconds = max(0.0, float(blocking_degrade_window_seconds))
         
         self.current_rps = initial_rps
         self._lock = threading.Lock()
@@ -77,6 +81,8 @@ class AdaptiveRateLimiter:
 
         # Phase 2 (SGK-2026-0311): Blocking signal event log.
         self.blocking_signals: list[BlockingSignalEvent] = []
+        self._degraded_origins: dict[str, str] = {}
+        self.degrade_events: list[dict] = []
     
     def wait(self, target: str = None) -> float:
         """
@@ -122,6 +128,7 @@ class AdaptiveRateLimiter:
                     origin_key=target or "",
                     timestamp=time.time(),
                 ))
+                self._maybe_degrade_origin(target or "")
 
             if status_code == 429:
                 # レート制限検知 → 減速
@@ -171,9 +178,45 @@ class AdaptiveRateLimiter:
         with self._lock:
             if target:
                 self._target_rates[target] = self.initial_rps
+                self._degraded_origins.pop(target, None)
             else:
                 self.current_rps = self.initial_rps
                 self._target_rates.clear()
+                self._degraded_origins.clear()
+
+    def _maybe_degrade_origin(self, origin_key: str) -> None:
+        if not origin_key or origin_key in self._degraded_origins:
+            return
+
+        now = time.time()
+        window_start = now - self.blocking_degrade_window_seconds
+        recent = [
+            signal for signal in self.blocking_signals
+            if signal.origin_key == origin_key
+            and (
+                self.blocking_degrade_window_seconds <= 0.0
+                or signal.timestamp >= window_start
+            )
+        ]
+        if len(recent) < self.blocking_degrade_threshold:
+            return
+
+        reason = "blocking_signal_threshold"
+        self._degraded_origins[origin_key] = reason
+        self.degrade_events.append({
+            "origin_key": origin_key,
+            "reason": reason,
+            "signal_count": len(recent),
+            "timestamp": now,
+        })
+
+    def is_origin_degraded(self, origin_key: str) -> bool:
+        with self._lock:
+            return origin_key in self._degraded_origins
+
+    def get_origin_degrade_reason(self, origin_key: str) -> str:
+        with self._lock:
+            return self._degraded_origins.get(origin_key, "")
     
     def get_stats(self) -> dict:
         """統計情報を取得"""
@@ -182,6 +225,7 @@ class AdaptiveRateLimiter:
             "throttled_count": self.stats.throttled_count,
             "current_rps": self.current_rps,
             "throttle_rate": self.stats.throttled_count / max(1, self.stats.total_requests),
+            "degraded_origins": sorted(self._degraded_origins.keys()),
         }
 
 

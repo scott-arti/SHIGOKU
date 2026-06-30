@@ -5,7 +5,7 @@ status: active
 parent_task_id: null
 related_docs: []
 created_at: '2026-05-19'
-updated_at: '2026-05-19'
+updated_at: '2026-06-30'
 ---
 
 # 将来の機能拡張 (Future Functions)
@@ -190,6 +190,13 @@ class AuthManager:
 - HTTP レスポンス 401 Unauthorized
 - セッション有効期限切れメッセージ検出
 
+**次期Ver.方針**:
+
+- EventBus を使うが、再認証の最終判断は MC が持つ。
+- AuthSwarm は再認証実行担当、MC は `止める / 再試行 / 再計画` の判断担当にする。
+- 追跡計画:
+  - [2026-06-20_sgk-2026-0280_reauth_subtask_plan.md](../subtasks/done/2026-06-20_sgk-2026-0280_reauth_subtask_plan.md)
+
 ---
 
 ## 8. Agentic RAG (Feedback Loop)
@@ -216,6 +223,27 @@ for attempt in range(max_retries):
 # fallback
 return llm.generate_from_knowledge(task_context)
 ```
+
+**次期Ver.方針の更新**:
+
+- Agentic RAG は単なる query rewrite loop ではなく、MC の `hypothesis advisor` に寄せる。
+- MC は `chain state` と `hypothesis set` を持ち、`primary lane` は runtime facts から作る。
+- RAG は `alternative hypothesis`, `checklist`, `caution`, `counter-example hint` を返す補助層とする。
+- `RAG にないから却下` を禁止し、scope / budget / phase 制約の範囲でだけ補助的に探索を広げる。
+- 追跡計画:
+  - <!-- [REMOVED: target not found] -->
+
+## 8.1 Replay / HITL 通知
+
+**概要**: Replay フローと HITL 通知を運用機能として整備する。
+
+**現状**: placeholder や部分導線が残る。
+
+**将来の必要性**:
+
+- 再現性ある replay
+- pending HITL の通知・追跡・再送
+- MC / dashboard / CLI の状態一致
 
 ---
 

@@ -4,11 +4,11 @@ doc_type: work_log
 status: done
 parent_task_id: SGK-2026-0065
 related_docs:
-- docs/shigoku/plans/2026-06-08_remove-unused-caveman-skill-artifacts_plan.md
+- docs/shigoku/plans/2026-06-08_sgk-2026-0270_remove-unused-caveman-skill-artifacts_plan.md
 - docs/shigoku/reports/2026-06-08_sgk-2026-0270_remove-caveman-artifacts_work_report.md
 title: "作業ログ: Remove unused Caveman skill artifacts"
 created_at: "2026-06-08"
-updated_at: '2026-06-08'
+updated_at: '2026-06-30'
 ---
 
 # 作業ログ

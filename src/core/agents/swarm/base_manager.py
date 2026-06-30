@@ -54,15 +54,10 @@ class BaseManagerAgent(SwarmManager):
         cfg = config or {}
         if hasattr(cfg, "model"):
              self.model_name = cfg.model
+        elif isinstance(cfg, dict) and cfg.get("model"):
+             self.model_name = cfg["model"]
         else:
-             # settings から軽量モデルを取得（未注入フォールバックの過負荷を回避）
-             from src.config import settings
-             default_model = (
-                 settings.get_lightweight_model()
-                 if hasattr(settings, "get_lightweight_model")
-                 else getattr(settings, "model_lightweight", "ollama/qwen3.5:latest")
-             )
-             self.model_name = cfg.get("model", default_model)
+             self.model_name = LLMClient(role="swarm_manager").model
         
         # Working Memory
         self.history: List[Dict[str, str]] = []
@@ -116,25 +111,11 @@ class BaseManagerAgent(SwarmManager):
             "description": desc
         }
 
-    def _select_model_for_turn(self, turn: int, degraded_responses: int = 0) -> str:
-        """ターン数/応答品質に応じて使用モデルを選択"""
-        from src.config import settings
-
-        lightweight_model = (
-            settings.get_lightweight_model()
-            if hasattr(settings, "get_lightweight_model")
-            else getattr(settings, "model_lightweight", "ollama/qwen3.5:latest")
-        )
-        output_model = (
-            settings.get_output_model()
-            if hasattr(settings, "get_output_model")
-            else getattr(settings, "model_output", "deepseek/deepseek-chat")
-        )
-
+    def _select_role_for_turn(self, turn: int, degraded_responses: int = 0) -> str:
+        """ターン数/応答品質に応じて使用roleを選択（Phase 3: role-based）"""
         if degraded_responses > 0 or turn >= max(3, self.max_turns // 2 + 1):
-            return output_model
-
-        return lightweight_model
+            return "planner"
+        return "swarm_manager"
 
     async def dispatch(self, task: Task) -> SwarmResult:
         """
@@ -220,18 +201,12 @@ class BaseManagerAgent(SwarmManager):
         # LLMクライアントの確認とフォールバック
         if self.llm is None or not callable(getattr(self.llm, "agenerate", None)):
             logger.warning(f"[{self.name}] LLM client not injected. initializing new instance (Performance Warning).")
-            self.llm = LLMClient(model=self.model_name)
+            self.llm = LLMClient(role="swarm_manager")
 
         # 共有クライアントのモデル上書き競合を避けるため、LLMClient は dispatch 単位で複製して使う
         llm_for_dispatch = self.llm
         if isinstance(self.llm, LLMClient):
-            llm_for_dispatch = LLMClient(
-                model=getattr(self.llm, "model", self.model_name),
-                use_local=getattr(self.llm, "use_local", None),
-                local_model=getattr(self.llm, "_local_model", "qwen3.5:latest"),
-                local_base_url=getattr(self.llm, "_local_base_url", "http://localhost:11434"),
-                auto_route=getattr(self.llm, "auto_route", None),
-            )
+            llm_for_dispatch = LLMClient(role="swarm_manager")
 
         # 思考ループ開始
         turn = 0
@@ -246,9 +221,9 @@ class BaseManagerAgent(SwarmManager):
             # 1. Think (LLM Query)
             try:
                 if isinstance(llm_for_dispatch, LLMClient):
-                    selected_model = self._select_model_for_turn(turn, degraded_responses)
-                    llm_for_dispatch.model = selected_model
-                    logger.debug(f"[{self.name}] Turn {turn}: using model={selected_model}")
+                    selected_role = self._select_role_for_turn(turn, degraded_responses)
+                    llm_for_dispatch = LLMClient(role=selected_role)
+                    logger.debug(f"[{self.name}] Turn {turn}: using role={selected_role}")
 
                 # Semaphore による同時実行制御 (LLMリクエストのバースト防止)
                 async with self.semaphore:

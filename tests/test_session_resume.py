@@ -159,51 +159,57 @@ def test_master_conductor_start_session_uses_sanitized_project_name_and_context(
 
 def test_master_conductor_resume():
     """MasterConductor セッション復元テスト"""
+    import os
     print("[Test] MasterConductor Resume...")
     
-    from src.core.engine.master_conductor import MasterConductor, Task
-    from src.core.engine.task_queue import DynamicTaskQueue
-    from src.core.session import SessionManager
-    
-    with tempfile.TemporaryDirectory() as tmpdir:
-        project_dir = Path(tmpdir)
-        sm = SessionManager(project_dir)
+    # Disable preflight gate for this test (no Caido available)
+    os.environ["SHIGOKU_PREFLIGHT__ENABLED"] = "false"
+    try:
+        from src.core.engine.master_conductor import MasterConductor, Task
+        from src.core.engine.task_queue import DynamicTaskQueue
+        from src.core.session import SessionManager
         
-        # === 最初のConductor: タスクを途中まで実行してクラッシュをシミュレート ===
-        conductor1 = MasterConductor(session_manager=sm, auto_checkpoint=True)
-        conductor1.start_session("https://target.example.com", "ctf")
-        
-        # タスクキューを設定
-        conductor1.task_queue = DynamicTaskQueue()
-        conductor1.task_queue.add_batch(
-            [
-                Task(id="task_1", name="Recon", agent_type="cartographer", action="enumerate"),
-                Task(id="task_2", name="Fingerprint", agent_type="fingerprinter", action="scan"),
-                Task(id="task_3", name="Attack", agent_type="attacker", action="exploit"),
-            ],
-            source="test_master_conductor_resume",
-        )
-        conductor1.context.discovered_assets = ["asset1.example.com", "asset2.example.com"]
-        conductor1.context.bypass_methods = ["encoding_bypass"]
-        
-        # チェックポイント保存（クラッシュ前の状態）
-        conductor1._checkpoint()
-        session_id = conductor1._current_session.session_id
-        print("  ✅ Initial session saved")
-        
-        # === 新しいConductor: 復元 ===
-        conductor2 = MasterConductor(session_manager=sm, auto_checkpoint=True)
-        result = conductor2.resume_session(session_id)
-        
-        assert result is True
-        restored_tasks = list(conductor2.task_queue)
-        assert len(restored_tasks) == 3
-        assert restored_tasks[0].id == "task_1"
-        assert conductor2.context.target_info == conductor1.context.target_info
-        assert conductor2.context.discovered_assets == ["asset1.example.com", "asset2.example.com"]
-        assert conductor2.context.bypass_methods == ["encoding_bypass"]
-        print("  ✅ resume_session() restored task queue and context")
-    
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_dir = Path(tmpdir)
+            sm = SessionManager(project_dir)
+            
+            # === 最初のConductor: タスクを途中まで実行してクラッシュをシミュレート ===
+            conductor1 = MasterConductor(session_manager=sm, auto_checkpoint=True)
+            conductor1.start_session("https://target.example.com", "ctf")
+            
+            # タスクキューを設定
+            conductor1.task_queue = DynamicTaskQueue()
+            conductor1.task_queue.add_batch(
+                [
+                    Task(id="task_1", name="Recon", agent_type="cartographer", action="enumerate"),
+                    Task(id="task_2", name="Fingerprint", agent_type="fingerprinter", action="scan"),
+                    Task(id="task_3", name="Attack", agent_type="attacker", action="exploit"),
+                ],
+                source="test_master_conductor_resume",
+            )
+            conductor1.context.discovered_assets = ["asset1.example.com", "asset2.example.com"]
+            conductor1.context.bypass_methods = ["encoding_bypass"]
+            
+            # チェックポイント保存（クラッシュ前の状態）
+            conductor1._checkpoint()
+            session_id = conductor1._current_session.session_id
+            print("  ✅ Initial session saved")
+            
+            # === 新しいConductor: 復元 ===
+            conductor2 = MasterConductor(session_manager=sm, auto_checkpoint=True)
+            result = conductor2.resume_session(session_id)
+            
+            assert result is True
+            restored_tasks = list(conductor2.task_queue)
+            assert len(restored_tasks) == 3
+            assert restored_tasks[0].id == "task_1"
+            assert conductor2.context.target_info == conductor1.context.target_info
+            assert conductor2.context.discovered_assets == ["asset1.example.com", "asset2.example.com"]
+            assert conductor2.context.bypass_methods == ["encoding_bypass"]
+            print("  ✅ resume_session() restored task queue and context")
+    finally:
+        del os.environ["SHIGOKU_PREFLIGHT__ENABLED"]
+
     print("  ✅ MasterConductor Resume: PASSED\n")
 
 

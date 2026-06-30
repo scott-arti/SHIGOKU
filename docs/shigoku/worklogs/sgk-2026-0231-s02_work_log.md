@@ -8,7 +8,7 @@ related_docs:
 - docs/shigoku/plans/phase_e2_next_action_plan.md
 - docs/shigoku/reports/phase_e2_cto_review.md
 created_at: '2026-05-23'
-updated_at: '2026-05-25'
+updated_at: '2026-06-30'
 ---
 
 # SGK-2026-0231-S02 作業ログ
@@ -446,7 +446,7 @@ external_tools:
 
 ### タスク: SGK-2026-0241 ToolRegistry統合
 
-**計画**: `docs/shigoku/plans/2026-05-23_toolregistry-phase-e-3_plan.md`
+**計画**: `docs/shigoku/plans/2026-05-23_sgk-2026-0241_toolregistry-phase-e-3_plan.md`
 
 ### Week 1 タスク
 

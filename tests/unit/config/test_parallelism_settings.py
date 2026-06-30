@@ -151,3 +151,27 @@ class TestParallelismConfigYamlRoundtrip:
         assert s.shadow_mode is True  # default
         assert s.per_origin_budget.rpm == 50
         assert s.mutating.enabled is True
+
+
+# ============================================================
+# Phase 5 (SGK-2026-0314): kill_switch field (LB-1)
+# ============================================================
+
+class TestParallelismKillSwitch:
+    """Phase 5 LB-1: kill_switch field on ParallelismSettings."""
+
+    def test_kill_switch_default_is_false(self):
+        """kill_switch defaults to False (safe default)."""
+        s = ParallelismSettings()
+        assert s.kill_switch is False
+
+    def test_kill_switch_can_be_set_true(self):
+        """kill_switch can be set to True for emergency serial revert."""
+        s = ParallelismSettings(kill_switch=True)
+        assert s.kill_switch is True
+
+    def test_kill_switch_with_enabled_false(self):
+        """kill_switch=False with enabled=False is safe (already serial)."""
+        s = ParallelismSettings(enabled=False, kill_switch=False)
+        assert s.enabled is False
+        assert s.kill_switch is False

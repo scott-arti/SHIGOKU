@@ -3,10 +3,8 @@ Proxy Integration for SHIGOKU Phase D
 Elegant Caido/HTTP Proxy integration for reproduction
 """
 from __future__ import annotations
-import asyncio
-import json
 import logging
-from typing import Dict, Any, Optional, Protocol
+from typing import Dict, Any, Optional
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
 import aiohttp
@@ -218,40 +216,6 @@ class CaidoIntegration(ProxyIntegration):
             self._session = None
 
 
-class BurpIntegration(ProxyIntegration):
-    """
-    Burp Suite integration placeholder
-    
-    Would implement Burp's REST API or extension-based integration
-    """
-    
-    def __init__(self, base_url: str = "http://localhost:1337"):
-        self.base_url = base_url
-        logger.warning("Burp integration is a placeholder")
-    
-    async def send_request(self, request: ProxyRequest) -> ProxyResponse:
-        """Placeholder implementation"""
-        logger.warning("Burp send_request not implemented")
-        return ProxyResponse(
-            status_code=0,
-            headers={},
-            body="Not implemented"
-        )
-    
-    async def replay_finding(
-        self,
-        finding: Dict[str, Any],
-        modifications: Optional[Dict[str, Any]] = None
-    ) -> ProxyResponse:
-        """Placeholder implementation"""
-        logger.warning("Burp replay_finding not implemented")
-        return ProxyResponse(
-            status_code=0,
-            headers={},
-            body="Not implemented"
-        )
-
-
 class ProxyManager:
     """
     Central proxy management
@@ -303,8 +267,6 @@ class ProxyManager:
         except Exception:
             logger.debug("Caido not available")
         
-        # Add more auto-detection here (Burp, etc.)
-    
     async def send_finding_to_proxy(
         self,
         finding: Dict[str, Any],

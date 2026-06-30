@@ -1,7 +1,7 @@
 """XCTO-5 (Stage separation) RED tests.
 
 These tests intentionally codify the target behavior described in
-`docs/shigoku/plans/2026-05-24_xss-hunter-enhancement_plan.md` section 5.3.
+`docs/shigoku/plans/2026-05-24_sgk-2026-0244_xss-hunter-enhancement_plan.md` section 5.3.
 They are expected to fail until XCTO-5 is implemented.
 """
 

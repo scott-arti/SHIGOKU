@@ -1,9 +1,7 @@
 """
-MicroAgent: ローカルLLMによるツール出力解析
+MicroAgent: LLMによるツール出力解析
 
-Ollama経由でローカルLLMを使用し、
-ツール出力を低コストで解析する。
-
+LLMClient経由でツール出力を解析する。
 Phase 3機能: config/features.yaml でオン/オフ可能
 """
 from __future__ import annotations
@@ -30,19 +28,16 @@ class AnalysisResult:
 
 class MicroAgent:
     """
-    ローカルLLMによるツール出力解析
+    LLMによるツール出力解析
     
     特徴:
-    - Ollama経由でmistral:7b等を使用
+    - LLMClient経由でrole=tool_output_analysisを使用
     - ツール固有の出力パターンを解析
     - 低コストでの脆弱性抽出
-    
-    使用例:
-        agent = MicroAgent()
-        result = agent.analyze("nuclei", nuclei_output)
     """
-
+    
     # ツール固有のプロンプトテンプレート
+    ...
     ANALYSIS_PROMPTS = {
         "nuclei": """Analyze this Nuclei scan output and extract findings:
 
@@ -74,22 +69,29 @@ Return a JSON object with:
 
     def __init__(self):
         self.config = get_feature_config().phase3.micro_agent
-        self._client = None
+        self._llm_client = None
 
     def is_enabled(self) -> bool:
         """機能が有効かチェック"""
         return self.config.enabled
 
-    def _get_client(self):
-        """Ollamaクライアントを取得"""
-        if self._client is None:
-            try:
-                import httpx
-                self._client = httpx.Client()
-            except ImportError:
-                logger.error("httpx not installed")
-                return None
-        return self._client
+    def _get_llm_client(self):
+        """LLMClientを取得（role=tool_output_analysis）"""
+        if self._llm_client is None:
+            from src.core.models.llm import LLMClient
+            self._llm_client = LLMClient(role="tool_output_analysis")
+        return self._llm_client
+
+    def _call_llm(self, prompt: str) -> str:
+        """LLMClient経由でツール出力解析を実行"""
+        client = self._get_llm_client()
+        try:
+            messages = [{"role": "user", "content": prompt}]
+            response = client.generate(messages)
+            return response.get("choices", [{}])[0].get("message", {}).get("content", "")
+        except Exception as e:
+            logger.error("LLM analysis call failed: %s", e)
+            raise
 
     def analyze(
         self, 
@@ -138,7 +140,7 @@ Return a JSON object with:
             prompt = template.format(output=output)
 
         try:
-            response = self._call_ollama(prompt)
+            response = self._call_llm(prompt)
             return self._parse_response(response)
         except Exception as e:
             logger.error("MicroAgent analysis failed: %s", e)
@@ -148,39 +150,6 @@ Return a JSON object with:
                 findings=[],
                 severity="info"
             )
-
-    def _call_ollama(self, prompt: str) -> str:
-        """Ollama APIを呼び出し"""
-        client = self._get_client()
-        if not client:
-            raise RuntimeError("HTTP client not available")
-
-        url = f"{self.config.ollama_url}/api/generate"
-        
-        try:
-            response = client.post(
-                url,
-                json={
-                    "model": self.config.model,
-                    "prompt": prompt,
-                    "stream": False,
-                    "options": {
-                        "temperature": 0.1,
-                        "num_predict": 500,
-                    }
-                },
-                timeout=60
-            )
-            
-            if response.status_code != 200:
-                raise RuntimeError(f"Ollama API error: {response.status_code}")
-            
-            data = response.json()
-            return data.get("response", "")
-
-        except Exception as e:
-            logger.error("Ollama API call failed: %s", e)
-            raise
 
     def _parse_response(self, response: str) -> AnalysisResult:
         """LLMレスポンスをパース"""

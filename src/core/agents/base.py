@@ -45,7 +45,7 @@ class BaseAgent(ABC):
         
         # LLM Client integration (from Agent class)
         from src.core.models.llm import LLMClient
-        self.llm = LLMClient(model=self.config.model)
+        self.llm = LLMClient(role="specialist_light")
 
         # Handoff Mechanism Integration
         has_handoff = any(isinstance(t, HandoffTool) or getattr(t, "name", "") == "handoff" for t in self.config.tools)

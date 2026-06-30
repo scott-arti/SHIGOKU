@@ -4,13 +4,13 @@ doc_type: work_report
 status: done
 parent_task_id: SGK-2026-0131
 related_docs:
-- docs/shigoku/plans/2026-06-01_task_plan.md
+- docs/shigoku/plans/2026-06-01_sgk-2026-0251_task_plan.md
 - docs/shigoku/specs/inter_agent_chaining.md
 - docs/shigoku/specs/REQ_tier6_advanced_attacks.md
 - docs/shigoku/worklogs/2026-06-02_sgk-2026-0251_phase1-completion_work_log.md
 title: SGK-2026-0251 Phase1 完了報告
 created_at: '2026-06-02'
-updated_at: '2026-06-02'
+updated_at: '2026-06-30'
 ---
 
 # SGK-2026-0251 Phase1 完了報告

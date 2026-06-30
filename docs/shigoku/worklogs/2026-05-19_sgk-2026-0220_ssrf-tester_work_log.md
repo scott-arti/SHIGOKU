@@ -4,10 +4,10 @@ doc_type: work_log
 status: done
 parent_task_id: null
 related_docs:
-- docs/shigoku/plans/2026-05-19_b-2-ssrf-tester_plan.md
+- docs/shigoku/plans/2026-05-19_sgk-2026-0220_b-2-ssrf-tester_plan.md
 - docs/shigoku/reports/2026-05-19_sgk-2026-0220_ssrf-tester_work_report.md
 created_at: '2026-05-19'
-updated_at: '2026-05-19'
+updated_at: '2026-06-30'
 ---
 
 # Work Log: SGK-2026-0220
@@ -26,7 +26,7 @@ updated_at: '2026-05-19'
   - injection 全体回帰 `143 passed`
 
 ## 参照
-- 計画書: `docs/shigoku/plans/2026-05-19_b-2-ssrf-tester_plan.md`
+- 計画書: `docs/shigoku/plans/2026-05-19_sgk-2026-0220_b-2-ssrf-tester_plan.md`
 - 報告書: `docs/shigoku/reports/2026-05-19_sgk-2026-0220_ssrf-tester_work_report.md`
 
 ## 次アクション

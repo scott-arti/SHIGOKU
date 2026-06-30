@@ -42,11 +42,10 @@ class ScopeParserAgent(GeneralAgent):
             )
         else:
             # レガシー呼び出し用フォールバック
-            from src.config import settings
             super().__init__(
                 name="ScopeParser",
                 instructions=get_agent_prompt("scope_parser"),
-                model=getattr(settings, "model", None) or getattr(settings, "model_output", "deepseek/deepseek-chat"),
+                model="deepseek/deepseek-chat",
                 mode="security",
                 workspace_root=workspace_root,
                 project_manager=project_manager,

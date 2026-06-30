@@ -5,7 +5,7 @@ from src.core.models.finding import Finding, Severity, VulnType
 
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 
 def test_llm_chain_proposal_engine_can_use_llm_client_generate() -> None:
@@ -18,26 +18,27 @@ def test_llm_chain_proposal_engine_can_use_llm_client_generate() -> None:
         '"recommended_probe": "verify export", "reasoning_summary": "short"}'
         ']}'
     )
-    llm_client = MagicMock()
-    llm_client.generate.return_value = SimpleNamespace(
+    mock_resp_client = MagicMock()
+    mock_resp_client.generate.return_value = SimpleNamespace(
         choices=[SimpleNamespace(message=SimpleNamespace(content=payload))]
     )
-    engine = LLMChainProposalEngine.from_llm_client(
-        llm_client=llm_client,
-        model_name="deepseek/deepseek-v4-pro",
-        timeout_ms=50,
-        max_candidates=2,
-        session_budget=2,
-    )
+    llm_client = MagicMock()
+    with patch('src.core.models.llm.LLMClient', return_value=mock_resp_client):
+        engine = LLMChainProposalEngine.from_llm_client(
+            llm_client=llm_client,
+            model_name="deepseek/deepseek-v4-pro",
+            timeout_ms=50,
+            max_candidates=2,
+            session_budget=2,
+        )
 
-    result = engine.propose(_sample_findings(), {"mode": "shadow", "target_program": "acme"})
+        result = engine.propose(_sample_findings(), {"mode": "shadow", "target_program": "acme"})
 
     assert len(result) == 1
     assert result[0]["objective"] == "data_exfiltration"
-    llm_client.generate.assert_called_once()
-    kwargs = llm_client.generate.call_args.kwargs
+    mock_resp_client.generate.assert_called_once()
+    kwargs = mock_resp_client.generate.call_args.kwargs
     assert kwargs["response_format"] == {"type": "json_object"}
-    assert kwargs["model"] == "deepseek/deepseek-v4-pro"
     assert kwargs["temperature"] == 0.1
     assert kwargs["timeout"] == 0.05
 

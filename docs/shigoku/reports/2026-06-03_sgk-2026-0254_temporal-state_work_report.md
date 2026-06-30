@@ -4,13 +4,13 @@ doc_type: work_report
 status: done
 parent_task_id: SGK-2026-0251
 related_docs:
-- docs/shigoku/subtasks/2026-06-02_task_subtask_plan.md
-- docs/shigoku/plans/2026-06-01_task_plan.md
-- docs/shigoku/subtasks/2026-06-03_sgk-2026-0258-temporal-followup_subtask_plan.md
+- docs/shigoku/subtasks/2026-06-02_sgk-2026-0254_task_subtask_plan.md
+- docs/shigoku/plans/2026-06-01_sgk-2026-0251_task_plan.md
+- docs/shigoku/subtasks/2026-06-03_sgk-2026-0258_temporal-followup_subtask_plan.md
 - docs/shigoku/worklogs/2026-06-03_sgk-2026-0254_temporal-state_work_log.md
 title: SGK-2026-0254 temporal state 実装完了報告
 created_at: '2026-06-03'
-updated_at: '2026-06-03'
+updated_at: '2026-06-30'
 ---
 
 # SGK-2026-0254 temporal state 実装完了報告

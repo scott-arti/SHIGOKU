@@ -44,17 +44,13 @@ def restore_completed_tasks_from_session_payload(
         except ValueError:
             state = TaskState.SUCCESS
 
-        task = Task(
-            id=task_dict["id"],
-            name=task_dict["name"],
-            agent_type=task_dict.get("agent_type", "universal"),
-            action=task_dict.get("action", "run"),
-            phase=task_dict.get("phase", "init"),
-            params=task_dict.get("params", {}),
-            state=state,
-            error=task_dict.get("error"),
-            result=task_dict.get("result"),
-        )
+        # Sanitize state for from_dict (may raise ValueError on invalid states)
+        task_dict["state"] = state.value
+        task = Task.from_dict(task_dict)
+        # Override with already-parsed state to preserve existing behavior
+        task.state = state
+        task.error = task_dict.get("error")
+        task.result = task_dict.get("result")
         task.failure_phase = task_dict.get("failure_phase")
         task.failure_reason = task_dict.get("failure_reason")
         task.failure_reason_code = task_dict.get("failure_reason_code")
@@ -89,18 +85,11 @@ def restore_task_queue_from_session_payload(
                     on_invalid_state(state_str)
                 state = TaskState.PENDING
 
-        task = Task(
-            id=task_dict["id"],
-            name=task_dict["name"],
-            agent_type=task_dict["agent_type"],
-            action=task_dict["action"],
-            phase=task_dict.get("phase", "init"),
-            params=task_dict.get("params", {}),
-            state=state,
-            priority=task_dict.get("priority", 0),
-            parent_id=task_dict.get("parent_id"),
-            replan_depth=task_dict.get("replan_depth", 0),
-        )
+        # Sanitize state for from_dict (may raise ValueError on invalid states)
+        task_dict["state"] = state.value
+        task = Task.from_dict(task_dict)
+        # Override with already-resolved state to preserve existing behavior
+        task.state = state
         restored_tasks.append(task)
 
     return restored_tasks

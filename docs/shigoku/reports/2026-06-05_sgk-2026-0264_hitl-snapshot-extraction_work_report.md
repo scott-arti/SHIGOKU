@@ -4,11 +4,11 @@ doc_type: work_report
 status: active
 parent_task_id: SGK-2026-0065
 related_docs:
-- docs/shigoku/plans/2026-06-05_master-conductor-split-plan_plan.md
+- docs/shigoku/plans/2026-06-05_sgk-2026-0264_master-conductor-split-plan_plan.md
 - docs/shigoku/specs/ARCHITECTURE.md
 title: "MasterConductor 分割: HITL task snapshot 切り出しの実施報告"
 created_at: "2026-06-05"
-updated_at: '2026-06-08'
+updated_at: '2026-06-30'
 ---
 
 # 作業報告

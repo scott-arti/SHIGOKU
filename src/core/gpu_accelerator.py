@@ -4,15 +4,13 @@ GPU Accelerator - GPU検出・活用ヘルパー
 RTX 3060等のローカルGPUを活用した処理高速化。
 
 対応機能:
-- ローカルLLM (Ollama)
 - RAG Embedding (sentence-transformers)
 - パスワードクラック (hashcat連携)
 """
 
 import subprocess
-import shutil
 from dataclasses import dataclass
-from typing import Optional, List
+from typing import Optional
 import logging
 
 logger = logging.getLogger(__name__)
@@ -33,7 +31,6 @@ class GPUAccelerator:
     GPU活用ヘルパー
     
     RTX 3060 (12GB) 向け最適化:
-    - Ollama: qwen3:8b, qwen2.5-coder:7b
     - Embedding: all-MiniLM-L6-v2 (GPU)
     """
     
@@ -46,7 +43,6 @@ class GPUAccelerator:
     
     def __init__(self, auto_detect: bool = True):
         self._gpu_info: Optional[GPUInfo] = None
-        self._ollama_available: Optional[bool] = None
         self._gpu_enabled: bool = False  # GPU使用フラグ
         
         if auto_detect:
@@ -108,93 +104,30 @@ class GPUAccelerator:
         logger.warning("Cannot enable GPU: no GPU detected")
         return False
     
-    def is_ollama_available(self) -> bool:
-        """Ollama利用可能か"""
-        if self._ollama_available is not None:
-            return self._ollama_available
+    def query_llm(self, prompt: str, model: Optional[str] = None, max_tokens: int = 500) -> Optional[str]:
+        """Query LLM using LLMClient (role-based resolution).
         
-        self._ollama_available = shutil.which("ollama") is not None
-        return self._ollama_available
-    
-    def get_installed_models(self) -> List[str]:
-        """インストール済みOllamaモデル取得"""
-        if not self.is_ollama_available():
-            return []
+        Uses LLMClient with role="tool_output_analysis" for cloud-based LLM access.
         
+        Args:
+            prompt: The prompt text to send to the LLM.
+            model: Ignored (LLMClient resolves model via role configuration).
+            max_tokens: Ignored (LLMClient handles token limits internally).
+            
+        Returns:
+            LLM response text, or None on failure.
+        """
         try:
-            result = subprocess.run(
-                ["ollama", "list"],
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
-            if result.returncode == 0:
-                lines = result.stdout.strip().split("\n")[1:]  # ヘッダースキップ
-                return [line.split()[0] for line in lines if line.strip()]
-        except Exception as e:
-            logger.debug("Ollama list failed: %s", e)
-        
-        return []
-    
-    def pull_model(self, model: str) -> bool:
-        """Ollamaモデルをダウンロード"""
-        if not self.is_ollama_available():
-            logger.error("Ollama not installed")
-            return False
-        
-        try:
-            logger.info("Pulling model: %s", model)
-            result = subprocess.run(
-                ["ollama", "pull", model],
-                timeout=600  # 10分タイムアウト
-            )
-            return result.returncode == 0
-        except Exception as e:
-            logger.error("Model pull failed: %s", e)
-            return False
-    
-    def list_ollama_models(self) -> List[str]:
-        """Ollamaインストール済みモデルリスト取得（エイリアス）"""
-        return self.get_installed_models()
-    
-    def pull_ollama_model(self, model: str) -> bool:
-        """Ollamaモデルプル（エイリアス）"""
-        if not self.is_ollama_available():
-            return False
-        
-        try:
-            logger.info("Pulling Ollama model: %s", model)
-            result = subprocess.run(
-                ["ollama", "pull", model],
-                capture_output=True,
-                text=True,
-                timeout=600
-            )
-            return result.returncode == 0
-        except Exception as e:
-            logger.error("Model pull failed: %s", e)
-            return False
-    
-    def query_ollama(self, prompt: str, model: str = None, max_tokens: int = 500) -> Optional[str]:
-        """Ollamaでクエリ実行"""
-        if not self.is_ollama_available():
+            from src.core.models.llm import LLMClient
+            client = LLMClient(role="tool_output_analysis")
+            messages = [{"role": "user", "content": prompt}]
+            response = client.generate(messages)
+            if hasattr(response, 'choices') and response.choices:
+                return response.choices[0].message.content
             return None
-        
-        model = model or self.RECOMMENDED_MODELS["general"]
-        
-        try:
-            result = subprocess.run(
-                ["ollama", "run", model, prompt],
-                capture_output=True,
-                text=True,
-                timeout=120
-            )
-            if result.returncode == 0:
-                return result.stdout.strip()
         except Exception as e:
-            logger.error("Ollama query failed: %s", e)
-        
-        return None
+            logger.error("LLM query failed: %s", e)
+            return None
     
     def get_embedding_device(self) -> str:
         """Embedding用デバイス取得"""
@@ -220,8 +153,7 @@ class GPUAccelerator:
             "gpu_available": gpu is not None,
             "gpu_name": gpu.name if gpu else None,
             "gpu_memory_mb": gpu.memory_total_mb if gpu else 0,
-            "ollama_available": self.is_ollama_available(),
-            "installed_models": self.get_installed_models(),
+            "gpu_enabled": self._gpu_enabled,
             "recommended_models": self.RECOMMENDED_MODELS,
         }
 

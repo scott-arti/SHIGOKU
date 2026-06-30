@@ -1,3 +1,4 @@
+from src.core.domain.model.task import TaskState
 from src.core.engine.master_conductor_state_snapshot import restore_pending_hitl_from_session_payload
 from src.core.engine.master_conductor import ExecutionContext
 from src.core.engine.master_conductor_state_snapshot import (
@@ -205,3 +206,203 @@ def test_restore_task_queue_from_session_payload_reports_invalid_state_via_callb
     assert len(restored) == 1
     assert restored[0].state.value == "pending"
     assert seen == ["not_a_real_state"]
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 (SGK-2026-0310): execution contract metadata in state snapshot restore
+# ---------------------------------------------------------------------------
+
+class TestStateSnapshotMetadata:
+    """restore_task_queue and restore_completed_tasks must preserve metadata."""
+
+    def test_restore_task_queue_preserves_metadata(self) -> None:
+        payload = {
+            "task_queue": [
+                {
+                    "id": "queue-meta",
+                    "name": "Meta Queue Task",
+                    "agent_type": "InjectionSwarm",
+                    "action": "scan",
+                    "state": "pending",
+                    "phase": "attack",
+                    "params": {"target": "https://example.test"},
+                    "priority": 42,
+                    "parent_id": "parent-queue",
+                    "replan_depth": 1,
+                    "metadata": {
+                        "target_key": "https://example.test",
+                        "origin_key": "recon://scenario-1",
+                        "lifecycle_status": "admitted",
+                    },
+                }
+            ]
+        }
+
+        restored = restore_task_queue_from_session_payload(payload, should_rerun_running=True)
+
+        assert len(restored) == 1
+        assert restored[0].id == "queue-meta"
+        assert restored[0].metadata["target_key"] == "https://example.test"
+        assert restored[0].metadata["origin_key"] == "recon://scenario-1"
+        assert restored[0].metadata["lifecycle_status"] == "admitted"
+
+    def test_restore_task_queue_without_metadata_defaults_to_empty(self) -> None:
+        """Legacy session payload without metadata field must default to empty metadata."""
+        payload = {
+            "task_queue": [
+                {
+                    "id": "queue-old",
+                    "name": "Old Queue Task",
+                    "agent_type": "Recon",
+                    "action": "scan",
+                    "state": "pending",
+                }
+            ]
+        }
+
+        restored = restore_task_queue_from_session_payload(payload, should_rerun_running=True)
+
+        assert len(restored) == 1
+        assert restored[0].id == "queue-old"
+        assert restored[0].metadata == {}
+
+    def test_restore_completed_tasks_preserves_metadata(self) -> None:
+        payload = {
+            "completed_tasks": [
+                {
+                    "id": "done-meta",
+                    "name": "Meta Done Task",
+                    "state": "success",
+                    "metadata": {
+                        "target_key": "https://example.test",
+                        "correlation_id": "corr-abc",
+                        "evidence_key": "ev-123",
+                    },
+                }
+            ]
+        }
+
+        restored = restore_completed_tasks_from_session_payload(
+            payload,
+            normalize_failure_reason_code=lambda phase, reason, error=None: "unused",
+        )
+
+        assert len(restored) == 1
+        assert restored[0].id == "done-meta"
+        assert restored[0].metadata["target_key"] == "https://example.test"
+        assert restored[0].metadata["correlation_id"] == "corr-abc"
+        assert restored[0].metadata["evidence_key"] == "ev-123"
+
+    def test_restore_completed_tasks_without_metadata_defaults_to_empty(self) -> None:
+        """Legacy completed task without metadata field must default to empty metadata."""
+        payload = {
+            "completed_tasks": [
+                {
+                    "id": "done-old",
+                    "name": "Old Done Task",
+                    "state": "success",
+                }
+            ]
+        }
+
+        restored = restore_completed_tasks_from_session_payload(
+            payload,
+            normalize_failure_reason_code=lambda phase, reason, error=None: "unused",
+        )
+
+        assert len(restored) == 1
+        assert restored[0].id == "done-old"
+        assert restored[0].metadata == {}
+
+    def test_unknown_lifecycle_metadata_does_not_affect_state_restoration(self) -> None:
+        """lifecycle_status in metadata must not change restored TaskState."""
+        payload = {
+            "task_queue": [
+                {
+                    "id": "queue-lifecycle",
+                    "name": "Lifecycle Task",
+                    "agent_type": "Recon",
+                    "action": "scan",
+                    "state": "pending",
+                    "metadata": {
+                        "lifecycle_status": "invalidated",
+                        "invalidated_by": "recon_update_123",
+                    },
+                }
+            ]
+        }
+
+        restored = restore_task_queue_from_session_payload(payload, should_rerun_running=True)
+
+        assert restored[0].state == TaskState.PENDING
+        assert restored[0].metadata["lifecycle_status"] == "invalidated"
+
+    def test_state_snapshot_redacts_secrets(self) -> None:
+        """F-1: cookie/token in session payload metadata must be [REDACTED] after restore."""
+        payload = {
+            "task_queue": [
+                {
+                    "id": "queue-secret",
+                    "name": "Secret Task",
+                    "agent_type": "Recon",
+                    "action": "scan",
+                    "state": "pending",
+                    "metadata": {
+                        "cookie": "session=abc123; secret=xyz",
+                        "token": "Bearer eyJhbGciOiJIUzI1NiJ9.xxx",
+                        "api_key": "sk-1234567890abcdef",
+                        "password": "supersecret",
+                        "Authorization": "Basic dXNlcjpwYXNz",
+                        "session_id": "sess-001",
+                        "target_key": "https://example.test",
+                        "origin_key": "https://example.com",
+                    },
+                }
+            ]
+        }
+
+        restored = restore_task_queue_from_session_payload(payload, should_rerun_running=True)
+
+        assert len(restored) == 1
+        restored_meta = restored[0].metadata
+
+        # Secret-bearing keys must be redacted
+        for secret_key in ("cookie", "token", "api_key", "password", "Authorization", "session_id"):
+            assert restored_meta.get(secret_key) == "[REDACTED]", (
+                f"Secret key '{secret_key}' was not redacted: {restored_meta.get(secret_key)!r}"
+            )
+
+        # Non-secret keys must be preserved
+        assert restored_meta.get("target_key") == "https://example.test"
+        assert restored_meta.get("origin_key") == "https://example.com"
+
+    def test_state_snapshot_redacts_secrets_in_completed_tasks(self) -> None:
+        """F-1: completed_tasks restore also redacts secrets at the boundary."""
+        payload = {
+            "completed_tasks": [
+                {
+                    "id": "done-secret",
+                    "name": "Secret Done Task",
+                    "state": "success",
+                    "metadata": {
+                        "cookie": "session=hackme",
+                        "token": "Bearer secret123",
+                        "Set-Cookie": "auth=realvalue",
+                        "target_key": "https://example.test",
+                    },
+                }
+            ]
+        }
+
+        restored = restore_completed_tasks_from_session_payload(
+            payload,
+            normalize_failure_reason_code=lambda phase, reason, error=None: "unused",
+        )
+
+        assert len(restored) == 1
+        restored_meta = restored[0].metadata
+
+        assert restored_meta.get("cookie") == "[REDACTED]"
+        assert restored_meta.get("token") == "[REDACTED]"
+        assert restored_meta.get("Set-Cookie") == "[REDACTED]"
+        assert restored_meta.get("target_key") == "https://example.test"

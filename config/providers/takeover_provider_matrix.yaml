@@ -1,0 +1,118 @@
+# Takeover Provider Matrix
+# ========================
+# Single source of truth for per-provider takeover fingerprints,
+# claim prerequisites, error tokens, and tool preferences.
+#
+# This file is consumed by:
+#   src/core/adapters/external/takeover_provider_matrix_adapter.py
+#
+# Schema per entry:
+#   provider_id            (str)  — canonical provider identifier
+#   fingerprint_domains    (list) — DNS/CNAME suffixes that indicate this provider
+#   error_tokens           (list) — HTTP body substrings indicating unclaimed resources
+#   claim_prerequisites    (list) — what a human needs to claim the resource
+#   verification_urls      (list) — URLs for manual verification
+#   tool_preference        (list) — ordered tool chain (subjack, subzy, nuclei, manual_curl)
+#   false_positive_twins   (list) — error tokens that mimic a real vulnerability
+#   hitl_checkpoint_types  (list) — when HITL must be involved
+#   supports_auto_confirm  (bool) — can automation confirm a claim without HITL?
+#   rollback_target        (str)  — optional, expected non-takeover CNAME if a takeover 
+#                                   turns out to be a false positive
+#
+# Update policy: version-controlled, reviewed on provider-side API changes.
+
+version: "1.0.0"
+updated_at: "2026-06-25"
+source_note: "Initial provider matrix with AWS S3, GitHub Pages, Heroku, Azure"
+
+providers:
+  - provider_id: aws_s3
+    fingerprint_domains:
+      - s3.amazonaws.com
+      - s3-website-us-east-1.amazonaws.com
+      - s3-website-us-west-2.amazonaws.com
+      - s3-website-ap-northeast-1.amazonaws.com
+    error_tokens:
+      - NoSuchBucket
+      - The specified bucket does not exist
+    claim_prerequisites:
+      - AWS account
+      - S3 bucket creation UI or CLI
+    verification_urls:
+      - https://s3.console.aws.amazon.com/
+    tool_preference:
+      - subjack
+      - nuclei
+      - manual_curl
+    false_positive_twins:
+      - NoSuchBucket in response to HEAD
+    hitl_checkpoint_types:
+      - claim_ui_required
+    supports_auto_confirm: true
+    rollback_target:
+
+  - provider_id: github_pages
+    fingerprint_domains:
+      - github.io
+      - githubpages.com
+    error_tokens:
+      - There isn't a GitHub Pages site here
+    claim_prerequisites:
+      - GitHub account
+      - Repository creation
+    verification_urls:
+      - https://github.com/settings/pages
+    tool_preference:
+      - subzy
+      - manual_curl
+    false_positive_twins:
+      - custom 404 page matches error token
+    hitl_checkpoint_types:
+      - claim_ui_required
+      - repo_ownership
+    supports_auto_confirm: false
+    rollback_target:
+
+  - provider_id: heroku
+    fingerprint_domains:
+      - herokuapp.com
+      - herokudns.com
+    error_tokens:
+      - No such app
+    claim_prerequisites:
+      - Heroku account
+      - app creation via CLI or dashboard
+    verification_urls:
+      - https://dashboard.heroku.com/
+    tool_preference:
+      - subjack
+      - subzy
+      - manual_curl
+    false_positive_twins: []
+    hitl_checkpoint_types:
+      - claim_ui_required
+    supports_auto_confirm: true
+    rollback_target:
+
+  - provider_id: azure_websites
+    fingerprint_domains:
+      - azurewebsites.net
+      - cloudapp.net
+    error_tokens:
+      - Web App not found
+      - This web app is stopped
+    claim_prerequisites:
+      - Azure subscription
+      - App Service plan
+    verification_urls:
+      - https://portal.azure.com/
+    tool_preference:
+      - nuclei
+      - manual_curl
+    false_positive_twins:
+      - stopped != unclaimed
+    hitl_checkpoint_types:
+      - claim_ui_required
+      - subscription_verification
+    supports_auto_confirm: false
+    rollback_target:

@@ -4,11 +4,11 @@ doc_type: work_report
 status: done
 parent_task_id: SGK-2026-0065
 related_docs:
-- docs/shigoku/plans/2026-06-08_remove-unused-caveman-skill-artifacts_plan.md
+- docs/shigoku/plans/2026-06-08_sgk-2026-0270_remove-unused-caveman-skill-artifacts_plan.md
 - docs/shigoku/roadmaps/IMPLEMENTATION_ROADMAP.md
 title: "Remove unused Caveman skill artifacts 実施報告"
 created_at: "2026-06-08"
-updated_at: '2026-06-08'
+updated_at: '2026-06-30'
 ---
 
 # 作業報告
@@ -29,7 +29,7 @@ updated_at: '2026-06-08'
 - `skills-lock.json`
 - `.agents/skills/cavecrew/*`
 - `.agents/skills/caveman*/*`
-- `docs/shigoku/plans/2026-06-08_remove-unused-caveman-skill-artifacts_plan.md`
+- `docs/shigoku/plans/2026-06-08_sgk-2026-0270_remove-unused-caveman-skill-artifacts_plan.md`
 
 ## 検証
 - `rg -n "caveman|cavecrew" . -g '!node_modules' -g '!graphify-out' -g '!workspace' -g '!tmp'`

@@ -273,6 +273,24 @@ class SwarmManager(ABC):
         """RAG を設定（MC ではなく Swarm で使用）"""
         self._rag = rag
         
+    @staticmethod
+    def _make_shadow_decision(specialist: Specialist) -> Dict[str, Any]:
+        """Phase 8 Step 2: Shadow parallel decision for a specialist.
+
+        In Phase 8, ALL SwarmManager specialists are rejected for inner parallelism
+        due to adaptive_skip_sensitivity (per plan LB-3 / C3). This records the
+        classification without changing execution order.
+        """
+        return {
+            "type": "shadow_parallel_decision",
+            "source_layer": "swarm_manager",
+            "source_unit": getattr(specialist, "name", str(specialist)),
+            "candidate": False,
+            "parallelism_type": None,
+            "safety_classification": "adaptive_skip_sensitive",
+            "rejection_reason": "adaptive_skip_sensitive (Phase 8 LB-3: specialist parallelization shadow-only)",
+        }
+    
     def set_network_client(self, client: Any) -> None:
         """Shared Network Client を設定"""
         self.network_client = client
@@ -323,6 +341,11 @@ class SwarmManager(ABC):
         total_specialists = len(specialists)
         successful_count = 0
         failed_count = 0
+
+        # --- Phase 8 Step 2: Shadow parallel decisions (recorded first, re-ordered to end later) ---
+        shadow_entries: List[Dict[str, Any]] = [
+            self._make_shadow_decision(spec) for spec in specialists
+        ]
         
         logger.info(
             "[%s] Dispatching task '%s' to %d specialists",
@@ -444,6 +467,7 @@ class SwarmManager(ABC):
             execution_time_seconds=total_time,
             input_tags=list(task.tags),  # 入力タグを記録
             output_tags=output_tags,  # 出力タグを記録
+            shadow_decisions=shadow_entries,  # Phase 8 Step 2
         )
         
         logger.info(

@@ -4,11 +4,11 @@ doc_type: work_report
 status: done
 parent_task_id: SGK-2026-0243
 related_docs:
-  - docs/shigoku/plans/2026-05-24_phase-d-bug-bounty-improvement-implementation_plan.md
-  - docs/shigoku/plans/2026-05-24_phase-d-bug-bounty-improvement-implementation_plan_v2.md
+  - docs/shigoku/plans/2026-05-24_sgk-2026-0242_phase-d-bug-bounty-improvement-implementation_plan.md
+  - docs/shigoku/plans/2026-05-24_sgk-2026-0243_phase-d-bug-bounty-improvement-implementation_plan_v2.md
   - docs/shigoku/worklogs/2026-05-27_sgk-2026-0248_phase-d-plan-template-closure_work_log.md
 created_at: '2026-05-27'
-updated_at: '2026-05-27'
+updated_at: '2026-06-30'
 ---
 
 # SGK-2026-0247 作業報告（Phase D 子Plan整理）

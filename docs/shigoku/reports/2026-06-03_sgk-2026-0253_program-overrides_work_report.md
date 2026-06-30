@@ -4,13 +4,13 @@ doc_type: work_report
 status: done
 parent_task_id: SGK-2026-0251
 related_docs:
-- docs/shigoku/subtasks/2026-06-02_program-overrides_subtask_plan.md
-- docs/shigoku/plans/2026-06-01_task_plan.md
-- docs/shigoku/subtasks/2026-06-03_sgk-2026-0253-program-overrides_subtask_plan.md
+- docs/shigoku/subtasks/2026-06-02_sgk-2026-0253_program-overrides_subtask_plan.md
+- docs/shigoku/plans/2026-06-01_sgk-2026-0251_task_plan.md
+- docs/shigoku/subtasks/2026-06-03_sgk-2026-0256_program-overrides_subtask_plan.md
 - docs/shigoku/worklogs/2026-06-03_sgk-2026-0253_program-overrides_work_log.md
 title: SGK-2026-0253 program overrides 実装完了報告
 created_at: '2026-06-03'
-updated_at: '2026-06-03'
+updated_at: '2026-06-30'
 ---
 
 # SGK-2026-0253 program overrides 実装完了報告
@@ -20,7 +20,7 @@ updated_at: '2026-06-03'
 - `src/core/intelligence/chain_builder.py` の industry / workflow / tactical policy 解決を前提に、`src/core/engine/master_conductor.py` へ policy 正規化、workflow template 正規化、chain finding からの runtime context 変換、rollout 判定を追加した。
 - `tests/core/engine/test_master_conductor_phase1_step14.py` に precedence matrix、invalid key 監査、resolved context 一致、rollout/read-only 切り戻しのテストを追加した。
 - `tests/core/intelligence/test_chain_builder.py` に default rules 配置確認と `chain_builder` / `master_conductor` の resolved result 一致確認を追加した。
-- `docs/shigoku/subtasks/2026-06-02_program-overrides_subtask_plan.md` を更新し、`Step 2/4/9/10/11/11A`、Done条件、懸念点と対策、着手順整理を完了状態へ反映した。
+- `docs/shigoku/subtasks/2026-06-02_sgk-2026-0253_program-overrides_subtask_plan.md` を更新し、`Step 2/4/9/10/11/11A`、Done条件、懸念点と対策、着手順整理を完了状態へ反映した。
 
 ## 判断理由
 - rule / workflow 解決の正本は `chain_builder`、runtime guard / rollout 判定の正本は `master_conductor` に固定し、責務重複を避けた。

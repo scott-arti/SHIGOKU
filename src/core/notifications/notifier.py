@@ -1,17 +1,26 @@
 """
 Notifier: System-wide notification wrapper using projectdiscovery/notify.
 """
+import datetime
+import json
 import logging
 import shutil
 import subprocess
-from typing import Optional, Dict
+import time
+from pathlib import Path
+from typing import Optional, Dict, List
 
 from src.core.models.finding import Finding, Severity
+from src.core.config.settings import Settings, get_settings
 from src.config import settings
 
 logger = logging.getLogger(__name__)
 
-from pathlib import Path
+
+class BodyBuildError(Exception):
+    """Raised when JapaneseBodyBuilder fails to build notification body."""
+    pass
+
 
 class Notifier:
     """
@@ -44,92 +53,233 @@ class Notifier:
             # Config missing is common in dev/test, just warn once
             logger.warning("Notify config not found (checked ~/.config/notify/provider-config.yaml etc). Notifications will be disabled.")
 
+        # Phase A (SGK-2026-0297): Operational protections
+        self._load_operational_settings()
+
+    def _load_operational_settings(self):
+        """Reload operational settings from config (supports hot-reload)."""
+        try:
+            s = get_settings()
+            fn = s.feature_notifications
+            self.dry_run: bool = getattr(fn, 'notify_dry_run', False)
+            self.kill_switch: bool = getattr(fn, 'notify_kill_switch', False)
+            self.notify_timeout: float = getattr(fn, 'notify_timeout_seconds', 10.0)
+            self.notify_retry_count: int = getattr(fn, 'notify_retry_count', 1)
+            self.notify_retry_backoff: float = getattr(fn, 'notify_retry_backoff_seconds', 1.0)
+            self.provider_allowlist: List[str] = getattr(fn, 'notify_provider_allowlist', []) or []
+            self.max_body_length: int = getattr(fn, 'notify_max_body_length', 4000)
+        except Exception:
+            # Fallback defaults if settings unavailable
+            self.dry_run = False
+            self.kill_switch = False
+            self.notify_timeout = 10.0
+            self.notify_retry_count = 1
+            self.notify_retry_backoff = 1.0
+            self.provider_allowlist = []
+            self.max_body_length = 4000
+
     def notify(self, message: str, provider: Optional[str] = None, bulk: bool = False) -> bool:
         """
-        Send a raw text notification.
-        
-        Args:
-            message: The message content to send.
-            provider: Specific provider ID to use (optional). If None, uses all providers.
-            bulk: Whether to send as bulk (one message) or line-by-line (default false, but for single msg it doesn't matter much).
-                  The `notify` tool defaults to line-by-line. -bulk sends the whole input as one notification.
-        
-        Returns:
-            bool: True if command execution was successful, False otherwise.
+        Send a raw text notification with operational protections.
+
+        Protections (in order):
+        1. Kill switch: block all sends
+        2. Empty message: skip
+        3. Dry-run: log what WOULD be sent, return True (simulated success)
+        4. Missing CLI/config: log and skip (only when actually sending)
+        5. Provider allowlist: only allowed providers (only when actually sending)
+        6. Timeout: subprocess timeout
+        7. Retry: retry on failure with backoff
         """
-        if not self.notify_path or not self.config_path:
+        # 1. Kill switch (blocks everything, including dry-run)
+        if self.kill_switch:
+            logger.info("Notification blocked: kill_switch active (message not sent)")
             return False
 
+        # 2. Empty message
         if not message:
             return False
 
-        # Build command
-        # echo "message" | notify -silent [-provider provider] [-bulk] [-config config]
+        # 3. Dry-run (succeeds regardless of CLI/config/allowlist state)
+        if self.dry_run:
+            logger.info("DRY-RUN: would send notification [provider=%s]: %s",
+                       provider or "all", message[:200])
+            return True  # Simulated success
+
+        # 4. Missing CLI/config (only checked when actually sending)
+        if not self.notify_path or not self.config_path:
+            logger.debug("Notify CLI or config missing, skipping notification")
+            return False
+
+        # 5. Provider allowlist enforcement (only checked when actually sending)
+        if self.provider_allowlist:
+            if provider:
+                if provider not in self.provider_allowlist:
+                    logger.info("Provider '%s' not in allowlist, skipping notification", provider)
+                    return False
+            else:
+                logger.warning(
+                    "Provider allowlist is set (%s) but no specific provider given. "
+                    "Refusing to broadcast to all providers. Specify a provider from the allowlist.",
+                    self.provider_allowlist,
+                )
+                return False
+
+        # 6. Build command with timeout
         cmd = [self.notify_path, "-silent"]
-        
         if self.config_path:
             cmd.extend(["-config", self.config_path])
-        
         if provider:
             cmd.extend(["-provider", provider])
-        
         if bulk:
             cmd.append("-bulk")
 
-        try:
-            # We pass message via stdin
-            process = subprocess.run(
-                cmd,
-                input=message,
-                capture_output=True,
-                text=True,
-                check=False
-            )
-            
-            if process.returncode == 0:
-                return True
-            else:
-                logger.warning("Notify command failed (non-fatal): %s", process.stderr)
-                return False
-                
-        except Exception as e:
-            logger.error("Error executing notify: %s", e)
-            return False
+        # 7. Retry loop
+        last_error: Optional[str] = None
+        for attempt in range(self.notify_retry_count + 1):
+            try:
+                process = subprocess.run(
+                    cmd,
+                    input=message,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=self.notify_timeout,
+                )
+                if process.returncode == 0:
+                    return True
+                last_error = process.stderr.strip() or f"exit code {process.returncode}"
+                logger.warning("Notify attempt %d/%d failed: %s",
+                             attempt + 1, self.notify_retry_count + 1, last_error)
+            except subprocess.TimeoutExpired:
+                last_error = f"timeout after {self.notify_timeout}s"
+                logger.warning("Notify attempt %d/%d timed out after %.1fs",
+                             attempt + 1, self.notify_retry_count + 1, self.notify_timeout)
+            except Exception as e:
+                last_error = str(e)
+                logger.warning("Notify attempt %d/%d error: %s",
+                             attempt + 1, self.notify_retry_count + 1, e)
 
-    def notify_finding(self, finding: Finding) -> bool:
+            # Backoff before retry (not after last attempt)
+            if attempt < self.notify_retry_count:
+                time.sleep(self.notify_retry_backoff)
+
+        logger.error("Notify failed after %d attempts: %s",
+                    self.notify_retry_count + 1, last_error)
+        return False
+
+    def notify_finding(self, finding, run_id: str = "", source_component: str = "", ingress_path: str = "", provider: Optional[str] = None) -> bool:
         """
-        Format and send a notification for a security finding.
-        
+        Format and send a detailed Japanese notification for a security finding.
+
+        Phase A (SGK-2026-0297): Uses JapaneseBodyBuilder for detailed body
+        with all key fields and mandatory redaction.
+
         Args:
-            finding: The Finding object.
-            
+            finding: Finding object, FindingNotificationDTO, or dict.
+            run_id: Run identifier for structured logging.
+            source_component: Component that originated this notification.
+            ingress_path: How the finding entered the notification system.
+
         Returns:
-            bool: True if sent successfully.
+            bool: True if notification was processed (sent, dry-run, or logged).
+                  False only when completely blocked (kill switch, no CLI).
         """
-        if not self.notify_path:
+        # Reload settings (supports runtime changes)
+        self._load_operational_settings()
+
+        # Kill switch: block everything
+        if self.kill_switch:
+            logger.info("Notification blocked by kill_switch: %s",
+                       getattr(finding, 'title', str(finding)[:100]))
+            self._log_notification(finding, "", run_id, source_component, ingress_path, False)
             return False
 
-        # Simple text formatting for broad compatibility
-        icon = finding.get_severity_icon()
-        severity_str = finding.severity.value.upper()
-        
-        message = (
-            f"{icon} **[{severity_str}] {finding.title}**\n"
-            f"Type: {finding.vuln_type.value}\n"
-            f"Target: {finding.target_url}\n"
-            f"Confidence: {int(finding.confidence * 100)}%\n"
-            f"\n"
-            f"{finding.description}\n"
-            f"\n"
-            f"Agent: {finding.source_agent}"
-        )
-        
-        # CRITICALの場合はメンションを追加
-        if finding.severity == Severity.CRITICAL and settings.notify_critical_mention:
-            message = f"{settings.notify_critical_mention}\n{message}"
-        
-        # Use bulk to keep newlines intact
-        return self.notify(message, bulk=True)
+        # If notify CLI is missing and NOT dry-run: log and skip
+        if not self.notify_path and not self.dry_run:
+            logger.info("Notify CLI not available, notification skipped: %s",
+                       getattr(finding, 'title', str(finding)[:100]))
+            self._log_notification(finding, "", run_id, source_component, ingress_path, False)
+            return False
+
+        # Build detailed Japanese body
+        try:
+            from src.core.notifications.body_builder import JapaneseBodyBuilder
+            builder = JapaneseBodyBuilder(max_length=self.max_body_length)
+            body = builder.build(finding)
+        except BodyBuildError:
+            raise
+        except Exception as e:
+            logger.error("Body build failed for finding: %s", e)
+            raise BodyBuildError(f"Failed to build notification body: {e}") from e
+
+        # CRITICAL severity: prepend mention if configured
+        if hasattr(finding, 'severity'):
+            sev = finding.severity
+            if hasattr(sev, 'value'):
+                sev = sev.value
+            if str(sev).lower() == 'critical' and settings.notify_critical_mention:
+                body = f"{settings.notify_critical_mention}\n{body}"
+        elif isinstance(finding, dict):
+            sev = finding.get('severity', '')
+            if hasattr(sev, 'value'):
+                sev = sev.value
+            if str(sev).lower() == 'critical' and settings.notify_critical_mention:
+                body = f"{settings.notify_critical_mention}\n{body}"
+
+        # Send (with all operational protections in self.notify())
+        success = self.notify(body, provider=provider, bulk=True)
+
+        # Structured log entry with accurate delivery_status
+        self._log_notification(finding, body, run_id, source_component, ingress_path, success)
+
+        return success
+
+    def _log_notification(self, finding, body: str, run_id: str,
+                         source_component: str, ingress_path: str,
+                         success: Optional[bool] = None) -> None:
+        """
+        Emit a structured log entry for this notification attempt.
+        JSONL-compatible format. Does NOT log the full body (only first 200 chars).
+        """
+        try:
+            d = {}
+            if hasattr(finding, 'to_dict'):
+                d = finding.to_dict()
+            elif isinstance(finding, dict):
+                d = finding
+
+            entry = {
+                "timestamp": datetime.datetime.now().isoformat(),
+                "run_id": run_id or "unknown",
+                "finding_id": d.get('finding_id', d.get('id', 'unknown')),
+                "severity": d.get('severity', 'unknown'),
+                "vuln_type": d.get('vuln_type', d.get('type', 'unknown')),
+                "title": d.get('title', '')[:200],
+                "source_component": source_component,
+                "ingress_path": ingress_path,
+                "delivery_status": self._compute_delivery_status(success),
+                "body_length": len(body),
+                "body_preview": body[:200],
+                "dry_run": self.dry_run,
+                "kill_switch": self.kill_switch,
+                "notify_path_available": bool(self.notify_path),
+            }
+            logger.info("NOTIFICATION_EVENT %s", json.dumps(entry, ensure_ascii=False))
+        except Exception as e:
+            logger.debug("Failed to log notification entry: %s", e)
+
+    def _compute_delivery_status(self, success: Optional[bool]) -> str:
+        """Compute accurate delivery status based on operational state."""
+        if self.kill_switch:
+            return "blocked_kill_switch"
+        if self.dry_run:
+            return "dry_run"
+        if success is True:
+            return "sent"
+        if success is False:
+            return "failed"
+        return "unknown"
 
     def notify_event(
         self,

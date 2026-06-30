@@ -4,13 +4,13 @@ doc_type: work_report
 status: done
 parent_task_id: SGK-2026-0251
 related_docs:
-  - docs/shigoku/subtasks/2026-06-02_degrade-runbook_subtask_plan.md
+  - docs/shigoku/subtasks/2026-06-02_sgk-2026-0255_degrade-runbook_subtask_plan.md
   - docs/shigoku/manuals/2026-06-03_degrade-operations_runbook.md
   - docs/shigoku/manuals/2026-06-03_degrade-drill-evidence_template.md
   - docs/shigoku/worklogs/2026-06-03_sgk-2026-0255_degrade-runbook_work_log.md
 title: SGK-2026-0255 degrade 設計と運用 Runbook 完了報告
 created_at: '2026-06-03'
-updated_at: '2026-06-03'
+updated_at: '2026-06-30'
 ---
 
 # SGK-2026-0255 degrade 設計と運用 Runbook 完了報告
@@ -47,7 +47,7 @@ updated_at: '2026-06-03'
 - `src/core/reporting/platform_integration.py`
 - `tests/core/intelligence/test_phase2_risk_clearance_checklist.py`
 - `tests/unit/reporting/test_platform_integration_degradation.py`
-- `docs/shigoku/subtasks/2026-06-02_degrade-runbook_subtask_plan.md`
+- `docs/shigoku/subtasks/2026-06-02_sgk-2026-0255_degrade-runbook_subtask_plan.md`
 - `docs/shigoku/manuals/2026-06-03_degrade-operations_runbook.md`
 - `docs/shigoku/manuals/2026-06-03_degrade-drill-evidence_template.md`
 

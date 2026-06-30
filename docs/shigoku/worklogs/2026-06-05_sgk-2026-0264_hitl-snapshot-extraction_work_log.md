@@ -4,11 +4,11 @@ doc_type: work_log
 status: active
 parent_task_id: SGK-2026-0065
 related_docs:
-- docs/shigoku/plans/2026-06-05_master-conductor-split-plan_plan.md
+- docs/shigoku/plans/2026-06-05_sgk-2026-0264_master-conductor-split-plan_plan.md
 - docs/shigoku/reports/2026-06-05_sgk-2026-0264_hitl-snapshot-extraction_work_report.md
 title: "作業ログ: MasterConductor HITL snapshot 切り出し"
 created_at: "2026-06-05"
-updated_at: '2026-06-08'
+updated_at: '2026-06-30'
 ---
 
 # 作業ログ

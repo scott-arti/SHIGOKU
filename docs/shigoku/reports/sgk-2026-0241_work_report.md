@@ -4,14 +4,14 @@ doc_type: work_report
 status: done
 parent_task_id: null
 related_docs:
-- docs/shigoku/plans/2026-05-23_toolregistry-phase-e-3_plan.md
+- docs/shigoku/plans/2026-05-23_sgk-2026-0241_toolregistry-phase-e-3_plan.md
 - docs/shigoku/worklogs/sgk-2026-0231-s02_work_log.md
 - src/core/adapters/external/tool_providers.py
 - src/core/adapters/external/tool_registry_facade.py
 - src/core/adapters/external/binary_manager.py
 - tests/core/adapters/external/test_tool_registry_facade_integration.py
 created_at: '2026-05-24'
-updated_at: '2026-05-25'
+updated_at: '2026-06-30'
 ---
 
 # ToolRegistry統合と技術的負債解消 (Phase E-3) 作業報告書

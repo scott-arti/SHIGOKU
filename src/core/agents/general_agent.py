@@ -142,16 +142,10 @@ Output JSON with:
 """
         
         try:
-            from src.config import settings
-            response = self.llm_client.chat.completions.create(
-                model=(
-                    getattr(settings, "model_lightweight", None)
-                    or getattr(settings, "model", None)
-                    or getattr(settings, "model_output", None)
-                    or "ollama/qwen3.5:latest"
-                ),
+            from src.core.models.llm import LLMClient
+            llm_client = LLMClient(role="specialist_light")
+            response = llm_client.generate(
                 messages=[
-                    {"role": "system", "content": "You are a security analyst. Output JSON only."},
                     {"role": "user", "content": prompt},
                 ],
                 response_format={"type": "json_object"},
@@ -217,16 +211,10 @@ Output YAML format recipe with:
 """
         
         try:
-            from src.config import settings
-            response = self.llm_client.chat.completions.create(
-                model=(
-                    getattr(settings, "model_lightweight", None)
-                    or getattr(settings, "model", None)
-                    or getattr(settings, "model_output", None)
-                    or "ollama/qwen3.5:latest"
-                ),
+            from src.core.models.llm import LLMClient
+            llm_client = LLMClient(role="recipe_generator")
+            response = llm_client.generate(
                 messages=[
-                    {"role": "system", "content": "You are a security expert. Output YAML recipe."},
                     {"role": "user", "content": prompt},
                 ],
                 temperature=0.3,

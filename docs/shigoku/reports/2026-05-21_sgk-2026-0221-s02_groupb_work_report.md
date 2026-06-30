@@ -5,11 +5,11 @@ status: done
 parent_task_id: SGK-2026-0221
 related_docs:
 - docs/shigoku/subtasks/2026-05-20_sgk-2026-0221-s02_groupb_discovery-graphql_subtask_plan.md
-- docs/shigoku/plans/2026-05-19_mock-optimizedreciperunner-discovery-graphql_plan.md
+- docs/shigoku/plans/2026-05-19_sgk-2026-0221_mock-optimizedreciperunner-discovery-graphql_plan.md
 - docs/shigoku/plans/2026-05-21_sgk-2026-0222_distributed-runtime-control_plan.md
 - docs/shigoku/plans/2026-05-21_sgk-2026-0223_graphql-longrun-regression-test_plan.md
 created_at: '2026-05-21'
-updated_at: '2026-05-21'
+updated_at: '2026-06-30'
 ---
 
 # Work Report: SGK-2026-0221-S02 GroupB Discovery GraphQL 本実装接続
