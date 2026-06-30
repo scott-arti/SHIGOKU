@@ -4,7 +4,7 @@ doc_type: subtask_plan
 status: done
 parent_task_id: SGK-2026-0291
 related_docs:
-- docs/shigoku/subtasks/2026-06-23_sgk-2026-0291_swarm-parallelism-review_subtask_plan.md
+- docs/shigoku/subtasks/done/2026-06-23_sgk-2026-0291_swarm-parallelism-review_subtask_plan.md
 title: 'Swarm並列化 Phase 7: stateful mutating aggressive lanes 限定解禁'
 created_at: '2026-06-26'
 updated_at: '2026-06-30'
@@ -105,7 +105,7 @@ Phase 5 計画書 6.13 FU-1。参照ルール: `rules/lessons.md`・`rules/codin
 - `create_parallel_task` は unknown category を `read_only` に倒す（`src/core/engine/parallel_orchestrator.py:37-46`, `:321-330`）。Phase 7 では unknown high-risk unit を read_only 扱いにしない。
 - `check_snapshot_validity` は存在する（`src/core/engine/snapshot_validity.py:11-58`）が、現行 grep では `master_conductor.py` / `task_queue.py` に接続されていない。既存テストも invalidation metadata を test 内で模擬している（`tests/core/engine/test_task_queue_validity.py:92-109`）。
 - `PriorityBooster` は `_boosts` / `_task_priorities` を lock なしで更新する（`src/core/intelligence/priority_booster.py:97-145`, `:237-260`）。`_observe_and_rethink` も react counters / pending queue を lock なし更新する（`master_conductor.py:7354-7364`, `:7473-7491`）。
-- Phase 8 計画は内側並列化を別Phaseとし、Injection URL並列化は per-origin budget / payload fingerprint が揃った場合のみとする（`docs/shigoku/subtasks/2026-06-26_swarm-phase-8-swarmdispatcher-swarmmanager_subtask_plan.md`）。
+- Phase 8 計画は内側並列化を別Phaseとし、Injection URL並列化は per-origin budget / payload fingerprint が揃った場合のみとする（`docs/shigoku/subtasks/done/2026-06-26_swarm-phase-8-swarmdispatcher-swarmmanager_subtask_plan.md`）。
 - 親計画は mutating/aggressive admission gate、target risk tier、operator control、state assertion を横断制約として扱う（親計画 5.4-5.5）。
 
 ### 7.3 Local Blocker
@@ -710,7 +710,7 @@ Expected: PASS。
 ### 8.8 Task 6: Phase 7 Completion Gate / Documentation
 
 **Files**
-- Modify: `docs/shigoku/subtasks/2026-06-26_swarm-phase-7-stateful-mutating-aggressive-lanes_subtask_plan.md`
+- Modify: `docs/shigoku/subtasks/done/2026-06-26_swarm-phase-7-stateful-mutating-aggressive-lanes_subtask_plan.md`
 - Modify: `docs/shigoku/reports/2026-06-29_sgk-2026-0316_work_report.md`
 - Modify: `docs/shigoku/worklogs/2026-06-29_sgk-2026-0316_work_log.md`
 

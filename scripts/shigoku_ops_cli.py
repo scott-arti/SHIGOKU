@@ -27,6 +27,7 @@ from src.reporting.report_session_consistency import verify_report_session_consi
 from src.reporting.report_loop_orchestrator import run_report_loop  # noqa: E402
 from src.reporting.session_finding_inspector import inspect_session_findings  # noqa: E402
 from src.reporting.runtime_control_release_gate import evaluate_gate_evidence_bundle  # noqa: E402
+from src.reporting.runtime_control_release_gate import evaluate_phase9_evidence_bundle  # noqa: E402
 from src.reporting.run_narrative_formatter import RunNarrativeFormatter  # noqa: E402
 from src.reporting.target_profile_formatter import TargetProfileFormatter  # noqa: E402
 from src.reporting.attack_path_formatter import AttackPathFormatter  # noqa: E402
@@ -757,7 +758,14 @@ def _run_runtime_control_gate(args: argparse.Namespace) -> int:
                                 reason_codes.append("approval_source_mismatch")
 
     critical_gate_names = _parse_csv_tokens(args.critical_gates)
-    verdict = evaluate_gate_evidence_bundle(records, critical_gate_names=critical_gate_names)
+
+    phase = getattr(args, "phase", "generic")
+    if phase == "phase9":
+        verdict = evaluate_phase9_evidence_bundle(records)
+        # Phase 9 uses its own allowed/required gate names
+    else:
+        verdict = evaluate_gate_evidence_bundle(records, critical_gate_names=critical_gate_names)
+
     all_errors = list(verdict.errors) + reason_codes
     unique_errors = sorted(set(all_errors))
     is_valid = verdict.valid and not reason_codes
@@ -1139,6 +1147,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         default=False,
         help="Require branch protection evidence to enable code owner reviews.",
+    )
+    runtime_control_gate.add_argument(
+        "--phase",
+        default="generic",
+        choices=["generic", "phase9"],
+        help="Gate evaluation phase. 'phase9' routes to Phase 9 specific evaluator with extended metrics.",
     )
     runtime_control_gate.set_defaults(handler=_run_runtime_control_gate)
 

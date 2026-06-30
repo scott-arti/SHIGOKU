@@ -4,7 +4,7 @@ doc_type: subtask_plan
 status: done
 parent_task_id: SGK-2026-0291
 related_docs:
-- docs/shigoku/subtasks/2026-06-23_sgk-2026-0291_swarm-parallelism-review_subtask_plan.md
+- docs/shigoku/subtasks/done/2026-06-23_sgk-2026-0291_swarm-parallelism-review_subtask_plan.md
 - docs/shigoku/subtasks/2026-06-21_sgk-2026-0287_task-queue-pruning-policy_subtask_plan.md
 title: 'Swarm並列化 Phase 6: Event-Driven Chaining と pruning invalidation 統合'
 created_at: '2026-06-26'

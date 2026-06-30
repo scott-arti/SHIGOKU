@@ -4,7 +4,7 @@ doc_type: subtask_plan
 status: done
 parent_task_id: SGK-2026-0291
 related_docs:
-- docs/shigoku/subtasks/2026-06-23_sgk-2026-0291_swarm-parallelism-review_subtask_plan.md
+- docs/shigoku/subtasks/done/2026-06-23_sgk-2026-0291_swarm-parallelism-review_subtask_plan.md
 - docs/shigoku/plans/2026-06-21_sgk-2026-0289_commonization-technical-debt-roadmap_plan.md
 title: 'Swarm並列化 Phase 0: 現状正本化と非対象固定'
 created_at: '2026-06-26'

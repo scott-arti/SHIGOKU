@@ -307,7 +307,7 @@
 | SGK-2026-0288 | Discord通知日本語化 設計計画 | backlog | subtask_plan | SGK-2026-0278 | docs/shigoku/subtasks/2026-06-21_sgk-2026-0288_discord-notification-ja_subtask_plan.md |
 | SGK-2026-0289 | SHIGOKU共通化・技術的負債返済ロードマップ | active | plan | SGK-2026-0065 | docs/shigoku/plans/2026-06-21_sgk-2026-0289_commonization-technical-debt-roadmap_plan.md |
 | SGK-2026-0290 | CLI日本語化設計計画 | done | subtask_plan | SGK-2026-0266 | docs/shigoku/subtasks/2026-06-22_sgk-2026-0290_cli-japanese-localization_subtask_plan.md |
-| SGK-2026-0291 | Swarm並列処理検討 設計議論計画 | active | subtask_plan | SGK-2026-0289 | docs/shigoku/subtasks/2026-06-23_sgk-2026-0291_swarm-parallelism-review_subtask_plan.md |
+| SGK-2026-0291 | Swarm並列処理検討 設計議論計画 | done | subtask_plan | SGK-2026-0289 | docs/shigoku/subtasks/done/2026-06-23_sgk-2026-0291_swarm-parallelism-review_subtask_plan.md |
 | SGK-2026-0292 | Ollama廃止とLLM設定統一 設計議論計画 | done | subtask_plan | SGK-2026-0289 | docs/shigoku/subtasks/2026-06-23_sgk-2026-0292_ollama-removal-llm-config-unification_subtask_plan.md |
 | SGK-2026-0293 | 脆弱性管理と実行後レビュー設計 議論計画 | active | subtask_plan | SGK-2026-0289 | docs/shigoku/subtasks/2026-06-23_sgk-2026-0293_vulnerability-management-review-trail_subtask_plan.md |
 | SGK-2026-0294 | 3判断器再設計とAdvisor AI戦略レビュー化 議論計画 | backlog | subtask_plan | SGK-2026-0293 | docs/shigoku/subtasks/2026-06-23_sgk-2026-0294_3-advisor-ai_subtask_plan.md |
@@ -327,14 +327,14 @@
 | SGK-2026-0308 | Takeover v2 継続監視（provider matrix更新、optional deps、shadow wiring） | active | subtask_plan | SGK-2026-0283 | docs/shigoku/subtasks/2026-06-25_sgk-2026-0308_takeover-v2-monitoring_subtask_plan.md |
 | SGK-2026-0309 | Swarm並列化 Phase 0: 現状正本化と非対象固定 | done | subtask_plan | SGK-2026-0291 | docs/shigoku/subtasks/done/2026-06-26_swarm-phase-0_subtask_plan.md |
 | SGK-2026-0310 | Swarm並列化 Phase 1: additive execution contract と debug metadata | done | subtask_plan | SGK-2026-0291 | docs/shigoku/subtasks/done/2026-06-26_swarm-phase-1-additive-execution-contract-debug-metadata_subtask_plan.md |
-| SGK-2026-0311 | Swarm並列化 Phase 2: scope admission と per-origin budget policy | active | subtask_plan | SGK-2026-0291 | docs/shigoku/subtasks/2026-06-26_swarm-phase-2-scope-admission-per-origin-budget-policy_subtask_plan.md |
+| SGK-2026-0311 | Swarm並列化 Phase 2: scope admission と per-origin budget policy | done | subtask_plan | SGK-2026-0291 | docs/shigoku/subtasks/done/2026-06-26_swarm-phase-2-scope-admission-per-origin-budget-policy_subtask_plan.md |
 | SGK-2026-0312 | Swarm並列化 Phase 3: dispatch context isolation と Swarm pool安全化 | done | subtask_plan | SGK-2026-0291 | docs/shigoku/subtasks/done/2026-06-26_swarm-phase-3-dispatch-context-isolation-swarm-pool_subtask_plan.md |
-| SGK-2026-0313 | Swarm並列化 Phase 4: Lane Scheduler shadow mode | done | subtask_plan | SGK-2026-0291 | docs/shigoku/subtasks/2026-06-26_swarm-phase-4-lane-scheduler-shadow-mode_subtask_plan.md |
-| SGK-2026-0314 | Swarm並列化 Phase 5: read_only outer task parallelism 限定解禁 | active | subtask_plan | SGK-2026-0291 | docs/shigoku/subtasks/2026-06-26_swarm-phase-5-read-only-outer-task-parallelism_subtask_plan.md |
-| SGK-2026-0315 | Swarm並列化 Phase 6: Event-Driven Chaining と pruning invalidation 統合 | active | subtask_plan | SGK-2026-0291 | docs/shigoku/subtasks/2026-06-26_swarm-phase-6-event-driven-chaining-pruning-invalidation_subtask_plan.md |
+| SGK-2026-0313 | Swarm並列化 Phase 4: Lane Scheduler shadow mode | done | subtask_plan | SGK-2026-0291 | docs/shigoku/subtasks/done/2026-06-26_swarm-phase-4-lane-scheduler-shadow-mode_subtask_plan.md |
+| SGK-2026-0314 | Swarm並列化 Phase 5: read_only outer task parallelism 限定解禁 | done | subtask_plan | SGK-2026-0291 | docs/shigoku/subtasks/done/2026-06-26_swarm-phase-5-read-only-outer-task-parallelism_subtask_plan.md |
+| SGK-2026-0315 | Swarm並列化 Phase 6: Event-Driven Chaining と pruning invalidation 統合 | done | subtask_plan | SGK-2026-0291 | docs/shigoku/subtasks/done/2026-06-26_swarm-phase-6-event-driven-chaining-pruning-invalidation_subtask_plan.md |
 | SGK-2026-0316 | Swarm並列化 Phase 7: stateful mutating aggressive lanes 限定解禁 | done | subtask_plan | SGK-2026-0291 | docs/shigoku/subtasks/done/2026-06-26_swarm-phase-7-stateful-mutating-aggressive-lanes_subtask_plan.md |
 | SGK-2026-0317 | Swarm並列化 Phase 8: SwarmDispatcher SwarmManager 内側並列化評価 | done | subtask_plan | SGK-2026-0291 | docs/shigoku/subtasks/done/2026-06-26_swarm-phase-8-swarmdispatcher-swarmmanager_subtask_plan.md |
-| SGK-2026-0318 | Swarm並列化 Phase 9: release gate rollout policy promotion | active | subtask_plan | SGK-2026-0291 | docs/shigoku/subtasks/2026-06-26_swarm-phase-9-release-gate-rollout-policy-promotion_subtask_plan.md |
+| SGK-2026-0318 | Swarm並列化 Phase 9: release gate rollout policy promotion | done | subtask_plan | SGK-2026-0291 | docs/shigoku/subtasks/done/2026-06-26_swarm-phase-9-release-gate-rollout-policy-promotion_subtask_plan.md |
 | SGK-2026-0319 | learnings の恒久ルール昇格と agent rule 接続 | done | subtask_plan | SGK-2026-0289 | docs/shigoku/subtasks/done/2026-06-26_learnings-agent-rule_subtask_plan.md |
 | SGK-2026-0320 | Recon途中再開・可視化・対話型オペレーション 統合ロードマップ | active | plan |  | docs/shigoku/plans/2026-06-29_sgk-2026-0320_recon-resume-visibility-conversational-ops_plan.md |
 | SGK-2026-0321 | P0: Recon step状態自動保存＋再開CLI＋前回差分可視化 | active | subtask_plan | SGK-2026-0320 | docs/shigoku/subtasks/2026-06-29_sgk-2026-0321_recon-step-state-resume-diff_subtask_plan.md |

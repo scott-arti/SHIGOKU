@@ -4,9 +4,9 @@ doc_type: subtask_plan
 status: done
 parent_task_id: SGK-2026-0291
 related_docs:
-- docs/shigoku/subtasks/2026-06-23_sgk-2026-0291_swarm-parallelism-review_subtask_plan.md
+- docs/shigoku/subtasks/done/2026-06-23_sgk-2026-0291_swarm-parallelism-review_subtask_plan.md
 - docs/shigoku/subtasks/done/2026-06-26_swarm-phase-0_subtask_plan.md
-- docs/shigoku/subtasks/2026-06-26_swarm-phase-2-scope-admission-per-origin-budget-policy_subtask_plan.md
+- docs/shigoku/subtasks/done/2026-06-26_swarm-phase-2-scope-admission-per-origin-budget-policy_subtask_plan.md
 title: 'Swarm並列化 Phase 1: additive execution contract と debug metadata'
 created_at: '2026-06-26'
 updated_at: '2026-06-30'

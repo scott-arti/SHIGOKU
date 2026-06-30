@@ -4,7 +4,7 @@ doc_type: subtask_plan
 status: done
 parent_task_id: SGK-2026-0291
 related_docs:
-- docs/shigoku/subtasks/2026-06-23_sgk-2026-0291_swarm-parallelism-review_subtask_plan.md
+- docs/shigoku/subtasks/done/2026-06-23_sgk-2026-0291_swarm-parallelism-review_subtask_plan.md
 - docs/shigoku/reports/2026-06-30_sgk-2026-0317_work_report.md
 - docs/shigoku/worklogs/2026-06-30_sgk-2026-0317_work_log.md
 title: 'Swarm並列化 Phase 8: SwarmDispatcher SwarmManager 内側並列化評価'

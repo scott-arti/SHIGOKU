@@ -13,8 +13,9 @@ import threading
 from typing import Dict, Any, Optional, List, Type
 
 from src.core.agents.swarm.base import SwarmManager, Task as SwarmTask
-from src.core.models.swarm import SwarmResult
+from src.core.models.swarm import SwarmResult, PerUrlSubResult
 from src.core.engine.aggressive_limiter import get_aggressive_limiter, AggressiveLimiter
+from src.core.engine.budget_policy import ExecutionBudgetPolicy, BudgetDecision
 from src.core.engine.tag_taxonomy_registry import (
     SUBDOMAIN_TAG_TO_SWARM,
     URL_TAG_TO_SWARM,
@@ -78,6 +79,7 @@ class SwarmDispatcher:
         self._recipe_loader = None
         self._rag = None
         self._aggressive_limiter: AggressiveLimiter = get_aggressive_limiter()
+        self._budget_policy: ExecutionBudgetPolicy = ExecutionBudgetPolicy()
         self.run_ledger_recorder = get_run_ledger_recorder()
     
     def set_recipe_loader(self, recipe_loader) -> None:
@@ -529,7 +531,116 @@ class SwarmDispatcher:
             )
         except Exception:
             pass
-    
+
+    def _build_per_url_sub_result(
+        self,
+        source_url: str,
+        origin_key: str,
+        request_fingerprint: str = "",
+        payload_fingerprint: str = "",
+    ) -> PerUrlSubResult:
+        """Phase 9 T-3.1: Budget-enforced PerUrlSubResult factory.
+
+        Calls ExecutionBudgetPolicy.consume(origin_key) before each URL worker.
+        Records the budget decision in PerUrlSubResult.budget_decision.
+        Sets status="skipped" when budget is rejected (not allowed).
+        Sets status="rejected" when the budget decision has a blocking reason_code.
+
+        Workers MUST NOT directly mutate shared current_context — they return
+        PerUrlSubResult objects.
+        """
+        decision: BudgetDecision = self._budget_policy.consume(origin_key)
+
+        budget_decision_dict = {
+            "allowed": decision.allowed,
+            "wait_seconds": decision.wait_seconds,
+            "reason_code": decision.reason_code,
+        }
+
+        if not decision.allowed:
+            status = "rejected" if decision.reason_code else "skipped"
+            return PerUrlSubResult(
+                source_url=source_url,
+                origin_key=origin_key,
+                request_fingerprint=request_fingerprint,
+                payload_fingerprint=payload_fingerprint,
+                budget_decision=budget_decision_dict,
+                status=status,
+            )
+
+        # Budget allowed — return pending skeleton; worker fills in the results
+        return PerUrlSubResult(
+            source_url=source_url,
+            origin_key=origin_key,
+            request_fingerprint=request_fingerprint,
+            payload_fingerprint=payload_fingerprint,
+            budget_decision=budget_decision_dict,
+            status="pending",
+        )
+
+    @staticmethod
+    def _merge_per_url_sub_results(
+        sub_results: List[PerUrlSubResult],
+    ) -> Dict[str, Any]:
+        """Phase 9 T-3.2: Deterministic post-join merge of PerUrlSubResult objects.
+
+        Sorts by (source_url, request_fingerprint, payload_fingerprint) for
+        deterministic order. Merges findings, url_results, and tested_params
+        from non-skipped/non-rejected results (status "success" or "failed").
+
+        Returns a merged result dict suitable for assembly into final context.
+        """
+        # Sort for deterministic order
+        sorted_results = sorted(
+            sub_results,
+            key=lambda r: (r.source_url, r.request_fingerprint, r.payload_fingerprint),
+        )
+
+        all_findings: List[Any] = []
+        merged_url_results: Dict[str, Any] = {}
+        merged_tested_params: List[str] = []
+        success_count = 0
+        skipped_count = 0
+        rejected_count = 0
+        failed_count = 0
+
+        for sr in sorted_results:
+            if sr.is_skipped_or_rejected:
+                if sr.status == "skipped":
+                    skipped_count += 1
+                else:
+                    rejected_count += 1
+                continue
+
+            # Non-skipped, non-rejected: merge findings, url_results, tested_params
+            all_findings.extend(sr.findings)
+            merged_url_results.update(sr.url_result)
+            # Deduplicate tested_params
+            for param in sr.tested_params:
+                if param not in merged_tested_params:
+                    merged_tested_params.append(param)
+
+            if sr.status == "success":
+                success_count += 1
+            elif sr.status == "failed":
+                failed_count += 1
+            elif sr.status == "pending":
+                # Pending results (budget allowed but not yet executed) - count separately
+                pass
+
+        return {
+            "findings": all_findings,
+            "url_results": merged_url_results,
+            "tested_params": merged_tested_params,
+            "counts": {
+                "success": success_count,
+                "skipped": skipped_count,
+                "rejected": rejected_count,
+                "failed": failed_count,
+                "total": len(sub_results),
+            },
+        }
+
     async def dispatch_rich_url(
         self,
         rich_context: 'RichUrlContext',
@@ -738,6 +849,73 @@ class SwarmDispatcher:
                 except Exception as ce:
                     logger.error("[_dispatch_to_single_swarm] Error closing %s: %s", swarm_name, ce)
     
+    async def dispatch_injection_urls_with_budget(
+        self,
+        urls: List[str],
+        origin_key: str,
+        swarm_name: str = "injection",
+        task_name: str = "injection_url_task",
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Phase 9 T-3: Budget-enforced per-URL dispatch for Injection URLs.
+
+        Integrates _build_per_url_sub_result() budget enforcement with actual
+        swarm dispatch, followed by deterministic post-join merge via
+        _merge_per_url_sub_results().
+
+        For each URL:
+        1. _build_per_url_sub_result(origin_key) checks budget
+        2. If rejected/skipped: record PerUrlSubResult immediately, skip dispatch
+        3. If allowed: dispatch to swarm via _dispatch_to_single_swarm,
+           collect findings into PerUrlSubResult
+
+        After all URLs: deterministic merge with skip/reject evidence.
+
+        Returns:
+            Merged dict with keys: findings, url_results, tested_params, counts
+            Counts include success, skipped, rejected, failed, total.
+        """
+        sub_results: List[PerUrlSubResult] = []
+
+        for url in urls:
+            sub_result = self._build_per_url_sub_result(
+                source_url=url,
+                origin_key=origin_key,
+            )
+
+            if sub_result.is_skipped_or_rejected:
+                sub_results.append(sub_result)
+                continue
+
+            # Budget allowed — dispatch to swarm
+            try:
+                swarm_result = await self._dispatch_to_single_swarm(
+                    swarm_name=swarm_name,
+                    target=url,
+                    task_name=task_name,
+                    params=params or {},
+                )
+                if swarm_result:
+                    sub_result.findings = swarm_result.findings
+                    sub_result.status = swarm_result.status
+                    if swarm_result.status == "failed":
+                        sub_result.error = (
+                            swarm_result.execution_log[0].get("error", "swarm_dispatch_failed")
+                            if swarm_result.execution_log
+                            else "swarm_dispatch_failed"
+                        )
+                else:
+                    sub_result.status = "failed"
+                    sub_result.error = "swarm_result_none"
+            except Exception as e:
+                sub_result.status = "failed"
+                sub_result.error = str(e)
+
+            sub_results.append(sub_result)
+
+        # Post-join deterministic merge
+        return self._merge_per_url_sub_results(sub_results)
+
     async def dispatch_to_all(
         self,
         target: str,

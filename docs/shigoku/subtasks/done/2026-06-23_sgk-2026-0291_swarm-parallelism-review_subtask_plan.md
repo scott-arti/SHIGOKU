@@ -1,22 +1,24 @@
 ---
 task_id: SGK-2026-0291
 doc_type: subtask_plan
-status: active
+status: done
 parent_task_id: SGK-2026-0289
 related_docs:
 - docs/shigoku/plans/2026-06-21_sgk-2026-0289_commonization-technical-debt-roadmap_plan.md
 - docs/shigoku/plans/2026-06-20_sgk-2026-0278_ver-2-planning-bundle-dev-mode-recon_plan.md
 - docs/shigoku/subtasks/2026-06-21_sgk-2026-0287_task-queue-pruning-policy_subtask_plan.md
-- docs/shigoku/subtasks/2026-06-26_swarm-phase-0_subtask_plan.md
-- docs/shigoku/subtasks/2026-06-26_swarm-phase-1-additive-execution-contract-debug-metadata_subtask_plan.md
-- docs/shigoku/subtasks/2026-06-26_swarm-phase-2-scope-admission-per-origin-budget-policy_subtask_plan.md
+- docs/shigoku/subtasks/done/2026-06-26_swarm-phase-0_subtask_plan.md
+- docs/shigoku/subtasks/done/2026-06-26_swarm-phase-1-additive-execution-contract-debug-metadata_subtask_plan.md
+- docs/shigoku/subtasks/done/2026-06-26_swarm-phase-2-scope-admission-per-origin-budget-policy_subtask_plan.md
 - docs/shigoku/subtasks/done/2026-06-26_swarm-phase-3-dispatch-context-isolation-swarm-pool_subtask_plan.md
-- docs/shigoku/subtasks/2026-06-26_swarm-phase-4-lane-scheduler-shadow-mode_subtask_plan.md
-- docs/shigoku/subtasks/2026-06-26_swarm-phase-5-read-only-outer-task-parallelism_subtask_plan.md
+- docs/shigoku/subtasks/done/2026-06-26_swarm-phase-4-lane-scheduler-shadow-mode_subtask_plan.md
+- docs/shigoku/subtasks/done/2026-06-26_swarm-phase-5-read-only-outer-task-parallelism_subtask_plan.md
 - docs/shigoku/subtasks/done/2026-06-26_swarm-phase-6-event-driven-chaining-pruning-invalidation_subtask_plan.md
 - docs/shigoku/subtasks/done/2026-06-26_swarm-phase-7-stateful-mutating-aggressive-lanes_subtask_plan.md
-- docs/shigoku/subtasks/2026-06-26_swarm-phase-8-swarmdispatcher-swarmmanager_subtask_plan.md
-- docs/shigoku/subtasks/2026-06-26_swarm-phase-9-release-gate-rollout-policy-promotion_subtask_plan.md
+- docs/shigoku/subtasks/done/2026-06-26_swarm-phase-8-swarmdispatcher-swarmmanager_subtask_plan.md
+- docs/shigoku/subtasks/done/2026-06-26_swarm-phase-9-release-gate-rollout-policy-promotion_subtask_plan.md
+- docs/shigoku/reports/2026-06-30_sgk-2026-0291_work_report.md
+- docs/shigoku/worklogs/2026-06-30_sgk-2026-0291_work_log.md
 title: Swarm並列処理検討 設計議論計画
 created_at: '2026-06-23'
 updated_at: '2026-06-30'
@@ -182,16 +184,16 @@ target: src/core/engine/master_conductor.py, src/core/engine/swarm_dispatcher.py
 - [ ] **No-Go条件:** mutating/aggressive lane に operator control / audit trail / rollback がない。
 
 ### 4.5 実装サブタスク分割
-- [ ] `SGK-2026-0309`: Phase 0 現状正本化と非対象固定。挙動変更なしで、並列/直列実態、共有状態、specialist分類を正本化する。
-- [ ] `SGK-2026-0310`: Phase 1 additive execution contract と debug metadata。既存schemaを壊さず、実行単位識別子とlifecycle metadataを追加する。
-- [ ] `SGK-2026-0311`: Phase 2 scope admission と per-origin budget policy。scope unknown fail-closed、origin単位rate limit、parallelism configを入れる。
-- [ ] `SGK-2026-0312`: Phase 3 dispatch context isolation と Swarm pool安全化。`current_context` 汚染とstateful pool再利用を止める。
-- [ ] `SGK-2026-0313`: Phase 4 Lane Scheduler shadow mode。実行順を変えずにlane / mutex / admission / budget decisionを記録する。
-- [ ] `SGK-2026-0314`: Phase 5 read_only outer task parallelism 限定解禁。最初の実並列化をMC外側のread_only taskに限定する。
-- [ ] `SGK-2026-0315`: Phase 6 Event-Driven Chaining と pruning invalidation 統合。順序依存taskの遅延生成と不要化taskの退役を扱う。
-- [ ] `SGK-2026-0316`: Phase 7 stateful / mutating / aggressive lanes 限定解禁。高リスクlaneをmutex、admission、operator control付きで扱う。
-- [ ] `SGK-2026-0317`: Phase 8 SwarmDispatcher / SwarmManager 内側並列化評価。外側並列化安定後に内側並列化を個別評価する。
-- [ ] `SGK-2026-0318`: Phase 9 release gate / rollout / policy promotion。shadow/canary/default昇格、rollback、operator runbookを整える。
+- [x] `SGK-2026-0309`: Phase 0 現状正本化と非対象固定。挙動変更なしで、並列/直列実態、共有状態、specialist分類を正本化する。
+- [x] `SGK-2026-0310`: Phase 1 additive execution contract と debug metadata。既存schemaを壊さず、実行単位識別子とlifecycle metadataを追加する。
+- [x] `SGK-2026-0311`: Phase 2 scope admission と per-origin budget policy。scope unknown fail-closed、origin単位rate limit、parallelism configを入れる。
+- [x] `SGK-2026-0312`: Phase 3 dispatch context isolation と Swarm pool安全化。`current_context` 汚染とstateful pool再利用を止める。
+- [x] `SGK-2026-0313`: Phase 4 Lane Scheduler shadow mode。実行順を変えずにlane / mutex / admission / budget decisionを記録する。
+- [x] `SGK-2026-0314`: Phase 5 read_only outer task parallelism 限定解禁。最初の実並列化をMC外側のread_only taskに限定する。
+- [x] `SGK-2026-0315`: Phase 6 Event-Driven Chaining と pruning invalidation 統合。順序依存taskの遅延生成と不要化taskの退役を扱う。
+- [x] `SGK-2026-0316`: Phase 7 stateful / mutating / aggressive lanes 限定解禁。高リスクlaneをmutex、admission、operator control付きで扱う。
+- [x] `SGK-2026-0317`: Phase 8 SwarmDispatcher / SwarmManager 内側並列化評価。外側並列化安定後に内側並列化を個別評価する。
+- [x] `SGK-2026-0318`: Phase 9 release gate / rollout / policy promotion。shadow/canary/default昇格、rollback、operator runbookを整える。
 
 ## 5. 懸念点と対策 / 次回の申し送り（Backlog / 技術的負債）
 - ※CTO/SREレビューで「後回し可」となった懸念事項は、ここに必ず記録する。
@@ -281,3 +283,20 @@ deferred_tasks:
     tracking_task_id: SGK-2026-0291
     recommended_next_action: "Phase 0-1 の実装サブタスクを起票し、挙動変更なしの観測・metadata基盤から開始する"
 ```
+
+## 6. 完了クローズ（2026-06-30）
+
+### 6.1 完了判定
+- **判定:** done。
+- **理由:** SGK-2026-0309 から SGK-2026-0318 までの Phase 0-9 がすべて `done` 化され、計画書は `docs/shigoku/subtasks/done/` 配下へ集約済み。Phase 9 release gate / rollback / promotion matrix / operator runbook の完了判定レビューで Blocker 0 を確認した。
+- **残存監視:** operator dashboard / 長期可視化は SGK-2026-0320、EventBus runtime の継続可視化は SGK-2026-0322 で別タスクとして追跡する。本親タスクの完了条件は壊さない。
+
+### 6.2 完了時検証
+- `.venv/bin/pytest -q tests/core/engine/test_master_conductor_phase5_parallelism.py tests/unit/config/test_parallelism_settings.py tests/unit/engine/test_budget_policy.py tests/unit/engine/test_lane_policy.py` -> 101 passed。
+- `.venv/bin/pytest -q tests/unit/reporting/ tests/unit/engine/test_phase9_injection_budget.py` -> 373 passed。
+- `.venv/bin/pytest -q tests/unit/config/test_parallelism_settings.py tests/core/domain/model/test_task_execution_contract_metadata.py tests/unit/engine/test_budget_policy.py tests/unit/engine/test_lane_policy.py tests/unit/engine/test_mutex_policy.py tests/unit/engine/test_phase8_serial_baseline.py tests/unit/engine/test_phase8_gate.py tests/unit/engine/test_phase8_limited_parallel_a.py tests/unit/engine/test_phase8_shadow_decisions.py tests/unit/engine/test_phase9_injection_budget.py tests/unit/reporting/test_runtime_control_release_gate.py tests/unit/reporting/test_shigoku_ops_phase9_route.py tests/unit/reporting/test_parity_comparator.py tests/unit/reporting/test_rollback_drill.py tests/unit/reporting/test_reader_compatibility.py tests/unit/reporting/test_promotion_matrix.py` -> 287 passed。
+- `python3 scripts/validate_shigoku_docs.py` -> 0 issue。
+
+### 6.3 クローズ成果物
+- Work report: `docs/shigoku/reports/2026-06-30_sgk-2026-0291_work_report.md`
+- Work log: `docs/shigoku/worklogs/2026-06-30_sgk-2026-0291_work_log.md`

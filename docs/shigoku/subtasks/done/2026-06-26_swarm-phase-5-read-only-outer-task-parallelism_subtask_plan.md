@@ -1,10 +1,12 @@
 ---
 task_id: SGK-2026-0314
 doc_type: subtask_plan
-status: active
+status: done
 parent_task_id: SGK-2026-0291
 related_docs:
-- docs/shigoku/subtasks/2026-06-23_sgk-2026-0291_swarm-parallelism-review_subtask_plan.md
+- docs/shigoku/subtasks/done/2026-06-23_sgk-2026-0291_swarm-parallelism-review_subtask_plan.md
+- docs/shigoku/reports/2026-06-30_sgk-2026-0314_work_report.md
+- docs/shigoku/worklogs/2026-06-30_sgk-2026-0314_work_log.md
 title: 'Swarm並列化 Phase 5: read_only outer task parallelism 限定解禁'
 created_at: '2026-06-26'
 updated_at: '2026-06-30'
@@ -63,6 +65,11 @@ deferred_tasks:
     tracking_task_id: SGK-2026-0314
     recommended_next_action: "canary対象でserial/parallel比較を継続し、差分があればPhase 4分類へ戻す"
 ```
+
+### 5.2 完了クローズ（2026-06-30）
+- **判定:** done。
+- **根拠:** Phase 5 の目的は「既存の無門番 outer task 並列へ gate を被せ、`read_only` + `parallel_safe` 以外を serial / hold へ倒せること」。関連実装とテストが完了し、Phase 9 の pre-flight / release gate でも前提 Phase evidence として参照済み。
+- **検証:** `.venv/bin/pytest -q tests/core/engine/test_master_conductor_phase5_parallelism.py tests/unit/config/test_parallelism_settings.py tests/unit/engine/test_budget_policy.py tests/unit/engine/test_lane_policy.py` -> 101 passed。
 
 ---
 
