@@ -9,7 +9,7 @@ related_docs:
   - docs/shigoku/reports/2026-05-24_phase-d2-detection-engines_report.md
   - docs/shigoku/reports/2026-05-24_phase-d3-advanced-features_report.md
 created_at: '2026-05-24'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 ---
 
 # Phase D Integration & Deployment Setup Report

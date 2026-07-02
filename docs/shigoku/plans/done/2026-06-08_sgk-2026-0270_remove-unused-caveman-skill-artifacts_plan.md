@@ -7,7 +7,7 @@ related_docs:
 - docs/shigoku/roadmaps/IMPLEMENTATION_ROADMAP.md
 title: Remove unused Caveman skill artifacts
 created_at: '2026-06-08'
-updated_at: '2026-06-24'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: .agents/skills

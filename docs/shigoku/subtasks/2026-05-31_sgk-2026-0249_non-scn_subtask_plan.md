@@ -8,7 +8,7 @@ related_docs:
 - docs/shigoku/reports/2026-05-31_sgk-2026-0219_non-scn-eval_work_report.md
 title: SGK-2026-0219 継続監視（Non-SCN評価の経過観察）
 created_at: '2026-05-31'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: evaluation-pipeline

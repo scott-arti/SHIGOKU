@@ -8,7 +8,7 @@ related_docs:
 - docs/shigoku/specs/visibility_and_metrics.md
 title: '内部挙動可視化 S2: Run Narrative・Target Profile Markdown出力'
 created_at: '2026-06-24'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: shigoku-ops report narrative, target_profile.md

@@ -3,6 +3,10 @@ from unittest.mock import MagicMock, AsyncMock
 from src.core.attack.lfi_tester import LFITester
 from src.core.agents.swarm.injection.smart_lfi import SmartLFIHunter
 from src.core.agents.swarm.base import Task
+from src.core.security.execution_safeguard import (
+    ExecutionSafeguardService,
+    reset_execution_safeguard,
+)
 
 @pytest.mark.asyncio
 async def test_lfi_tester_traversal_depth():
@@ -102,3 +106,109 @@ async def test_send_request_detects_lfi_indicator_beyond_snippet_window():
     obs = await hunter._send_request("../../../../etc/passwd")
 
     assert obs["diff"] == "lfi_found"
+
+
+# ------------------------------------------------------------------
+# ExecutionSafeguard integration tests
+# ------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _reset_safeguard():
+    """Reset the safeguard singleton before each test to avoid cross-test leakage."""
+    reset_execution_safeguard()
+    yield
+    reset_execution_safeguard()
+
+
+def test_smart_lfi_injects_execution_safeguard():
+    """SmartLFIHunter must inject ExecutionSafeguardService into SmartRequest."""
+    config = {"model": "test-model"}
+    hunter = SmartLFIHunter(config=config)
+
+    assert hunter.smart_client.safeguard is not None, (
+        "SmartRequest should have execution_safeguard set"
+    )
+    assert isinstance(hunter.smart_client.safeguard, ExecutionSafeguardService), (
+        f"Expected ExecutionSafeguardService, got {type(hunter.smart_client.safeguard).__name__}"
+    )
+    # Legacy request_guard should remain None when execution_safeguard is used
+    assert hunter.smart_client.guard is None, (
+        "When execution_safeguard is used, legacy guard should not be set"
+    )
+
+
+def test_smart_lfi_default_mode_bugbounty():
+    """SmartLFIHunter defaults to bugbounty mode, not ctf."""
+    config = {"model": "test-model"}
+    hunter = SmartLFIHunter(config=config)
+
+    assert hunter.smart_client.safeguard.mode == "bugbounty", (
+        f"Default mode should be bugbounty for fail-closed behavior, "
+        f"got {hunter.smart_client.safeguard.mode}"
+    )
+
+
+def test_smart_lfi_ctf_mode_override():
+    """Config mode=ctf overrides the default bugbounty."""
+    config = {"model": "test-model", "mode": "ctf"}
+    hunter = SmartLFIHunter(config=config)
+
+    assert hunter.smart_client.safeguard.mode == "ctf", (
+        f"Mode override failed: expected ctf, got {hunter.smart_client.safeguard.mode}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_send_request_blocked_by_safeguard():
+    """POST to /etc/passwd should be blocked by safeguard in bugbounty mode
+    when no HITL callback is configured (fail-closed)."""
+    config = {"model": "test-model", "mode": "bugbounty"}
+    hunter = SmartLFIHunter(config=config)
+    hunter.context = {
+        "target": "http://example.com/view.php?file=test.txt",
+        "param": "file",
+        "method": "POST",
+        "params": {"file": "test.txt"},
+        "auth_headers": {},
+    }
+
+    obs = await hunter._send_request("../../../../etc/passwd")
+
+    assert obs["status"] == 0, (
+        f"Safeguard should block POST in bugbounty without callback, got status={obs['status']}"
+    )
+    assert obs["diff"] in ("blocked", "error"), (
+        f"Expected blocked or error diff, got {obs['diff']}"
+    )
+    assert obs.get("body_snippet", ""), (
+        "Blocked response should include an error message"
+    )
+
+
+@pytest.mark.asyncio
+async def test_send_request_allowed_by_safeguard():
+    """GET request should be allowed by safeguard in bugbounty mode."""
+    config = {"model": "test-model", "mode": "bugbounty"}
+    hunter = SmartLFIHunter(config=config)
+    hunter.context = {
+        "target": "http://example.com/view.php?file=test.txt",
+        "param": "file",
+        "method": "GET",
+        "params": {"file": "test.txt"},
+        "auth_headers": {},
+    }
+    # Mock the underlying network response (after safeguard passes)
+    hunter.smart_client.client.request = AsyncMock()
+    hunter.smart_client.client.request.return_value = AsyncMock()
+    hunter.smart_client.client.request.return_value.status = 200
+    hunter.smart_client.client.request.return_value.body = "safe response"
+    hunter.smart_client.client.request.return_value.headers = {}
+
+    obs = await hunter._send_request("../../../../etc/passwd")
+
+    assert obs["status"] == 200, (
+        f"GET should pass safeguard, got status={obs['status']}"
+    )
+    assert obs["diff"] == "normal", (
+        f"Expected normal diff, got {obs['diff']}"
+    )

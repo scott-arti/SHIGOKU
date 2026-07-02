@@ -1,0 +1,9 @@
+{
+  "provider": "hackerone",
+  "program_alias": "tiktok",
+  "bundle_id": "bbp-hackerone-tiktok-2026-07-01T07:38:38Z-ab12cd34",
+  "policy_id": "bbp:hackerone:tiktok:2026-07-01T07:38:38Z",
+  "compiled_policy_path": "compiled_guard_policy.yaml",
+  "compiled_policy_hash": "sha256:4be73cd4fa12c45175432e662478698a9c3441237ab8a611f2aee61733ed274d",
+  "activated_at_utc": "2026-07-01T08:10:00Z"
+}

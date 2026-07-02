@@ -8,7 +8,7 @@ related_docs:
 - docs/shigoku/roadmaps/bug_bounty_enhancements_2026.md
 title: DEV_MODEデモ経路分離とBurpIntegration削除計画
 created_at: '2026-06-20'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: src/recon/tool_runner.py, src/recon/pipeline.py, src/core/adapters/proxy_integration.py

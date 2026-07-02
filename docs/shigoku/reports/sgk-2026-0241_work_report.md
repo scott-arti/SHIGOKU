@@ -11,7 +11,7 @@ related_docs:
 - src/core/adapters/external/binary_manager.py
 - tests/core/adapters/external/test_tool_registry_facade_integration.py
 created_at: '2026-05-24'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 ---
 
 # ToolRegistry統合と技術的負債解消 (Phase E-3) 作業報告書

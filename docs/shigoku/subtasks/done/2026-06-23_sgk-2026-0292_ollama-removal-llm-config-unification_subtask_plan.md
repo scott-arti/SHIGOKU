@@ -7,7 +7,7 @@ related_docs:
 - docs/shigoku/plans/2026-06-21_sgk-2026-0289_commonization-technical-debt-roadmap_plan.md
 title: Ollama廃止とLLM設定統一 設計議論計画
 created_at: '2026-06-23'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: config/shigoku.yaml, config/features.yaml, src/core/config/settings.py, src/config.py, src/core/models/llm.py, src/core/llm/, src/prompts/, src/core/agents/, src/core/engine/, src/core/rag_module/rag.py, src/intelligence/proxy_log_analyzer.py, tests/, docs/shigoku/manuals/, docs/shigoku/specs/

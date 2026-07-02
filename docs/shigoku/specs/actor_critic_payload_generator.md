@@ -7,7 +7,7 @@ doc_type: spec
 parent_task_id: null
 related_docs: []
 created_at: '2026-05-19'
-updated_at: '2026-05-19'
+updated_at: '2026-07-02'
 ---
 
 # LLM Actor-Critic Fuzzing Loop 仕様書

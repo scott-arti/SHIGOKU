@@ -10,7 +10,7 @@ related_docs:
   - docs/shigoku/manuals/2026-05-26_arjun-gau-failure-drill_runbook.md
   - docs/shigoku/worklogs/2026-05-26_sgk-2026-0245_kpi-threshold-and-drill-kickoff_work_log.md
 created_at: 2026-05-26
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 ---
 
 # SGK-2026-0245 作業完了報告（区切り）

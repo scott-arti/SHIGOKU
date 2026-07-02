@@ -9,7 +9,7 @@ related_docs:
 - docs/shigoku/roadmaps/future_functions1.md
 title: PhaseGate細粒度化計画
 created_at: '2026-06-21'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: src/core/engine/phase_gate.py, src/core/engine/master_conductor.py, src/core/security/ethics_guard.py

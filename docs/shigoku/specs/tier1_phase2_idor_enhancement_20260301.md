@@ -5,7 +5,7 @@ status: active
 parent_task_id: null
 related_docs: []
 created_at: '2026-03-01'
-updated_at: '2026-05-19'
+updated_at: '2026-07-02'
 ---
 
 # Spec: Tier 1 (Phase 2) - `IdorHunterSpecialist` 強化 (HPP & 動的プロパティ抽出)

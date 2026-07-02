@@ -7,7 +7,7 @@ related_docs:
 - docs/shigoku/roadmaps/IMPLEMENTATION_ROADMAP.md
 - docs/shigoku/specs/FEATURE_EXPANSION_PLAN.md
 created_at: '2026-03-01'
-updated_at: '2026-05-19'
+updated_at: '2026-07-02'
 ---
 
 # 🗺️ SHIGOKU 統一ロードマップ — 最終確定版（外部フィードバック統合済み）

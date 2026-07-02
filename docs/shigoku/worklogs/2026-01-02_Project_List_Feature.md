@@ -5,7 +5,7 @@ status: done
 parent_task_id: null
 related_docs: []
 created_at: '2026-01-02'
-updated_at: '2026-05-19'
+updated_at: '2026-07-02'
 ---
 
 2026-01-02 | Implementation | Project List Feature | プロジェクト一覧表示ロジックを ProjectManager に追加

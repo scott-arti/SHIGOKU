@@ -8,7 +8,7 @@ related_docs:
 - docs/shigoku/specs/ARCHITECTURE.md
 title: "MasterConductor 分割: HITL task snapshot 切り出しの実施報告"
 created_at: "2026-06-05"
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 ---
 
 # 作業報告

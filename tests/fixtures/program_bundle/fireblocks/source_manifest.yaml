@@ -1,0 +1,12 @@
+schema_version: 1
+provider: bugcrowd
+program_name: Fireblocks
+captured_at_utc: "2026-02-12T13:49:31Z"
+default_timezone: "UTC"
+bundle_id: "bbp-bugcrowd-fireblocks-2026-02-12T13:49:31Z-ef56aa01"
+policy_path: "policy.md"
+scope_sources:
+  - kind: extracted_scope_block
+    path: "scope_assets.txt"
+raw_source_urls:
+  - "https://bugcrowd.com/fireblocks"

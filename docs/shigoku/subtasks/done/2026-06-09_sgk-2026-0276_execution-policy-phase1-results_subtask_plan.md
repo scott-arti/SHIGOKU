@@ -7,7 +7,7 @@ related_docs:
 - docs/shigoku/plans/2026-06-05_sgk-2026-0265_injection-manager-split-plan_plan.md
 title: 純粋判定/ログヘルパーの execution_policy/phase1_results への追加移動
 created_at: '2026-06-09'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: src/core/agents/swarm/injection/manager.py

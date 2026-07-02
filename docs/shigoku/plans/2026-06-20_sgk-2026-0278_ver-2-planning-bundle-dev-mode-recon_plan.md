@@ -9,7 +9,7 @@ related_docs:
 - docs/shigoku/roadmaps/bug_bounty_enhancements_2026.md
 title: 'Ver.2 planning bundle: DEV_MODE整理・自律再認証強化・Recon再設計'
 created_at: '2026-06-20'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: src/recon/, src/core/agents/swarm/auth/, src/core/engine/

@@ -5,7 +5,7 @@ status: active
 parent_task_id: null
 related_docs: []
 created_at: '2026-05-19'
-updated_at: '2026-05-19'
+updated_at: '2026-07-02'
 ---
 
 # Phase 2.1: Critical Path Analysis 仕様書

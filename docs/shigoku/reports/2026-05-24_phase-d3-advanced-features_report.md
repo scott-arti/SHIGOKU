@@ -8,7 +8,7 @@ related_docs:
   - docs/shigoku/reports/2026-05-24_phase-d1-infrastructure-implementation_report.md
   - docs/shigoku/reports/2026-05-24_phase-d2-detection-engines_report.md
 created_at: '2026-05-24'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 ---
 
 # Phase D-3 Advanced Features Implementation Report

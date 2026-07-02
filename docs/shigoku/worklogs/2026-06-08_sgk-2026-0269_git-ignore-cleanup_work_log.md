@@ -8,7 +8,7 @@ related_docs:
 - docs/shigoku/reports/2026-06-08_sgk-2026-0269_git-ignore-cleanup_work_report.md
 title: "作業ログ: Git ignore cleanup for fresh GitHub repository"
 created_at: "2026-06-08"
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 ---
 
 # 作業ログ

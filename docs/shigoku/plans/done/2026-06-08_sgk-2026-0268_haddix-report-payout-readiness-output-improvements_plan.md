@@ -8,7 +8,7 @@ related_docs:
 - docs/shigoku/reports/REPORT_OUTPUTS.md
 title: Haddix report payout-readiness output improvements
 created_at: '2026-06-08'
-updated_at: '2026-06-24'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: Haddix report output

@@ -9,7 +9,7 @@ related_docs:
 - docs/shigoku/specs/2026-01-26_Proxy_ErrorHandling.md
 title: 'Strict Entry Gate: Caido Mandatory and Runtime Preflight Validation'
 created_at: '2026-06-23'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: runtime entry gate / preflight validation

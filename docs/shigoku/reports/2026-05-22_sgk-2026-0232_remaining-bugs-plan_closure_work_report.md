@@ -7,7 +7,7 @@ related_docs:
   - docs/shigoku/plans/remaining_bugs_plan.md
   - docs/shigoku/specs/2026-05-22_should_observe_observation_policy_spec.md
 created_at: '2026-05-22'
-updated_at: '2026-05-22'
+updated_at: '2026-07-02'
 ---
 
 # SGK-2026-0215 クローズ作業報告

@@ -7,7 +7,7 @@ related_docs:
   - docs/shigoku/plans/external_tool_migration_plan.md
   - docs/shigoku/reports/2026-05-26_sgk-2026-0239_async-gau-and-arjun-metrics_work_report.md
 created_at: '2026-05-26'
-updated_at: '2026-05-26'
+updated_at: '2026-07-02'
 ---
 
 # SGK-2026-0239 作業ログ（2026-05-26）

@@ -11,7 +11,7 @@ related_docs:
 - docs/shigoku/plans/2026-06-24_sgk-2026-0304_active_plan.md
 title: 3判断器再設計とAdvisor AI戦略レビュー化 議論計画
 created_at: '2026-06-23'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: src/core/engine/strategy_optimizer.py, src/core/intelligence/self_reflection.py,

@@ -11,7 +11,7 @@ related_docs:
 - docs/shigoku/specs/modules/KNOWLEDGE_GRAPH.md
 title: 'P3: 攻撃パスNeo4j UI＋脆弱性管理システム'
 created_at: '2026-06-29'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 - neo4j

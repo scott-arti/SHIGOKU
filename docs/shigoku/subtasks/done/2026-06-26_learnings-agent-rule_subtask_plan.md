@@ -14,7 +14,7 @@ related_docs:
 - docs/shigoku/worklogs/2026-06-26_sgk-2026-0319_learnings-rule-extraction_work_log.md
 title: learnings の恒久ルール昇格と agent rule 接続
 created_at: '2026-06-26'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: docs/shigoku, rules, AGENTS.md

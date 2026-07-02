@@ -183,3 +183,98 @@ class TestParallelTasks:
         content = dead_subs_files[0].read_text().strip().split("\n")
         assert "b.example.com" in content or "c.example.com" in content
         assert len(content) == 2
+
+    # ── Unit 3: Checkpoint hooks ──────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_full_port_scan_updates_checkpoint_on_skip(self, tmp_path):
+        """No live subs records skipped in parallel_task_progress."""
+        tasks = ParallelTasks({}, None, None)
+        state = ReconState()
+        
+        result = await tasks.full_port_scan([], tmp_path, state)
+        assert result["status"] == "skipped"
+        assert "full_port_scan" in state.parallel_task_progress
+        assert state.parallel_task_progress["full_port_scan"]["status"] == "skipped"
+        assert state.parallel_task_progress["full_port_scan"]["resume_reason"] == "no_live_subs"
+
+    @pytest.mark.asyncio
+    async def test_full_port_scan_updates_checkpoint_on_completed(self, tmp_path):
+        """Completed full_port_scan records artifact_refs in progress."""
+        tasks = ParallelTasks(
+            config={"recon": {"naabu_top_ports": "80,443"}},
+            project_manager=None,
+            master_conductor=None,
+        )
+        state = ReconState()
+        live_subs = ["example.com"]
+        
+        with patch("asyncio.create_subprocess_exec") as mock_exec:
+            mock_proc = AsyncMock()
+            mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+            mock_exec.return_value = mock_proc
+            
+            output_file = tasks._get_path(tmp_path, state, "full_port_scan", "txt")
+            output_file.write_text("example.com:8080\n")
+            
+            result = await tasks.full_port_scan(live_subs, tmp_path, state)
+        
+        assert result["status"] == "completed"
+        assert "full_port_scan" in state.parallel_task_progress
+        entry = state.parallel_task_progress["full_port_scan"]
+        assert entry["status"] == "completed"
+        assert len(entry["artifact_refs"]) >= 1
+
+    @pytest.mark.asyncio
+    async def test_visual_recon_accepts_state_and_updates_checkpoint(self, tmp_path):
+        """visual_recon with state=None still works (backward compat)."""
+        tasks = ParallelTasks({}, None, None)
+        
+        # Without state
+        result = await tasks.visual_recon([], tmp_path)
+        assert result["status"] == "skipped"
+        
+        # With state
+        state = ReconState()
+        result = await tasks.visual_recon([], tmp_path, state=state)
+        assert result["status"] == "skipped"
+        assert "visual_recon" in state.parallel_task_progress
+        assert state.parallel_task_progress["visual_recon"]["status"] == "skipped"
+
+    @pytest.mark.asyncio
+    async def test_permutation_scan_records_already_executed_skip(self, tmp_path):
+        """permutation_executed=True records skipped in progress."""
+        tasks = ParallelTasks({}, None, None)
+        state = ReconState()
+        state.permutation_executed = True
+        
+        result = await tasks.permutation_scan(["example.com"], "example.com", tmp_path, state)
+        assert result["status"] == "skipped"
+        assert "permutation_scan" in state.parallel_task_progress
+        assert state.parallel_task_progress["permutation_scan"]["status"] == "skipped"
+        assert state.parallel_task_progress["permutation_scan"]["resume_reason"] == "already_executed"
+
+    @pytest.mark.asyncio
+    async def test_dead_subdomain_scan_updates_checkpoint_on_completed(self, tmp_path):
+        """Dead sub scan records artifact_refs on completion."""
+        tasks = ParallelTasks({}, None, None)
+        state = ReconState()
+        
+        all_subs = ["a.example.com", "b.example.com", "c.example.com"]
+        live_subs = ["a.example.com"]
+        
+        with patch("asyncio.create_subprocess_exec") as mock_exec:
+            mock_proc = AsyncMock()
+            mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+            mock_exec.return_value = mock_proc
+            
+            output_file = tasks._get_path(tmp_path, state, "dead_subdomain_scan", "txt")
+            output_file.write_text("b.example.com:8080\n")
+            
+            result = await tasks.dead_subdomain_scan(all_subs, live_subs, tmp_path, state)
+        
+        assert result["status"] == "completed"
+        assert "dead_subdomain_scan" in state.parallel_task_progress
+        entry = state.parallel_task_progress["dead_subdomain_scan"]
+        assert entry["status"] == "completed"
+        assert len(entry["artifact_refs"]) >= 1

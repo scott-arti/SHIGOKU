@@ -132,7 +132,7 @@ CRITICAL RULES:
         Specialist.__init__(self, config)
         ThoughtLoop.__init__(self, max_turns=8)
 
-        mode = "ctf"  # CTF モードで POST リクエストを許可
+        mode = "bugbounty"  # Bug Bounty fail-closed default
         if config and isinstance(config, dict):
             mode = config.get("mode", mode)
 
@@ -146,10 +146,11 @@ CRITICAL RULES:
         except ImportError:
             pass
 
-        from src.core.security.request_guard import get_request_guard
+        from src.core.security.execution_safeguard import get_execution_safeguard
 
         self.network_client = AsyncNetworkClient(proxy_manager=proxy_manager, mode=mode)
-        self.smart_client = SmartRequest(network_client=self.network_client, request_guard=get_request_guard(mode=mode))
+        safeguard = get_execution_safeguard(mode=mode)
+        self.smart_client = SmartRequest(network_client=self.network_client, execution_safeguard=safeguard)
 
         # State
         self.vulnerable = False

@@ -5,7 +5,7 @@ status: active
 parent_task_id: null
 related_docs: []
 created_at: '2026-05-19'
-updated_at: '2026-05-19'
+updated_at: '2026-07-02'
 ---
 
 # IDOR (Insecure Direct Object Reference) / BOLA スキャナの実装課題と将来のロードマップ

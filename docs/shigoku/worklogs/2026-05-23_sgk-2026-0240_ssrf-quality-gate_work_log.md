@@ -7,7 +7,7 @@ related_docs:
 - docs/shigoku/plans/2026-05-23_sgk-2026-0240_ssrf-p0-fp_plan.md
 - docs/shigoku/reports/2026-05-23_sgk-2026-0240_ssrf-quality-gate_work_report.md
 created_at: '2026-05-23'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 ---
 
 # Work Log: SGK-2026-0240

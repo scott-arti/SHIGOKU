@@ -1,16 +1,19 @@
 ---
 task_id: SGK-2026-0244-S01
 doc_type: subtask_plan
-status: active
+status: done
 parent_task_id: SGK-2026-0244
 related_docs:
   - docs/shigoku/plans/2026-05-24_sgk-2026-0244_xss-hunter-enhancement_plan.md
-  - src/core/detection/xss_detector.py
+  - docs/shigoku/reports/2026-06-30_sgk-2026-0244-s01_xss-hunter-remaining-implementation_work_report.md
+  - docs/shigoku/worklogs/2026-06-30_sgk-2026-0244-s01_xss-hunter-remaining-implementation_work_log.md
+  - src/core/agents/swarm/injection/stored_xss_detector.py
   - src/core/agents/swarm/injection/smart_xss.py
   - src/core/detection/browser_pool.py
-  - src/core/detection/xss_pipeline.py
+  - tests/core/agents/swarm/injection/test_smart_xss_logic.py
+  - tests/core/detection/test_xss_detector.py
 created_at: '2026-05-27'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 ---
 
 # SGK-2026-0244-S01: XSS Hunter未実装項目の完了計画
@@ -60,3 +63,8 @@ updated_at: '2026-06-30'
 
 ## 6. 完了条件
 - 実装差分、テスト結果、未対応事項を work_report/work_log に記録し、`SGK-2026-0244-S01` を `done` へ更新する。
+
+## 7. クローズメモ
+- SmartXSSHunter の DOM 検証主経路は `BrowserPoolXSSVerifier` 優先へ統一済み。
+- Stored XSS 側は `xss_detector.py` を強化するのではなく、placeholder を削除して `stored_xss_detector.py` に責務を集約する形で完了した。
+- 上記の実装判断と検証結果は `work_report` / `work_log` に記録し、本 subtask を `done` 化する。

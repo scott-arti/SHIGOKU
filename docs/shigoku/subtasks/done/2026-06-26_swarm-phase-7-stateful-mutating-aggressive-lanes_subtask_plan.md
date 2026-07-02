@@ -7,7 +7,7 @@ related_docs:
 - docs/shigoku/subtasks/done/2026-06-23_sgk-2026-0291_swarm-parallelism-review_subtask_plan.md
 title: 'Swarm並列化 Phase 7: stateful mutating aggressive lanes 限定解禁'
 created_at: '2026-06-26'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: lane scheduler, Target/Session Mutex, ResourceManager, admission policy, operator

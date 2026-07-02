@@ -9,7 +9,7 @@ related_docs:
 - docs/shigoku/roadmaps/bug_bounty_enhancements_2026.md
 title: Bug Bounty向けScope制御高度化計画
 created_at: '2026-06-21'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: src/core/security/, src/core/engine/master_conductor.py, src/commands/

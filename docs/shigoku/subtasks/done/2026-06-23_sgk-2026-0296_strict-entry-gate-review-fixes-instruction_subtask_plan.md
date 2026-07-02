@@ -9,7 +9,7 @@ related_docs:
 - docs/shigoku/roadmaps/IMPLEMENTATION_ROADMAP.md
 title: Strict Entry Gate Review Fixes Instruction
 created_at: '2026-06-23'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: src/core/preflight and CLI entry gate

@@ -8,7 +8,7 @@ related_docs:
   - docs/shigoku/reports/2026-05-22_sgk-2026-0232_remaining-bugs-plan_closure_work_report.md
   - docs/shigoku/specs/2026-05-22_should_observe_observation_policy_spec.md
 created_at: '2026-05-22'
-updated_at: '2026-05-22'
+updated_at: '2026-07-02'
 ---
 
 # Worklog: Remaining Bugs Plan Closure

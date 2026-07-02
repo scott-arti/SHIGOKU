@@ -8,10 +8,14 @@ related_docs:
 - docs/shigoku/manuals/MANUAL_JA.md
 - docs/shigoku/roadmaps/shigoku_unified_roadmap_20260301.md
 created_at: '2026-05-19'
-updated_at: '2026-05-19'
+updated_at: '2026-07-02'
 ---
 
 # 🏗️ SHIGOKU 技術仕様書
+
+> 現行の内部仕様書は
+> [`2026-07-02_sgk-2026-0338_internal-architecture-and-dataflow-spec.md`](2026-07-02_sgk-2026-0338_internal-architecture-and-dataflow-spec.md)
+> です。本ファイルには過去設計も含まれるため、2026-07 時点の実行経路、データフロー、セッション・レポート契約は現行版を優先します。
 
 ## 1. システム概要
 

@@ -6,7 +6,7 @@ parent_task_id: null
 related_docs:
   - docs/shigoku/specs/2026-05-22_should_observe_observation_policy_spec.md
 created_at: '2026-05-19'
-updated_at: '2026-05-22'
+updated_at: '2026-07-02'
 ---
 
 # 残存バグ修正タスク (Remaining Bug Fixes)

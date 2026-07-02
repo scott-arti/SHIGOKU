@@ -6,10 +6,10 @@ parent_task_id: SGK-2026-0101
 related_docs:
 - docs/shigoku/specs/TECHNICAL_SPEC_JA.md
 - docs/shigoku/plans/2026-05-14_ssti_docs/shigoku/plans/file_upload_implementation_plan_legacy.md
-- docs/shigoku/subtasks/phase1_tasks.md
+- docs/shigoku/subtasks/done/2026-05-19_sgk-2026-0171_phase1_tasks.md
 - docs/shigoku/reports/REPORT_OUTPUTS.md
 created_at: '2026-05-19'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 ---
 
 # SHIGOKU 実装ロードマップ

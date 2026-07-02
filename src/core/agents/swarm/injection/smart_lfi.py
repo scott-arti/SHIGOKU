@@ -65,14 +65,16 @@ INPUT: [Input]
         Specialist.__init__(self, config)
         ThoughtLoop.__init__(self, max_turns=8)
 
-        mode = "ctf"  # CTF モードで POST リクエストを許可
+        mode = "bugbounty"  # Bug Bounty fail-closed default
         if config and isinstance(config, dict):
              mode = config.get("mode", mode)
 
         self.llm = LLMClient(role="lfi_specialist")
         # SmartRequest requires an AsyncNetworkClient instance
         self.network_client = AsyncNetworkClient()
-        self.smart_client = SmartRequest(network_client=self.network_client)
+        from src.core.security.execution_safeguard import get_execution_safeguard
+        safeguard = get_execution_safeguard(mode=mode)
+        self.smart_client = SmartRequest(network_client=self.network_client, execution_safeguard=safeguard)
         self.vulnerable = False
         self.evidence = ""
 

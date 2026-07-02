@@ -9,7 +9,7 @@ related_docs:
 - docs/shigoku/worklogs/2026-06-30_sgk-2026-0317_work_log.md
 title: 'Swarm並列化 Phase 8: SwarmDispatcher SwarmManager 内側並列化評価'
 created_at: '2026-06-26'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: SwarmDispatcher.dispatch, SwarmManager.dispatch, InjectionManager.dispatch,

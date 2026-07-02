@@ -8,7 +8,7 @@ related_docs:
 - docs/shigoku/reports/sgk-2026-0241_work_report.md
 title: ToolRegistry統合と技術的負債解消 (Phase E-3) - 修正版
 created_at: '2026-05-23'
-updated_at: '2026-06-24'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 - technical_debt

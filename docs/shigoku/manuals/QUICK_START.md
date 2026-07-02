@@ -5,7 +5,7 @@ status: active
 parent_task_id: null
 related_docs: []
 created_at: '2026-05-19'
-updated_at: '2026-05-19'
+updated_at: '2026-07-02'
 ---
 
 # 🚀 SHIGOKU クイックスタートガイド
@@ -375,7 +375,10 @@ pytho3 -c "import pytesseract; print(pytesseract.get_tesseract_version())"
 
 | ドキュメント                               | 内容                                          |
 | :----------------------------------------- | :-------------------------------------------- |
+| [2026-07-02_sgk-2026-0338_operator-user-manual.md](2026-07-02_sgk-2026-0338_operator-user-manual.md) | 初期設定、Docker、モード、出力ファイル、ユースケース別コマンド |
+| [../specs/2026-07-02_sgk-2026-0338_internal-architecture-and-dataflow-spec.md](../specs/2026-07-02_sgk-2026-0338_internal-architecture-and-dataflow-spec.md) | 現行の実行経路、データフロー、内部モジュール仕様 |
 | [USER_MANUAL.md](USER_MANUAL.md)           | 3 つのモード（Recon/Hybrid/Sentinel）の使い方 |
+| [2026-07-02_sgk-2026-0337_detailed-command-reference.md](2026-07-02_sgk-2026-0337_detailed-command-reference.md) | `shigoku-ops` と `src.main` の詳細CLIリファレンス |
 | [../specs/TECHNICAL_DESIGN2026-01-26.md](../specs/TECHNICAL_DESIGN2026-01-26.md) | 内部アーキテクチャの理解                      |
 | [REFERENCE.md](REFERENCE.md)               | 全設定オプションと環境変数                    |
 

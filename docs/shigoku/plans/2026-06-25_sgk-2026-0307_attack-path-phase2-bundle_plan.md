@@ -3,7 +3,7 @@ task_id: SGK-2026-0307
 doc_type: plan
 status: active
 created_at: '2026-06-25'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 parent_task_id: SGK-2026-0298
 related_docs:
 - docs/shigoku/reports/2026-06-25_sgk-2026-0302_attack-path-markdown-neo4j-prep_work_report.md

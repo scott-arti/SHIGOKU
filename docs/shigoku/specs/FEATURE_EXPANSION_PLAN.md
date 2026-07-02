@@ -7,7 +7,7 @@ related_docs:
 - docs/shigoku/roadmaps/shigoku_unified_roadmap_20260301.md
 - docs/shigoku/roadmaps/IMPLEMENTATION_ROADMAP.md
 created_at: '2026-05-19'
-updated_at: '2026-05-19'
+updated_at: '2026-07-02'
 ---
 
 # SHIGOKU 機能拡張マスタープラン

@@ -5,7 +5,7 @@ status: active
 parent_task_id: null
 related_docs: []
 created_at: '2026-05-19'
-updated_at: '2026-05-19'
+updated_at: '2026-07-02'
 ---
 
 # Phase 1: 足場固めと構造改革 (Swarm化 & 入力正規化) 詳細仕様書

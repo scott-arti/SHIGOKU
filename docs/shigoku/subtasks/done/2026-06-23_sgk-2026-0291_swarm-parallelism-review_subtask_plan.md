@@ -21,7 +21,7 @@ related_docs:
 - docs/shigoku/worklogs/2026-06-30_sgk-2026-0291_work_log.md
 title: Swarm並列処理検討 設計議論計画
 created_at: '2026-06-23'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: src/core/engine/master_conductor.py, src/core/engine/swarm_dispatcher.py,

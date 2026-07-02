@@ -8,7 +8,7 @@ PhaseGate: フェーズベースのタスク生成許可制御
 """
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 import time
 import logging
 
@@ -31,6 +31,14 @@ class PhaseData:
     tech_stack: List[str] = field(default_factory=list)
     findings: List[str] = field(default_factory=list)
     classified_files: Dict[str, Dict] = field(default_factory=dict)
+    # P2b: 細粒度ゲート判定用フィールド
+    auth_required_endpoints: List[str] = field(default_factory=list)
+    public_endpoints: List[str] = field(default_factory=list)
+    scope_status: str = ""  # e.g. "in_scope", "out_of_scope", "unknown"
+    budget_remaining: float = 0.0
+    critical_findings: List[str] = field(default_factory=list)
+    import_provenance: Dict[str, Any] = field(default_factory=dict)
+    gate_reasons: List[str] = field(default_factory=list)
     
     @property
     def is_unlocked(self) -> bool:
@@ -94,18 +102,26 @@ class PhaseGate:
         """
         return self._phases[phase].is_unlocked
     
-    def can_create_task(self, phase: Phase) -> tuple[bool, str]:
+    def can_create_task(self, phase: Phase, context: Optional[Dict[str, Any]] = None) -> tuple[bool, str]:
         """
-        タスク生成が許可されているか
-        
+        タスク生成が許可されているか（後方互換: context=None で従来の lock/unlock 判定）
+
         Args:
             phase: チェックするフェーズ
-            
+            context: 追加の判定context（省略時は従来のバイナリ判定）
+
         Returns:
             (許可されているか, 理由)
         """
         if not self.is_unlocked(phase):
             return False, f"Phase {phase.value} is locked"
+        if context is None:
+            return True, "OK"
+        # With context, delegate to category-level helper for ATTACK phase
+        if phase == Phase.ATTACK:
+            category = context.get("category")
+            if category:
+                return self.can_create_attack_task(str(category), context.get("metadata"))
         return True, "OK"
     
     def get_allowed_tags(self, phase: Phase) -> List[str]:
@@ -119,6 +135,65 @@ class PhaseGate:
             許可されているタグのリスト
         """
         return self.PHASE_TAGS.get(phase, ["all"])
+
+    def can_create_attack_task(
+        self, category: str, metadata: Optional[Dict[str, Any]] = None
+    ) -> tuple[bool, str]:
+        """カテゴリ単位で Attack タスク生成可否を判定する。
+
+        Args:
+            category: Recon 分類カテゴリ名（例: "auth", "id_param", "admin"）
+            metadata: 追加の判定情報（auth_required, scope, budget, etc.）
+
+        Returns:
+            (許可されているか, 拒否理由または "OK")
+        """
+        data = self._phases[Phase.ATTACK]
+        metadata = metadata or {}
+
+        # 1) scope 外チェック
+        scope_status = data.scope_status or metadata.get("scope_status", "")
+        if scope_status == "out_of_scope":
+            reason = f"Category '{category}' is out of scope"
+            data.gate_reasons.append(reason)
+            return False, reason
+
+        # 2) budget チェック（明示的に指定された場合のみ制約として適用）
+        meta_budget = metadata.get("budget_remaining")
+        if meta_budget is not None and meta_budget <= 0.0:
+            reason = f"Budget exhausted for category '{category}' (explicit budget={meta_budget})"
+            data.gate_reasons.append(reason)
+            return False, reason
+
+        # 3) auth 必須チェック（認証情報なしで auth_required endpoint をスキップ）
+        is_auth_required = category in data.auth_required_endpoints or metadata.get("auth_required", False)
+        has_auth = bool(metadata.get("has_auth_credentials", False))
+        if is_auth_required and not has_auth:
+            reason = f"Category '{category}' requires auth but no credentials available"
+            data.gate_reasons.append(reason)
+            return False, reason
+
+        # 4) stale import チェック
+        import_prov = data.import_provenance or metadata.get("import_provenance", {})
+        if import_prov.get("all_rejected"):
+            reason = f"Category '{category}' from import rejected (all artifacts stale/mismatched)"
+            data.gate_reasons.append(reason)
+            return False, reason
+        if import_prov.get("stale_artifact"):
+            reason = f"Category '{category}' from stale imported artifact"
+            data.gate_reasons.append(reason)
+            return False, reason
+
+        # 5) critical finding 優先: 一旦カテゴリ自体を抑制するのではなく
+        #    reason に critical_finding 有無を残して呼び出し側に判断させる
+        critical = data.critical_findings or metadata.get("critical_findings", [])
+        if critical:
+            logger.info(
+                "Category '%s': critical findings present (%s) – consider Report/HITL priority",
+                category, ", ".join(critical[:3]),
+            )
+
+        return True, "OK"
     
     def add_asset(self, phase: Phase, asset: str) -> None:
         """
@@ -208,16 +283,20 @@ class PhaseGate:
     
     def get_summary(self) -> Dict:
         """
-        全フェーズのサマリーを取得
+        全フェーズのサマリーを取得（P2b: gate_reason_count を含む）
         
         Returns:
             サマリー辞書
         """
+        attack_data = self._phases.get(Phase.ATTACK)
+        gate_reason_count = len(attack_data.gate_reasons) if attack_data else 0
         return {
             "unlocked_phases": [p.value for p, d in self._phases.items() if d.is_unlocked],
             "total_assets": len(self.get_all_assets()),
             "total_tech_stack": len(self.get_all_tech_stack()),
             "total_findings": sum(len(d.findings) for d in self._phases.values()),
+            "gate_reason_count": gate_reason_count,
+            "gate_reasons": attack_data.gate_reasons[:10] if attack_data else [],
         }
 
 

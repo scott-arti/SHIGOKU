@@ -144,7 +144,7 @@ INPUT: [Input]
         Specialist.__init__(self, config)
         ThoughtLoop.__init__(self, max_turns=8)
 
-        mode = "ctf"  # CTF モードで POST リクエストを許可
+        mode = "bugbounty"  # Bug Bounty fail-closed default
         if config and isinstance(config, dict):
              mode = config.get("mode", mode)
 
@@ -158,10 +158,11 @@ INPUT: [Input]
         except ImportError:
             pass
 
-        from src.core.security.request_guard import get_request_guard
+        from src.core.security.execution_safeguard import get_execution_safeguard
 
         base_client = AsyncNetworkClient(proxy_manager=proxy_manager, mode=mode)
-        self.smart_client = SmartRequest(base_client, request_guard=get_request_guard(mode=mode))
+        safeguard = get_execution_safeguard(mode=mode)
+        self.smart_client = SmartRequest(base_client, execution_safeguard=safeguard)
 
         # State for loop
         self.vulnerable = False

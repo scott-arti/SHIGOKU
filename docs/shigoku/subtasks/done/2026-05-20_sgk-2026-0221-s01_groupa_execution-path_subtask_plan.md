@@ -10,7 +10,7 @@ related_docs:
 - docs/shigoku/reports/2026-05-21_sgk-2026-0221-s01_groupa_work_report.md
 title: 'GroupA: 実行経路のモック除去（OptimizedRecipeRunner / run_recipe）'
 created_at: '2026-05-20'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 - group-a

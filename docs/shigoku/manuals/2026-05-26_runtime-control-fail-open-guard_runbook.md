@@ -8,7 +8,7 @@ related_docs:
   - src/core/agents/swarm/discovery/graphql.py
   - src/core/agents/swarm/runtime_control_backend.py
 created_at: '2026-05-26'
-updated_at: '2026-05-26'
+updated_at: '2026-07-02'
 ---
 
 # Runtime Control fail_open 運用ガード Runbook

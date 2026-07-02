@@ -5,10 +5,10 @@ status: done
 parent_task_id: SGK-2026-0244
 related_docs:
 - docs/shigoku/plans/2026-05-24_sgk-2026-0244_xss-hunter-enhancement_plan.md
-- docs/shigoku/subtasks/2026-05-27_sgk-2026-0244-s01_xss-hunter-remaining-implementation_subtask_plan.md
+- docs/shigoku/subtasks/done/2026-05-27_sgk-2026-0244-s01_xss-hunter-remaining-implementation_subtask_plan.md
 title: xss_detector.py から Stored XSS placeholder を削除
 created_at: '2026-06-21'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: src/core/detection/xss_detector.py, tests/core/detection/

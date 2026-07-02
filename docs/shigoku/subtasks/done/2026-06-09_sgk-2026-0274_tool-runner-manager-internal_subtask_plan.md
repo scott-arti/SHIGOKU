@@ -7,7 +7,7 @@ related_docs:
 - docs/shigoku/plans/2026-06-05_sgk-2026-0265_injection-manager-split-plan_plan.md
 title: tool runner 結果整形の manager_internal 抽出
 created_at: '2026-06-09'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: src/core/agents/swarm/injection/manager.py

@@ -27,6 +27,19 @@ from .pii_masker import (
     mask_pii,
     unmask_pii,
 )
+from .request_guard import (
+    RequestGuard,
+    get_request_guard,
+    reset_request_guard,
+)
+from .execution_safeguard import (
+    SafeguardDecision,
+    PayloadRiskPolicy,
+    MethodRiskPolicy,
+    ExecutionSafeguardService,
+    get_execution_safeguard,
+    reset_execution_safeguard,
+)
 
 __all__ = [
     # 既存
@@ -52,5 +65,16 @@ __all__ = [
     "get_pii_masker",
     "mask_pii",
     "unmask_pii",
+    # Request Guard (HTTP/HITL adapter)
+    "RequestGuard",
+    "get_request_guard",
+    "reset_request_guard",
+    # Execution Safeguard (shared safeguard)
+    "SafeguardDecision",
+    "PayloadRiskPolicy",
+    "MethodRiskPolicy",
+    "ExecutionSafeguardService",
+    "get_execution_safeguard",
+    "reset_execution_safeguard",
 ]
 

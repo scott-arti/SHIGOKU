@@ -181,6 +181,30 @@ class TestHelpOutputJapanese:
                 f"--help epilog missing Japanese indicator: {indicator}"
             )
 
+    def test_help_output_does_not_expose_removed_translate_logs_flag(self):
+        """Obsolete log translation flag should no longer appear in --help."""
+        import subprocess
+        import sys
+
+        result = subprocess.run(
+            [sys.executable, "-m", "src.main", "--help"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        output = result.stdout
+
+        assert "--translate-logs" not in output
+        assert "ログを日本語に翻訳" not in output
+
+
+class TestRemovedTranslateLogsCatalog:
+    """Verify obsolete translate-logs catalog entries are removed."""
+
+    def test_translate_logs_help_key_is_removed(self):
+        """The message catalog should no longer ship help text for the removed flag."""
+        assert msg_or_none("argparse.translate_logs.help") is None
+
 
 # ============================================================
 # JSON non-contamination verification

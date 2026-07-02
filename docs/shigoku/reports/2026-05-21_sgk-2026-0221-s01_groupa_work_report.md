@@ -8,7 +8,7 @@ related_docs:
 - docs/shigoku/plans/2026-05-19_sgk-2026-0221_mock-optimizedreciperunner-discovery-graphql_plan.md
 - docs/shigoku/specs/bug_bounty_enhancements.md
 created_at: '2026-05-21'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 ---
 
 # Work Report: SGK-2026-0221-S01 GroupA 実行経路モック除去

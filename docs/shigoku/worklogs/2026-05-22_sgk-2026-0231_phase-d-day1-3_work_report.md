@@ -8,7 +8,7 @@ related_docs:
   - src/core/agents/swarm/injection/smart_sqli.py
   - src/core/agents/swarm/injection/smart_xss.py
 created_at: '2026-05-22'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 ---
 
 # Phase D Day 1-3 作業報告書 (SGK-2026-0231)

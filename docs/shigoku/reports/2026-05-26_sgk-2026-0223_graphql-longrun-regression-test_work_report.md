@@ -7,7 +7,7 @@ related_docs:
 - docs/shigoku/plans/2026-05-21_sgk-2026-0223_graphql-longrun-regression-test_plan.md
 - docs/shigoku/worklogs/2026-05-26_sgk-2026-0223_graphql-longrun-regression-test_work_log.md
 created_at: '2026-05-26'
-updated_at: '2026-05-26'
+updated_at: '2026-07-02'
 ---
 
 # 作業報告書: GraphQL Runtime 長時間回帰テスト計画

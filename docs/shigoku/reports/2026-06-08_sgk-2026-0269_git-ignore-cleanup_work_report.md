@@ -8,7 +8,7 @@ related_docs:
 - docs/shigoku/roadmaps/IMPLEMENTATION_ROADMAP.md
 title: "Git ignore cleanup for fresh GitHub repository 実施報告"
 created_at: "2026-06-08"
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 ---
 
 # 作業報告

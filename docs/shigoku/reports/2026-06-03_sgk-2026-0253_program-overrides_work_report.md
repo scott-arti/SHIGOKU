@@ -10,7 +10,7 @@ related_docs:
 - docs/shigoku/worklogs/2026-06-03_sgk-2026-0253_program-overrides_work_log.md
 title: SGK-2026-0253 program overrides 実装完了報告
 created_at: '2026-06-03'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 ---
 
 # SGK-2026-0253 program overrides 実装完了報告

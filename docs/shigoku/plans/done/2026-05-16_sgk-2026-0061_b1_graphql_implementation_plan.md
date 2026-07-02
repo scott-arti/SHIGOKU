@@ -5,7 +5,7 @@ status: backlog
 parent_task_id: null
 related_docs: []
 created_at: '2026-05-16'
-updated_at: '2026-06-24'
+updated_at: '2026-07-02'
 ---
 
 # B-1: GraphQL Introspection 実装計画書（アップデート版）

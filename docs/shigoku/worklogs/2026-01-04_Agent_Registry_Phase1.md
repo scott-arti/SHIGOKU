@@ -5,7 +5,7 @@ status: done
 parent_task_id: null
 related_docs: []
 created_at: '2026-01-04'
-updated_at: '2026-05-19'
+updated_at: '2026-07-02'
 ---
 
 2026-01-04 | Architecture | Phase 1 完了: Agent Registry | エージェント・ツールのタグシステム実装。CTF モードで Web タグフィルタリング（コンテキスト 30%削減）

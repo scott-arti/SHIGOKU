@@ -13,7 +13,7 @@ related_docs:
 - docs/shigoku/subtasks/done/2026-06-24_sgk-2026-0302_attack-path-markdown-neo4j-prep_subtask_plan.md
 title: SHIGOKU 内部挙動可視化・ガバナンス出力 実装計画
 created_at: '2026-06-24'
-updated_at: '2026-06-25'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: MC/Swarm observability, reports, target profile, attack paths

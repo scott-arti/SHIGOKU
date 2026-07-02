@@ -13,7 +13,7 @@ related_docs:
 - docs/shigoku/reports/2026-06-26_sgk-2026-0309_work_report.md
 title: 'Swarm並列化 Phase 4: Lane Scheduler shadow mode'
 created_at: '2026-06-26'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: LanePolicy, MutexPolicy, SchedulingDecision, MasterConductor task dequeue

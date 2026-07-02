@@ -1,0 +1,80 @@
+schema_version: 1
+compile_status: ready
+bundle_id: "bbp-bugcrowd-fireblocks-2026-02-12T13:49:31Z-ef56aa01"
+policy_id: "bbp:bugcrowd:fireblocks:2026-02-12T13:49:31Z"
+provider: bugcrowd
+program_name: Fireblocks
+program_alias: "fireblocks"
+compiled_at_utc: "2026-02-12T13:50:00Z"
+normalized_facts_hash: "sha256:fireblocks-normalized-facts-hash"
+default_decision: deny
+compatibility:
+  min_reader_schema_version: 1
+  backward_compatible_with:
+    - 1
+scope:
+  allow_hosts:
+    - "sb-console-api.fireblocks.io"
+    - "sb-mobile-api.fireblocks.io"
+    - "sandbox-api.fireblocks.io"
+  deny_hosts: []
+  allow_url_prefixes: []
+  deny_url_prefixes: []
+  non_http_assets: []
+rules:
+  phases:
+    post_exploit:
+      decision: deny
+      reason_code: post_exploit_prohibited
+      source_refs:
+        - "policy.md#post-exploit-stop"
+  attack_classes:
+    dos:
+      decision: deny
+      reason_code: attack_class_dos_denied
+      source_refs:
+        - "policy.md#dos-prohibition"
+    rate_limit_bypass:
+      decision: deny
+      reason_code: attack_class_rate_limit_bypass_denied
+      source_refs:
+        - "policy.md#rate-limit-bypass"
+  auth:
+    allowed_email_domains:
+      - "bugcrowdninja.com"
+  budgets:
+    requests_per_minute: 60
+review_gate:
+  manual_review_required: false
+  blocking_findings: []
+audit:
+  source_hashes: {}
+  compile_inputs: {}
+  rule_origins:
+    - rule_origin_id: "origin.fireblocks.host.sbconsole"
+      runtime_rule_id: "scope.host.allow.1"
+      origin_type: structured_scope
+      source_ref: "scope_assets.txt#line=3"
+      subject: "sb-console-api.fireblocks.io"
+      decision: allow
+      review_finding_ids: []
+      override_paths: []
+      normalization_notes: "exact host allow from Targets section"
+    - rule_origin_id: "origin.fireblocks.host.sbmobile"
+      runtime_rule_id: "scope.host.allow.2"
+      origin_type: structured_scope
+      source_ref: "scope_assets.txt#line=4"
+      subject: "sb-mobile-api.fireblocks.io"
+      decision: allow
+      review_finding_ids: []
+      override_paths: []
+      normalization_notes: "exact host allow from Targets section"
+    - rule_origin_id: "origin.fireblocks.host.sandbox"
+      runtime_rule_id: "scope.host.allow.3"
+      origin_type: structured_scope
+      source_ref: "scope_assets.txt#line=5"
+      subject: "sandbox-api.fireblocks.io"
+      decision: allow
+      review_finding_ids: []
+      override_paths: []
+      normalization_notes: "exact host allow from Targets section"

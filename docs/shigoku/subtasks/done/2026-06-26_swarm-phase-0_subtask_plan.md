@@ -8,7 +8,7 @@ related_docs:
 - docs/shigoku/plans/2026-06-21_sgk-2026-0289_commonization-technical-debt-roadmap_plan.md
 title: 'Swarm並列化 Phase 0: 現状正本化と非対象固定'
 created_at: '2026-06-26'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: src/core/engine/master_conductor.py, src/core/engine/parallel_orchestrator.py,

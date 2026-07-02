@@ -8,7 +8,7 @@ related_docs:
 - docs/shigoku/specs/bug_bounty_enhancements.md
 title: 'GroupC: 回帰防止テストと可観測性・ドキュメント整備'
 created_at: '2026-05-20'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 - group-c

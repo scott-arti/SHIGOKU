@@ -5,10 +5,14 @@ status: active
 parent_task_id: null
 related_docs: []
 created_at: '2026-05-19'
-updated_at: '2026-05-19'
+updated_at: '2026-07-02'
 ---
 
 # 📘 SHIGOKU ユーザーマニュアル
+
+> 現行の運用者向けマニュアルは
+> [`2026-07-02_sgk-2026-0338_operator-user-manual.md`](2026-07-02_sgk-2026-0338_operator-user-manual.md)
+> です。本ファイルは過去の包括マニュアルとして残し、最新の初期設定、Docker、モード、出力ファイル、ユースケース別コマンドは現行版を優先します。
 
 **SHIGOKU** を「最強の相棒」として使いこなすための包括的なガイドです。
 基本操作から高度な戦略的オーケストレーションまでをカバーします。
@@ -32,6 +36,11 @@ updated_at: '2026-05-19'
 ---
 
 ## 1. CLI リファレンス
+
+最新の詳細版は
+[`2026-07-02_sgk-2026-0337_detailed-command-reference.md`](2026-07-02_sgk-2026-0337_detailed-command-reference.md)
+を参照してください。この節は実行イメージの把握用に残し、現行の `shigoku-ops`
+サブコマンド体系は詳細版を正本とします。
 
 ### 基本構文
 

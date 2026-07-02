@@ -7,7 +7,7 @@ related_docs:
   - docs/shigoku/plans/external_tool_migration_plan.md
   - docs/shigoku/worklogs/2026-05-25_sgk-2026-0239_external-tool-final-migration_work_log.md
 created_at: '2026-05-25'
-updated_at: '2026-05-25'
+updated_at: '2026-07-02'
 ---
 
 # SGK-2026-0239 作業完了報告（最終切替）

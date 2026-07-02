@@ -9,7 +9,7 @@ related_docs:
 - docs/shigoku/subtasks/done/2026-06-26_swarm-phase-2-scope-admission-per-origin-budget-policy_subtask_plan.md
 title: 'Swarm並列化 Phase 1: additive execution contract と debug metadata'
 created_at: '2026-06-26'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: src/core/domain/model/task.py, session/report readers, debug metadata

@@ -10,6 +10,8 @@ Tests:
   5. test_merge_preserves_finding_counts — skipped/rejected results don't lose findings from successful workers
   6. test_budget_decision_recorded_in_sub_result — budget_decision dict is populated
 """
+import asyncio
+
 import pytest
 
 from src.core.engine.swarm_dispatcher import SwarmDispatcher
@@ -488,3 +490,55 @@ class TestInjectionUrlBudgetIntegration:
         assert merged["findings"] == []
         assert merged["url_results"] == {}
         assert merged["tested_params"] == []
+
+    @pytest.mark.asyncio
+    async def test_integration_allowed_url_workers_run_concurrently(self):
+        """Allowed URL workers must overlap before post-join merge.
+
+        A sequential implementation times out inside the first worker because
+        the remaining workers never enter. The parallel path lets all workers
+        enter, releases the barrier, and returns success for every URL.
+        """
+        dispatcher = SwarmDispatcher()
+        dispatcher._budget_policy = ExecutionBudgetPolicy(rpm=60000, burst=10)
+
+        urls = [
+            "https://example.com/page?id=1",
+            "https://example.com/page?id=2",
+            "https://example.com/page?id=3",
+        ]
+        all_started = asyncio.Event()
+        active_workers = 0
+        entered_workers = 0
+        max_active_workers = 0
+
+        async def _mock_dispatch(swarm_name, target, task_name, params):
+            nonlocal active_workers, entered_workers, max_active_workers
+            active_workers += 1
+            entered_workers += 1
+            max_active_workers = max(max_active_workers, active_workers)
+            if entered_workers == len(urls):
+                all_started.set()
+
+            try:
+                await asyncio.wait_for(all_started.wait(), timeout=0.2)
+            finally:
+                active_workers -= 1
+
+            return SwarmResult(
+                findings=[],
+                status="success",
+                swarm_name=swarm_name,
+            )
+
+        dispatcher._dispatch_to_single_swarm = _mock_dispatch  # type: ignore[method-assign]
+
+        merged = await dispatcher.dispatch_injection_urls_with_budget(
+            urls=urls,
+            origin_key="https://example.com",
+        )
+
+        assert merged["counts"]["success"] == len(urls)
+        assert merged["counts"]["failed"] == 0
+        assert merged["counts"]["total"] == len(urls)
+        assert max_active_workers >= 2

@@ -9,7 +9,7 @@ related_docs:
 - docs/shigoku/reports/2026-05-31_sgk-2026-0221_plan-closure_work_report.md
 title: SGK-2026-0221 継続監視（GraphQL運用SLO/観測）
 created_at: '2026-05-31'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: graphql-observability

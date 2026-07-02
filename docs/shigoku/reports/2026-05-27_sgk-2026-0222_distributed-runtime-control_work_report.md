@@ -8,7 +8,7 @@ related_docs:
 - docs/shigoku/worklogs/2026-05-26_sgk-2026-0222_runtime-control-backend-implementation_work_log.md
 - docs/shigoku/manuals/2026-05-26_runtime-control-fail-open-guard_runbook.md
 created_at: '2026-05-27'
-updated_at: '2026-05-27'
+updated_at: '2026-07-02'
 ---
 
 # 作業報告書: 分散ランタイム制御共通基盤化（SGK-2026-0222）

@@ -9,7 +9,7 @@ related_docs:
 - docs/shigoku/specs/adr/001-entry-point-unification.md
 title: '巨大ファイル分割計画 3/4: CLI Entrypoint 分割'
 created_at: '2026-06-05'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: src/main.py

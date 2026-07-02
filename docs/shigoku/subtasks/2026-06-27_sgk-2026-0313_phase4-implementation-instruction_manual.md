@@ -1,7 +1,7 @@
 ---
 task_id: SGK-2026-0313
 doc_type: manual
-status: active
+status: done
 parent_task_id: SGK-2026-0291
 related_docs:
 - docs/shigoku/subtasks/done/2026-06-26_swarm-phase-4-lane-scheduler-shadow-mode_subtask_plan.md
@@ -13,7 +13,7 @@ related_docs:
 - docs/shigoku/reports/2026-06-26_sgk-2026-0309_work_report.md
 title: 'SGK-2026-0313 Phase 4 実装指示書（Lane Scheduler shadow mode）'
 created_at: '2026-06-27'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: src/core/engine/lane_policy.py, src/core/engine/mutex_policy.py, src/core/engine/scheduling_decision.py,

@@ -50,11 +50,12 @@ class ExternalToolProvider:
     Phase E-3: 新外部ツール統合基盤をラップ
     """
     
-    def __init__(self):
+    def __init__(self, mode: str = "bugbounty"):
+        self._mode = mode
         self._bridges: Dict[str, Any] = {}
         self._executor: Optional[Any] = None
         self._initialized = False
-        logger.info("[ExternalToolProvider] Initialized")
+        logger.info("[ExternalToolProvider] Initialized (mode=%s)", mode)
     
     def _ensure_initialized(self):
         """初期化を保証（遅延初期化）"""
@@ -66,8 +67,8 @@ class ExternalToolProvider:
             from .external_tool_executor import get_global_executor
             
             # Bridgeインスタンス作成（AI統合用）
-            self._bridges["nuclei_scan"] = create_nuclei_bridge()
-            self._bridges["dalfox_scan"] = create_dalfox_bridge()
+            self._bridges["nuclei_scan"] = create_nuclei_bridge(mode=self._mode)
+            self._bridges["dalfox_scan"] = create_dalfox_bridge(mode=self._mode)
             
             # Phase E-3 Week 2: 他のAdapterも直接登録（Bridgeなしで実行可能に）
             self._register_direct_adapters()
@@ -95,10 +96,10 @@ class ExternalToolProvider:
             from .gau_adapter import GauAdapter
             
             # AdapterをラップしてBridgeインターフェースと同じにする
-            self._bridges["ffuf_scan"] = _AdapterWrapper(FfufAdapter(), "ffuf_scan")
-            self._bridges["nmap_scan"] = _AdapterWrapper(NmapAdapter(), "nmap_scan")
-            self._bridges["arjun_scan"] = _AdapterWrapper(ArjunAdapter(), "arjun_scan")
-            self._bridges["gau_scan"] = _AdapterWrapper(GauAdapter(), "gau_scan")
+            self._bridges["ffuf_scan"] = _AdapterWrapper(FfufAdapter(mode=self._mode), "ffuf_scan")
+            self._bridges["nmap_scan"] = _AdapterWrapper(NmapAdapter(mode=self._mode), "nmap_scan")
+            self._bridges["arjun_scan"] = _AdapterWrapper(ArjunAdapter(mode=self._mode), "arjun_scan")
+            self._bridges["gau_scan"] = _AdapterWrapper(GauAdapter(mode=self._mode), "gau_scan")
             
             logger.info(f"[ExternalToolProvider] Registered direct adapters: ffuf, nmap, arjun, gau")
             

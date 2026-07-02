@@ -34,36 +34,36 @@
       "failures": 0
     },
     "injectionswarm::csrf_candidate": {
-      "alpha": 5.799999999999999,
-      "beta": 4.199999999999999,
-      "pulls": 8,
-      "total_reward": 4.8,
-      "successes": 8,
+      "alpha": 11.799999999999995,
+      "beta": 8.200000000000003,
+      "pulls": 18,
+      "total_reward": 10.799999999999997,
+      "successes": 18,
       "failures": 0
     },
     "injectionswarm::xss_candidate": {
-      "alpha": 5.199999999999999,
-      "beta": 3.7999999999999994,
-      "pulls": 7,
-      "total_reward": 4.2,
-      "successes": 7,
+      "alpha": 10.599999999999996,
+      "beta": 7.400000000000002,
+      "pulls": 16,
+      "total_reward": 9.599999999999998,
+      "successes": 16,
       "failures": 0
     },
     "scope_parser::generic": {
-      "alpha": 4.6,
-      "beta": 3.3999999999999995,
-      "pulls": 6,
-      "total_reward": 3.6,
-      "successes": 6,
+      "alpha": 10.599999999999996,
+      "beta": 7.400000000000002,
+      "pulls": 16,
+      "total_reward": 9.599999999999998,
+      "successes": 16,
       "failures": 0
     },
     "recon_master::generic": {
-      "alpha": 1.6,
-      "beta": 6.4,
-      "pulls": 6,
-      "total_reward": 0.6,
-      "successes": 1,
-      "failures": 5
+      "alpha": 6.399999999999999,
+      "beta": 10.600000000000003,
+      "pulls": 15,
+      "total_reward": 5.3999999999999995,
+      "successes": 9,
+      "failures": 6
     },
     "bizlogic::admin": {
       "alpha": 4.0,
@@ -82,11 +82,11 @@
       "failures": 0
     },
     "injectionmanageragent::api_data": {
-      "alpha": 2.0,
+      "alpha": 4.0,
       "beta": 1.0,
-      "pulls": 1,
-      "total_reward": 1.0,
-      "successes": 1,
+      "pulls": 3,
+      "total_reward": 3.0,
+      "successes": 3,
       "failures": 0
     },
     "injectionswarm::api_candidate": {
@@ -98,11 +98,11 @@
       "failures": 0
     },
     "injectionswarm::auth": {
-      "alpha": 4.6,
-      "beta": 3.3999999999999995,
-      "pulls": 6,
-      "total_reward": 3.6,
-      "successes": 6,
+      "alpha": 10.599999999999996,
+      "beta": 7.400000000000002,
+      "pulls": 16,
+      "total_reward": 9.599999999999998,
+      "successes": 16,
       "failures": 0
     },
     "injectionswarm::basket_order": {
@@ -122,11 +122,11 @@
       "failures": 0
     },
     "authninja::auth": {
-      "alpha": 2.2,
-      "beta": 1.7999999999999998,
-      "pulls": 2,
-      "total_reward": 1.2,
-      "successes": 2,
+      "alpha": 2.8000000000000003,
+      "beta": 2.1999999999999997,
+      "pulls": 3,
+      "total_reward": 1.7999999999999998,
+      "successes": 3,
       "failures": 0
     },
     "web_scanner::generic": {
@@ -200,6 +200,102 @@
       "total_reward": 1.2,
       "successes": 2,
       "failures": 2
+    },
+    "bizlogic::generic": {
+      "alpha": 3.4000000000000004,
+      "beta": 2.5999999999999996,
+      "pulls": 4,
+      "total_reward": 2.4,
+      "successes": 4,
+      "failures": 0
+    },
+    "injectionmanageragent::api_candidate": {
+      "alpha": 1.6,
+      "beta": 1.4,
+      "pulls": 1,
+      "total_reward": 0.6,
+      "successes": 1,
+      "failures": 0
+    },
+    "injectionmanageragent::command_injection": {
+      "alpha": 1.6,
+      "beta": 1.4,
+      "pulls": 1,
+      "total_reward": 0.6,
+      "successes": 1,
+      "failures": 0
+    },
+    "sessionhijacker::generic": {
+      "alpha": 1.0,
+      "beta": 1.0,
+      "pulls": 0,
+      "total_reward": 0.0,
+      "successes": 0,
+      "failures": 0
+    },
+    "injectionmanageragent::file_param": {
+      "alpha": 1.6,
+      "beta": 1.4,
+      "pulls": 1,
+      "total_reward": 0.6,
+      "successes": 1,
+      "failures": 0
+    },
+    "injectionmanageragent::csrf_candidate": {
+      "alpha": 1.6,
+      "beta": 1.4,
+      "pulls": 1,
+      "total_reward": 0.6,
+      "successes": 1,
+      "failures": 0
+    },
+    "injectionmanageragent::feedback_review": {
+      "alpha": 1.0,
+      "beta": 1.0,
+      "pulls": 0,
+      "total_reward": 0.0,
+      "successes": 0,
+      "failures": 0
+    },
+    "injectionmanageragent::cors_candidate": {
+      "alpha": 1.0,
+      "beta": 1.0,
+      "pulls": 0,
+      "total_reward": 0.0,
+      "successes": 0,
+      "failures": 0
+    },
+    "injectionmanageragent::id_param": {
+      "alpha": 1.6,
+      "beta": 1.4,
+      "pulls": 1,
+      "total_reward": 0.6,
+      "successes": 1,
+      "failures": 0
+    },
+    "injectionmanageragent::redirect_param": {
+      "alpha": 1.0,
+      "beta": 1.0,
+      "pulls": 0,
+      "total_reward": 0.0,
+      "successes": 0,
+      "failures": 0
+    },
+    "injectionmanageragent::graphql_candidate": {
+      "alpha": 1.0,
+      "beta": 1.0,
+      "pulls": 0,
+      "total_reward": 0.0,
+      "successes": 0,
+      "failures": 0
+    },
+    "injectionmanageragent::crlf_candidate": {
+      "alpha": 1.0,
+      "beta": 1.0,
+      "pulls": 0,
+      "total_reward": 0.0,
+      "successes": 0,
+      "failures": 0
     }
   }
 }

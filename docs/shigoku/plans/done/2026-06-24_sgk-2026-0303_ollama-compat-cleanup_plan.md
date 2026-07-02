@@ -8,7 +8,7 @@ related_docs:
   - docs/shigoku/reports/2026-06-24_SGK-2026-0303-D02_work_report.md
   - docs/shigoku/worklogs/2026-06-24_SGK-2026-0303-D02_work_log.md
 created_at: '2026-06-24'
-updated_at: '2026-06-24'
+updated_at: '2026-07-02'
 tags:
   - shigoku
   - llm

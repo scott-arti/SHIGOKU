@@ -7,7 +7,7 @@ related_docs:
 - docs/shigoku/plans/2026-06-01_sgk-2026-0251_task_plan.md
 title: 脆弱性チェーンルール拡張と program overrides 整備
 created_at: '2026-06-02'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: attack-chain-rules

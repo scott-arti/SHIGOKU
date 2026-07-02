@@ -13,7 +13,7 @@ related_docs:
 - docs/shigoku/worklogs/2026-06-27_sgk-2026-0312_work_log.md
 title: 'Swarm並列化 Phase 3: dispatch context isolation と Swarm pool安全化'
 created_at: '2026-06-26'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: src/core/engine/swarm_dispatcher.py, src/core/agents/swarm/base_manager.py,

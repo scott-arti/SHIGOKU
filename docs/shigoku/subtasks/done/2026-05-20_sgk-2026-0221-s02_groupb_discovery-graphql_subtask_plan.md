@@ -11,7 +11,7 @@ related_docs:
 - docs/shigoku/worklogs/2026-05-21_log_sgk-2026-0221-s02_groupb.md
 title: 'GroupB: Discovery GraphQL 本実装接続（graphql.py / manager.py）'
 created_at: '2026-05-20'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 - group-b

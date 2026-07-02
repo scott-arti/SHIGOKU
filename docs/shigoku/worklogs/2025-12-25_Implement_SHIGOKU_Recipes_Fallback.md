@@ -5,7 +5,7 @@ status: done
 parent_task_id: null
 related_docs: []
 created_at: '2025-12-25'
-updated_at: '2026-05-19'
+updated_at: '2026-07-02'
 ---
 
 2025-12-25 | Legacy Code Removal | Implement SHIGOKU Recipes & Fallback | apply_mode_preset 削除と Ctrl+C インタラクティブ実装

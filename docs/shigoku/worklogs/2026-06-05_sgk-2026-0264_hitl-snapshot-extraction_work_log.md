@@ -8,7 +8,7 @@ related_docs:
 - docs/shigoku/reports/2026-06-05_sgk-2026-0264_hitl-snapshot-extraction_work_report.md
 title: "作業ログ: MasterConductor HITL snapshot 切り出し"
 created_at: "2026-06-05"
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 ---
 
 # 作業ログ

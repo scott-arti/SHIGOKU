@@ -9,7 +9,7 @@ related_docs:
   - src/core/agents/swarm/discovery/graphql.py
   - tests/core/agents/swarm/test_discovery_graphql_contract.py
 created_at: '2026-05-26'
-updated_at: '2026-05-26'
+updated_at: '2026-07-02'
 ---
 
 # SGK-2026-0222 作業ログ（Runtime Control Backend 実装）

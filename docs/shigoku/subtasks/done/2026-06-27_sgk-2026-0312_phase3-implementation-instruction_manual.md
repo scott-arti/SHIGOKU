@@ -11,7 +11,7 @@ related_docs:
 - docs/shigoku/subtasks/done/2026-06-26_swarm-phase-2-scope-admission-per-origin-budget-policy_subtask_plan.md
 title: 'SGK-2026-0312 Phase 3 実装指示書（dispatch context isolation / per-dispatch instance）'
 created_at: '2026-06-27'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: src/core/engine/swarm_dispatcher.py

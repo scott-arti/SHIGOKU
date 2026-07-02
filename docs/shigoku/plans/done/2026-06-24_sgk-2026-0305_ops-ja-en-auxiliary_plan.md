@@ -7,7 +7,7 @@ related_docs:
   - docs/shigoku/reports/2026-06-24_haddix-ja-en-paired-report_work_report.md
   - docs/shigoku/subtasks/2026-06-24_sgk-2026-0301_haddix-ja-en-paired-report_subtask_plan.md
 created_at: '2026-06-24'
-updated_at: '2026-06-24'
+updated_at: '2026-07-02'
 ---
 
 # shigoku-ops haddix-ja-en 補助導線 (Phase B)

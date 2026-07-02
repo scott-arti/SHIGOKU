@@ -5,7 +5,7 @@ status: active
 parent_task_id: null
 related_docs: []
 created_at: '2026-04-22'
-updated_at: '2026-05-19'
+updated_at: '2026-07-02'
 ---
 
 # 仕様書: Quality-First 攻撃成功強化フロー（crAPI起点・汎用運用）

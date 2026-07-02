@@ -7,7 +7,7 @@ related_docs:
 - docs/shigoku/plans/2026-06-05_sgk-2026-0265_injection-manager-split-plan_plan.md
 title: "作業ログ: InjectionManager 分割"
 created_at: "2026-06-05"
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 ---
 
 # 作業ログ

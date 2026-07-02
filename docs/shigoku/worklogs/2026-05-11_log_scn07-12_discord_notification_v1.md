@@ -5,7 +5,7 @@ status: done
 parent_task_id: null
 related_docs: []
 created_at: '2026-05-11'
-updated_at: '2026-05-19'
+updated_at: '2026-07-02'
 ---
 
 # 2026-05-11 作業ログ: SCN07-12 Discord Notification Ver.1

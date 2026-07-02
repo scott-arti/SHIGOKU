@@ -7,7 +7,7 @@ related_docs:
   - docs/shigoku/subtasks/2026-06-24_sgk-2026-0301_haddix-ja-en-paired-report_subtask_plan.md
   - docs/shigoku/reports/2026-06-24_haddix-ja-en-paired-report_work_report.md
 created_at: '2026-06-24'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 ---
 
 # 作業ログ：内部挙動可視化 S3: Haddixレポート日本語併記出力

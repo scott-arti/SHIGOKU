@@ -6,7 +6,7 @@ parent_task_id: SGK-2026-0215
 related_docs:
   - docs/shigoku/plans/remaining_bugs_plan.md
 created_at: '2026-05-22'
-updated_at: '2026-05-22'
+updated_at: '2026-07-02'
 ---
 
 # Specification: `_should_observe` Observation Policy

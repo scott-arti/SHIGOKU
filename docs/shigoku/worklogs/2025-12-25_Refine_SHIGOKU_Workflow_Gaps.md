@@ -5,7 +5,7 @@ status: done
 parent_task_id: null
 related_docs: []
 created_at: '2025-12-25'
-updated_at: '2026-05-19'
+updated_at: '2026-07-02'
 ---
 
 2025-12-25 | Workspace Enhancement | Refine SHIGOKU Workflow Gaps | ターゲット別ディレクトリ分離と上書き防止ロジックの実装

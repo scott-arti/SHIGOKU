@@ -8,7 +8,7 @@ related_docs:
 - docs/shigoku/subtasks/2026-06-21_sgk-2026-0288_discord-notification-ja_subtask_plan.md
 title: Discord全Finding詳細通知 統一設計計画
 created_at: '2026-06-23'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: src/core/notifications/notifier.py, src/core/notifications/notification_service.py,

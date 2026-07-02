@@ -7,7 +7,7 @@ related_docs:
 - docs/shigoku/plans/2026-05-21_sgk-2026-0224_operational-hardening-backlog_plan.md
 - docs/shigoku/reports/2026-05-22_sgk-2026-0224_operational-hardening-backlog_work_report.md
 created_at: '2026-05-22'
-updated_at: '2026-05-22'
+updated_at: '2026-07-02'
 ---
 
 # 作業ログ: Operational Hardening Backlog (SGK-2026-0224)

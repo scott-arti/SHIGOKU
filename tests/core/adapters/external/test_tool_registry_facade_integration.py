@@ -5,10 +5,57 @@ ToolRegistryFacade Integration Tests (E-3.7)
 - 全ツール検出
 - 重複チェック
 - 外部ツール実行
+- Singleton mode-mismatch regression (SGK-2026-0335)
 """
 
 import pytest
 import asyncio
+
+
+class TestSingletonModeMismatch:
+    """Singleton helper mode-mismatch regression (SGK-2026-0335 Phase 2)"""
+
+    def teardown_method(self):
+        from src.core.adapters.external.tool_registry_facade import reset_tool_registry_facade
+        reset_tool_registry_facade()
+
+    def test_mode_mismatch_recreates_instance(self):
+        """get_tool_registry_facade re-creates singleton on mode mismatch."""
+        from src.core.adapters.external.tool_registry_facade import (
+            get_tool_registry_facade,
+            reset_tool_registry_facade,
+        )
+        reset_tool_registry_facade()
+
+        f1 = get_tool_registry_facade(mode="bugbounty")
+        assert f1._external._mode == "bugbounty"
+
+        f2 = get_tool_registry_facade(mode="ctf")
+        assert f2._external._mode == "ctf"
+        assert f2 is not f1  # Recreated due to mode mismatch
+
+    def test_same_mode_returns_same_instance(self):
+        """get_tool_registry_facade returns same instance when mode matches."""
+        from src.core.adapters.external.tool_registry_facade import (
+            get_tool_registry_facade,
+            reset_tool_registry_facade,
+        )
+        reset_tool_registry_facade()
+
+        f1 = get_tool_registry_facade(mode="ctf")
+        f2 = get_tool_registry_facade(mode="ctf")
+        assert f2 is f1
+
+    def test_default_mode_returns_bugbounty(self):
+        """Default (no mode arg) creates bugbounty facade."""
+        from src.core.adapters.external.tool_registry_facade import (
+            get_tool_registry_facade,
+            reset_tool_registry_facade,
+        )
+        reset_tool_registry_facade()
+
+        f = get_tool_registry_facade()
+        assert f._external._mode == "bugbounty"
 
 
 class TestToolRegistryFacadeIntegration:
@@ -18,7 +65,7 @@ class TestToolRegistryFacadeIntegration:
         """Facade初期化テスト"""
         from src.core.adapters.external.tool_registry_facade import ToolRegistryFacade
         
-        facade = ToolRegistryFacade()
+        facade = ToolRegistryFacade(mode="ctf")
         
         assert facade._external is not None
         assert facade._internal is not None
@@ -27,7 +74,7 @@ class TestToolRegistryFacadeIntegration:
         """全ツール一覧テスト"""
         from src.core.adapters.external.tool_registry_facade import ToolRegistryFacade
         
-        facade = ToolRegistryFacade()
+        facade = ToolRegistryFacade(mode="ctf")
         tools = facade.list_all()
         
         # 外部ツール + 内部ツール
@@ -41,7 +88,7 @@ class TestToolRegistryFacadeIntegration:
         """外部ツール登録確認"""
         from src.core.adapters.external.tool_registry_facade import ToolRegistryFacade
         
-        facade = ToolRegistryFacade()
+        facade = ToolRegistryFacade(mode="ctf")
         external = facade.list_by_provider("external")
         
         external_names = {t.name for t in external}
@@ -53,12 +100,15 @@ class TestToolRegistryFacadeIntegration:
     def test_internal_tools_registered(self):
         """内部ツール登録確認"""
         from src.core.adapters.external.tool_registry_facade import ToolRegistryFacade
+        from src.core.tool_registry import ToolRegistry
         
-        facade = ToolRegistryFacade()
+        facade = ToolRegistryFacade(mode="ctf")
         internal = facade.list_by_provider("internal")
-        
-        # 51ツール以上登録されていること
-        assert len(internal) >= 50, f"Only {len(internal)} internal tools found"
+
+        # Source-of-truth: must match ToolRegistry().tools count exactly
+        registry_count = len(ToolRegistry().tools)
+        assert len(internal) == registry_count, \
+            f"Facade internal count {len(internal)} != ToolRegistry {registry_count}"
         
         # 主要ツールの確認
         internal_names = {t.name for t in internal}
@@ -166,6 +216,7 @@ class TestToolRegistryFacadeIntegration:
     def test_statistics(self):
         """統計情報テスト"""
         from src.core.adapters.external.tool_registry_facade import ToolRegistryFacade
+        from src.core.tool_registry import ToolRegistry
         
         facade = ToolRegistryFacade()
         stats = facade.get_statistics()
@@ -174,7 +225,8 @@ class TestToolRegistryFacadeIntegration:
         assert "external_tools" in stats
         assert "internal_tools" in stats
         assert stats["external_tools"] == 6
-        assert stats["internal_tools"] >= 50
+        assert stats["internal_tools"] == len(ToolRegistry().tools)
+        assert stats["total_tools"] == 6 + len(ToolRegistry().tools)
 
 
 class TestExternalToolExecution:
@@ -185,7 +237,7 @@ class TestExternalToolExecution:
         """nuclei実行テスト"""
         from src.core.adapters.external.tool_registry_facade import ToolRegistryFacade
         
-        facade = ToolRegistryFacade()
+        facade = ToolRegistryFacade(mode="ctf")
         result = await facade.execute("nuclei_scan", target="http://localhost:3000")
         
         assert result.status is not None
@@ -196,7 +248,7 @@ class TestExternalToolExecution:
         """dalfox実行テスト"""
         from src.core.adapters.external.tool_registry_facade import ToolRegistryFacade
         
-        facade = ToolRegistryFacade()
+        facade = ToolRegistryFacade(mode="ctf")
         
         # テスト対象（XSSなしの単純ページ）
         result = await facade.execute("dalfox_scan", target="http://localhost:3000")
@@ -208,7 +260,7 @@ class TestExternalToolExecution:
         """ffuf実行テスト"""
         from src.core.adapters.external.tool_registry_facade import ToolRegistryFacade
         
-        facade = ToolRegistryFacade()
+        facade = ToolRegistryFacade(mode="ctf")
         
         # FUZZキーワードを含むURL
         result = await facade.execute("ffuf_scan", target="http://localhost:3000/FUZZ")
@@ -220,7 +272,7 @@ class TestExternalToolExecution:
         """nmap実行テスト"""
         from src.core.adapters.external.tool_registry_facade import ToolRegistryFacade
         
-        facade = ToolRegistryFacade()
+        facade = ToolRegistryFacade(mode="ctf")
         
         result = await facade.execute("nmap_scan", target="localhost")
         

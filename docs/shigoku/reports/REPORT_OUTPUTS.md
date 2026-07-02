@@ -7,7 +7,7 @@ related_docs:
 - docs/shigoku/plans/2026-05-14_ssti_docs/shigoku/plans/file_upload_implementation_plan_legacy.md
 - docs/shigoku/worklogs/2026-05-14_log_codex_chat_summary.md
 created_at: '2026-05-19'
-updated_at: '2026-05-19'
+updated_at: '2026-07-02'
 ---
 
 # REPORT Outputs Reference

@@ -5,7 +5,7 @@ status: active
 parent_task_id: null
 related_docs: []
 created_at: '2026-05-11'
-updated_at: '2026-05-19'
+updated_at: '2026-07-02'
 ---
 
 # SCN01-07 測定用ベンチ計画（固定seed・固定session / 境界tightening）

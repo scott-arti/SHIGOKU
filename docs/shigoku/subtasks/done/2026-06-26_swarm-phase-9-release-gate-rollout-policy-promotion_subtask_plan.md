@@ -10,7 +10,7 @@ related_docs:
 - docs/shigoku/worklogs/2026-06-30_sgk-2026-0318_work_log.md
 title: 'Swarm並列化 Phase 9: release gate rollout policy promotion'
 created_at: '2026-06-26'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: release gate, rollout flags, operator control, compatibility checks

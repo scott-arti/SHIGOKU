@@ -5,7 +5,7 @@ status: done
 parent_task_id: null
 related_docs: []
 created_at: '2026-01-03'
-updated_at: '2026-05-19'
+updated_at: '2026-07-02'
 ---
 
 # 作業ログ: SHIGOKU 機能拡張マスタープラン策定

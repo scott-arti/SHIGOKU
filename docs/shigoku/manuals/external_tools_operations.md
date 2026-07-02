@@ -8,7 +8,7 @@ related_docs:
 - docs/shigoku/plans/done/ai_tool_integration_guide.md
 - docs/shigoku/reports/phase_e2_cto_review.md
 created_at: '2026-05-23'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 ---
 
 # 外部ツール運用マニュアル

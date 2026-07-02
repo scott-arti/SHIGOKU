@@ -8,7 +8,7 @@ related_docs:
 - docs/shigoku/plans/2026-05-15_sgk-2026-0059_a2_b2_implementation_plan.md
 - docs/shigoku/specs/standards/vulnerability_feature_implementation_spec.md
 created_at: '2026-05-19'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 ---
 
 # Work Report: SGK-2026-0220 B-2 SSRF 単体 Tester 実実装

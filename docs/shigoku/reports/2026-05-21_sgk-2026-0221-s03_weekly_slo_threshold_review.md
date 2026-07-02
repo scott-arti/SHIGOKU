@@ -10,7 +10,7 @@ related_docs:
 - docs/shigoku/reports/observability_weekly_review_2026-W21.json
 title: 'Weekly SLO Threshold Review (2026-W21)'
 created_at: '2026-05-21'
-updated_at: '2026-05-21'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 - observability

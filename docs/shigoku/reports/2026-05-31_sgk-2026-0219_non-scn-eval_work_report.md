@@ -10,7 +10,7 @@ related_docs:
 - docs/shigoku/worklogs/sgk-2026-0219_baseline_manifest_20260531_0121.md
 - docs/shigoku/worklogs/2026-05-31_sgk-2026-0219_non-scn-eval_work_log.md
 created_at: '2026-05-31'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 ---
 
 # Work Report: SGK-2026-0219 Step1-7

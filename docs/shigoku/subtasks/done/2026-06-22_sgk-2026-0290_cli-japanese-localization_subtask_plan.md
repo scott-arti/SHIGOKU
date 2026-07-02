@@ -8,7 +8,7 @@ related_docs:
 - docs/shigoku/plans/2026-06-21_sgk-2026-0289_commonization-technical-debt-roadmap_plan.md
 title: CLI日本語化設計計画
 created_at: '2026-06-22'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: src/main.py, src/cli/, src/core/logger.py, user-facing CLI output

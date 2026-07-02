@@ -8,7 +8,7 @@ related_docs:
 - docs/shigoku/reports/2026-06-03_sgk-2026-0254_temporal-state_work_report.md
 title: SGK-2026-0258 継続監視（temporal metadata / benchmark / reason code 安定化）
 created_at: '2026-06-03'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: chain-temporal-followup

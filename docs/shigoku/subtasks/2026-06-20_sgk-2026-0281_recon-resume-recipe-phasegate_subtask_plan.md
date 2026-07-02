@@ -8,7 +8,7 @@ related_docs:
 - docs/shigoku/roadmaps/future_functions1.md
 title: 'Recon運用再設計: Resume・再利用・Recipe/PhaseGate連携計画'
 created_at: '2026-06-20'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: src/recon/, src/core/engine/recipe_loader.py, src/core/engine/phase_gate.py,

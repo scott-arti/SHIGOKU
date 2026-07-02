@@ -196,6 +196,143 @@ from src.core.observability.flaky_quarantine import (
     resolve_flaky_policy_from_settings,
 )
 
+# ---------------------------------------------------------------------------
+# Bug bounty bundle resolution helpers (Phase 1: SGK-2026-0335)
+# ---------------------------------------------------------------------------
+
+
+def _resolve_bundle_by_program(
+    program: str,
+    provider: str = "",
+) -> "LoadedGuardPolicy | GuardLoadError":
+    """Resolve active bundle by program alias.
+
+    Spec layout: workspace/bugbounty/programs/<provider>/<program_alias>/
+    When ``provider`` is not given, search all provider directories.
+    """
+    from pathlib import Path
+    from src.core.security.compiled_guard_loader import (
+        GuardLoadError,
+        load_active_policy_from_bundle_dir,
+    )
+
+    base = Path("workspace/bugbounty/programs")
+    if not base.exists():
+        return GuardLoadError(
+            reason_code="active_bundle_missing",
+            message=f"Bug bounty programs base directory not found: {base}",
+            details={"base_dir": str(base), "program": program},
+        )
+
+    candidates: list[Path] = []
+    if provider:
+        candidate = base / provider / program
+        if candidate.is_dir():
+            candidates.append(candidate)
+    else:
+        # Search all provider directories
+        try:
+            for provider_dir in sorted(base.iterdir()):
+                if not provider_dir.is_dir():
+                    continue
+                candidate = provider_dir / program
+                if candidate.is_dir():
+                    candidates.append(candidate)
+        except OSError:
+            pass
+
+    if not candidates:
+        return GuardLoadError(
+            reason_code="active_bundle_missing",
+            message=f"No bundle directory found for program '{program}' (provider={provider or 'any'})",
+            details={"base_dir": str(base), "program": program, "provider": provider},
+        )
+
+    # Use the first match
+    bundle_dir = candidates[0]
+    return load_active_policy_from_bundle_dir(
+        bundle_dir=str(bundle_dir),
+        expected_program=None,  # Directory was found by program name, skip alias check
+    )
+
+
+def _resolve_bundle_by_id(
+    bundle_id: str,
+    provider: str = "",
+) -> "LoadedGuardPolicy | GuardLoadError":
+    """Resolve active bundle by bundle_id.
+
+    Per spec §13.8, the canonical layout is:
+      workspace/bugbounty/programs/<provider>/<program_alias>/
+        active_bundle.json          # references the active compiled policy
+        compiled_guard_policy.yaml  # the compiled policy itself
+        bundles/<bundle_id>/        # immutable snapshot
+
+    This function searches all program directories for an ``active_bundle.json``
+    whose ``bundle_id`` field matches, then loads from that program root.
+    """
+    from pathlib import Path
+    from src.core.security.compiled_guard_loader import (
+        GuardLoadError,
+        load_active_policy_from_bundle_dir,
+    )
+
+    base = Path("workspace/bugbounty/programs")
+    if not base.exists():
+        return GuardLoadError(
+            reason_code="active_bundle_missing",
+            message=f"Bug bounty programs base directory not found: {base}",
+            details={"base_dir": str(base), "bundle_id": bundle_id},
+        )
+
+    # Search all programs for the active_bundle.json that references this bundle_id
+    matches: list[tuple[Path, str]] = []  # (program_dir, program_alias)
+    search_providers = [provider] if provider else []
+    if not search_providers:
+        try:
+            search_providers = [
+                d.name for d in sorted(base.iterdir()) if d.is_dir()
+            ]
+        except OSError:
+            search_providers = []
+
+    for prov in search_providers:
+        prov_dir = base / prov
+        if not prov_dir.is_dir():
+            continue
+        try:
+            for prog_dir in sorted(prov_dir.iterdir()):
+                if not prog_dir.is_dir():
+                    continue
+                active_json = prog_dir / "active_bundle.json"
+                if not active_json.is_file():
+                    continue
+                try:
+                    import json
+                    data = json.loads(active_json.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                if data.get("bundle_id") == bundle_id:
+                    matches.append((prog_dir, prog_dir.name))
+        except OSError:
+            continue
+
+    if not matches:
+        return GuardLoadError(
+            reason_code="active_bundle_missing",
+            message=f"No active_bundle.json found with bundle_id '{bundle_id}'",
+            details={"base_dir": str(base), "bundle_id": bundle_id, "provider": provider},
+        )
+
+    # Load from the first matching program root
+    prog_dir, program_alias = matches[0]
+    return load_active_policy_from_bundle_dir(
+        bundle_dir=str(prog_dir),
+        expected_program=None,  # Matched by bundle_id, skip alias check
+    )
+
+
+
 class MasterConductor:
     """
     動的リプラン司令塔
@@ -218,6 +355,7 @@ class MasterConductor:
         session_manager = None,  # SessionManager for persistence
         auto_checkpoint: bool = True,  # 自動チェックポイント有効化
         project_manager = None,  # ProjectManager for data persistence
+        import_recon_dir = None,  # P2b: imported recon directory
     ):
         self.graph = graph or KnowledgeGraph()
         self.pam = pam
@@ -399,6 +537,10 @@ class MasterConductor:
 
         # PhaseGate: フェーズベースのタスク生成制御
         self.phase_gate = get_phase_gate()
+
+        # P2b: Imported recon bundle (loaded lazily when import_recon_dir is provided)
+        self._import_recon_dir = import_recon_dir
+        self._import_recon_bundle = None  # Lazy: loaded on first access or during recon merge
 
         # 5.1 Notification Tool
         from src.tools.custom.notify import NotifyTool
@@ -926,6 +1068,13 @@ class MasterConductor:
             await service.stop()
         except Exception as e:
             logger.error(f"Failed to stop NotificationService: {e}")
+
+        # 0.25 Clear shared guard context (Phase 2: SGK-2026-0335)
+        try:
+            from src.core.security.guard_enforcement import clear_shared_guard_context
+            clear_shared_guard_context()
+        except Exception as e:
+            logger.error(f"Failed to clear shared guard context: {e}")
 
         # 0.3 OOB Listener を停止
         try:
@@ -4923,29 +5072,29 @@ class MasterConductor:
             matched = [str(matched)]
 
         scenario_titles = {
-            7: "Token Trust Boundary",
-            8: "Out-of-Band External Channel",
-            9: "Multi-step State Machine",
-            10: "Semantic Business Logic",
-            11: "Multi-Vector Chain",
-            12: "Advanced SSRF Internal Topology",
+            7: "トークン信頼境界",
+            8: "帯域外の外部チャネル",
+            9: "多段ステートマシン",
+            10: "セマンティックなビジネスロジック",
+            11: "マルチベクターチェーン",
+            12: "高度な SSRF 内部トポロジ",
         }
-        suspected = scenario_titles.get(number, "Manual Review Scenario")
+        suspected = scenario_titles.get(number, "手動レビューシナリオ")
         route = str(decision.get("route", "shigoku_only") or "shigoku_only")
         confidence = str(decision.get("confidence", 0.0))
         reason_text = " | ".join(str(x) for x in reasons[:4]) if reasons else "-"
         matched_text = " | ".join(str(x) for x in matched[:6]) if matched else "-"
 
         message_lines = [
-            f"🔔 SCN{number:02d} Manual Validation Candidate",
-            f"- Scenario: {suspected} ({scenario_id})",
-            f"- Target(s): {target_summary}",
-            f"- Task: {str(getattr(task, 'name', '') or '-')}",
-            f"- Route/Gate: {route} / {str(gate_mode or 'observe')}",
-            f"- Confidence: {confidence}",
-            f"- Suspected Signals: {matched_text}",
-            f"- Why Flagged: {reason_text}",
-            "- Required Action: Manually validate this scenario and record outcome (verified / not reproducible / needs more evidence).",
+            f"🔔 SCN{number:02d} 手動検証候補",
+            f"- シナリオ: {suspected} ({scenario_id})",
+            f"- 対象: {target_summary}",
+            f"- タスク: {str(getattr(task, 'name', '') or '-')}",
+            f"- ルート/ゲート: {route} / {str(gate_mode or 'observe')}",
+            f"- 信頼度: {confidence}",
+            f"- 検知シグナル: {matched_text}",
+            f"- 判定理由: {reason_text}",
+            "- 必要な対応: このシナリオを手動で検証し、結果を記録してください（verified / not reproducible / needs more evidence）。",
         ]
         message = "\n".join(message_lines)
 
@@ -7213,15 +7362,44 @@ class MasterConductor:
         """
         脆弱性の種類に応じて、Post-Exploitタスクを生成・割り込みさせる
         """
-        # 交戦規定チェック (BBモードでの暴走防止)
+        # ---- Shared evaluator check (Phase 2: SGK-2026-0335) ----
+        current_mode = (self.mode or "").lower()
+        if current_mode == "bugbounty":
+            from src.core.security.guard_enforcement import (
+                EnforcementStage,
+                evaluate_at_layer,
+                resolve_enforcement_stage,
+                resolve_policy_from_context,
+            )
+            from src.core.security.compiled_guard_models import GuardInput
+
+            policy = resolve_policy_from_context(self.context.target_info)
+            stage = resolve_enforcement_stage(context=self.context.target_info)
+
+            gi = GuardInput(
+                bundle_id=policy.bundle_id if policy else "",
+                policy_id=policy.policy_id if policy else "",
+                target=finding.target_url or "",
+                phase="post_exploit",
+                enforcement_layer="mc",
+            )
+            # Always evaluate — shadow mode logs, fail-closed on missing policy
+            decision = evaluate_at_layer(policy=policy, guard_input=gi, layer="mc", stage=stage)
+            if decision.decision == "block":
+                logger.info(
+                    "Post-Exploit blocked by compiled guard (reason=%s).", decision.reason_code,
+                )
+                return
+
+        # ---- Legacy fallback (non-bugbounty, or mc_only with no bundle) ----
         from src.core.security.ethics_guard import get_ethics_guard
         guard = get_ethics_guard()
         if guard.scope:
             allow_pe = guard.scope.allow_post_exploit
         else:
             allow_pe = getattr(settings, "allow_post_exploit", False)
-            
-        if self.mode.lower() == "bugbounty" and not allow_pe:
+
+        if current_mode == "bugbounty" and not allow_pe:
             logger.info("Post-Exploit skipped due to RoE config (mode=%s).", self.mode)
             return
 
@@ -8132,6 +8310,27 @@ class MasterConductor:
         if in_scope_domains:
             target_info_update["in_scope_domains"] = in_scope_domains
 
+        # ---- Bug Bounty bundle preflight (Phase 1: SGK-2026-0335) ----------
+        current_mode = self.context.target_info.get(
+            "mode",
+            getattr(self, "mode", "").lower() if getattr(self, "mode", None) else "bugbounty",
+        ).lower()
+        if current_mode == "bugbounty":
+            bundle_result = self._try_resolve_bugbounty_bundle()
+            if isinstance(bundle_result, dict) and bundle_result.get("_preflight_failed"):
+                # Fail-closed: bundle resolution failed
+                return bundle_result
+            # Store successfully resolved bundle in context
+            target_info_update.update(bundle_result)
+            target_info_update["scope_source"] = "compiled_guard_policy"
+        else:
+            # Non-bugbounty mode: clear any stale shared guard context
+            try:
+                from src.core.security.guard_enforcement import clear_shared_guard_context
+                clear_shared_guard_context()
+            except Exception:
+                pass
+
         return {
             "success": True,
             "task_id": task.id,
@@ -8146,6 +8345,99 @@ class MasterConductor:
             "context": {"target_info": target_info_update},
             "findings": [],
         }
+
+    def _try_resolve_bugbounty_bundle(self) -> dict[str, Any]:
+        """Resolve active bug bounty bundle and return context dict.
+
+        Called during preflight for bug bounty mode.  Reads ``bundle_dir``,
+        ``program``, or ``bundle_id`` from ``context.target_info`` and loads
+        the compiled guard policy.
+
+        Returns:
+            - Dict with ``_preflight_failed=True`` if bundle resolution
+              failed or no bundle is configured (fail-closed).
+            - Dict with ``bundle_id``, ``policy_id``, ``compiled_policy_hash``,
+              ``compiled_guard_policy_path`` on success.
+        """
+        bundle_dir = self.context.target_info.get("bundle_dir", "")
+        program = self.context.target_info.get("program", "")
+        bundle_id = self.context.target_info.get("bundle_id", "")
+        provider = self.context.target_info.get("provider", "")
+
+        from src.core.security.compiled_guard_loader import (
+            GuardLoadError,
+            load_active_policy_from_bundle_dir,
+        )
+
+        resolved: object = GuardLoadError(
+            reason_code="active_bundle_missing",
+            message="Bug bounty mode requires a program bundle. Set --program, --bundle-id, or --bundle-dir.",
+        )
+
+        if bundle_dir:
+            resolved = load_active_policy_from_bundle_dir(
+                bundle_dir=bundle_dir,
+                expected_program=program or None,
+            )
+        elif bundle_id:
+            # Direct bundle-id resolution: finds the program whose
+            # active_bundle.json references this bundle_id, then loads
+            # from that program root per spec §13.8.
+            resolved = _resolve_bundle_by_id(bundle_id, provider=provider)
+        elif program:
+            # Resolve via program alias + provider.
+            # Spec layout: workspace/bugbounty/programs/<provider>/<program_alias>/
+            resolved = _resolve_bundle_by_program(program, provider=provider)
+        # else: no bundle configured — resolved stays as GuardLoadError
+
+        if isinstance(resolved, GuardLoadError):
+            logger.error(
+                "Bug bounty bundle preflight FAILED: reason=%s message=%s",
+                resolved.reason_code, resolved.message,
+            )
+            # Clear shared guard context on preflight failure (Phase 2: SGK-2026-0335)
+            try:
+                from src.core.security.guard_enforcement import clear_shared_guard_context
+                clear_shared_guard_context()
+            except Exception:
+                pass
+            return {
+                "_preflight_failed": True,
+                "success": False,
+                "task_id": "",
+                "agent": "scope_parser",
+                "error": f"Bundle preflight failed: {resolved.reason_code} - {resolved.message}",
+                "findings": [],
+            }
+
+        # Success: store bundle context
+        logger.info(
+            "Bug bounty bundle resolved: bundle_id=%s policy_id=%s",
+            resolved.bundle_id, resolved.policy_id,
+        )
+        # Phase 2 (SGK-2026-0335): inject guard context into shared network client
+        # and module-level shared context (for managers/adapters/context-runners)
+        try:
+            from src.core.security.guard_enforcement import (
+                resolve_enforcement_stage,
+                set_shared_guard_context,
+            )
+            stage = resolve_enforcement_stage(context=self.context.target_info)
+            set_shared_guard_context({
+                "policy": resolved,
+                "stage": stage,
+            })
+            logger.debug("Shared guard context updated (stage=%s)", stage.value)
+        except Exception as exc:
+            logger.debug("Failed to set shared guard context: %s", exc)
+
+        return {
+            "bundle_id": resolved.bundle_id,
+            "policy_id": resolved.policy_id,
+            "compiled_policy_hash": resolved.compiled_policy_hash,
+            "compiled_guard_policy_path": resolved.compiled_policy_path,
+            "scope_source": "compiled_guard_policy",
+        }
     
     async def _dispatch(self, task: Task) -> dict:
         """タスクを適切なエージェントにディスパッチ"""
@@ -8154,18 +8446,75 @@ class MasterConductor:
         if task.agent_type == "scope_parser" and getattr(task, "action", "") == "verify_scope":
             return self._dispatch_scope_verification_fast_path(task)
         
-        current_mode = self.context.target_info.get("mode", "bugbounty")
+        current_mode = self.context.target_info.get("mode", "bugbounty").lower()
+
+        # ---- Bug Bounty bundle readiness gate (Phase 1: SGK-2026-0335) ------
+        # Ensure bundle was resolved before any non-verify_scope task runs.
+        # verify_scope fast-path handles its own resolution; this gate covers
+        # recipe / parallel / injected tasks that skip the normal first-step.
+        if current_mode == "bugbounty":
+            if not self.context.target_info.get("bundle_id"):
+                bundle_result = self._try_resolve_bugbounty_bundle()
+                if isinstance(bundle_result, dict) and bundle_result.get("_preflight_failed"):
+                    logger.error(
+                        "Bug bounty bundle preflight FAILED at task %s: %s",
+                        task.id, bundle_result.get("error"),
+                    )
+                    return bundle_result
+                # Store successfully resolved bundle in context for later tasks
+                self.context.target_info.update(bundle_result)
         
         # --- Scope-based Post Exploitation Control ---
+        # Phase 2 (SGK-2026-0335): shared evaluator check first, then legacy fallback
         if task.agent_type in ["post_exploit", "secret_looter", "internal_recon", "pivot_scan"] or getattr(task, "action", "") in ["secret_looting", "internal_recon"]:
+            if current_mode == "bugbounty":
+                from src.core.security.guard_enforcement import (
+                    EnforcementStage,
+                    evaluate_at_layer,
+                    resolve_enforcement_stage,
+                    resolve_policy_from_context,
+                )
+                from src.core.security.compiled_guard_models import GuardInput
+
+                policy = resolve_policy_from_context(self.context.target_info)
+                stage = resolve_enforcement_stage(context=self.context.target_info)
+
+                gi = GuardInput(
+                    bundle_id=policy.bundle_id if policy else "",
+                    policy_id=policy.policy_id if policy else "",
+                    target=task.target or "",
+                    host=getattr(task, "host", "") or "",
+                    phase="post_exploit",
+                    enforcement_layer="mc",
+                )
+                # Always evaluate — shadow mode logs, fail-closed on missing policy
+                decision = evaluate_at_layer(policy=policy, guard_input=gi, layer="mc", stage=stage)
+                if decision.decision == "block":
+                    logger.info(
+                        "Post-exploit task %s blocked by compiled guard (reason=%s).",
+                        task.id, decision.reason_code,
+                    )
+                    return {
+                        "success": True,
+                        "task_id": task.id,
+                        "agent": task.agent_type,
+                        "data": {
+                            "skipped": True,
+                            "reason": f"Post-exploitation denied by compiled policy: {decision.reason_code}",
+                        },
+                        "error": None,
+                        "findings": [],
+                    }
+
+            # Legacy fallback
             from src.core.security.ethics_guard import get_ethics_guard
             guard = get_ethics_guard()
             if guard.scope:
                 allow_pe = guard.scope.allow_post_exploit
             else:
                 allow_pe = getattr(settings, "allow_post_exploit", False)
-            
-            if current_mode.lower() == "bugbounty" and not allow_pe:
+
+            if current_mode == "bugbounty" and not allow_pe:
                 logger.info(f"Skipping post-exploit task {task.id} ({task.agent_type}) due to strict bugbounty scope rules.")
                 return {
                     "success": True, 
@@ -8184,7 +8533,7 @@ class MasterConductor:
             pass
         
         # === Phase 1: フェーズベースフィルタリング (CTFモード限定) ===
-        current_mode = self.context.target_info.get("mode", "bugbounty")
+        current_mode = self.context.target_info.get("mode", "bugbounty").lower()
         
         if current_mode == "ctf":
             from src.core.engine.agent_registry import is_agent_available
@@ -8384,6 +8733,7 @@ class MasterConductor:
                 }
                 
             try:
+                from pathlib import Path
                 from src.recon.pipeline import ReconPipeline
                 
                 target = task.params.get("target", self.context.target_info.get("target"))
@@ -8392,6 +8742,29 @@ class MasterConductor:
 
                 logger.info(f"Dispatching ReconPipeline for target: {target}")
                 
+                # Resume support: restore previous state if resume_state_path is set
+                resume_source = str(self.context.target_info.get("resume_source", "") or "").strip()
+                resume_state_path = str(self.context.target_info.get("resume_state_path", "") or "").strip()
+                resume_state = None
+                if resume_state_path:
+                    try:
+                        from pathlib import Path
+                        from src.recon.pipeline import ReconState
+                        loaded = ReconState.load(Path(resume_state_path))
+                        if loaded and loaded.run_id:
+                            effective_source = resume_source if resume_source in ("resume", "resume_override") else "resume"
+                            loaded.rebind_for_resume(resume_source=effective_source)
+                            resume_state = loaded
+                            logger.info(
+                                "Resume state loaded: run_id=%s diff_base_run_id=%s step=%d completed=%s",
+                                resume_state.run_id,
+                                resume_state.diff_base_run_id,
+                                resume_state.current_step,
+                                resume_state.completed_steps[-1] if resume_state.completed_steps else "none",
+                            )
+                    except Exception as e:
+                        logger.warning("Failed to load resume state from %s: %s", resume_state_path, e)
+                
                 # ReconPipeline 初期化 (MC を渡す)
                 pipeline = ReconPipeline(
                     config=settings.model_dump() if hasattr(settings, "model_dump") else settings.dict(),
@@ -8399,6 +8772,16 @@ class MasterConductor:
                     project_manager=self.project_manager,
                     master_conductor=self
                 )
+                
+                # Apply resume state if loaded
+                if resume_state is not None:
+                    pipeline.state = resume_state
+                    logger.info(
+                        "Applied resume state to pipeline: source=%s run_id=%s completed_steps=%s",
+                        pipeline.state.resume_source,
+                        pipeline.state.run_id,
+                        pipeline.state.completed_steps,
+                    )
                 
                 # 実行
                 # パラメータでステップ指定があれば従う（デフォルトは全ステップ）
@@ -8431,20 +8814,31 @@ class MasterConductor:
                 for tech in state.tech_stack:
                     self.phase_gate.add_tech(Phase.RECON, tech)
                 
-                # 分類結果を保存
-                if state.results:
-                    self.phase_gate.set_classified_files(Phase.RECON, state.results)
+                # 分類結果を保存（import merge 後）
+                merged_results = state.results or {}
+                try:
+                    # P2b: Import 済み Recon 成果物を merge（fresh 優先）
+                    merged_results = self._merge_imported_recon_results(merged_results)
+                except Exception as exc:
+                    logger.warning("Import recon merge failed (continuing with fresh only): %s", exc)
+
+                if merged_results:
+                    self.phase_gate.set_classified_files(Phase.RECON, merged_results)
                     
                     # 成果があれば ATTACK フェーズをアンロック
-                    if any(v.get("count", 0) > 0 for v in state.results.values()):
+                    has_results = any(v.get("count", 0) > 0 for v in merged_results.values())
+                    bundle = self._load_import_recon_bundle()
+                    if has_results:
                         self.phase_gate.unlock(Phase.ATTACK)
                         logger.info("ATTACK phase unlocked due to recon results")
                         
                         # Attack タスクを生成(サブエージェント生成)
-                        attack_tasks = self._create_attack_tasks_from_recon(state.results)
+                        attack_tasks = self._create_attack_tasks_from_recon(merged_results)
                         if attack_tasks:
                             self._add_tasks(attack_tasks, source="recon_result")
                             logger.info(f"Added {len(attack_tasks)} attack tasks to queue")
+                    elif bundle is not None and not bundle.accepted:
+                        logger.warning("ATTACK phase NOT unlocked: all imported artifacts rejected")
                 
                 # Recon実行完了フラグをセット（重複実行防止）
                 self._recon_executed = True
@@ -9351,6 +9745,93 @@ class MasterConductor:
                     priority=60,
                 ))
     
+    def _load_import_recon_bundle(self) -> Optional['ImportedReconBundle']:
+        """Load and cache the imported recon bundle.
+
+        Returns None if import_recon_dir was not provided, the directory
+        is missing, or all artifacts were rejected.
+
+        On first call the bundle is loaded from disk; subsequent calls
+        return the cached result.
+        """
+        if self._import_recon_bundle is not None:
+            return self._import_recon_bundle
+
+        if not self._import_recon_dir:
+            return None
+
+        try:
+            from pathlib import Path
+            from src.core.engine.recon_importer import load_imported_recon_dir
+
+            target = self.context.target_info.get("target", "") if hasattr(self, 'context') else None
+            bundle = load_imported_recon_dir(
+                Path(self._import_recon_dir),
+                target=str(target) if target else None,
+            )
+            self._import_recon_bundle = bundle
+
+            if bundle.accepted:
+                logger.info(
+                    "Imported recon: %d accepted artifacts, %d categories merged",
+                    len(bundle.accepted_artifacts),
+                    len(bundle.normalized_results),
+                )
+                stale_count = len(bundle.stale_artifacts)
+                if stale_count > 0:
+                    logger.warning(
+                        "Imported recon: %d stale artifacts excluded from Attack input",
+                        stale_count,
+                    )
+                rejected_count = len(bundle.rejected_artifacts)
+                if rejected_count > 0:
+                    rejected_reasons = set()
+                    for a in bundle.rejected_artifacts:
+                        rejected_reasons.update(a.reason_codes)
+                    logger.warning(
+                        "Imported recon: %d rejected artifacts (reasons: %s)",
+                        rejected_count,
+                        ", ".join(sorted(rejected_reasons)),
+                    )
+            else:
+                logger.warning(
+                    "Imported recon: all artifacts rejected for %s — Attack will not be unlocked from imports",
+                    target,
+                )
+
+            return bundle
+
+        except Exception as exc:
+            logger.error("Failed to load import recon dir %s: %s", self._import_recon_dir, exc)
+            return None
+
+    def _merge_imported_recon_results(self, fresh_results: dict) -> dict:
+        """Merge imported recon results into fresh results.
+
+        Fresh results always take precedence over imported for the same category.
+        Imported categories not present in fresh are added with provenance annotation.
+        """
+        bundle = self._load_import_recon_bundle()
+        if bundle is None or not bundle.accepted:
+            return fresh_results
+
+        merged = dict(fresh_results) if fresh_results else {}
+
+        for category, data in bundle.normalized_results.items():
+            if category not in merged:
+                # Add imported category not present in fresh
+                imported_data = dict(data) if isinstance(data, dict) else {"count": 0, "file": ""}
+                imported_data.setdefault("_source", "imported")
+                imported_data.setdefault("_import_provenance", {"import_dir": str(bundle.import_dir), "import_time": bundle.import_timestamp})
+                merged[category] = imported_data
+                logger.debug("Imported recon category '%s' added (not in fresh)", category)
+            else:
+                # Fresh exists — keep fresh, annotate with imported provenance
+                merged[category].setdefault("_import_provenance", {"import_dir": str(bundle.import_dir), "import_time": bundle.import_timestamp})
+                logger.debug("Imported recon category '%s' superseded by fresh results", category)
+
+        return merged
+
     def _create_attack_tasks_from_recon(self, recon_results: dict[str, dict]) -> list[Task]:
         """
         Recon 結果から Attack タスクを生成
@@ -9410,6 +9891,28 @@ class MasterConductor:
                     "Skipping non-actionable recon category '%s' (count=%d)",
                     normalized_category,
                     count,
+                )
+                continue
+
+            # P2b: カテゴリ単位の PhaseGate 判定
+            has_auth_credentials = bool(
+                self.context.target_info.get("cookies")
+                or self.context.target_info.get("bearer_token")
+                or self.context.target_info.get("auth_headers")
+            )
+            import_prov = data.get("_import_provenance", {}) if isinstance(data, dict) else {}
+            gate_metadata = {
+                "auth_required": bool(import_prov.get("auth_required", False)),
+                "has_auth_credentials": has_auth_credentials,
+                "import_provenance": import_prov,
+                "critical_findings": list(self.phase_gate.get_phase_data(Phase.ATTACK).critical_findings),
+            }
+            can_attack, gate_reason = self.phase_gate.can_create_attack_task(
+                normalized_category, gate_metadata
+            )
+            if not can_attack:
+                logger.warning(
+                    "Gate rejected category '%s': %s", normalized_category, gate_reason
                 )
                 continue
 

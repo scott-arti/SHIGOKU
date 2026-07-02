@@ -9,7 +9,7 @@ related_docs:
   - docs/shigoku/specs/xss_specialist.md
   - docs/shigoku/specs/xss_workflow_improvement.md
 created_at: '2026-05-24'
-updated_at: '2026-06-24'
+updated_at: '2026-07-02'
 ---
 
 # XSS Hunter強化計画: DalFox統合と検出精度向上
@@ -1142,5 +1142,5 @@ Week 1        Week 2        Week 3        Week 4
 ## 10. 親タスク整合メモ（SGK-2026-0231）
 
 - 親タスク `SGK-2026-0231` は `done` で、`SGK-2026-0244` は親配下の拡張計画として本更新で `done` 化。
-- `SGK-2026-0244-S01`（未実装項目完了計画）も `active` のため、親子整合上は「0244未クローズ」が正。
-- `SGK-2026-0244-S01` の残項目は独立サブタスクとして継続管理する。
+- `SGK-2026-0244-S01` は 2026-06-30 付けで `done` 化し、SmartXSSHunter の BrowserPool 主経路統合と Stored XSS placeholder 解消の closeout を反映した。
+- Stored XSS 側は `xss_detector.py` 強化ではなく、`stored_xss_detector.py` への責務集約と `SGK-2026-0285` による placeholder 削除で収束した。

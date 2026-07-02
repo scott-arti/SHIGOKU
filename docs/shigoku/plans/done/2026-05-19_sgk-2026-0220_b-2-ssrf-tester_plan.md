@@ -8,7 +8,7 @@ related_docs:
 - docs/shigoku/specs/standards/vulnerability_feature_implementation_spec.md
 title: 'B-2: SSRF 単体 Tester 実実装'
 created_at: '2026-05-19'
-updated_at: '2026-06-24'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: src/core/attack/ssrf_tester.py, src/core/agents/swarm/injection/smart_ssrf.py,

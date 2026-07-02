@@ -8,7 +8,7 @@ related_docs:
   - docs/shigoku/reports/2026-06-03_sgk-2026-0255_degrade-runbook_work_report.md
 title: SGK-2026-0255 degrade 設計と運用 Runbook 作業ログ
 created_at: '2026-06-03'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 ---
 
 # SGK-2026-0255 degrade 設計と運用 Runbook 作業ログ

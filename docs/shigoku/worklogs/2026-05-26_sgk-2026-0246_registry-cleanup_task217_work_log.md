@@ -9,7 +9,7 @@ related_docs:
   - docs/shigoku/registry/task_ledger.md
   - docs/shigoku/registry/task_ledger.csv
 created_at: '2026-05-26'
-updated_at: '2026-05-26'
+updated_at: '2026-07-02'
 ---
 
 # SGK-2026-0246 作業ログ（不要タスク整理: task_217_missing_file）

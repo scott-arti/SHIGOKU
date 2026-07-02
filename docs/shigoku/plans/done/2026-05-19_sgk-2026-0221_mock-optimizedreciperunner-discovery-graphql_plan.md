@@ -13,7 +13,7 @@ related_docs:
 - docs/shigoku/subtasks/2026-05-31_sgk-2026-0250_graphql-slo_subtask_plan.md
 title: 'Mock除去優先: OptimizedRecipeRunner と Discovery GraphQL 本実装接続'
 created_at: '2026-05-19'
-updated_at: '2026-06-24'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: src/core/engine/optimized_runner.py, src/core/agents/swarm/discovery/graphql.py

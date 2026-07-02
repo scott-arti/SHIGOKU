@@ -88,9 +88,12 @@ class ParallelTasks:
             タスク結果
         """
         logger.info("Full Port Scan started: %d hosts", len(live_subs))
+        task_name = "full_port_scan"
         
         if not live_subs:
             logger.warning("No live subdomains for Full Port Scan")
+            if state and hasattr(state, "update_parallel_task_progress"):
+                state.update_parallel_task_progress(task_name, "skipped", resume_reason="no_live_subs")
             return {"status": "skipped", "reason": "no_live_subs"}
         
         # 入力ファイル作成
@@ -116,6 +119,8 @@ class ParallelTasks:
                 "naabu not found. Skipping Full Port Scan. "
                 "If you are using Docker, please ensure naabu is installed in the container."
             )
+            if state and hasattr(state, "update_parallel_task_progress"):
+                state.update_parallel_task_progress(task_name, "skipped", resume_reason="tool_not_found")
             return {"status": "skipped", "reason": "tool_not_found", "tool": "naabu"}
 
         cmd = [
@@ -150,11 +155,15 @@ class ParallelTasks:
         
         except OSError as e:
             logger.error("Full Port Scan failed: %s", e)
+            if state and hasattr(state, "update_parallel_task_progress"):
+                state.update_parallel_task_progress(task_name, "failed", error_summary=str(e))
             return {"status": "error", "error": str(e)}
-        
+
         # 結果パース
         if not output_file.exists():
             logger.warning("Full Port Scan output file not found")
+            if state and hasattr(state, "update_parallel_task_progress"):
+                state.update_parallel_task_progress(task_name, "completed", resume_reason="no_output_file")
             return {"status": "no_results"}
         
         ports_found = output_file.read_text().strip().split("\n") if output_file.stat().st_size > 0 else []
@@ -195,6 +204,20 @@ class ParallelTasks:
             except Exception as e:
                 logger.error("Failed to register task to MC: %s", e)
         
+        # Checkpoint: record completed with artifact refs
+        if state and hasattr(state, "update_parallel_task_progress"):
+            artifact_refs = []
+            if output_file.exists():
+                artifact_refs.append({
+                    "path": str(output_file),
+                    "kind": "output",
+                    "size": output_file.stat().st_size,
+                    "mtime": output_file.stat().st_mtime,
+                })
+            state.update_parallel_task_progress(
+                task_name, "completed", artifact_refs=artifact_refs,
+            )
+        
         return {
             "status": "completed",
             "ports_count": len(ports_found),
@@ -205,6 +228,7 @@ class ParallelTasks:
         self,
         live_subs: list[str],
         workspace: Path,
+        state: Any = None,
     ) -> dict[str, Any]:
         """Visual Recon タスク
         
@@ -213,14 +237,18 @@ class ParallelTasks:
         Args:
             live_subs: ライブサブドメインのリスト
             workspace: ワークスペースディレクトリ
+            state: ReconState インスタンス (optional, for checkpoint)
         
         Returns:
             タスク結果
         """
         logger.info("Visual Recon started: %d hosts", len(live_subs))
+        task_name = "visual_recon"
         
         if not live_subs:
             logger.warning("No live subdomains for Visual Recon")
+            if state and hasattr(state, "update_parallel_task_progress"):
+                state.update_parallel_task_progress(task_name, "skipped", resume_reason="no_live_subs")
             return {"status": "skipped", "reason": "no_live_subs"}
         
         # 入力ファイル作成
@@ -239,6 +267,8 @@ class ParallelTasks:
                 "gowitness not found. Skipping Visual Recon. "
                 "If you are using Docker, please ensure gowitness is installed in the container."
             )
+            if state and hasattr(state, "update_parallel_task_progress"):
+                state.update_parallel_task_progress(task_name, "skipped", resume_reason="tool_not_found")
             return {"status": "skipped", "reason": "tool_not_found", "tool": "gowitness"}
 
         cmd = [
@@ -267,10 +297,14 @@ class ParallelTasks:
             logger.warning("Visual Recon timed out")
             proc.kill()
             await proc.wait()
+            if state and hasattr(state, "update_parallel_task_progress"):
+                state.update_parallel_task_progress(task_name, "failed", error_summary="timeout")
             return {"status": "timeout"}
         
         except OSError as e:
             logger.error("Visual Recon failed: %s", e)
+            if state and hasattr(state, "update_parallel_task_progress"):
+                state.update_parallel_task_progress(task_name, "failed", error_summary=str(e))
             return {"status": "error", "error": str(e)}
         
         # スクリーンショット数をカウント
@@ -289,6 +323,17 @@ class ParallelTasks:
         except Exception as e:
             logger.warning("Failed to send notification: %s", e)
 
+        # Checkpoint: record completed with artifact refs
+        if state and hasattr(state, "update_parallel_task_progress"):
+            artifact_refs = [{
+                "path": str(screenshots_dir),
+                "kind": "screenshots_dir",
+                "size": 0,
+                "mtime": screenshots_dir.stat().st_mtime if screenshots_dir.exists() else 0,
+            }]
+            state.update_parallel_task_progress(
+                task_name, "completed", artifact_refs=artifact_refs,
+            )
         
         return {
             "status": "completed",
@@ -318,14 +363,19 @@ class ParallelTasks:
             タスク結果
         """
         logger.info("Permutation Scan started")
+        task_name = "permutation_scan"
         
         # 無限ループ防止ガード
         if state.permutation_executed:
             logger.warning("Permutation already executed. Skipping.")
+            if state and hasattr(state, "update_parallel_task_progress"):
+                state.update_parallel_task_progress(task_name, "skipped", resume_reason="already_executed")
             return {"status": "skipped", "reason": "already_executed"}
         
         if not all_subs:
             logger.warning("No subdomains for Permutation Scan")
+            if state and hasattr(state, "update_parallel_task_progress"):
+                state.update_parallel_task_progress(task_name, "skipped", resume_reason="no_subdomains")
             return {"status": "skipped", "reason": "no_subdomains"}
         
         # Step 1: LLM による候補生成
@@ -368,6 +418,8 @@ class ParallelTasks:
                 "alterx not found. Skipping Permutation Scan. "
                 "If you are using Docker, please ensure alterx is installed in the container."
             )
+            if state and hasattr(state, "update_parallel_task_progress"):
+                state.update_parallel_task_progress(task_name, "skipped", resume_reason="tool_not_found")
             return {"status": "skipped", "reason": "tool_not_found", "tool": "alterx"}
 
         all_subs_file = self._get_path(workspace, state, "all_subdomains", "txt")
@@ -391,6 +443,8 @@ class ParallelTasks:
             await proc.communicate()
         except OSError as e:
             logger.error("alterx failed: %s", e)
+            if state and hasattr(state, "update_parallel_task_progress"):
+                state.update_parallel_task_progress(task_name, "failed", error_summary=str(e))
             return {"status": "error", "error": str(e)}
         
         # Step 3: 候補を統合
@@ -406,6 +460,8 @@ class ParallelTasks:
         
         if not candidates:
             logger.warning("No permutation candidates generated")
+            if state and hasattr(state, "update_parallel_task_progress"):
+                state.update_parallel_task_progress(task_name, "skipped", resume_reason="no_candidates")
             return {"status": "no_candidates"}
         
         permutation_input.write_text("\n".join(sorted(candidates)))
@@ -417,6 +473,8 @@ class ParallelTasks:
                 "shuffledns not found. Skipping DNS resolution in Permutation Scan. "
                 "If you are using Docker, please ensure shuffledns is installed in the container."
             )
+            if state and hasattr(state, "update_parallel_task_progress"):
+                state.update_parallel_task_progress(task_name, "skipped", resume_reason="tool_not_found")
             return {"status": "skipped", "reason": "tool_not_found", "tool": "shuffledns"}
 
         # リゾルバーは簡易的に Google DNS を使用（Phase 5 で動的取得実装）
@@ -458,11 +516,15 @@ class ParallelTasks:
         
         except OSError as e:
             logger.error("shuffledns failed: %s", e)
+            if state and hasattr(state, "update_parallel_task_progress"):
+                state.update_parallel_task_progress(task_name, "failed", error_summary=str(e))
             return {"status": "error", "error": str(e)}
         
         # Step 5: 新サブドメインを抽出
         if not permutation_resolved.exists():
             logger.warning("No permutation results")
+            if state and hasattr(state, "update_parallel_task_progress"):
+                state.update_parallel_task_progress(task_name, "completed", resume_reason="no_results")
             return {"status": "no_results"}
         
         resolved_subs = permutation_resolved.read_text().strip().split("\n") if permutation_resolved.stat().st_size > 0 else []
@@ -507,6 +569,24 @@ class ParallelTasks:
             except Exception as e:
                 logger.error("Failed to register task to MC: %s", e)
         
+        # Checkpoint: record completed with artifact refs
+        if state and hasattr(state, "update_parallel_task_progress"):
+            artifact_refs = []
+            for ref_file, kind in [
+                (new_subs_file, "new_subs"),
+                (permutation_resolved, "resolved"),
+            ]:
+                if ref_file.exists():
+                    artifact_refs.append({
+                        "path": str(ref_file),
+                        "kind": kind,
+                        "size": ref_file.stat().st_size,
+                        "mtime": ref_file.stat().st_mtime,
+                    })
+            state.update_parallel_task_progress(
+                task_name, "completed", artifact_refs=artifact_refs,
+            )
+        
         return {
             "status": "completed",
             "candidates_count": len(candidates),
@@ -537,12 +617,15 @@ class ParallelTasks:
             タスク結果
         """
         logger.info("Dead Subdomain Scan started")
+        task_name = "dead_subdomain_scan"
         
         # Dead サブドメインを抽出
         dead_subs = list(set(all_subs) - set(live_subs))
         
         if not dead_subs:
             logger.info("No dead subdomains to scan")
+            if state and hasattr(state, "update_parallel_task_progress"):
+                state.update_parallel_task_progress(task_name, "skipped", resume_reason="no_dead_subs")
             return {"status": "skipped", "reason": "no_dead_subs"}
         
         # 入力ファイル作成
@@ -565,6 +648,8 @@ class ParallelTasks:
                 "naabu not found. Skipping Dead Subdomain Scan. "
                 "If you are using Docker, please ensure naabu is installed in the container."
             )
+            if state and hasattr(state, "update_parallel_task_progress"):
+                state.update_parallel_task_progress(task_name, "skipped", resume_reason="tool_not_found")
             return {"status": "skipped", "reason": "tool_not_found", "tool": "naabu"}
 
         cmd = [
@@ -598,11 +683,15 @@ class ParallelTasks:
         
         except OSError as e:
             logger.error("Dead Sub Scan failed: %s", e)
+            if state and hasattr(state, "update_parallel_task_progress"):
+                state.update_parallel_task_progress(task_name, "failed", error_summary=str(e))
             return {"status": "error", "error": str(e)}
         
         # 結果パース
         if not output_file.exists():
             logger.warning("Dead Sub Scan output file not found")
+            if state and hasattr(state, "update_parallel_task_progress"):
+                state.update_parallel_task_progress(task_name, "completed", resume_reason="no_output_file")
             return {"status": "no_results"}
         
         alive_count = len(output_file.read_text().strip().split("\n")) if output_file.stat().st_size > 0 else 0
@@ -639,6 +728,19 @@ class ParallelTasks:
             except Exception as e:
                 logger.error("Failed to register task to MC: %s", e)
 
+        # Checkpoint: record completed with artifact refs
+        if state and hasattr(state, "update_parallel_task_progress"):
+            artifact_refs = []
+            if output_file.exists():
+                artifact_refs.append({
+                    "path": str(output_file),
+                    "kind": "output",
+                    "size": output_file.stat().st_size,
+                    "mtime": output_file.stat().st_mtime,
+                })
+            state.update_parallel_task_progress(
+                task_name, "completed", artifact_refs=artifact_refs,
+            )
         
         return {
             "status": "completed",

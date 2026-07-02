@@ -5,7 +5,7 @@ status: active
 parent_task_id: null
 related_docs: []
 created_at: '2026-05-19'
-updated_at: '2026-05-19'
+updated_at: '2026-07-02'
 ---
 
 # ⚙️ SHIGOKU リファレンスガイド
@@ -177,6 +177,11 @@ volumes:
 ---
 
 ## 3. CLI オプション
+
+現行の詳細版コマンド体系は
+[`2026-07-02_sgk-2026-0337_detailed-command-reference.md`](2026-07-02_sgk-2026-0337_detailed-command-reference.md)
+を参照してください。特に `report` / `session` / `validate` / `recon state` 系は
+`shigoku-ops` が正規の入口です。
 
 ### コマンド構文
 

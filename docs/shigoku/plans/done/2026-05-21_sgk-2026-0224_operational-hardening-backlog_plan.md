@@ -11,7 +11,7 @@ related_docs:
 - docs/shigoku/worklogs/2026-05-22_sgk-2026-0224_operational-hardening-backlog_worklog.md
 title: 'Operational Hardening Backlog: Alert/Contract/Auth/Learning/Tenant Isolation'
 created_at: '2026-05-21'
-updated_at: '2026-05-23'
+updated_at: '2026-07-02'
 assignee: TBD
 tags:
 - shigoku

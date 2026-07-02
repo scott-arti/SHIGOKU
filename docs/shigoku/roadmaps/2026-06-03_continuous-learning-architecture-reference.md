@@ -12,7 +12,7 @@ related_docs:
 - docs/shigoku/roadmaps/future_functions.md
 title: '継続学習リファレンス: KG・RAG・MC・Recipe・Recon の理想アーキテクチャ'
 created_at: '2026-06-03'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 - reference

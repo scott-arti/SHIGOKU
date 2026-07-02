@@ -12,7 +12,7 @@ related_docs:
 - docs/shigoku/roadmaps/future_functions.md
 title: '継続学習運用改善: Obsidian/RAG・KG・Recipe連携の再設計'
 created_at: '2026-06-03'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: src/core/rag_module/rag.py, src/core/intelligence/agentic_rag.py, src/core/learning/repository.py,

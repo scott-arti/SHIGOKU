@@ -1,0 +1,10 @@
+schema_version: 1
+provider: hackerone
+program_name: SecretTest
+captured_at_utc: "2026-07-02T00:00:00Z"
+default_timezone: "UTC"
+bundle_id: "h1-secret-2026-07-02T00:00:00Z"
+policy_path: "policy.md"
+scope_sources:
+  - kind: hackerone_csv
+    path: "scope_assets.csv"

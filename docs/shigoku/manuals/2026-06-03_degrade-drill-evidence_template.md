@@ -7,7 +7,7 @@ related_docs:
   - docs/shigoku/subtasks/2026-06-02_sgk-2026-0255_degrade-runbook_subtask_plan.md
   - docs/shigoku/plans/2026-06-01_sgk-2026-0251_task_plan.md
 created_at: '2026-06-03'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 ---
 
 # Degrade Drill 証跡テンプレート

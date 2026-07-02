@@ -7,7 +7,7 @@ related_docs:
 - docs/shigoku/subtasks/2026-05-20_sgk-2026-0221-s03_groupc_regression-observability_subtask_plan.md
 title: 'Weekly Observability SLO Report (2026-05-21)'
 created_at: '2026-05-21'
-updated_at: '2026-05-21'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 - observability

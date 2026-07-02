@@ -5,7 +5,7 @@ status: backlog
 parent_task_id: null
 related_docs: []
 created_at: '2026-05-15'
-updated_at: '2026-06-24'
+updated_at: '2026-07-02'
 ---
 
 # A-2〜B-2 実装計画書

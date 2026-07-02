@@ -9,7 +9,7 @@ related_docs:
 - docs/shigoku/specs/fix_injection_swarm.md
 title: '巨大ファイル分割計画 2/4: InjectionManager 分割'
 created_at: '2026-06-05'
-updated_at: '2026-06-24'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: src/core/agents/swarm/injection/manager.py

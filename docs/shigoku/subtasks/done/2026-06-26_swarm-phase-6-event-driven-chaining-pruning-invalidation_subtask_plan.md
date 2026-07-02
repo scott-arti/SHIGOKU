@@ -8,7 +8,7 @@ related_docs:
 - docs/shigoku/subtasks/2026-06-21_sgk-2026-0287_task-queue-pruning-policy_subtask_plan.md
 title: 'Swarm並列化 Phase 6: Event-Driven Chaining と pruning invalidation 統合'
 created_at: '2026-06-26'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: src/core/infra/event_bus.py, MasterConductor event handlers, TaskPruningPolicy,

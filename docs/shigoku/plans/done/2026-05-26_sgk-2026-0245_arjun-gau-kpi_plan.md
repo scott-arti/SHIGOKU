@@ -9,7 +9,7 @@ related_docs:
 - docs/shigoku/manuals/2026-05-26_arjun-gau-failure-drill_runbook.md
 title: Arjun/GAU 運用KPI・ガバナンス充足化実装計画
 created_at: '2026-05-26'
-updated_at: '2026-06-24'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: external-tool-observability-governance

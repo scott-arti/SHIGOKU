@@ -8,7 +8,7 @@ related_docs:
 - docs/shigoku/specs/2026-05-31_sgk-2026-0219_non-scn-evaluation-spec.md
 - docs/shigoku/worklogs/sgk-2026-0219_baseline_manifest_20260531_0121.md
 created_at: '2026-05-31'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 ---
 
 # Work Log: SGK-2026-0219 Step1-7 Execution

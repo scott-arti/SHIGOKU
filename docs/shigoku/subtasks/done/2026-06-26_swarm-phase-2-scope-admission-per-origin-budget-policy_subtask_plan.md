@@ -13,7 +13,7 @@ related_docs:
 - docs/shigoku/worklogs/2026-06-27_sgk-2026-0311_work_log.md
 title: 'Swarm並列化 Phase 2: scope admission と per-origin budget policy'
 created_at: '2026-06-26'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: src/core/engine/parallel_orchestrator.py, src/core/security/ethics_guard.py,

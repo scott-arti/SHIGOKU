@@ -36,10 +36,10 @@ class DirBruteSpecialist(Specialist):
     name = "DirBruteSpecialist"
     description = "Directory Brute-forcing using ffuf or native fuzzer"
     
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, config: Optional[Dict[str, Any]] = None, mode: str = "bugbounty"):
         super().__init__(config)
         self._executor = get_global_executor()
-        self._ffuf_adapter = FfufAdapter()
+        self._ffuf_adapter = FfufAdapter(mode=mode)
         
         # Native Client Initialization
         proxy_manager = None
@@ -48,7 +48,7 @@ class DirBruteSpecialist(Specialist):
             proxy_manager = get_proxy_manager()
         except ImportError:
             pass
-        self.client = AsyncNetworkClient(proxy_manager=proxy_manager)
+        self.client = AsyncNetworkClient(proxy_manager=proxy_manager, mode=mode)
         self.native_fuzzer = NativeFuzzer(self.client)
         
         # Knowledge Graph Initialization
@@ -207,11 +207,11 @@ class ParamFuzzerSpecialist(DirBruteSpecialist):
     name = "ParamFuzzerSpecialist"
     description = "Hidden Parameter Discovery using Arjun or Native Fuzzer"
     
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
-        super().__init__(config)
+    def __init__(self, config: Optional[Dict[str, Any]] = None, mode: str = "bugbounty"):
+        super().__init__(config, mode=mode)
         from src.core.attack.native_param_fuzzer import NativeParamFuzzer
         
-        self._external_tools = ExternalToolProvider()
+        self._external_tools = ExternalToolProvider(mode=mode)
         self._observability = get_observability()
         # NativeFuzzer requires client (initialized in super)
         self.native = NativeParamFuzzer(self.client)
@@ -371,11 +371,11 @@ class FuzzingSwarm(SwarmManager):
     name = "fuzzing"
     description = "Performs active fuzzing (Directory/File brute-forcing)"
     
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, config: Optional[Dict[str, Any]] = None, mode: str = "bugbounty"):
         super().__init__(config)
         self._all_specialists = [
-            DirBruteSpecialist(config),
-            ParamFuzzerSpecialist(config)
+            DirBruteSpecialist(config, mode=mode),
+            ParamFuzzerSpecialist(config, mode=mode)
         ]
         
     def get_specialists(self, tags: List[str]) -> List[Specialist]:

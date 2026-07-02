@@ -8,7 +8,7 @@ related_docs:
   - docs/shigoku/manuals/2026-05-26_arjun-gau-threshold-recalibration_runbook.md
   - docs/shigoku/manuals/2026-05-26_arjun-gau-failure-drill_runbook.md
 created_at: '2026-05-26'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 ---
 
 # SGK-2026-0245 作業ログ（KPI再校正・演習キックオフ）

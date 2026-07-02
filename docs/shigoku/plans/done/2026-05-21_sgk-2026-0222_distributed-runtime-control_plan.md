@@ -9,7 +9,7 @@ related_docs:
 - docs/shigoku/specs/bug_bounty_enhancements.md
 title: 'SHIGOKU全体: 分散ランタイム制御共通基盤化（QPS/隔離/回復）'
 created_at: '2026-05-21'
-updated_at: '2026-05-26'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 - platform

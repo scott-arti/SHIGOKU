@@ -71,6 +71,11 @@ current_reauth_context: contextvars.ContextVar[Optional[dict[str, Any]]] = conte
     "current_reauth_context", default=None
 )
 
+# Phase 2 (SGK-2026-0335): Shared guard context set by MC after bundle
+# resolution.  All AsyncNetworkClient instances fall back to this when
+# no per-instance guard_context is passed.
+_shared_guard_context: Optional[Dict[str, Any]] = None
+
 class AsyncNetworkClient:
     """
     非同期ネットワーククライアント
@@ -92,12 +97,14 @@ class AsyncNetworkClient:
         user_agent: str = "Shigoku-SwarmBot/1.0",
         mode: str = "bugbounty",  # bugbounty, ctf, vulntest
         cookies: Optional[Dict[str, str]] = None,  # Explicit override
-        event_bus: Optional[Any] = None
+        event_bus: Optional[Any] = None,
+        guard_context: Optional[Dict[str, Any]] = None,  # Phase 2: SGK-2026-0335
     ):
         self.proxy_manager = proxy_manager
         self.default_timeout = default_timeout
         self.user_agent = user_agent
         self.mode = mode
+        self._default_guard_context = guard_context  # explicit only; shared is read at request time
         self.event_bus = event_bus
         
         # Auto-initialize event bus if not provided
@@ -124,6 +131,24 @@ class AsyncNetworkClient:
                 self.proxy_manager = get_proxy_manager()
             except Exception:
                 pass
+
+    def set_default_guard_context(self, ctx: Dict[str, Any]) -> None:
+        """Set default guard context for all requests (Phase 2: SGK-2026-0335).
+
+        Per-request ``guard_context`` overrides individual keys.
+        """
+        self._default_guard_context = dict(ctx) if ctx else None
+
+    @staticmethod
+    def update_shared_guard_context(ctx: Optional[Dict[str, Any]]) -> None:
+        """Update the module-level shared guard context (Phase 2: SGK-2026-0335).
+
+        Called by MC after bundle resolution.  All existing and future
+        AsyncNetworkClient instances automatically pick up the update on
+        their next request.
+        """
+        global _shared_guard_context
+        _shared_guard_context = dict(ctx) if ctx else None
 
     def _is_docker(self) -> bool:
         """Docker環境かどうかを判定（キャッシュ付き）"""
@@ -278,12 +303,19 @@ class AsyncNetworkClient:
         use_cache: bool = True,
         cache_ttl: int = 300,
         auto_waf_bypass: bool = True,
+        guard_context: Optional[Dict[str, Any]] = None,  # Phase 2: SGK-2026-0335
         **kwargs
     ) -> NetworkResponse:
         """
         リクエストを実行（リトライ・プロキシ回転付き）
 
         Note: use_proxy is False by default (Opt-in).
+
+        Args:
+            guard_context: Optional compiled-guard context dict with keys:
+                ``policy`` (LoadedGuardPolicy), ``stage`` (EnforcementStage),
+                ``bundle_id``, ``host``, ``phase``, ``attack_class``,
+                ``source_agent``, ``requested_action``.
 
         Returns:
             NetworkResponse: レスポンスオブジェクト
@@ -294,6 +326,56 @@ class AsyncNetworkClient:
         # ループが変わっていないかチェックするために常に start() を呼ぶ
         # start() 内部で軽量なチェックを行っているためパフォーマンスへの影響は軽微
         await self.start()
+
+        # ---- Compiled guard enforcement (Phase 2: SGK-2026-0335) ----------
+        # Only active in bug bounty mode. Merge: shared (always fresh) ->
+        # explicit instance default -> per-request.  Shared is re-read every
+        # request so that updates/clears propagate.
+        if self.mode.lower() == "bugbounty":
+            active_guard = dict(_shared_guard_context or {})
+            if self._default_guard_context:
+                active_guard.update(self._default_guard_context)
+            if guard_context:
+                active_guard.update(guard_context)
+
+            # Always evaluate — shadow mode logs, fail-closed on missing policy.
+            # evaluate_at_layer() handles: policy=None → fail-closed block,
+            # shadow mode → allow with logging, normal → block/allow.
+            from src.core.security.guard_enforcement import (
+                EnforcementStage,
+                evaluate_at_layer,
+                extract_host_from_target,
+            )
+            from src.core.security.compiled_guard_models import GuardInput
+
+            policy = active_guard.get("policy") if active_guard else None
+            stage = active_guard.get("stage") if active_guard else None
+            if stage is None:
+                stage = EnforcementStage.MC_ONLY
+
+            host = (active_guard.get("host") or extract_host_from_target(url)) if active_guard else extract_host_from_target(url)
+            gi = GuardInput(
+                bundle_id=getattr(policy, "bundle_id", "") if policy else "",
+                policy_id=getattr(policy, "policy_id", "") if policy else "",
+                target=url,
+                host=host,
+                phase=active_guard.get("phase", "") if active_guard else "",
+                attack_class=active_guard.get("attack_class", "") if active_guard else "",
+                requested_action=active_guard.get("requested_action", "http_request") if active_guard else "http_request",
+                proposed_tool=active_guard.get("proposed_tool", "") if active_guard else "",
+                enforcement_layer="network",
+            )
+            decision = evaluate_at_layer(
+                policy=policy,
+                guard_input=gi,
+                layer="network",
+                stage=stage,
+            )
+            if decision.decision == "block":
+                raise NetworkClientError(
+                    f"Request blocked by compiled guard policy: {decision.reason_code} "
+                    f"(policy_id={decision.policy_id})"
+                )
 
         # 0. プロキシ死活監視 (絶対プロキシ主義)
         if use_proxy:

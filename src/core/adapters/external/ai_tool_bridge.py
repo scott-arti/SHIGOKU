@@ -154,73 +154,73 @@ class AIToolBridge(BaseTool):
 # プリセット Bridge インスタンス（簡単な登録用）
 # ============================================================
 
-def create_nuclei_bridge() -> AIToolBridge:
+def create_nuclei_bridge(mode: str = "bugbounty") -> AIToolBridge:
     """Nuclei Bridgeインスタンスを作成"""
     from src.core.adapters.external.nuclei_adapter import NucleiAdapter
     
     return AIToolBridge(
         name="nuclei_scan",
-        adapter=NucleiAdapter(),
+        adapter=NucleiAdapter(mode=mode),
         description="Execute Nuclei vulnerability scanner. Use tags='cve' for CVE scanning, tags='misconfig' for misconfiguration detection. Severity levels: critical, high, medium, low, info.",
         default_timeout=120.0
     )
 
 
-def create_dalfox_bridge() -> AIToolBridge:
+def create_dalfox_bridge(mode: str = "bugbounty") -> AIToolBridge:
     """DalFox Bridgeインスタンスを作成"""
     from src.core.adapters.external.dalfox_adapter import DalFoxAdapter
     
     return AIToolBridge(
         name="dalfox_scan",
-        adapter=DalFoxAdapter(),
+        adapter=DalFoxAdapter(mode=mode),
         description="Execute DalFox XSS scanner. Finds reflected and stored XSS vulnerabilities in web applications.",
         default_timeout=60.0
     )
 
 
-def create_ffuf_bridge() -> AIToolBridge:
+def create_ffuf_bridge(mode: str = "bugbounty") -> AIToolBridge:
     """Ffuf Bridgeインスタンスを作成"""
     from src.core.adapters.external.ffuf_adapter import FfufAdapter
 
     return AIToolBridge(
         name="ffuf_scan",
-        adapter=FfufAdapter(),
+        adapter=FfufAdapter(mode=mode),
         description="Execute Ffuf content discovery scanner. Target URL must contain FUZZ keyword.",
         default_timeout=90.0,
     )
 
 
-def create_nmap_bridge() -> AIToolBridge:
+def create_nmap_bridge(mode: str = "bugbounty") -> AIToolBridge:
     """Nmap Bridgeインスタンスを作成"""
     from src.core.adapters.external.nmap_adapter import NmapAdapter
 
     return AIToolBridge(
         name="nmap_scan",
-        adapter=NmapAdapter(),
+        adapter=NmapAdapter(mode=mode),
         description="Execute Nmap port and service scan against host or URL target.",
         default_timeout=120.0,
     )
 
 
-def create_arjun_bridge() -> AIToolBridge:
+def create_arjun_bridge(mode: str = "bugbounty") -> AIToolBridge:
     """Arjun Bridgeインスタンスを作成"""
     from src.core.adapters.external.arjun_adapter import ArjunAdapter
 
     return AIToolBridge(
         name="arjun_scan",
-        adapter=ArjunAdapter(),
+        adapter=ArjunAdapter(mode=mode),
         description="Execute Arjun parameter discovery scanner for hidden GET/POST parameters.",
         default_timeout=90.0,
     )
 
 
-def create_gau_bridge() -> AIToolBridge:
+def create_gau_bridge(mode: str = "bugbounty") -> AIToolBridge:
     """Gau Bridgeインスタンスを作成"""
     from src.core.adapters.external.gau_adapter import GauAdapter
 
     return AIToolBridge(
         name="gau_scan",
-        adapter=GauAdapter(),
+        adapter=GauAdapter(mode=mode),
         description="Execute Gau URL collection scanner from wayback/otx/commoncrawl/urlscan sources.",
         default_timeout=90.0,
     )
@@ -230,11 +230,12 @@ def create_gau_bridge() -> AIToolBridge:
 # Manager登録ヘルパー
 # ============================================================
 
-def register_external_tools_with_manager(manager: Any) -> None:
+def register_external_tools_with_manager(manager: Any, mode: str = "bugbounty") -> None:
     """新外部ツール統合基盤のツールをManagerに一括登録
     
     Args:
         manager: BaseManagerAgentインスタンス
+        mode: 動作モード (bugbounty/ctf/vulntest)
     """
     bridge_factories = (
         create_nuclei_bridge,
@@ -246,6 +247,6 @@ def register_external_tools_with_manager(manager: Any) -> None:
     )
 
     for factory in bridge_factories:
-        bridge = factory()
+        bridge = factory(mode=mode)
         manager.register_tool(bridge.name, bridge.run, bridge.description)
         logger.info("Registered external tool: %s", bridge.name)

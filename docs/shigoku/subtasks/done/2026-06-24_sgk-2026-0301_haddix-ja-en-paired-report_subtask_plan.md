@@ -8,7 +8,7 @@ related_docs:
 - docs/shigoku/plans/2026-06-08_sgk-2026-0268_haddix-report-payout-readiness-output-improvements_plan.md
 title: '内部挙動可視化 S3: Haddixレポート日本語併記出力'
 created_at: '2026-06-24'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: haddix_formatter Japanese/English paired report

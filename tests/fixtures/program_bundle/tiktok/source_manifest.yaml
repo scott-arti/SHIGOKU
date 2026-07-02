@@ -1,0 +1,12 @@
+schema_version: 1
+provider: hackerone
+program_name: TikTok
+captured_at_utc: "2026-07-01T07:38:38Z"
+default_timezone: "UTC"
+bundle_id: "bbp-hackerone-tiktok-2026-07-01T07:38:38Z-ab12cd34"
+policy_path: "policy.md"
+scope_sources:
+  - kind: hackerone_csv
+    path: "scope_assets.csv"
+raw_source_urls:
+  - "https://hackerone.com/tiktok"

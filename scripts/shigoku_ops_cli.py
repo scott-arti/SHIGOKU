@@ -1207,7 +1207,153 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ops_learn.set_defaults(handler=_run_ops_learn_categories, domain="ops", action="learn-categories")
 
+    recon_parser = top.add_parser("recon", help="Recon pipeline state and diff operations")
+    recon_sub = recon_parser.add_subparsers(dest="action", required=True)
+
+    recon_status = recon_sub.add_parser(
+        "status",
+        help="Show recon checkpoint/resume status for a target.",
+    )
+    recon_status.add_argument(
+        "--state",
+        required=True,
+        help="Path to recon_state.json",
+    )
+    recon_status.add_argument(
+        "--target",
+        help="Target to verify fingerprint match",
+        default="",
+    )
+    recon_status.set_defaults(handler=_run_recon_status, domain="recon", action="status")
+
+    recon_diff = recon_sub.add_parser(
+        "diff",
+        help="Show diff between two recon_state.json snapshots.",
+    )
+    recon_diff.add_argument(
+        "--prev",
+        required=True,
+        help="Path to previous recon_state.json (diff base)",
+    )
+    recon_diff.add_argument(
+        "--current",
+        help="Path to current recon_state.json (default: same as --prev)",
+    )
+    recon_diff.add_argument(
+        "--target",
+        help="Target to verify fingerprint match on prev state",
+        default="",
+    )
+    recon_diff.set_defaults(handler=_run_recon_diff, domain="recon", action="diff")
+
     return parser
+
+
+def _run_recon_status(args: argparse.Namespace) -> int:
+    """Handle 'recon status' subcommand."""
+    from src.recon.pipeline import ReconState, _compute_target_fingerprint as compute_fp
+
+    state_path = Path(args.state)
+    target = str(args.target or "").strip()
+
+    payload: dict[str, Any] = {
+        "state_path": str(state_path),
+        "state_exists": state_path.exists(),
+    }
+
+    if not state_path.exists():
+        payload["can_resume"] = False
+        payload["reason_code"] = "no_state_file"
+        payload["reason_message"] = "State file not found."
+    else:
+        try:
+            state = ReconState.load(state_path)
+            payload["schema_version"] = state.schema_version
+            payload["saved_at"] = state.saved_at
+            payload["run_id"] = state.run_id
+            payload["current_step"] = state.current_step
+            payload["last_completed_step"] = state.last_completed_step
+            payload["completed_steps"] = state.completed_steps
+            payload["target"] = state.target
+            payload["target_fingerprint"] = state.target_fingerprint
+            payload["reason_codes"] = list(state.reason_codes)
+            payload["all_subs_count"] = len(state.all_subs)
+            payload["live_subs_count"] = len(state.live_subs)
+            payload["dead_subs_count"] = len(state.dead_subs)
+            payload["screenshots_count"] = state.screenshots_count
+            payload["tech_stack"] = state.tech_stack
+            payload["resume_source"] = state.resume_source
+            payload["diff_base_run_id"] = state.diff_base_run_id
+            payload["checkpoint_healthy"] = (
+                state.schema_version >= 1
+                and state.saved_at
+                and state.run_id
+                and state.current_step > 0
+            )
+
+            if target:
+                expected_fp = compute_fp(target)
+                payload["target_match"] = state.target_fingerprint == expected_fp
+
+            # Resume assessment
+            verdict = ReconState.validate_for_resume(state_path, target or state.target)
+            payload["can_resume"] = verdict["can_resume"]
+            payload["reason_code"] = verdict["reason_code"]
+            payload["reason_message"] = verdict["reason_message"]
+            payload["next_step"] = verdict["next_step"]
+        except Exception as e:
+            payload["can_resume"] = False
+            payload["reason_code"] = "corrupt_state"
+            payload["reason_message"] = f"Cannot parse state file: {e}"
+
+    _emit_command_payload(args, payload)
+    return 0 if payload.get("can_resume", False) else 3
+
+
+def _run_recon_diff(args: argparse.Namespace) -> int:
+    """Handle 'recon diff' subcommand."""
+    from src.recon.pipeline import ReconState, compute_recon_diff
+
+    prev_path = Path(args.prev)
+    curr_path = Path(args.current) if args.current else prev_path
+    target = str(args.target or "").strip()
+
+    payload: dict[str, Any] = {
+        "prev_path": str(prev_path),
+        "current_path": str(curr_path),
+    }
+
+    if not prev_path.exists():
+        payload["error"] = f"Previous state file not found: {prev_path}"
+        _emit_command_payload(args, payload)
+        return 3
+
+    if not curr_path.exists():
+        payload["error"] = f"Current state file not found: {curr_path}"
+        _emit_command_payload(args, payload)
+        return 3
+
+    try:
+        prev_state = ReconState.load(prev_path)
+        curr_state = ReconState.load(curr_path)
+
+        if target and prev_state.target_fingerprint:
+            from src.recon.pipeline import _compute_target_fingerprint as compute_fp
+            expected_fp = compute_fp(target)
+            if prev_state.target_fingerprint != expected_fp:
+                payload["warning"] = (
+                    f"Previous state target fingerprint mismatch: "
+                    f"prev={prev_state.target_fingerprint[:8]}..., "
+                    f"expected={expected_fp[:8]}..."
+                )
+
+        diff = compute_recon_diff(prev_state, curr_state)
+        payload.update(diff)
+    except Exception as e:
+        payload["error"] = f"Diff computation failed: {e}"
+
+    _emit_command_payload(args, payload)
+    return 0
 
 
 def main() -> int:

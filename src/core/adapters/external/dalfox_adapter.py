@@ -33,13 +33,14 @@ class DalFoxAdapter(BaseExternalAdapter):
                 print(f"XSS Found: {finding['param']} = {finding['payload']}")
     """
     
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, config: Optional[Dict[str, Any]] = None, mode: str = "bugbounty"):
         """初期化
-        
+
         Args:
             config: 設定辞書（オプション）
+            mode: 動作モード (bugbounty/ctf/vulntest)
         """
-        super().__init__("dalfox", config)
+        super().__init__("dalfox", config, mode=mode)
         self.binary_manager = BinaryManager()
         self._binary_path: Optional[Path] = None
     

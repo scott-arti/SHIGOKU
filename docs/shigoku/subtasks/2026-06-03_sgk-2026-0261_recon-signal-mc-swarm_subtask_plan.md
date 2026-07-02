@@ -14,7 +14,7 @@ related_docs:
 - docs/shigoku/roadmaps/future_functions1.md
 title: 'Recon運用フロー改善: 攻撃面分類・Signal正規化・MC/Swarm受け渡し'
 created_at: '2026-06-03'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: src/recon/pipeline.py, src/core/intel/tagging_filter.py, src/core/validation/url_classifier.py,

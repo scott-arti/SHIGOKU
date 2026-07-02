@@ -11,7 +11,7 @@ related_docs:
 - docs/shigoku/roadmaps/future_functions1.md
 title: 'Recipe高度化: 単一セッション高額Auth/JWT/OAuth検出強化'
 created_at: '2026-06-03'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: src/core/engine/recipe_loader.py, src/core/engine/master_conductor.py, recipes/auth,

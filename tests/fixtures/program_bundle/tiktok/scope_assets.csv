@@ -1,0 +1,10 @@
+identifier,asset_type,instruction,eligible_for_bounty,eligible_for_submission,availability_requirement,confidentiality_requirement,integrity_requirement,max_severity
+*.tiktok.com,WILDCARD,All TikTok web applications on *.tiktok.com,true,true,"","","",critical
+developers.tiktok.com,URL,Temporary exclusion - see policy,false,false,"","","",critical
+fbt.tiktok.com,URL,Temporary exclusion - TikTok FBT platform,false,false,"","","",critical
+android-app,TikTok for Android,GOOGLE_PLAY_APP_ID,Android app,false,false,"","","",critical
+ios-app,TikTok for iOS,APPLE_STORE_APP_ID,iOS app,false,false,"","","",critical
+*tiktokv.us,WILDCARD,Explicitly out of scope,false,false,"","","",critical
+*us.tiktokv.com,WILDCARD,Explicitly out of scope,false,false,"","","",critical
+*byteoversea.com,WILDCARD,Out of scope,false,false,"","","",critical
+tiktokcdn.com,WILDCARD,CDN - limited scope,true,true,"","","",medium

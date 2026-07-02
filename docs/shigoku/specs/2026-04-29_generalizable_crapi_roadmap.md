@@ -5,7 +5,7 @@ status: active
 parent_task_id: null
 related_docs: []
 created_at: '2026-04-29'
-updated_at: '2026-05-19'
+updated_at: '2026-07-02'
 ---
 
 # 仕様書: crAPI起点で汎用性を維持する検出強化ロードマップ

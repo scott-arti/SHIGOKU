@@ -10,7 +10,8 @@ from src.core.security.ethics_guard import get_ethics_guard
 @pytest.mark.asyncio
 async def test_dispatch_scope_parser_fast_path_sets_scope_and_context():
     mc = MasterConductor.__new__(MasterConductor)
-    mc.context = SimpleNamespace(target_info={})
+    mc.mode = "CTF"
+    mc.context = SimpleNamespace(target_info={"mode": "ctf"})
 
     task = Task(
         id="task_001",

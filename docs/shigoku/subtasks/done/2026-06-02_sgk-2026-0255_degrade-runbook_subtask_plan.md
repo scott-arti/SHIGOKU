@@ -11,7 +11,7 @@ related_docs:
 - docs/shigoku/worklogs/2026-06-03_sgk-2026-0255_degrade-runbook_work_log.md
 title: 脆弱性チェーン degrade 設計と運用Runbook 整備
 created_at: '2026-06-02'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: chain-operations

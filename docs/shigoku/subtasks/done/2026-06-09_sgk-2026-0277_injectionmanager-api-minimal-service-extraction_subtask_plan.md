@@ -8,7 +8,7 @@ related_docs:
 - docs/shigoku/subtasks/2026-06-09_sgk-2026-0273_api-probe-helper-4_subtask_plan.md
 title: InjectionManager API minimal check service 化による大規模分割
 created_at: '2026-06-09'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: src/core/agents/swarm/injection/manager.py::_run_api_minimal_check

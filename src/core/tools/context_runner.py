@@ -8,7 +8,7 @@ Fingerprinterの結果に基づき、ターゲットの技術スタックに
 """
 
 from dataclasses import dataclass, field
-from typing import Optional, Any
+from typing import Optional, Any, Dict
 import subprocess
 import shlex
 
@@ -99,14 +99,21 @@ class ContextToolRunner:
         self,
         ethics_guard = None,
         proxy_manager = None,
+        guard_context: Optional[Dict[str, Any]] = None,  # Phase 2: SGK-2026-0335
+        mode: str = "bugbounty",
     ):
         """
         Args:
             ethics_guard: EthicsGuard instance for action validation
             proxy_manager: ProxyRotationManager for rotating IPs
+            guard_context: Optional compiled-guard context dict with
+                ``policy`` (LoadedGuardPolicy), ``stage`` (EnforcementStage).
+            mode: 動作モード (bugbounty/ctf/vulntest)。shared guard は bugbounty のみ適用
         """
         self.ethics_guard = ethics_guard
         self.proxy_manager = proxy_manager
+        self.guard_context = guard_context
+        self._mode = mode
         self.execution_history: list[ExecutionResult] = []
     
     def run_tool(
@@ -134,6 +141,39 @@ class ContextToolRunner:
         Returns:
             ExecutionResult
         """
+        # 0. Compiled guard enforcement (Phase 2: SGK-2026-0335)
+        # Always evaluate for bugbounty — shadow mode logs, fail-closed on missing policy.
+        # evaluate_at_layer() handles both: policy=None → block, shadow → allow+log.
+        if self._mode.lower() == "bugbounty":
+            from src.core.security.compiled_guard_models import GuardInput
+            from src.core.security.guard_enforcement import (
+                EnforcementStage,
+                evaluate_at_layer,
+                extract_host_from_target,
+            )
+
+            gc = self._resolve_guard_context()
+            policy = gc.get("policy") if gc else None
+            stage = (gc.get("stage") if gc else None) or EnforcementStage.MC_ONLY
+
+            gi = GuardInput(
+                bundle_id=getattr(policy, "bundle_id", "") if policy else "",
+                policy_id=getattr(policy, "policy_id", "") if policy else "",
+                target=target,
+                host=extract_host_from_target(target),
+                requested_action="external_tool_exec",
+                proposed_tool=tool_name,
+                enforcement_layer="external",
+            )
+            decision = evaluate_at_layer(policy=policy, guard_input=gi, layer="external", stage=stage)
+            if decision.decision == "block":
+                return ExecutionResult(
+                    success=False,
+                    output="",
+                    error=f"Blocked by compiled guard: {decision.reason_code}",
+                    command_used="",
+                )
+
         # 1. EthicsGuard でチェック
         if self.ethics_guard:
             from src.core.security.ethics_guard import ActionType, ActionResult
@@ -243,7 +283,19 @@ class ContextToolRunner:
         
         self.execution_history.append(execution_result)
         return execution_result
-    
+
+    def _resolve_guard_context(self):
+        """Resolve guard context at call time (Phase 2: SGK-2026-0335).
+
+        Priority: per-instance > shared module-level (bugbounty mode only).
+        """
+        if self.guard_context:
+            return self.guard_context
+        if self._mode.lower() != "bugbounty":
+            return None
+        from src.core.security.guard_enforcement import get_shared_guard_context
+        return get_shared_guard_context()
+
     def _generate_optimized_args(self, config: ToolConfig, context: dict) -> str:
         """コンテキストから最適化された引数を生成"""
         args_parts = []

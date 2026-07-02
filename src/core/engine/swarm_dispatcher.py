@@ -866,8 +866,8 @@ class SwarmDispatcher:
         For each URL:
         1. _build_per_url_sub_result(origin_key) checks budget
         2. If rejected/skipped: record PerUrlSubResult immediately, skip dispatch
-        3. If allowed: dispatch to swarm via _dispatch_to_single_swarm,
-           collect findings into PerUrlSubResult
+        3. If allowed: dispatch URL workers concurrently via
+           _dispatch_to_single_swarm, collect findings into PerUrlSubResult
 
         After all URLs: deterministic merge with skip/reject evidence.
 
@@ -876,6 +876,7 @@ class SwarmDispatcher:
             Counts include success, skipped, rejected, failed, total.
         """
         sub_results: List[PerUrlSubResult] = []
+        allowed_sub_results: List[PerUrlSubResult] = []
 
         for url in urls:
             sub_result = self._build_per_url_sub_result(
@@ -883,35 +884,42 @@ class SwarmDispatcher:
                 origin_key=origin_key,
             )
 
-            if sub_result.is_skipped_or_rejected:
-                sub_results.append(sub_result)
+            sub_results.append(sub_result)
+
+            if not sub_result.is_skipped_or_rejected:
+                allowed_sub_results.append(sub_result)
+
+        async def _dispatch_allowed_url(sub_result: PerUrlSubResult) -> Optional[SwarmResult]:
+            return await self._dispatch_to_single_swarm(
+                swarm_name=swarm_name,
+                target=sub_result.source_url,
+                task_name=task_name,
+                params=dict(params or {}),
+            )
+
+        dispatch_results = await asyncio.gather(
+            *(_dispatch_allowed_url(sub_result) for sub_result in allowed_sub_results),
+            return_exceptions=True,
+        )
+
+        for sub_result, dispatch_result in zip(allowed_sub_results, dispatch_results):
+            if isinstance(dispatch_result, Exception):
+                sub_result.status = "failed"
+                sub_result.error = str(dispatch_result)
                 continue
 
-            # Budget allowed — dispatch to swarm
-            try:
-                swarm_result = await self._dispatch_to_single_swarm(
-                    swarm_name=swarm_name,
-                    target=url,
-                    task_name=task_name,
-                    params=params or {},
-                )
-                if swarm_result:
-                    sub_result.findings = swarm_result.findings
-                    sub_result.status = swarm_result.status
-                    if swarm_result.status == "failed":
-                        sub_result.error = (
-                            swarm_result.execution_log[0].get("error", "swarm_dispatch_failed")
-                            if swarm_result.execution_log
-                            else "swarm_dispatch_failed"
-                        )
-                else:
-                    sub_result.status = "failed"
-                    sub_result.error = "swarm_result_none"
-            except Exception as e:
+            if dispatch_result:
+                sub_result.findings = dispatch_result.findings
+                sub_result.status = dispatch_result.status
+                if dispatch_result.status == "failed":
+                    sub_result.error = (
+                        dispatch_result.execution_log[0].get("error", "swarm_dispatch_failed")
+                        if dispatch_result.execution_log
+                        else "swarm_dispatch_failed"
+                    )
+            else:
                 sub_result.status = "failed"
-                sub_result.error = str(e)
-
-            sub_results.append(sub_result)
+                sub_result.error = "swarm_result_none"
 
         # Post-join deterministic merge
         return self._merge_per_url_sub_results(sub_results)

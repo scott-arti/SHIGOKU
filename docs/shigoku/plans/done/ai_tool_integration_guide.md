@@ -8,7 +8,7 @@ related_docs:
 - docs/shigoku/reports/phase_e2_cto_review.md
 - docs/shigoku/subtasks/2026-05-23_sgk-2026-0231-s02_ai-integration-and-adapter-expansion.md
 created_at: '2026-05-23'
-updated_at: '2026-05-30'
+updated_at: '2026-07-02'
 ---
 
 # AIツール統合ガイド: 新外部ツール基盤 ↔ AIエージェント接続

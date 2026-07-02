@@ -7,7 +7,7 @@ related_docs:
 - docs/shigoku/specs/TECHNICAL_SPEC_JA.md
 - docs/shigoku/roadmaps/IMPLEMENTATION_ROADMAP.md
 created_at: '2026-05-19'
-updated_at: '2026-05-19'
+updated_at: '2026-07-02'
 ---
 
 # 📖 SHIGOKU ユーザーマニュアル（日本語版）

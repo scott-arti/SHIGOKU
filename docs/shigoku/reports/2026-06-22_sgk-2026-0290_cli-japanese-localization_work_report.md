@@ -8,7 +8,7 @@ related_docs:
   - docs/shigoku/plans/2026-06-05_sgk-2026-0266_cli-entrypoint-split-plan_plan.md
 title: CLI日本語化 作業完了報告書
 created_at: '2026-06-22'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
   - shigoku
   - localization

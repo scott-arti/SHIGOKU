@@ -4,11 +4,11 @@ doc_type: plan
 status: done
 parent_task_id: SGK-2026-0065
 related_docs:
-- docs/shigoku/subtasks/phase1_tasks.md
+- docs/shigoku/subtasks/done/2026-05-19_sgk-2026-0171_phase1_tasks.md
 - docs/shigoku/reports/REPORT_OUTPUTS.md
 - docs/shigoku/worklogs/2026-05-14_log_codex_chat_summary.md
 created_at: '2026-05-14'
-updated_at: '2026-06-24'
+updated_at: '2026-07-02'
 ---
 
 # SSTI Detection Implementation Plan

@@ -12,17 +12,43 @@ class SmartRequest:
     """
     Intelligent HTTP Client wrapper for Brain Agents.
     Features:
+    - Execution safeguard integration (method + payload risk)
     - WAF Detection (403/406 analysis)
     - Diff Analysis (Content comparison)
     - Automatic Retry/Backoff
     """
     
-    def __init__(self, network_client: AsyncNetworkClient, request_guard=None):
+    def __init__(self, network_client: AsyncNetworkClient, request_guard=None,
+                 execution_safeguard=None, guard_context: Optional[Dict[str, Any]] = None):
         self.client = network_client
+        # Preferred: execution_safeguard (ExecutionSafeguardService)
+        self.safeguard = execution_safeguard
+        # Legacy fallback: request_guard (RequestGuard)
         self.guard = request_guard
+        # Phase 2 (SGK-2026-0335): Always pull guard_context from the
+        # underlying network_client at request time (never cache at
+        # construction time — shared updates must propagate).
+        self._explicit_guard_context = guard_context
         self.waf_detected = False
         self.last_response = None
         self.last_status = None
+
+    def _get_guard_context(self) -> Optional[Dict[str, Any]]:
+        """Resolve active guard context at call time.
+
+        Priority: explicit > client default > shared module-level.
+        """
+        if self._explicit_guard_context:
+            return self._explicit_guard_context
+        nc_default = getattr(self.client, "_default_guard_context", None)
+        if nc_default and isinstance(nc_default, dict) and nc_default:
+            return nc_default
+        # Fall back to module-level shared context directly
+        from src.core.infra import network_client as _nc
+        shared = getattr(_nc, "_shared_guard_context", None)
+        if shared and isinstance(shared, dict) and shared:
+            return dict(shared)
+        return None
         
     async def request(
         self, 
@@ -35,9 +61,35 @@ class SmartRequest:
         Returns a dict with 'status', 'headers', 'body', 'diff', 'waf_suspected'.
         """
         source_agent = kwargs.pop("source_agent", "")
+
+        # Extract payload for safeguard evaluation
+        payload = kwargs.get("data") or kwargs.get("json") or None
         
-        # 0. Request Guard Check
-        if self.guard:
+        # 0. Safeguard Check (preferred: ExecutionSafeguardService)
+        if self.safeguard is not None:
+            from src.core.security.execution_safeguard import SafeguardDecision
+            decision: SafeguardDecision = await self.safeguard.evaluate(
+                method=method,
+                url=url,
+                payload=payload,
+                source_agent=source_agent,
+            )
+            if not decision.allowed:
+                logger.warning(
+                    "Request blocked by execution safeguard: method=%s url=%s "
+                    "reason_code=%s matched_rules=%s",
+                    method, url, decision.reason_code, decision.matched_rules,
+                )
+                return {
+                    "status": 0,
+                    "headers": {},
+                    "body": "",
+                    "diff": "",
+                    "waf_suspected": False,
+                    "error": f"Blocked by ExecutionSafeguard: {decision.reason_code}"
+                }
+        elif self.guard is not None:
+            # Legacy path: direct RequestGuard usage (backward compat)
             approved = await self.guard.check(method, url, source_agent=source_agent)
             if not approved:
                 logger.warning(f"Request blocked by guard: {method} {url}")
@@ -63,7 +115,17 @@ class SmartRequest:
             # 1. Automatic Retry for 429
             max_retries = 3
             for attempt in range(max_retries):
-                response = await self.client.request(method, url, **kwargs)
+                # Phase 2 (SGK-2026-0335): pass guard context to network layer
+                request_kwargs = dict(kwargs)
+                gc = self._get_guard_context()
+                if gc:
+                    request_kwargs["guard_context"] = dict(gc)
+                    request_kwargs["guard_context"].setdefault("phase", kwargs.get("phase", ""))
+                    request_kwargs["guard_context"].setdefault("attack_class", kwargs.get("attack_class", ""))
+                    request_kwargs["guard_context"].setdefault("source_agent", source_agent)
+                    request_kwargs["guard_context"].setdefault("requested_action", kwargs.get("requested_action", "http_request"))
+                    request_kwargs["guard_context"].setdefault("proposed_tool", kwargs.get("proposed_tool", ""))
+                response = await self.client.request(method, url, **request_kwargs)
                 
                 if response.status == 429:
                     wait_time = 2 ** (attempt + 1)

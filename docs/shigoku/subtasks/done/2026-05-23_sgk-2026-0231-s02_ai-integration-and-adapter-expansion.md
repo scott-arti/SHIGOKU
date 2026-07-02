@@ -8,7 +8,7 @@ related_docs:
   - docs/shigoku/reports/phase_e2_cto_review.md
   - docs/shigoku/subtasks/2026-05-22_sgk-2026-0231-s01_external-tool-organization_subtask_plan.md
 created_at: '2026-05-23'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 ---
 
 # Phase E-2: 外部ツールAI統合とAdapter拡張計画

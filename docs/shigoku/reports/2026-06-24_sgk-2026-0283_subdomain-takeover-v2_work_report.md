@@ -3,7 +3,7 @@ task_id: SGK-2026-0283
 doc_type: work_report
 parent_task_id: SGK-2026-0278
 created_at: '2026-06-24'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
   - shigoku
   - takeover

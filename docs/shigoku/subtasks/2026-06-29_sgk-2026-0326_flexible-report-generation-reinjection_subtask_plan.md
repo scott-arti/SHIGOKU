@@ -13,7 +13,7 @@ related_docs:
 - scripts/shigoku_ops_cli.py
 title: 'B: 自由形式レポート生成→SHIGOKU再投入'
 created_at: '2026-06-29'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 - reporting

@@ -12,7 +12,7 @@ related_docs:
 - scripts/shigoku_ops_cli.py
 title: 'A: 対話型オペレーション（チャットベース指揮 軽量版）'
 created_at: '2026-06-29'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 - conversational

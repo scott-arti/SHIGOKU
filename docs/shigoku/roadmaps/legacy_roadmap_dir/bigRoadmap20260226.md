@@ -5,7 +5,7 @@ status: active
 parent_task_id: null
 related_docs: []
 created_at: '2026-02-26'
-updated_at: '2026-05-19'
+updated_at: '2026-07-02'
 ---
 
 1. 次に完成させるべきサブエージェント（Bug Bounty優先度順）

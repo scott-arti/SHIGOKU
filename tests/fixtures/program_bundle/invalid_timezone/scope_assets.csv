@@ -1,0 +1,2 @@
+identifier,asset_type,instruction,eligible_for_bounty,eligible_for_submission,availability_requirement,confidentiality_requirement,integrity_requirement,max_severity
+example.com,URL,,true,true,,,,

@@ -13,7 +13,7 @@ related_docs:
 - docs/shigoku/roadmaps/future_functions1.md
 title: 'Recipe運用フロー改善: Recon起点の選抜・実行・Swarm連携'
 created_at: '2026-06-03'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: src/core/engine/master_conductor.py, src/core/engine/recipe_loader.py, src/core/engine/optimized_runner.py,

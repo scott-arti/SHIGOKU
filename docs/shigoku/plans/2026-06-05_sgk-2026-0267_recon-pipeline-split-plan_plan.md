@@ -9,7 +9,7 @@ related_docs:
 - docs/shigoku/specs/dynamic_recon_attack.md
 title: '巨大ファイル分割計画 4/4: ReconPipeline 分割'
 created_at: '2026-06-05'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: src/recon/pipeline.py

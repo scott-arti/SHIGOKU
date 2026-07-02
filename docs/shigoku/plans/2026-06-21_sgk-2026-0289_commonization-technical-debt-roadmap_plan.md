@@ -8,7 +8,7 @@ related_docs:
 - docs/shigoku/plans/2026-06-05_sgk-2026-0265_injection-manager-split-plan_plan.md
 title: SHIGOKU共通化・技術的負債返済ロードマップ
 created_at: '2026-06-21'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: src/core, src/cli, src/recon, src/intelligence

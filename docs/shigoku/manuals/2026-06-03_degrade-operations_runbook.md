@@ -8,7 +8,7 @@ related_docs:
   - docs/shigoku/manuals/2026-06-03_degrade-drill-evidence_template.md
   - docs/shigoku/plans/2026-06-01_sgk-2026-0251_task_plan.md
 created_at: '2026-06-03'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 ---
 
 # 脆弱性チェーン degrade 運用 Runbook

@@ -5,7 +5,7 @@ status: done
 parent_task_id: null
 related_docs: []
 created_at: '2026-01-01'
-updated_at: '2026-05-19'
+updated_at: '2026-07-02'
 ---
 
 2026-01-01 | Feature Implementation | Notification System Integration | projectdiscovery/notify を統合、CLI ラッパー実装

@@ -8,7 +8,7 @@ related_docs:
   - docs/shigoku/reports/2026-06-24_sgk-2026-0283_subdomain-takeover-v2_work_report.md
 title: Takeover v2 継続監視
 created_at: '2026-06-25'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
   - shigoku
   - takeover

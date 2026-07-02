@@ -9,7 +9,7 @@ related_docs:
   - docs/shigoku/learnings.md
 title: 'SGK-2026-0319 作業ログ: learnings の恒久ルール昇格と agent rule 接続'
 created_at: '2026-06-26'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
   - shigoku
 ---

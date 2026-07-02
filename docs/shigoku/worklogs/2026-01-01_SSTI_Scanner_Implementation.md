@@ -5,7 +5,7 @@ status: done
 parent_task_id: null
 related_docs: []
 created_at: '2026-01-01'
-updated_at: '2026-05-19'
+updated_at: '2026-07-02'
 ---
 
 2026-01-01 | Feature Implementation | Implement SSTI Scanner | SSTI 検出機能と PayloadEncoder を新規実装

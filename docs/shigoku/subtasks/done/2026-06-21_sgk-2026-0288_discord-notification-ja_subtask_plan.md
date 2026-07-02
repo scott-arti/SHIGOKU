@@ -9,7 +9,7 @@ related_docs:
 - docs/shigoku/plans/2026-06-24_sgk-2026-0304_active_plan.md
 title: Discord通知日本語化 設計計画
 created_at: '2026-06-21'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: src/core/notifications/notifier.py, src/core/notifications/notification_service.py,

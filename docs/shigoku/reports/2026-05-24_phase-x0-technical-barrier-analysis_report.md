@@ -7,7 +7,7 @@ related_docs:
   - docs/shigoku/plans/2026-05-24_sgk-2026-0244_xss-hunter-enhancement_plan.md
   - docs/shigoku/reports/2026-05-24_phase-d2-detection-engines_report.md
 created_at: '2026-05-24'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 ---
 
 # Phase X-0 技術的障壁分析レポート

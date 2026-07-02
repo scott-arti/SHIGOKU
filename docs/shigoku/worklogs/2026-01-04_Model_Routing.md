@@ -5,7 +5,7 @@ status: done
 parent_task_id: null
 related_docs: []
 created_at: '2026-01-04'
-updated_at: '2026-05-19'
+updated_at: '2026-07-02'
 ---
 
 2026-01-04 | Configuration | Model Routing | `config.py` にモデルルーティング設定を追加 (軽量/高精度)

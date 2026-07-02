@@ -447,7 +447,46 @@ class BaseManagerAgent(SwarmManager):
         """指定されたツールを実行"""
         if name not in self.available_tools:
             raise ValueError(f"Unknown tool: {name}")
-            
+
+        # ---- Compiled guard enforcement (Phase 2: SGK-2026-0335) ----------
+        current_mode = (self.current_context.get("mode", "") or "").lower()
+        if current_mode == "bugbounty":
+            from src.core.security.guard_enforcement import (
+                EnforcementStage,
+                evaluate_at_layer,
+                extract_host_from_target,
+                get_shared_guard_context,
+            )
+            from src.core.security.compiled_guard_models import GuardInput
+
+            guard_ctx = getattr(self, "_guard_context", None)
+            if guard_ctx is None:
+                guard_ctx = get_shared_guard_context()
+
+            policy = guard_ctx.get("policy") if guard_ctx else None
+            stage = (guard_ctx.get("stage") if guard_ctx else None) or EnforcementStage.MC_ONLY
+
+            target = str(args.get("target", args.get("url", "")) or self.current_context.get("target", ""))
+            gi = GuardInput(
+                bundle_id=getattr(policy, "bundle_id", "") if policy else "",
+                policy_id=getattr(policy, "policy_id", "") if policy else "",
+                target=target,
+                host=extract_host_from_target(target),
+                requested_action="external_tool_exec",
+                proposed_tool=name,
+                enforcement_layer="worker",
+            )
+            # Always evaluate — shadow mode logs, fail-closed on missing policy
+            decision = evaluate_at_layer(policy=policy, guard_input=gi, layer="worker", stage=stage)
+            if decision.decision == "block":
+                logger.warning(
+                    "Guard BLOCKED tool=%s at worker layer: reason=%s",
+                    name, decision.reason_code,
+                )
+                raise RuntimeError(
+                    f"Tool execution blocked by compiled guard: {decision.reason_code}"
+                )
+
         func = self.available_tools[name]["func"]
         
         # run_file_upload_check への引数リマップ (params={} で呼ばれた場合のフォールバック)

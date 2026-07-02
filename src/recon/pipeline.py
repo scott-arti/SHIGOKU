@@ -11,7 +11,11 @@ Wildcard Recon フローと並行タスク処理を提供する。
 from __future__ import annotations
 
 import asyncio
+import json as _json
 import logging
+import os
+import tempfile
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -39,6 +43,86 @@ from src.core.adapters.external.takeover_provider_matrix_adapter import (
 logger = logging.getLogger(__name__)
 
 
+# Schema version for recon_state.json. Bump when checkpoint format changes.
+RECON_STATE_SCHEMA_VERSION = 1
+
+# Checkpoint version for parallel task progress entries.
+# Bump when the parallel_task_progress entry format changes.
+PARALLEL_TASK_CHECKPOINT_VERSION = 1
+
+
+def _compute_target_fingerprint(target: str) -> str:
+    """Compute a stable fingerprint for target identity verification.
+    
+    Uses SHA-256 of the normalized target to avoid collision.
+    """
+    normalized = str(target or "").strip().lower()
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
+
+
+def _generate_run_id() -> str:
+    """Generate a unique run identifier."""
+    return uuid.uuid4().hex[:12]
+
+
+# Mapping of user-facing step numbers (1-8) to internal completion markers.
+# Each step has a list of marker *groups*. A group is satisfied if ANY marker in
+# it is present. The step is done only when ALL groups are satisfied.
+#
+# This mapping MUST match the start_step/end_step conditions in run():
+#   step 1: subdomain_discovery (or _skipped)
+#   step 2: historical_discovery (or _skipped)
+#   step 3: live_check + url_discovery (3b runs under start_step<=3)
+#   step 4: waf_detection (runs under start_step<=4)
+#   step 5: port_scan_phase1 + port_scan_phase2 (phase1=start_step<=5, phase2=unguarded)
+#   step 6: classification
+#   step 7: save_to_project
+#   step 8: return_to_mc
+STEP_MARKER_GROUPS: dict[int, list[frozenset[str]]] = {
+    1: [frozenset({"subdomain_discovery", "subdomain_discovery_skipped"})],
+    2: [frozenset({"historical_discovery", "historical_discovery_skipped"})],
+    3: [
+        frozenset({"live_check"}),
+        frozenset({"url_discovery"}),
+    ],
+    4: [frozenset({"waf_detection"})],
+    5: [
+        frozenset({"port_scan_phase1"}),
+        frozenset({"port_scan_phase2"}),
+    ],
+    6: [frozenset({"classification"})],
+    7: [frozenset({"save_to_project"})],
+    8: [frozenset({"return_to_mc"})],
+}
+
+# Legacy compat alias — union of all groups per step
+STEP_GROUPS: dict[int, frozenset[str]] = {
+    k: frozenset.union(*v) for k, v in STEP_MARKER_GROUPS.items()
+}
+
+
+def infer_next_step(completed_steps: list[str]) -> int:
+    """Return the next uncompleted user-facing step (1-8) or 9 if all done.
+    
+    A step is considered completed when ALL its marker groups are satisfied.
+    A group is satisfied when ANY marker in it is present in completed_steps.
+    """
+    completed = set(completed_steps)
+    for step_no in sorted(STEP_MARKER_GROUPS.keys()):
+        groups = STEP_MARKER_GROUPS[step_no]
+        all_satisfied = all(
+            bool(group & completed) for group in groups
+        )
+        if not all_satisfied:
+            return step_no
+    return 9  # all steps done
+
+
+def is_all_steps_completed(completed_steps: list[str]) -> bool:
+    """Return True if all 8 user-facing steps are fully completed."""
+    return infer_next_step(completed_steps) > 8
+
+
 @dataclass
 class ReconState:
     """Recon パイプラインの状態管理
@@ -54,6 +138,12 @@ class ReconState:
     permutation_executed: bool = False
     attack_phase_active: bool = False
     
+    # 並行タスク進捗管理 (P1a: checkpoint/resume 堅牢化)
+    # Key: task_name (e.g. "full_port_scan", "visual_recon", "permutation_scan", "dead_subdomain_scan")
+    # Value: dict with keys: status, started_at, updated_at, completed_at,
+    #        checkpoint_version, artifact_refs, error_summary, resume_reason, attempt_count
+    parallel_task_progress: dict[str, dict[str, Any]] = field(default_factory=dict)
+    
     # 結果キャッシュ
     all_subs: list[str] = field(default_factory=list)
     live_subs: list[str] = field(default_factory=list)
@@ -66,21 +156,237 @@ class ReconState:
     tech_stack: list[str] = field(default_factory=list)  # 検出された技術スタック
     results: dict[str, dict] | None = None  # Step 8 の分類結果
     
+    # Checkpoint contract fields (P0: resume/diff に必要な最小限)
+    schema_version: int = RECON_STATE_SCHEMA_VERSION
+    saved_at: str = ""  # ISO 8601
+    run_id: str = field(default_factory=_generate_run_id)
+    target_fingerprint: str = ""
+    last_completed_step: str = ""
+    resume_source: str = "fresh"  # "fresh" | "resume" | "resume_override"
+    diff_base_run_id: str = ""  # resume 時の前回 run_id
+    reason_codes: list[str] = field(default_factory=list)  # 注目すべきイベント
+    
+    def __post_init__(self) -> None:
+        """Derive target_fingerprint if target is set but fingerprint is blank."""
+        if self.target and not self.target_fingerprint:
+            self.target_fingerprint = _compute_target_fingerprint(self.target)
+        if not self.run_id:
+            self.run_id = _generate_run_id()
+    
     def mark_step_complete(self, step_name: str) -> None:
         """ステップを完了としてマーク"""
         if step_name not in self.completed_steps:
             self.completed_steps.append(step_name)
         self.current_step += 1
+        self.last_completed_step = step_name
         logger.debug("Step completed: %s", step_name)
+    
+    def rebind_for_resume(self, *, resume_source: str = "resume") -> None:
+        """Prepare this state for a resumed run.
+        
+        Preserves the previous run_id as diff_base_run_id and generates
+        a new run_id for the resumed execution.
+        """
+        self.diff_base_run_id = self.run_id or ""
+        self.run_id = _generate_run_id()
+        self.resume_source = resume_source
     
     def is_step_complete(self, step_name: str) -> bool:
         """ステップが完了済みか確認"""
         return step_name in self.completed_steps
     
-    def save(self, path: Path) -> None:
-        """状態をJSONファイルに保存"""
-        import json
-        data = {
+    def update_parallel_task_progress(
+        self,
+        task_name: str,
+        status: str,
+        *,
+        artifact_refs: list[dict[str, Any]] | None = None,
+        error_summary: str = "",
+        resume_reason: str = "",
+    ) -> None:
+        """Update parallel task progress entry with status transition.
+        
+        Records running/completed/failed/skipped/rerun_required status
+        transitions. attempt_count increments on re-run (running after
+        completed/failed). started_at is set on first running only.
+        updated_at is always refreshed.
+        
+        Args:
+            task_name: Task identifier (e.g. "full_port_scan")
+            status: One of running/completed/failed/skipped/rerun_required
+            artifact_refs: List of artifact dicts with path/kind/size/mtime
+            error_summary: Error message for failed status
+            resume_reason: Reason for skipped status
+        """
+        now_utc = datetime.now(timezone.utc).isoformat()
+        entry = self.parallel_task_progress.get(task_name)
+        
+        if entry is None:
+            entry = {
+                "status": "",
+                "started_at": "",
+                "updated_at": "",
+                "completed_at": "",
+                "checkpoint_version": PARALLEL_TASK_CHECKPOINT_VERSION,
+                "artifact_refs": [],
+                "error_summary": "",
+                "resume_reason": "",
+                "attempt_count": 0,
+            }
+            self.parallel_task_progress[task_name] = entry
+        
+        prev_status = entry.get("status", "")
+        entry["status"] = status
+        entry["updated_at"] = now_utc
+        
+        # First running: set started_at and increment attempt
+        if status == "running":
+            if not entry["started_at"]:
+                entry["started_at"] = now_utc
+            # Increment attempt on re-run (running after non-running, or first time)
+            if prev_status != "running":
+                entry["attempt_count"] = entry.get("attempt_count", 0) + 1
+        
+        # Terminal statuses: set completed_at
+        if status in ("completed", "failed", "skipped", "rerun_required"):
+            entry["completed_at"] = now_utc
+        
+        # Merge artifact_refs (normalized list of dicts)
+        if artifact_refs:
+            existing_refs = entry.setdefault("artifact_refs", [])
+            existing_paths = {ref.get("path", "") for ref in existing_refs}
+            for ref in artifact_refs:
+                if not isinstance(ref, dict):
+                    continue
+                normalized = {
+                    "path": str(ref.get("path", "")),
+                    "kind": str(ref.get("kind", "unknown")),
+                    "size": int(ref.get("size", 0)),
+                    "mtime": float(ref.get("mtime", 0.0)),
+                }
+                # Resolve exists from actual filesystem if path is a string
+                norm_path = normalized["path"]
+                if norm_path:
+                    try:
+                        p = Path(norm_path)
+                        normalized["exists"] = p.exists() and (p.is_file() or p.is_dir())
+                        if normalized["exists"] and normalized.get("size", 0) == 0:
+                            normalized["size"] = p.stat().st_size if p.is_file() else 0
+                        if normalized["exists"] and normalized.get("mtime", 0.0) == 0.0:
+                            normalized["mtime"] = p.stat().st_mtime
+                    except OSError:
+                        normalized["exists"] = False
+                else:
+                    normalized["exists"] = ref.get("exists", False)
+                
+                if normalized["path"] not in existing_paths:
+                    existing_refs.append(normalized)
+                    existing_paths.add(normalized["path"])
+                else:
+                    # Same path already recorded: update stale metadata
+                    # to prevent artifact_size_mismatch / artifact_outdated loops
+                    for existing in existing_refs:
+                        if existing.get("path") == normalized["path"]:
+                            existing["size"] = normalized["size"]
+                            existing["mtime"] = normalized["mtime"]
+                            existing["exists"] = normalized["exists"]
+                            existing["kind"] = normalized["kind"]
+                            break
+        
+        if error_summary:
+            entry["error_summary"] = str(error_summary)[:1000]
+        
+        if resume_reason:
+            entry["resume_reason"] = str(resume_reason)[:500]
+    
+    def get_parallel_task_resume_decision(self, task_name: str) -> dict[str, Any]:
+        """Determine whether a parallel task should be skipped or re-run.
+        
+        Checks: status == completed, checkpoint_version matches,
+        artifact files exist and are non-zero, size/mtime are consistent.
+        
+        Returns:
+            Dict with action (skip/run/rerun_required) and reason_codes list.
+        """
+        entry = self.parallel_task_progress.get(task_name)
+        reason_codes: list[str] = []
+        
+        if entry is None:
+            reason_codes.append("no_checkpoint_entry")
+            return {"action": "run", "reason_codes": reason_codes, "resume_reason": ""}
+        
+        status = entry.get("status", "")
+        if status != "completed":
+            reason_codes.append("not_completed")
+            return {"action": "run", "reason_codes": reason_codes, "resume_reason": ""}
+        
+        # Check checkpoint version
+        cp_version = entry.get("checkpoint_version", 0)
+        if cp_version != PARALLEL_TASK_CHECKPOINT_VERSION:
+            reason_codes.append("checkpoint_version_mismatch")
+            return {"action": "rerun_required", "reason_codes": reason_codes, "resume_reason": ""}
+        
+        # Check artifact consistency
+        artifact_refs = entry.get("artifact_refs", [])
+        if not artifact_refs:
+            reason_codes.append("no_artifact_refs")
+            return {"action": "rerun_required", "reason_codes": reason_codes, "resume_reason": ""}
+        
+        for ref in artifact_refs:
+            ref_path = ref.get("path", "")
+            if not ref_path:
+                reason_codes.append("artifact_missing_path")
+                continue
+            
+            p = Path(ref_path)
+            if not p.exists():
+                reason_codes.append("artifact_missing")
+                continue
+            
+            actual_size = p.stat().st_size if p.is_file() else 0
+            if actual_size == 0 and p.is_file():
+                reason_codes.append("artifact_zero_byte")
+                continue
+            
+            recorded_size = ref.get("size", -1)
+            actual_mtime = p.stat().st_mtime
+            recorded_mtime = ref.get("mtime", 0.0)
+            
+            # size mismatch (allow directory of size 0)
+            if p.is_file() and recorded_size >= 0 and actual_size != recorded_size:
+                reason_codes.append("artifact_size_mismatch")
+            
+            # mtime: artifact should not be older than recorded (tolerance: 1 second)
+            if recorded_mtime > 0 and actual_mtime < recorded_mtime - 1:
+                reason_codes.append("artifact_outdated")
+        
+        if reason_codes:
+            return {"action": "rerun_required", "reason_codes": reason_codes, "resume_reason": ""}
+        
+        return {"action": "skip", "reason_codes": reason_codes, "resume_reason": "checkpoint_artifacts_valid"}
+    
+    def _build_serializable_dict(self) -> dict[str, Any]:
+        """Build the serializable dictionary for save."""
+        saved_at = datetime.now(timezone.utc).isoformat()
+        self.saved_at = saved_at
+        
+        # results の概要 (P0: 完全保存は SGK-2026-0322 へ委譲)
+        results_summary: dict[str, Any] | None = None
+        if self.results:
+            results_summary = {
+                "category_count": len(self.results),
+                "categories": sorted(self.results.keys()),
+            }
+        
+        return {
+            "recon_state_schema_version": self.schema_version,
+            "saved_at": saved_at,
+            "run_id": self.run_id,
+            "target_fingerprint": self.target_fingerprint,
+            "last_completed_step": self.last_completed_step,
+            "resume_source": self.resume_source,
+            "diff_base_run_id": self.diff_base_run_id,
+            "reason_codes": list(self.reason_codes),
             "current_step": self.current_step,
             "completed_steps": self.completed_steps,
             "permutation_executed": self.permutation_executed,
@@ -90,18 +396,73 @@ class ReconState:
             "dead_subs": self.dead_subs,
             "target": self.target,
             "project_name": self.project_name,
+            "screenshots_count": self.screenshots_count,
+            "tech_stack": self.tech_stack,
+            "results_summary": results_summary,
+            "parallel_task_progress": self.parallel_task_progress,
         }
-        path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
-        logger.info("State saved: %s", path)
+    
+    def save(self, path: Path, *, atomic: bool = True) -> None:
+        """状態をJSONファイルに保存
+        
+        Args:
+            path: 保存先パス
+            atomic: True の場合、temp file + rename で原子的に保存する
+        """
+        data = self._build_serializable_dict()
+        payload = _json.dumps(data, indent=2, ensure_ascii=False)
+        
+        if atomic:
+            tmp_fd, tmp_path = tempfile.mkstemp(
+                suffix=".json", prefix=".recon_state_", dir=str(path.parent)
+            )
+            try:
+                os.write(tmp_fd, payload.encode("utf-8"))
+                os.fsync(tmp_fd)
+                os.close(tmp_fd)
+                tmp_fd = -1
+                os.rename(tmp_path, str(path))
+            except Exception:
+                if tmp_fd >= 0:
+                    os.close(tmp_fd)
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
+        else:
+            path.write_text(payload, encoding="utf-8")
+        
+        logger.info("State saved (atomic=%s): %s", atomic, path)
     
     @classmethod
     def load(cls, path: Path) -> "ReconState":
-        """JSONファイルから状態を復元"""
-        import json
+        """JSONファイルから状態を復元
+        
+        schema_version 欠損時は v0 として fallback 処理する。
+        """
         if not path.exists():
             return cls()
-        data = json.loads(path.read_text())
-        return cls(
+        
+        raw = path.read_text(encoding="utf-8")
+        data = _json.loads(raw)
+        schema_ver = data.get("recon_state_schema_version", 0)
+        
+        if schema_ver == 0:
+            return cls._load_v0(data)
+        elif schema_ver == 1:
+            return cls._load_v1(data)
+        else:
+            logger.warning(
+                "Unknown recon_state_schema_version=%s, attempting v1 load", schema_ver
+            )
+            return cls._load_v1(data)
+    
+    @classmethod
+    def _load_v0(cls, data: dict[str, Any]) -> "ReconState":
+        """Load v0 state (pre-checkpoint schema) with fallback."""
+        target = data.get("target", "")
+        state = cls(
             current_step=data.get("current_step", 0),
             completed_steps=data.get("completed_steps", []),
             permutation_executed=data.get("permutation_executed", False),
@@ -109,9 +470,282 @@ class ReconState:
             all_subs=data.get("all_subs", []),
             live_subs=data.get("live_subs", []),
             dead_subs=data.get("dead_subs", []),
-            target=data.get("target", ""),
+            target=target,
             project_name=data.get("project_name", ""),
+            schema_version=0,
+            saved_at=data.get("saved_at", ""),
+            run_id=data.get("run_id", ""),
+            target_fingerprint=data.get("target_fingerprint", "") or _compute_target_fingerprint(target),
+            last_completed_step=data.get("last_completed_step", ""),
+            resume_source="fresh",
+            reason_codes=["schema_migrated_from_v0"],
+            parallel_task_progress=data.get("parallel_task_progress", {}),
         )
+        # Reconstruct current_step from completed_steps if missing
+        if state.current_step == 0 and state.completed_steps:
+            state.current_step = len(state.completed_steps)
+        logger.info("Loaded v0 ReconState, migrated to v1. Reason: schema_migrated_from_v0")
+        return state
+    
+    @classmethod
+    def _load_v1(cls, data: dict[str, Any]) -> "ReconState":
+        """Load v1 state with full checkpoint contract."""
+        target = data.get("target", "")
+        return cls(
+            schema_version=data.get("recon_state_schema_version", RECON_STATE_SCHEMA_VERSION),
+            saved_at=data.get("saved_at", ""),
+            run_id=data.get("run_id", ""),
+            target_fingerprint=data.get("target_fingerprint", "") or _compute_target_fingerprint(target),
+            last_completed_step=data.get("last_completed_step", ""),
+            resume_source=data.get("resume_source", "fresh"),
+            diff_base_run_id=data.get("diff_base_run_id", ""),
+            reason_codes=list(data.get("reason_codes", [])),
+            current_step=data.get("current_step", 0),
+            completed_steps=data.get("completed_steps", []),
+            permutation_executed=data.get("permutation_executed", False),
+            attack_phase_active=data.get("attack_phase_active", False),
+            all_subs=data.get("all_subs", []),
+            live_subs=data.get("live_subs", []),
+            dead_subs=data.get("dead_subs", []),
+            target=target,
+            project_name=data.get("project_name", ""),
+            screenshots_count=data.get("screenshots_count", 0),
+            tech_stack=data.get("tech_stack", []),
+            results=data.get("results_summary") or data.get("results"),
+            parallel_task_progress=data.get("parallel_task_progress", {}),
+        )
+    
+    @classmethod
+    def validate_for_resume(cls, state_path: Path, expected_target: str) -> dict[str, Any]:
+        """Validate a state file for resume readiness.
+        
+        Returns a dict with keys: 'can_resume' (bool), 'reason_code' (str),
+        'reason_message' (str), 'next_step' (int), 'state' (ReconState|None),
+        'resume_state_path' (str).
+        """
+        if not state_path.exists():
+            return {
+                "can_resume": False,
+                "reason_code": "no_state_file",
+                "reason_message": f"State file not found: {state_path}",
+                "next_step": 1,
+                "state": None,
+                "resume_state_path": "",
+            }
+        
+        try:
+            state = cls.load(state_path)
+        except (_json.JSONDecodeError, KeyError, TypeError) as e:
+            return {
+                "can_resume": False,
+                "reason_code": "corrupt_state",
+                "reason_message": f"Cannot parse state file: {e}",
+                "next_step": 1,
+                "state": None,
+                "resume_state_path": str(state_path),
+            }
+        
+        # Target mismatch check (fail-closed)
+        expected_fp = _compute_target_fingerprint(expected_target)
+        if state.target_fingerprint and expected_fp != state.target_fingerprint:
+            return {
+                "can_resume": False,
+                "reason_code": "target_mismatch",
+                "reason_message": (
+                    f"State target fingerprint mismatch: "
+                    f"state={state.target_fingerprint[:8]}..., "
+                    f"expected={expected_fp[:8]}..."
+                ),
+                "next_step": 1,
+                "state": state,
+                "resume_state_path": str(state_path),
+            }
+        
+        # Schema migration note
+        if state.schema_version == 0:
+            state.reason_codes.append("schema_migrated_from_v0")
+        
+        # Determine next step from completed markers
+        next_step = infer_next_step(state.completed_steps)
+        
+        # Completed state check (marker-based)
+        if is_all_steps_completed(state.completed_steps):
+            return {
+                "can_resume": False,
+                "reason_code": "already_completed",
+                "reason_message": "All steps already completed. No resume needed.",
+                "next_step": next_step,
+                "state": state,
+                "resume_state_path": str(state_path),
+            }
+        
+        return {
+            "can_resume": True,
+            "reason_code": "ok",
+            "reason_message": f"Ready to resume from step {next_step}",
+            "next_step": next_step,
+            "state": state,
+            "resume_state_path": str(state_path),
+        }
+
+
+def compute_recon_diff(
+    prev_state: ReconState,
+    curr_state: ReconState,
+) -> dict[str, Any]:
+    """Compute diff between two ReconState snapshots.
+    
+    Compares all_subs, live_subs, dead_subs, tech_stack.
+    Returns added/removed/changed with metadata.
+    
+    Args:
+        prev_state: Previous state (diff base).
+        curr_state: Current state.
+    
+    Returns:
+        Dict with keys: added, removed, modified, unchanged, metadata.
+    """
+    # Normalize sets for comparison
+    prev_all = set(prev_state.all_subs or [])
+    curr_all = set(curr_state.all_subs or [])
+    prev_live = set(prev_state.live_subs or [])
+    curr_live = set(curr_state.live_subs or [])
+    prev_dead = set(prev_state.dead_subs or [])
+    curr_dead = set(curr_state.dead_subs or [])
+    prev_tech = set(prev_state.tech_stack or [])
+    curr_tech = set(curr_state.tech_stack or [])
+    
+    added_all = sorted(curr_all - prev_all)
+    removed_all = sorted(prev_all - curr_all)
+    added_live = sorted(curr_live - prev_live)
+    removed_live = sorted(prev_live - curr_live)
+    added_dead = sorted(curr_dead - prev_dead)
+    removed_dead = sorted(prev_dead - curr_dead)
+    added_tech = sorted(curr_tech - prev_tech)
+    removed_tech = sorted(prev_tech - curr_tech)
+    unchanged_tech = sorted(prev_tech & curr_tech)
+    
+    has_changes = any([
+        added_all, removed_all, added_live, removed_live,
+        added_dead, removed_dead, added_tech, removed_tech,
+    ])
+    
+    return {
+        "added": {
+            "all_subs": added_all,
+            "live_subs": added_live,
+            "dead_subs": added_dead,
+            "tech_stack": added_tech,
+        },
+        "removed": {
+            "all_subs": removed_all,
+            "live_subs": removed_live,
+            "dead_subs": removed_dead,
+            "tech_stack": removed_tech,
+        },
+        "modified": {},
+        "unchanged": {
+            "all_subs_count": len(curr_all & prev_all),
+            "live_subs_count": len(curr_live & prev_live),
+            "dead_subs_count": len(curr_dead & prev_dead),
+            "tech_stack": unchanged_tech,
+        },
+        "has_changes": has_changes,
+        "metadata": {
+            "saved_at": curr_state.saved_at,
+            "prev_saved_at": prev_state.saved_at,
+            "run_id": curr_state.run_id,
+            "diff_base_run_id": prev_state.run_id,
+            "stale_state": (
+                prev_state.schema_version < RECON_STATE_SCHEMA_VERSION
+                or bool(prev_state.reason_codes)
+            ),
+            "estimated": (
+                prev_state.schema_version == 0
+                or "schema_migrated_from_v0" in prev_state.reason_codes
+            ),
+        },
+    }
+
+
+def resolve_resume_start_step(
+    *,
+    recon_resume: bool,
+    recon_start_step: int | None,
+    state_path: Path,
+    target: str,
+) -> tuple[int, dict[str, Any]]:
+    """Shared resume resolver for main.py and ops CLI.
+
+    State loading and step resolution are separated:
+    - If recon_resume=True, the checkpoint is ALWAYS loaded and validated.
+    - start_step is then determined by precedence: explicit override wins,
+      otherwise the checkpoint's next_step is used.
+
+    Returns:
+        (start_step, verdict_dict) where verdict_dict always has:
+        'resolved_via', 'resume_verdict', 'resume_state', 'resume_state_path',
+        'effective_resume_source', 'start_step', 'target_fingerprint',
+        'checkpoint_next_step', 'effective_start_step' when applicable.
+    """
+    target_fp = _compute_target_fingerprint(target)
+    verdict: dict[str, Any] = {
+        "resolved_via": "default",
+        "resume_verdict": None,
+        "resume_state": None,
+        "resume_state_path": "",
+        "effective_resume_source": "fresh",
+        "target_fingerprint": target_fp,
+        "checkpoint_next_step": None,
+        "effective_start_step": None,
+    }
+
+    # Always resolve state first when recon_resume is True
+    resume_verdict: dict[str, Any] | None = None
+    if recon_resume:
+        resume_verdict = ReconState.validate_for_resume(state_path, target)
+        verdict["resume_verdict"] = resume_verdict
+        verdict["resume_state"] = resume_verdict.get("state")
+        verdict["resume_state_path"] = resume_verdict.get("resume_state_path", "")
+        if resume_verdict["can_resume"]:
+            verdict["checkpoint_next_step"] = resume_verdict["next_step"]
+        else:
+            verdict["checkpoint_next_step"] = None
+
+    # Determine start_step: explicit override always wins
+    if recon_start_step is not None:
+        verdict["resolved_via"] = "explicit_start_step"
+        verdict["effective_resume_source"] = "resume_override" if recon_resume else "fresh"
+        verdict["start_step"] = max(1, min(8, int(recon_start_step)))
+        verdict["effective_start_step"] = verdict["start_step"]
+        if recon_resume and resume_verdict and resume_verdict["can_resume"]:
+            verdict["resume_run_id"] = (
+                resume_verdict["state"].run_id if resume_verdict.get("state") else ""
+            )
+        return int(verdict["start_step"]), verdict
+
+    if recon_resume and resume_verdict is not None:
+        if resume_verdict["can_resume"]:
+            verdict["resolved_via"] = "checkpoint_resume"
+            verdict["effective_resume_source"] = "resume"
+            verdict["start_step"] = resume_verdict["next_step"]
+            verdict["effective_start_step"] = verdict["start_step"]
+            verdict["resume_run_id"] = (
+                resume_verdict["state"].run_id if resume_verdict.get("state") else ""
+            )
+            return int(verdict["start_step"]), verdict
+        else:
+            verdict["resolved_via"] = "checkpoint_resume_blocked"
+            verdict["effective_resume_source"] = "fresh"
+            verdict["start_step"] = 1
+            verdict["effective_start_step"] = 1
+            verdict["resume_error"] = resume_verdict.get("reason_message", "unknown")
+            return 1, verdict
+
+    verdict["resolved_via"] = "default"
+    verdict["start_step"] = 1
+    verdict["effective_start_step"] = 1
+    return 1, verdict
 
 
 class ReconPipeline:
@@ -186,8 +820,30 @@ class ReconPipeline:
         # authbypass/weak_id 向け BizLogic タスクの重複投入抑止
         self._seeded_authz_verify_targets: set[str] = set()
         
-        logger.info("ReconPipeline initialized: %s (Workspace: %s)", target, self.workspace_root)
-        
+        logger.info(
+            "ReconPipeline initialized: %s (Workspace: %s, run_id=%s, fingerprint=%s)",
+            target, self.workspace_root, self.state.run_id, self.state.target_fingerprint[:8],
+        )
+    
+    @property
+    def checkpoint_path(self) -> Path:
+        """recon_state.json の保存先パス"""
+        if self.pm and hasattr(self.pm, "project_dir") and self.pm.project_dir:
+            return Path(self.pm.project_dir) / "recon_state.json"
+        return Path(self.workspace_root) / "recon_state.json"
+    
+    def _save_checkpoint(self, step_label: str) -> None:
+        """checkpoint 保存。失敗時は reason_code を記録して継続。"""
+        try:
+            ckpt = self.checkpoint_path
+            ckpt.parent.mkdir(parents=True, exist_ok=True)
+            self.state.save(ckpt, atomic=True)
+            logger.debug("Checkpoint saved after step: %s", step_label)
+        except Exception as e:
+            logger.error("Checkpoint save FAILED after step %s: %s", step_label, e)
+            if "step_completed_but_checkpoint_failed" not in self.state.reason_codes:
+                self.state.reason_codes.append("step_completed_but_checkpoint_failed")
+    
     def _get_path(self, type_name: str, ext: str) -> Path:
         """命名規則に従ったファイルパスを取得する
         形式: YYYYMMDD_<project_name>_<type_name>.<ext>
@@ -3707,8 +4363,18 @@ class ReconPipeline:
         if target:
             self.target = target.strip()  # Strip whitespace
             self.state.target = self.target
+            self.state.target_fingerprint = _compute_target_fingerprint(self.target)
             
         logger.info("Starting Recon: '%s' (Steps %d-%d)", self.target, start_step, end_step)
+        
+        # Observability: log checkpoint contract fields (no secrets)
+        logger.info(
+            "Recon observability: run_id=%s fingerprint=%s resume_source=%s checkpoint_path=%s",
+            self.state.run_id,
+            self.state.target_fingerprint[:8],
+            self.state.resume_source,
+            self.checkpoint_path,
+        )
         
         # 0. Proxy Gatekeeper Check (Phase 1 Requirement)
         # settings.scan.proxy が設定されている場合、Caido等の接続が必須。
@@ -3769,14 +4435,17 @@ class ReconPipeline:
                 
                 if start_step <= 1 <= end_step:
                     self.state.mark_step_complete("subdomain_discovery")
+                    self._save_checkpoint("subdomain_discovery")
                 if start_step <= 2 <= end_step:
                     self.state.mark_step_complete("historical_discovery")
+                    self._save_checkpoint("historical_discovery")
                 
                 logger.info("[Step 1&2] Parallel Discovery completed: %d total subdomains", len(self.state.all_subs))
                 
             elif is_single_url:
                 self.state.mark_step_complete("subdomain_discovery_skipped")
                 self.state.mark_step_complete("historical_discovery_skipped")
+                self._save_checkpoint("discovery_skipped")
             
             # Step 3: Live Check & Technology
             if start_step <= 3 <= end_step:
@@ -3784,6 +4453,7 @@ class ReconPipeline:
                 self.state.live_subs = live_subs
                 self.state.dead_subs = dead_subs
                 self.state.mark_step_complete("live_check")
+                self._save_checkpoint("live_check")
             
             # Step 3b, 4, 5 Phase 1: Controlled Parallel Execution
             if start_step <= 3 <= end_step or start_step <= 4 <= end_step or start_step <= 5 <= end_step:
@@ -3803,9 +4473,15 @@ class ReconPipeline:
                 if active_tasks:
                     await asyncio.gather(*active_tasks)
                     # 完了マーク
-                    if start_step <= 3 <= end_step: self.state.mark_step_complete("url_discovery")
-                    if start_step <= 4 <= end_step: self.state.mark_step_complete("waf_detection")
-                    if start_step <= 5 <= end_step: self.state.mark_step_complete("port_scan_phase1")
+                    if start_step <= 3 <= end_step:
+                        self.state.mark_step_complete("url_discovery")
+                        self._save_checkpoint("url_discovery")
+                    if start_step <= 4 <= end_step:
+                        self.state.mark_step_complete("waf_detection")
+                        self._save_checkpoint("waf_detection")
+                    if start_step <= 5 <= end_step:
+                        self.state.mark_step_complete("port_scan_phase1")
+                        self._save_checkpoint("port_scan_phase1")
                 
                 logger.info("[Step 3b, 4, 5] Controlled Parallel Execution completed")
                 
@@ -3813,22 +4489,26 @@ class ReconPipeline:
                 logger.info("Step 5 Phase 2: Starting parallel tasks")
                 await self.step5_port_scan_phase2(self.state.live_subs)
                 self.state.mark_step_complete("port_scan_phase2")
+                self._save_checkpoint("port_scan_phase2")
             
             # Step 6: 分類ファイル生成
             classified_files: dict[str, Path] = {}
             if start_step <= 6 <= end_step:
                 classified_files = await self.step6_classify()
                 self.state.mark_step_complete("classification")
+                self._save_checkpoint("classification")
             
             # Step 7: ProjectManager 保存
             if start_step <= 7 <= end_step:
                 await self.step7_save_to_project(classified_files)
                 self.state.mark_step_complete("save_to_project")
+                self._save_checkpoint("save_to_project")
             
             # Step 8: MC へ結果返却
             if start_step <= 8 <= end_step:
                 self.state.results = await self.step8_return_to_mc(classified_files)
                 self.state.mark_step_complete("return_to_mc")
+                self._save_checkpoint("return_to_mc")
             
         except Exception as e:
             logger.error(f"Pipeline execution failed: {e}")
@@ -3840,6 +4520,8 @@ class ReconPipeline:
         """並行タスクを実行
         
         各タスクは完了次第、分類→PM保存→MC返却を独立実行する。
+        P1a: checkpoint/resume 堅牢化 - 完了済みかつartifact整合済みのタスクはskip、
+        欠損・破損・version不一致はrerun_required。
         
         Args:
             live_subs: ライブサブドメインのリスト
@@ -3850,51 +4532,119 @@ class ReconPipeline:
         
         logger.info("Starting parallel tasks for %d live subdomains", len(live_subs))
         
-        # ParallelTasks インスタンス作成
-        from src.recon.parallel_tasks import ParallelTasks
-        tasks = ParallelTasks(self.config, self.pm, self.mc)
+        # ParallelTasks インスタンス (use existing from __init__)
+        tasks = self.tasks
         
         # ワークスペースディレクトリ
         workspace = self.pm.project_dir if self.pm else Path.cwd() / "workspace" / "projects" / "unknown"
         workspace = Path(workspace)
         workspace.mkdir(parents=True, exist_ok=True)
         
-        # 独立した並行タスク (Task B: Visual Recon, Task C: Permutation)
-        independent_tasks = [
-            self._run_with_semaphore(tasks.visual_recon, live_subs, workspace),
-            self._run_with_semaphore(
+        # ── Resume decision evaluation ──────────────────────────────────
+        domain_target = self.target.replace("*.", "")
+        resume_decisions = {
+            tn: self.state.get_parallel_task_resume_decision(tn)
+            for tn in ("full_port_scan", "visual_recon", "permutation_scan", "dead_subdomain_scan")
+        }
+        
+        def _should_execute(task_name: str) -> bool:
+            return resume_decisions.get(task_name, {}).get("action") != "skip"
+        
+        # ── Checkpoint wrapper ──────────────────────────────────────────
+        async def _run_checkpointed(
+            task_name: str,
+            coro_factory,
+        ) -> Any:
+            """Run a parallel task with checkpoint recording.
+            
+            Records running before execution and terminal status after.
+            On skip, records resume_reason without executing.
+            """
+            decision = resume_decisions.get(task_name, {})
+            if decision.get("action") == "skip":
+                reason = decision.get("resume_reason", "checkpoint_artifacts_valid")
+                # Preserve completed status — do NOT overwrite to "skipped".
+                # Only refresh updated_at and record the resume reason
+                # so the next resume still sees status=="completed".
+                entry = self.state.parallel_task_progress.get(task_name)
+                if entry is not None:
+                    entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+                    entry["resume_reason"] = reason
+                    entry["last_resume_decision"] = "skip"
+                self._save_checkpoint(f"parallel:{task_name}:skipped")
+                logger.info("Skipping %s (reason: %s)", task_name, reason)
+                return {"status": "skipped", "reason": reason}
+            
+            # Record running
+            self.state.update_parallel_task_progress(task_name, "running")
+            self._save_checkpoint(f"parallel:{task_name}:running")
+            
+            try:
+                result = await coro_factory()
+            except Exception as e:
+                self.state.update_parallel_task_progress(
+                    task_name, "failed",
+                    error_summary=f"{type(e).__name__}: {e}",
+                )
+                self._save_checkpoint(f"parallel:{task_name}:failed")
+                logger.error("Parallel task %s failed with exception: %s", task_name, e)
+                raise
+            
+            # Result already recorded by task body (completed/skipped/failed)
+            # Save checkpoint to persist any artifact_refs recorded by task
+            self._save_checkpoint(f"parallel:{task_name}:completed")
+            return result
+        
+        # ── Build coroutine factories ───────────────────────────────────
+        
+        # Visual Recon: needs state for checkpoint
+        async def _visual_factory():
+            return await self._run_with_semaphore(
+                tasks.visual_recon, live_subs, workspace, self.state,
+            )
+        
+        # Permutation: needs state
+        async def _permutation_factory():
+            return await self._run_with_semaphore(
                 tasks.permutation_scan,
                 self.state.all_subs,
-                self.target.replace("*.", ""),  # *.example.com -> example.com
+                domain_target,
                 workspace,
                 self.state,
-            ),
+            )
+        
+        # Chained: Full Port → Dead Sub (independent resume decisions)
+        async def _chained_factory():
+            # Full Port
+            full_result = await _run_checkpointed(
+                "full_port_scan",
+                lambda: self._run_with_semaphore(
+                    tasks.full_port_scan, live_subs, workspace, self.state,
+                ),
+            )
+            logger.info("Full Port Scan result: %s", full_result.get("status") if isinstance(full_result, dict) else "exception")
+            
+            # Dead Sub (evaluated independently after Full Port)
+            dead_result = await _run_checkpointed(
+                "dead_subdomain_scan",
+                lambda: self._run_with_semaphore(
+                    tasks.dead_subdomain_scan,
+                    self.state.all_subs,
+                    live_subs,
+                    workspace,
+                    self.state,
+                ),
+            )
+            logger.info("Dead Sub Scan result: %s", dead_result.get("status") if isinstance(dead_result, dict) else "exception")
+        
+        # ── Launch all tasks ────────────────────────────────────────────
+        coroutines = [
+            _run_checkpointed("visual_recon", _visual_factory),
+            _run_checkpointed("permutation_scan", _permutation_factory),
+            _chained_factory(),
         ]
         
-        # 依存関係のあるタスク (Task A: Full Port → Task D: Dead Sub)
-        async def chained_port_scans():
-            # Task A: Full Port Scan
-            result_a = await self._run_with_semaphore(
-                tasks.full_port_scan, live_subs, workspace, self.state
-            )
-            logger.info("Full Port Scan result: %s", result_a.get("status"))
-            
-            # Task D: Dead Sub Scan
-            result_d = await self._run_with_semaphore(
-                tasks.dead_subdomain_scan,
-                self.state.all_subs,
-                live_subs,
-                workspace,
-                self.state,
-            )
-            logger.info("Dead Sub Scan result: %s", result_d.get("status"))
-        
-        # Task D を含む chained_port_scans もコルーチンとしてリストに追加
-        # Note: chained_port_scans() は coroutine object を返す
-        independent_tasks.append(chained_port_scans())
-        
-        # 全タスク実行
-        results = await asyncio.gather(*independent_tasks, return_exceptions=True)
+        results = await asyncio.gather(*coroutines, return_exceptions=True)
         
         # エラーチェック
         for i, result in enumerate(results):

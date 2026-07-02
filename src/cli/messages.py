@@ -104,6 +104,9 @@ _MESSAGES_JA: Dict[str, str] = {
     "argparse.recon_end_step.help": (
         "recon_masterタスクの偵察パイプライン終了ステップを上書き（1-8）"
     ),
+    "argparse.recon_resume.help": (
+        "前回中断した偵察パイプラインを checkpoint から再開する"
+    ),
     "argparse.fast_iterate.help": (
         "高速イテレーション用ショートカット: --skip-initial-recon "
         "--recon-start-step 6 --recon-end-step 8"
@@ -205,9 +208,6 @@ _MESSAGES_JA: Dict[str, str] = {
     "argparse.dry_run.help": (
         "ドライラン: 実際の攻撃なしでワークフローを実行（safe_mode=True）"
     ),
-    "argparse.translate_logs.help": (
-        "実験的機能: ローカルLLMを使ってログを日本語に翻訳"
-    ),
     "argparse.live_dashboard.help": (
         "フェーズ5: ターミナルにリアルタイム実行ダッシュボードを表示"
     ),
@@ -232,6 +232,9 @@ _MESSAGES_JA: Dict[str, str] = {
     ),
     "argparse.quality_loop_full_scan.help": (
         "--quality-loop shortと併用時、短縮攻撃ループの後に追加のフルスキャンを実行"
+    ),
+    "argparse.import_recon.help": (
+        "過去偵察成果物ディレクトリを取り込み、freshness判定後にAttackタスク生成へ利用"
     ),
 
     # ----------------------------------------------------------

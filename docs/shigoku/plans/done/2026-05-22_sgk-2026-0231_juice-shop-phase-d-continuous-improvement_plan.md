@@ -7,7 +7,7 @@ related_docs:
   - docs/shigoku/plans/juice_shop_coverage_plan_2026-04-01.md
   - docs/shigoku/plans/bug_bounty_methodology_guide.md
 created_at: '2026-05-22'
-updated_at: '2026-06-24'
+updated_at: '2026-07-02'
 ---
 
 # Phase D: Bug Bounty継続的改善計画

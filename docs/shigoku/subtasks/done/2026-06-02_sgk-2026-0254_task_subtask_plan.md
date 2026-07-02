@@ -10,7 +10,7 @@ related_docs:
 - docs/shigoku/subtasks/2026-06-03_sgk-2026-0258_temporal-followup_subtask_plan.md
 title: 脆弱性チェーン時間軸制約とセッション世代追跡
 created_at: '2026-06-02'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: chain-temporal-state

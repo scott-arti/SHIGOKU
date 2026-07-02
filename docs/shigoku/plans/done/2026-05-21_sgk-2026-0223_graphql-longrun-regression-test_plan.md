@@ -10,7 +10,7 @@ related_docs:
 - docs/shigoku/worklogs/2026-05-26_sgk-2026-0223_graphql-longrun-regression-test_work_log.md
 title: 'GraphQL Runtime 長時間回帰テスト計画（連続実行/状態リーク/劣化監視）'
 created_at: '2026-05-21'
-updated_at: '2026-05-21'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 - graphql

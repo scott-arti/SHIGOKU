@@ -114,6 +114,17 @@ def test_intervention_precheck_notifies_for_scn07_to_12(monkeypatch) -> None:
     )
 
     mc = _new_conductor_for_intervention_tests(callback=None)
+    monkeypatch.setattr(
+        mc,
+        "_get_intervention_decision",
+        lambda _task: {
+            "scenario_id": "scn_10_semantic_business_logic",
+            "route": "human_preferred",
+            "confidence": 0.9,
+            "reasons": ["matched"],
+            "matched_signals": ["business logic"],
+        },
+    )
     task = Task(
         id="task_notify_scn10",
         name="Business logic semantic abuse flow",
@@ -138,8 +149,71 @@ def test_intervention_precheck_notifies_for_scn07_to_12(monkeypatch) -> None:
     assert blocked.get("manual_deferred") is True
     assert len(captured) == 1
     assert "scn_10_semantic_business_logic" in captured[0]["message"].lower()
-    assert "Target(s):" in captured[0]["message"]
+    assert "SCN10 手動検証候補" in captured[0]["message"]
+    assert "- シナリオ: セマンティックなビジネスロジック (scn_10_semantic_business_logic)" in captured[0]["message"]
+    assert "- 対象: -" in captured[0]["message"]
+    assert "- タスク: Business logic semantic abuse flow" in captured[0]["message"]
+    assert "- ルート/ゲート: human_preferred / observe" in captured[0]["message"]
+    assert "- 信頼度: 0.9" in captured[0]["message"]
+    assert "- 検知シグナル: business logic" in captured[0]["message"]
+    assert "- 判定理由: matched" in captured[0]["message"]
+    assert "- 必要な対応: このシナリオを手動で検証し、結果を記録してください（verified / not reproducible / needs more evidence）。" in captured[0]["message"]
     assert captured[0]["bulk"] is True
+
+
+def test_intervention_precheck_notification_handles_string_and_missing_fields(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "intervention_gate_mode", "observe", raising=False)
+
+    captured: list[str] = []
+
+    class _DummyNotifier:
+        def notify(self, message: str, provider=None, bulk=False):
+            captured.append(message)
+            return True
+
+    monkeypatch.setattr(
+        "src.core.engine.master_conductor.get_notifier",
+        lambda: _DummyNotifier(),
+    )
+
+    mc = _new_conductor_for_intervention_tests(callback=None)
+    monkeypatch.setattr(
+        mc,
+        "_get_intervention_decision",
+        lambda _task: {
+            "scenario_id": "scn_08_oob_external_channel_flow",
+            "route": "human_preferred",
+            "confidence": 0.0,
+            "reasons": "email verification",
+            "matched_signals": "oob",
+        },
+    )
+    task = Task(
+        id="task_notify_scn08",
+        name="SCN08 OOB External Channel Surface Probe",
+        action="scan",
+        agent_type="InjectionSwarm",
+        params={
+            "_intervention": {
+                "decision": {
+                    "scenario_id": "scn_08_oob_external_channel_flow",
+                    "route": "human_preferred",
+                    "confidence": 0.0,
+                    "reasons": "email verification",
+                    "matched_signals": "oob",
+                }
+            }
+        },
+    )
+
+    blocked = mc._run_intervention_precheck(task)
+
+    assert blocked is not None
+    assert blocked.get("manual_deferred") is True
+    assert len(captured) == 1
+    assert "- 対象: -" in captured[0]
+    assert "- 検知シグナル: oob" in captured[0]
+    assert "- 判定理由: email verification" in captured[0]
 
 
 def test_intervention_precheck_notification_is_deduped_per_task_scenario(monkeypatch) -> None:

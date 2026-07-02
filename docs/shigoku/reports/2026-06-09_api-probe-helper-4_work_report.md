@@ -8,7 +8,7 @@ related_docs:
   - docs/shigoku/subtasks/2026-06-09_sgk-2026-0273_api-probe-helper-4_subtask_plan.md
 title: '作業完了報告書: API probe 純粋 helper の追加抽出 (4関数)'
 created_at: '2026-06-09'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
   - shigoku
   - refactoring

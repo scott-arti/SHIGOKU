@@ -8,7 +8,7 @@ related_docs:
 - docs/shigoku/reports/2026-06-08_sgk-2026-0268_haddix-payout-readiness_work_report.md
 title: "作業ログ: Haddix report payout-readiness output improvements"
 created_at: "2026-06-08"
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 ---
 
 # 作業ログ

@@ -5,7 +5,7 @@ status: done
 parent_task_id: null
 related_docs: []
 created_at: '2026-01-04'
-updated_at: '2026-05-19'
+updated_at: '2026-07-02'
 ---
 
 2026-01-04 | Enhancement | RAG Header-Based Chunking | `rag.py`改修: Markdown を見出し(#, ##)単位で分割しベクトル化精度向上

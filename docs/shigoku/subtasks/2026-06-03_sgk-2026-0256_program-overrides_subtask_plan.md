@@ -8,7 +8,7 @@ related_docs:
 - docs/shigoku/reports/2026-06-03_sgk-2026-0253_program-overrides_work_report.md
 title: SGK-2026-0256 継続監視（program overrides 運用観測）
 created_at: '2026-06-03'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: attack-chain-overrides-observability

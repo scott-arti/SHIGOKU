@@ -5,7 +5,7 @@ status: backlog
 parent_task_id: null
 related_docs: []
 created_at: '2026-05-13'
-updated_at: '2026-05-19'
+updated_at: '2026-07-02'
 ---
 
 # Raw Confirmed Stability + IDOR/Endpoint Class Recovery Implementation Plan

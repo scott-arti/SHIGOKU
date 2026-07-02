@@ -9,7 +9,7 @@ related_docs:
 - docs/shigoku/specs/REQ_tier4_mc_intelligence.md
 title: '巨大ファイル分割計画 1/4: MasterConductor 分割'
 created_at: '2026-06-05'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: src/core/engine/master_conductor.py

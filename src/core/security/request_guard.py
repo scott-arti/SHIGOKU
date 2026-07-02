@@ -7,11 +7,20 @@ logger = logging.getLogger(__name__)
 
 class RequestGuard:
     """
-    ネットワーク層のガードレール。
-    破壊的メソッド（POST/PUT/DELETE/PATCH）に対し、
-    エンドポイント(method+URLパス)単位で人間の承認を要求する。
-    一度承認されたエンドポイントはセッション中キャッシュされ、
-    同一エンドポイントへの再承認は不要。
+    HTTP/HITL endpoint-approval adapter.
+
+    Responsibilities (adapter layer):
+      - endpoint normalisation (UUID / numeric ID → wildcard)
+      - approval cache (session-scoped, keyed on method + normalised path)
+      - HITL callback interaction
+
+    This class does NOT handle payload parsing. For the unified safeguard
+    that combines method-risk and payload-risk decisions, use
+    :class:`ExecutionSafeguardService` from ``execution_safeguard.py``.
+
+    Aggressive HTTP methods (POST/PUT/DELETE/PATCH) require human approval
+    on first encounter; subsequent requests to the same normalised endpoint
+    are served from the in-memory cache.
     """
 
     AGGRESSIVE_METHODS = ("POST", "PUT", "DELETE", "PATCH")

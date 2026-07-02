@@ -4,10 +4,10 @@ doc_type: work_log
 status: done
 parent_task_id: SGK-2026-0244
 related_docs:
-- docs/shigoku/subtasks/2026-06-21_sgk-2026-0285_xss-detector-remove-stored-placeholder_subtask_plan.md
+- docs/shigoku/subtasks/done/2026-06-21_sgk-2026-0285_xss-detector-remove-stored-placeholder_subtask_plan.md
 - docs/shigoku/reports/2026-06-21_sgk-2026-0285_xss-detector-remove-stored-placeholder_work_report.md
 created_at: '2026-06-21'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 ---
 
 # 作業ログ

@@ -100,6 +100,9 @@ def start_interactive_session(
     llm_client=None,
     recon_start_step=None,
     recon_end_step=None,
+    resume_state_path=None,
+    resume_source=None,
+    import_recon_dir=None,
 ):
     """
     インタラクティブセッションを開始
@@ -178,24 +181,25 @@ def start_interactive_session(
     mc = MasterConductor(
         project_manager=pm, 
         auto_checkpoint=True,
-        llm_client=llm_client
+        llm_client=llm_client,
+        import_recon_dir=import_recon_dir,
     )
 
-    # 3.5 RequestGuardの初期化 (HITL連携)
+    # 3.5 ExecutionSafeguardの初期化 (HITL連携)
     try:
-        from src.core.security.request_guard import get_request_guard
+        from src.core.security.execution_safeguard import get_execution_safeguard
 
         async def hitl_callback(task_info: dict) -> bool:
-            """RequestGuardからの認可リクエストをユーザーに尋ねる"""
+            """ExecutionSafeguardからの認可リクエストをユーザーに尋ねる"""
             prompt = task_info.get("prompt", "承認が必要なリクエストがあります。許可しますか？")
             # 同期メソッド InteractiveBridge.ask_for_approval を非同期スレッドで実行
             return await asyncio.to_thread(InteractiveBridge.ask_for_approval, prompt, default=True)
 
         mode_val = str(cm.config.mode).lower() if cm.config.mode else "bugbounty"
-        get_request_guard(mode=mode_val, hitl_callback=hitl_callback)
-        print_step("🛡️", f"RequestGuard initialized (Mode: {mode_val}) with HITL callback")
+        get_execution_safeguard(mode=mode_val, hitl_callback=hitl_callback)
+        print_step("🛡️", f"ExecutionSafeguard initialized (Mode: {mode_val}) with HITL callback")
     except Exception as e:
-        logger.warning(f"Failed to initialize RequestGuard: {e}")
+        logger.warning(f"Failed to initialize ExecutionSafeguard: {e}")
     
     # 4. コンテキスト設定
     if cookies:
@@ -226,6 +230,10 @@ def start_interactive_session(
         mc.context.target_info["recon_start_step"] = int(recon_start_step)
     if recon_end_step is not None:
         mc.context.target_info["recon_end_step"] = int(recon_end_step)
+    if resume_state_path:
+        mc.context.target_info["resume_state_path"] = str(resume_state_path)
+    if resume_source:
+        mc.context.target_info["resume_source"] = str(resume_source)
     if recon_start_step is not None or recon_end_step is not None:
         start = int(mc.context.target_info.get("recon_start_step", 1))
         end = int(mc.context.target_info.get("recon_end_step", 8))

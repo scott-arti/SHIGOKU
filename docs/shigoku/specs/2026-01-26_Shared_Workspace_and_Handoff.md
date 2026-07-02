@@ -5,7 +5,7 @@ status: active
 parent_task_id: null
 related_docs: []
 created_at: '2026-01-26'
-updated_at: '2026-05-19'
+updated_at: '2026-07-02'
 ---
 
 # 仕様書: Phase 2 Shared Workspace & Handoff Mechanism Integration

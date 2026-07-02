@@ -35,13 +35,14 @@ class GauAdapter(BaseExternalAdapter):
                 print(f"Found URL: {url['url']} (Source: {url['source']})")
     """
     
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, config: Optional[Dict[str, Any]] = None, mode: str = "bugbounty"):
         """初期化
-        
+
         Args:
             config: 設定辞書（オプション）
+            mode: 動作モード (bugbounty/ctf/vulntest)
         """
-        super().__init__("gau", config)
+        super().__init__("gau", config, mode=mode)
         self._binary_manager = BinaryManager()
         self._binary_path: Optional[Path] = None
     

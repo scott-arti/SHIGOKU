@@ -10,7 +10,7 @@ related_docs:
 - docs/shigoku/plans/2026-06-24_sgk-2026-0304_active_plan.md
 title: Agentic RAG hypothesis advisor 組み込み計画
 created_at: '2026-06-21'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: src/core/intelligence/agentic_rag.py, src/core/engine/master_conductor.py,

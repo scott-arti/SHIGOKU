@@ -8,7 +8,7 @@ related_docs:
 - docs/shigoku/roadmaps/future_functions.md
 title: 自律再認証運用明確化計画
 created_at: '2026-06-20'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: src/core/agents/swarm/auth/, src/core/infra/network_client.py, src/core/engine/master_conductor.py

@@ -8,7 +8,7 @@ related_docs:
 - docs/shigoku/specs/visibility_and_metrics.md
 title: '内部挙動可視化 S1: Run Ledger・LLM使用量・セッション永続化'
 created_at: '2026-06-24'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: DecisionTrace, TaskExecutionLog, AuditLogger, session payload, LLM usage

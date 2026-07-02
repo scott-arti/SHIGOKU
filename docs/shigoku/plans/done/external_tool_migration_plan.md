@@ -10,7 +10,7 @@ related_docs:
   - docs/shigoku/reports/2026-05-26_sgk-2026-0239_async-gau-and-arjun-metrics_work_report.md
   - docs/shigoku/worklogs/2026-05-26_sgk-2026-0239_async-gau-and-arjun-metrics_work_log.md
 created_at: '2026-05-22'
-updated_at: '2026-05-25'
+updated_at: '2026-07-02'
 ---
 
 # Phase E: 外部ツール統合移行計画

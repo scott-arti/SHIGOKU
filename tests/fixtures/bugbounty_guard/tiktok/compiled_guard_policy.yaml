@@ -1,0 +1,87 @@
+schema_version: 1
+compile_status: ready
+bundle_id: "bbp-hackerone-tiktok-2026-07-01T07:38:38Z-ab12cd34"
+policy_id: "bbp:hackerone:tiktok:2026-07-01T07:38:38Z"
+provider: hackerone
+program_name: TikTok
+program_alias: "tiktok"
+compiled_at_utc: "2026-07-01T08:10:00Z"
+normalized_facts_hash: "sha256:tiktok-normalized-facts-hash"
+default_decision: deny
+compatibility:
+  min_reader_schema_version: 1
+  backward_compatible_with:
+    - 1
+scope:
+  allow_hosts:
+    - "*.tiktok.com"
+  deny_hosts:
+    - "*.tiktokv.us"
+    - "*.us.tiktokv.com"
+  allow_url_prefixes: []
+  deny_url_prefixes:
+    - "https://developers.tiktok.com/minis/"
+  non_http_assets: []
+rules:
+  phases:
+    post_exploit:
+      decision: deny
+      reason_code: post_exploit_prohibited
+      source_refs:
+        - "policy.md#post-exploit-prohibition"
+  attack_classes:
+    social_engineering:
+      decision: deny
+      reason_code: attack_class_social_engineering_denied
+      source_refs:
+        - "policy.md#social-engineering"
+    dos:
+      decision: deny
+      reason_code: attack_class_dos_denied
+      source_refs:
+        - "policy.md#dos-prohibition"
+    ssrf:
+      decision: allow
+      allowed_destinations:
+        - "https://ssrf-bait.byted.org/full-read-ssrf"
+        - "https://ssrf-bait.byted.org/blind-ssrf/*"
+      reason_code: attack_class_ssrf_allowlisted
+      source_refs:
+        - "policy.md#ssrf-sheriff-only"
+  auth: {}
+  budgets:
+    requests_per_minute: 60
+review_gate:
+  manual_review_required: false
+  blocking_findings: []
+audit:
+  source_hashes: {}
+  compile_inputs: {}
+  rule_origins:
+    - rule_origin_id: "origin.tiktok.wildcard.1"
+      runtime_rule_id: "scope.host.allow.1"
+      origin_type: structured_scope
+      source_ref: "scope_assets.csv#row=1"
+      subject: "*.tiktok.com"
+      decision: allow
+      review_finding_ids: []
+      override_paths: []
+      normalization_notes: "wildcard allow for all tiktok.com subdomains"
+    - rule_origin_id: "origin.tiktok.deny.tiktokv"
+      runtime_rule_id: "scope.host.deny.1"
+      origin_type: structured_scope
+      source_ref: "scope_assets.csv#row=32"
+      subject: "*.tiktokv.us"
+      decision: deny
+      review_finding_ids: []
+      override_paths: []
+      normalization_notes: "explicit deny for tiktokv.us"
+    - rule_origin_id: "origin.tiktok.deny.minis"
+      runtime_rule_id: "scope.url_prefix.deny.1"
+      origin_type: policy_text
+      source_ref: "policy.md#temporary-exclusion"
+      subject: "https://developers.tiktok.com/minis/"
+      decision: deny
+      review_finding_ids: []
+      override_paths: []
+      normalization_notes: "temporary exclusion of minis platform"

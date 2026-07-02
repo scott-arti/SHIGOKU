@@ -8,7 +8,7 @@ related_docs:
   - docs/shigoku/plans/phase_e2_next_action_plan.md
   - docs/shigoku/reports/phase_e2_cto_review.md
 created_at: '2026-05-22'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 ---
 
 # 外部ツール配置整理サブタスク (SGK-2026-0231-S01)

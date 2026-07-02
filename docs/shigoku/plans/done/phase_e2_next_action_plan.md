@@ -9,7 +9,7 @@ related_docs:
 - docs/shigoku/subtasks/2026-05-23_sgk-2026-0231-s02_ai-integration-and-adapter-expansion.md
 - docs/shigoku/plans/2026-05-23_sgk-2026-0241_toolregistry-phase-e-3_plan.md
 created_at: '2026-05-23'
-updated_at: '2026-06-24'
+updated_at: '2026-07-02'
 ---
 
 # Phase E-2: 次のアクションプラン

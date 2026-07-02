@@ -1930,6 +1930,12 @@ def main():
     )
 
     parser.add_argument(
+        "--recon-resume",
+        action="store_true",
+        help=msg("argparse.recon_resume.help"),
+    )
+
+    parser.add_argument(
         "--fast-iterate",
         action="store_true",
         help=msg("argparse.fast_iterate.help")
@@ -2242,12 +2248,6 @@ def main():
         help=msg("argparse.dry_run.help")
     )
     
-    parser.add_argument(
-        "--translate-logs",
-        action="store_true",
-        help=msg("argparse.translate_logs.help")
-    )
-    
     # Phase 5: Live Dashboard (NEW)
     parser.add_argument(
         "--live-dashboard",
@@ -2285,6 +2285,12 @@ def main():
         "--focus-fail-fast",
         action="store_true",
         help=msg("argparse.focus_fail_fast.help")
+    )
+
+    parser.add_argument(
+        "--import-recon",
+        metavar="DIR",
+        help=msg("argparse.import_recon.help"),
     )
 
     parser.add_argument(
@@ -2402,12 +2408,6 @@ def main():
     # Initialize Configuration
     cm = get_config_manager()
     config = cm.config
-    
-    # Experimental: Log Translation
-    if args.translate_logs:
-        os.environ["SHIGOKU_TRANSLATE_LOGS"] = "true"
-        from src.core.utils.log_translator import enable_log_translation
-        enable_log_translation()
     
     # Resolve Configuration (CLI > Config File > Default)
     mode = args.mode or config.mode or "bugbounty"
@@ -3727,6 +3727,39 @@ def main():
     elif args.recon:
         # Phase 2: MasterConductor経由 (旧: run_recon_phase直接呼び出し)
         from src.core.conductor.interactive_bridge import start_interactive_session
+        
+        # Resolve start_step from --recon-resume / --recon-start-step
+        resolved_start_step = args.recon_start_step
+        resume_state_path = None
+        resume_source = None
+        if args.recon_resume or args.recon_start_step is None:
+            try:
+                from src.core.project.project_manager import ProjectManager
+                from src.recon.pipeline import resolve_resume_start_step
+                pm = ProjectManager(args.recon)
+                state_path = pm.project_dir / "recon_state.json"
+                _start, _verdict = resolve_resume_start_step(
+                    recon_resume=bool(args.recon_resume),
+                    recon_start_step=args.recon_start_step,
+                    state_path=state_path,
+                    target=args.recon,
+                )
+                if resolved_start_step is None:
+                    resolved_start_step = _start
+                resume_state_path = _verdict.get("resume_state_path") or ""
+                resume_source = _verdict.get("effective_resume_source", "fresh")
+                logger.info(
+                    "Recon resume verdict: %s start_step=%s resolved_via=%s resume=%s",
+                    _verdict.get("resume_verdict", {}).get("reason_code", "n/a"),
+                    _start,
+                    _verdict.get("resolved_via", "n/a"),
+                    resume_source,
+                )
+            except Exception as e:
+                logger.warning("Resume resolver failed, using default start_step: %s", e)
+                if resolved_start_step is None:
+                    resolved_start_step = 1
+        
         start_interactive_session(
             mode=mode,
             scope_file=scope_file,
@@ -3734,6 +3767,11 @@ def main():
             auto_target=args.recon,
             profile=args.profile,
             bearer_token=args.bearer_token,
+            recon_start_step=resolved_start_step,
+            recon_end_step=args.recon_end_step,
+            resume_state_path=resume_state_path,
+            resume_source=resume_source,
+            import_recon_dir=args.import_recon,
         )
     elif args.target:
         target = args.target
@@ -3772,6 +3810,38 @@ def main():
             print_step("✅", msg("step.recon_complete"))
         # --- Phase 3 End ---
 
+        # Resolve start_step from --recon-resume / --recon-start-step
+        resolved_target_start_step = args.recon_start_step
+        resume_state_path = None
+        resume_source = None
+        if args.recon_resume or args.recon_start_step is None:
+            try:
+                from src.core.project.project_manager import ProjectManager
+                from src.recon.pipeline import resolve_resume_start_step
+                pm = ProjectManager(target)
+                state_path = pm.project_dir / "recon_state.json"
+                _start, _verdict = resolve_resume_start_step(
+                    recon_resume=bool(args.recon_resume),
+                    recon_start_step=args.recon_start_step,
+                    state_path=state_path,
+                    target=target,
+                )
+                if resolved_target_start_step is None:
+                    resolved_target_start_step = _start
+                resume_state_path = _verdict.get("resume_state_path") or ""
+                resume_source = _verdict.get("effective_resume_source", "fresh")
+                logger.info(
+                    "Recon resume verdict: %s start_step=%s resolved_via=%s resume=%s",
+                    _verdict.get("resume_verdict", {}).get("reason_code", "n/a"),
+                    _start,
+                    _verdict.get("resolved_via", "n/a"),
+                    resume_source,
+                )
+            except Exception as e:
+                logger.warning("Resume resolver failed, using default start_step: %s", e)
+                if resolved_target_start_step is None:
+                    resolved_target_start_step = 1
+
         start_interactive_session(
             mode=mode,
             scope_file=scope_file,
@@ -3784,8 +3854,11 @@ def main():
             recipe_file=args.recipe,
             profile=args.profile,
             llm_client=llm_client,
-            recon_start_step=args.recon_start_step,
+            recon_start_step=resolved_target_start_step,
             recon_end_step=args.recon_end_step,
+            resume_state_path=resume_state_path,
+            resume_source=resume_source,
+            import_recon_dir=args.import_recon,
         )
     elif args.log:
         if args.sessions_file or args.cross_test_approved:

@@ -8,7 +8,7 @@ related_docs:
 - docs/shigoku/reports/2026-06-02_sgk-2026-0251_phase3-completion_work_report.md
 title: SGK-2026-0251 Phase3 完了作業ログ
 created_at: '2026-06-02'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 ---
 
 # SGK-2026-0251 Phase3 完了作業ログ

@@ -1,5 +1,5 @@
 version: 1
-updated_at: '2026-06-29'
+updated_at: '2026-07-02'
 namespace: SGK
 id_rules:
   core: SGK-YYYY-NNNN
@@ -579,7 +579,7 @@ tasks:
   task_summary: SSTI Detection Implementation Plan
   parent_task_id: SGK-2026-0065
   related_docs:
-  - docs/shigoku/subtasks/phase1_tasks.md
+  - docs/shigoku/subtasks/done/2026-05-19_sgk-2026-0171_phase1_tasks.md
   - docs/shigoku/reports/REPORT_OUTPUTS.md
   - docs/shigoku/worklogs/2026-05-14_log_codex_chat_summary.md
 - provisional_id: DOC-0059
@@ -656,7 +656,7 @@ tasks:
   related_docs:
   - docs/shigoku/specs/TECHNICAL_SPEC_JA.md
   - docs/shigoku/plans/2026-05-14_sgk-2026-0058_ssti_implementation_plan.md
-  - docs/shigoku/subtasks/phase1_tasks.md
+  - docs/shigoku/subtasks/done/2026-05-19_sgk-2026-0171_phase1_tasks.md
   - docs/shigoku/reports/REPORT_OUTPUTS.md
 - provisional_id: DOC-0066
   task_id: SGK-2026-0066
@@ -1726,8 +1726,8 @@ tasks:
   task_id: SGK-2026-0171
   doc_type: subtask_plan
   title: 'Phase 1: 足場固めと構造改革 (Swarm化 & 入力正規化) - TODO Tasks'
-  primary_doc: docs/shigoku/subtasks/phase1_tasks.md
-  status: backlog
+  primary_doc: docs/shigoku/subtasks/done/2026-05-19_sgk-2026-0171_phase1_tasks.md
+  status: done
   provisional: false
   task_summary: 'Phase 1: 足場固めと構造改革 (Swarm化 & 入力正規化) - TODO Tasks'
   parent_task_id: SGK-2026-0058
@@ -2598,17 +2598,22 @@ tasks:
   task_id: SGK-2026-0244-S01
   doc_type: subtask_plan
   title: XSS Hunter未実装項目の完了計画（Stored XSS本実装・BrowserPool統合）
-  primary_doc: docs/shigoku/subtasks/2026-05-27_sgk-2026-0244-s01_xss-hunter-remaining-implementation_subtask_plan.md
-  status: active
+  primary_doc: docs/shigoku/subtasks/done/2026-05-27_sgk-2026-0244-s01_xss-hunter-remaining-implementation_subtask_plan.md
+  status: done
   provisional: false
   task_summary: SGK-2026-0244 の未実装項目（Stored XSS保存フェーズ、SmartXSSHunterのBrowserPool統合）を完了する子計画
   parent_task_id: SGK-2026-0244
+  work_report: docs/shigoku/reports/2026-06-30_sgk-2026-0244-s01_xss-hunter-remaining-implementation_work_report.md
+  work_log: docs/shigoku/worklogs/2026-06-30_sgk-2026-0244-s01_xss-hunter-remaining-implementation_work_log.md
   related_docs:
   - docs/shigoku/plans/2026-05-24_sgk-2026-0244_xss-hunter-enhancement_plan.md
-  - src/core/detection/xss_detector.py
+  - docs/shigoku/reports/2026-06-30_sgk-2026-0244-s01_xss-hunter-remaining-implementation_work_report.md
+  - docs/shigoku/worklogs/2026-06-30_sgk-2026-0244-s01_xss-hunter-remaining-implementation_work_log.md
+  - src/core/agents/swarm/injection/stored_xss_detector.py
   - src/core/agents/swarm/injection/smart_xss.py
   - src/core/detection/browser_pool.py
-  - src/core/detection/xss_pipeline.py
+  - tests/core/agents/swarm/injection/test_smart_xss_logic.py
+  - tests/core/detection/test_xss_detector.py
 - provisional_id: DOC-0255
   task_id: SGK-2026-0244
   doc_type: work_report
@@ -2620,7 +2625,7 @@ tasks:
   parent_task_id: SGK-2026-0244
   related_docs:
   - docs/shigoku/plans/2026-05-24_sgk-2026-0244_xss-hunter-enhancement_plan.md
-  - docs/shigoku/subtasks/2026-05-27_sgk-2026-0244-s01_xss-hunter-remaining-implementation_subtask_plan.md
+  - docs/shigoku/subtasks/done/2026-05-27_sgk-2026-0244-s01_xss-hunter-remaining-implementation_subtask_plan.md
   - src/core/agents/swarm/injection/stored_xss_detector.py
   - src/core/detection/browser_pool.py
   - src/core/detection/xss_pipeline.py
@@ -3222,14 +3227,16 @@ tasks:
   task_id: SGK-2026-0285
   doc_type: subtask_plan
   title: xss_detector.py から Stored XSS placeholder を削除
-  primary_doc: docs/shigoku/subtasks/2026-06-21_sgk-2026-0285_xss-detector-remove-stored-placeholder_subtask_plan.md
+  primary_doc: docs/shigoku/subtasks/done/2026-06-21_sgk-2026-0285_xss-detector-remove-stored-placeholder_subtask_plan.md
   status: done
   provisional: true
   task_summary: xss_detector.py から Stored XSS placeholder を削除
   parent_task_id: SGK-2026-0244
+  work_report: docs/shigoku/reports/2026-06-21_sgk-2026-0285_xss-detector-remove-stored-placeholder_work_report.md
+  work_log: docs/shigoku/worklogs/2026-06-21_sgk-2026-0285_xss-detector-remove-stored-placeholder_work_log.md
   related_docs:
   - docs/shigoku/plans/2026-05-24_sgk-2026-0244_xss-hunter-enhancement_plan.md
-  - docs/shigoku/subtasks/2026-05-27_sgk-2026-0244-s01_xss-hunter-remaining-implementation_subtask_plan.md
+  - docs/shigoku/subtasks/done/2026-05-27_sgk-2026-0244-s01_xss-hunter-remaining-implementation_subtask_plan.md
 - provisional_id: DOC-0303
   task_id: SGK-2026-0286
   doc_type: subtask_plan
@@ -3691,19 +3698,19 @@ tasks:
 - provisional_id: DOC-0337
   task_id: SGK-2026-0320
   doc_type: plan
-  title: 'Recon途中再開・可視化・対話型オペレーション 統合ロードマップ'
+  title: Recon途中再開・可視化・対話型オペレーション 統合ロードマップ
   primary_doc: docs/shigoku/plans/2026-06-29_sgk-2026-0320_recon-resume-visibility-conversational-ops_plan.md
   status: active
   provisional: false
-  task_summary: 'Recon途中再開・可視化・対話型オペレーション 統合ロードマップ'
+  task_summary: Recon途中再開・可視化・対話型オペレーション 統合ロードマップ
   parent_task_id: null
   related_docs:
   - docs/shigoku/subtasks/2026-06-20_sgk-2026-0281_recon-resume-recipe-phasegate_subtask_plan.md
   - docs/shigoku/plans/done/2026-06-24_sgk-2026-0298_internal-behavior-visibility-governance_plan.md
   - docs/shigoku/subtasks/2026-06-23_sgk-2026-0293_vulnerability-management-review-trail_subtask_plan.md
   - docs/shigoku/subtasks/2026-06-29_sgk-2026-0321_recon-step-state-resume-diff_subtask_plan.md
-  - docs/shigoku/subtasks/2026-06-29_sgk-2026-0322_reconstate-completion-parallel-checkpoint-decision-tree_subtask_plan.md
-  - docs/shigoku/subtasks/2026-06-29_sgk-2026-0323_phasegate-granularity-import-recon_subtask_plan.md
+  - docs/shigoku/subtasks/done/2026-06-29_sgk-2026-0322_reconstate-completion-parallel-checkpoint-decision-tree_subtask_plan.md
+  - docs/shigoku/subtasks/done/2026-06-29_sgk-2026-0323_phasegate-granularity-import-recon_subtask_plan.md
   - docs/shigoku/subtasks/2026-06-29_sgk-2026-0324_neo4j-attack-path-ui-vuln-management_subtask_plan.md
   - docs/shigoku/subtasks/2026-06-29_sgk-2026-0325_conversational-ops-chat-direction_subtask_plan.md
   - docs/shigoku/subtasks/2026-06-29_sgk-2026-0326_flexible-report-generation-reinjection_subtask_plan.md
@@ -3711,34 +3718,37 @@ tasks:
   task_id: SGK-2026-0321
   doc_type: subtask_plan
   title: 'P0: Recon step状態自動保存＋再開CLI＋前回差分可視化'
-  primary_doc: docs/shigoku/subtasks/2026-06-29_sgk-2026-0321_recon-step-state-resume-diff_subtask_plan.md
-  status: active
+  primary_doc: docs/shigoku/subtasks/done/2026-06-29_sgk-2026-0321_recon-step-state-resume-diff_subtask_plan.md
+  status: done
   provisional: false
   task_summary: 'P0: Recon step状態自動保存＋再開CLI＋前回差分可視化'
   parent_task_id: SGK-2026-0320
   related_docs:
   - docs/shigoku/plans/2026-06-29_sgk-2026-0320_recon-resume-visibility-conversational-ops_plan.md
   - docs/shigoku/subtasks/2026-06-20_sgk-2026-0281_recon-resume-recipe-phasegate_subtask_plan.md
-  - docs/shigoku/subtasks/2026-06-29_sgk-2026-0322_reconstate-completion-parallel-checkpoint-decision-tree_subtask_plan.md
+  - docs/shigoku/subtasks/done/2026-06-29_sgk-2026-0322_reconstate-completion-parallel-checkpoint-decision-tree_subtask_plan.md
 - provisional_id: DOC-0339
   task_id: SGK-2026-0322
   doc_type: subtask_plan
-  title: 'P1: ReconState完全化＋並行タスク途中保存＋判断ツリー可視化'
-  primary_doc: docs/shigoku/subtasks/2026-06-29_sgk-2026-0322_reconstate-completion-parallel-checkpoint-decision-tree_subtask_plan.md
-  status: active
+  title: 'P1a: ReconState完全化＋並行タスクcheckpoint/resume堅牢化'
+  primary_doc: docs/shigoku/subtasks/done/2026-06-29_sgk-2026-0322_reconstate-completion-parallel-checkpoint-decision-tree_subtask_plan.md
+  status: done
   provisional: false
-  task_summary: 'P1: ReconState完全化＋並行タスク途中保存＋判断ツリー可視化'
+  task_summary: 'P1a: ReconState完全化＋並行タスクcheckpoint/resume堅牢化'
   parent_task_id: SGK-2026-0320
   related_docs:
   - docs/shigoku/plans/2026-06-29_sgk-2026-0320_recon-resume-visibility-conversational-ops_plan.md
-  - docs/shigoku/subtasks/2026-06-29_sgk-2026-0321_recon-step-state-resume-diff_subtask_plan.md
+  - docs/shigoku/subtasks/done/2026-06-29_sgk-2026-0321_recon-step-state-resume-diff_subtask_plan.md
+  - docs/shigoku/subtasks/2026-07-01_p1b-shigoku-ops-decision-tree-cli_subtask_plan.md
   - docs/shigoku/plans/done/2026-06-24_sgk-2026-0298_internal-behavior-visibility-governance_plan.md
+  - docs/shigoku/reports/2026-07-01_SGK-2026-0322_work_report.md
+  - docs/shigoku/worklogs/2026-07-01_SGK-2026-0322_work_log.md
 - provisional_id: DOC-0340
   task_id: SGK-2026-0323
   doc_type: subtask_plan
   title: 'P2: PhaseGate細粒度化＋過去Recon成果物再利用(--import-recon)'
-  primary_doc: docs/shigoku/subtasks/2026-06-29_sgk-2026-0323_phasegate-granularity-import-recon_subtask_plan.md
-  status: active
+  primary_doc: docs/shigoku/subtasks/done/2026-06-29_sgk-2026-0323_phasegate-granularity-import-recon_subtask_plan.md
+  status: done
   provisional: false
   task_summary: 'P2: PhaseGate細粒度化＋過去Recon成果物再利用(--import-recon)'
   parent_task_id: SGK-2026-0320
@@ -3746,6 +3756,30 @@ tasks:
   - docs/shigoku/plans/2026-06-29_sgk-2026-0320_recon-resume-visibility-conversational-ops_plan.md
   - docs/shigoku/subtasks/2026-06-20_sgk-2026-0281_recon-resume-recipe-phasegate_subtask_plan.md
   - docs/shigoku/subtasks/2026-06-29_sgk-2026-0321_recon-step-state-resume-diff_subtask_plan.md
+- provisional_id: DOC-0399
+  task_id: SGK-2026-0323-WR
+  doc_type: work_report
+  title: SGK-2026-0323 P2b 実装完了報告
+  primary_doc: docs/shigoku/reports/2026-07-01_sgk-2026-0323_phasegate-granularity-import-recon_work_report.md
+  status: done
+  provisional: false
+  task_summary: SGK-2026-0323 P2b 実装完了報告
+  parent_task_id: SGK-2026-0323
+  related_docs:
+  - docs/shigoku/subtasks/done/2026-06-29_sgk-2026-0323_phasegate-granularity-import-recon_subtask_plan.md
+  - docs/shigoku/worklogs/2026-07-01_sgk-2026-0323_phasegate-granularity-import-recon_work_log.md
+- provisional_id: DOC-0400
+  task_id: SGK-2026-0323-WL
+  doc_type: work_log
+  title: SGK-2026-0323 P2b 作業ログ
+  primary_doc: docs/shigoku/worklogs/2026-07-01_sgk-2026-0323_phasegate-granularity-import-recon_work_log.md
+  status: done
+  provisional: false
+  task_summary: SGK-2026-0323 P2b 作業ログ
+  parent_task_id: SGK-2026-0323
+  related_docs:
+  - docs/shigoku/subtasks/done/2026-06-29_sgk-2026-0323_phasegate-granularity-import-recon_subtask_plan.md
+  - docs/shigoku/reports/2026-07-01_sgk-2026-0323_phasegate-granularity-import-recon_work_report.md
 - provisional_id: DOC-0341
   task_id: SGK-2026-0324
   doc_type: subtask_plan
@@ -3786,6 +3820,186 @@ tasks:
   - docs/shigoku/plans/2026-06-29_sgk-2026-0320_recon-resume-visibility-conversational-ops_plan.md
   - docs/shigoku/subtasks/2026-06-29_sgk-2026-0325_conversational-ops-chat-direction_subtask_plan.md
   - docs/shigoku/plans/done/2026-06-24_sgk-2026-0298_internal-behavior-visibility-governance_plan.md
+- provisional_id: DOC-0344
+  task_id: SGK-2026-0327
+  doc_type: subtask_plan
+  title: SCN介入通知日本語化（最小差分）計画
+  primary_doc: docs/shigoku/subtasks/done/2026-06-30_sgk-2026-0327_scn-intervention-notification-ja_subtask_plan.md
+  status: done
+  provisional: false
+  task_summary: SCN介入通知日本語化（最小差分）計画
+  parent_task_id: SGK-2026-0278
+  related_docs:
+  - docs/shigoku/subtasks/done/2026-06-21_sgk-2026-0288_discord-notification-ja_subtask_plan.md
+  - docs/shigoku/subtasks/done/2026-06-23_sgk-2026-0297_discord-all-finding-detail-notification_subtask_plan.md
+  - docs/shigoku/worklogs/2026-05-11_log_scn07-12_discord_notification_v1.md
+  - docs/shigoku/reports/2026-06-30_SGK-2026-0327_work_report.md
+  - docs/shigoku/worklogs/2026-06-30_SGK-2026-0327_work_log.md
+- provisional_id: DOC-0345
+  task_id: SGK-2026-0328
+  doc_type: subtask_plan
+  title: translate-logs削除とlog_translator廃止
+  primary_doc: docs/shigoku/subtasks/done/2026-06-30_sgk-2026-0328_translate-logs-log-translator-removal_subtask_plan.md
+  status: done
+  provisional: false
+  task_summary: translate-logs削除とlog_translator廃止
+  parent_task_id: SGK-2026-0303
+  related_docs:
+  - docs/shigoku/plans/done/2026-06-24_sgk-2026-0303_ollama-compat-cleanup_plan.md
+  - docs/shigoku/reports/2026-06-22_sgk-2026-0290_cli-japanese-localization_work_report.md
+  - docs/shigoku/reports/2026-06-30_SGK-2026-0328_work_report.md
+  - docs/shigoku/worklogs/2026-06-30_SGK-2026-0328_work_log.md
+- provisional_id: DOC-0346
+  task_id: SGK-2026-0329
+  doc_type: plan
+  title: BugBountyデフォルト化とSQLi危険操作HITL強制化 実装計画
+  primary_doc: docs/shigoku/plans/done/2026-06-30_sgk-2026-0329_bugbounty-sqli-hitl_plan.md
+  status: done
+  provisional: false
+  task_summary: BugBountyデフォルト化とSQLi危険操作HITL強制化 実装計画
+  parent_task_id: SGK-2026-0066
+  related_docs:
+  - docs/shigoku/roadmaps/bug_bounty_enhancements_2026.md
+  - docs/shigoku/specs/adr/2026-02-27_RequestGuard_Implementation.md
+  - docs/shigoku/specs/2026-05-14_ver1x_hitl_gate_policy.md
+  - docs/shigoku/reports/2026-06-30_SGK-2026-0329_work_report.md
+  - docs/shigoku/worklogs/2026-06-30_SGK-2026-0329_work_log.md
+- provisional_id: DOC-0347
+  task_id: SGK-2026-0330
+  doc_type: subtask_plan
+  title: 共有SafeGuardの残適用箇所横展開
+  primary_doc: docs/shigoku/subtasks/done/2026-06-30_sgk-2026-0330_safeguard_subtask_plan.md
+  status: done
+  provisional: false
+  task_summary: 共有SafeGuardの残適用箇所横展開
+  parent_task_id: SGK-2026-0329
+  related_docs:
+  - docs/shigoku/plans/done/2026-06-30_sgk-2026-0329_bugbounty-sqli-hitl_plan.md
+  - docs/shigoku/specs/adr/2026-02-27_RequestGuard_Implementation.md
+  - docs/shigoku/reports/2026-06-30_SGK-2026-0330_work_report.md
+  - docs/shigoku/worklogs/2026-06-30_SGK-2026-0330_work_log.md
+- provisional_id: DOC-0348
+  task_id: SGK-2026-0331
+  doc_type: plan
+  title: SmartRequest直生成の定期チェック自動化
+  primary_doc: docs/shigoku/plans/2026-06-30_sgk-2026-0331_smartrequest-lint-check_plan.md
+  status: active
+  provisional: true
+  task_summary: CIパイプラインで SmartRequest( / get_request_guard( 直呼びを検出するアサーションスクリプト追加
+  parent_task_id: SGK-2026-0330
+  related_docs:
+  - docs/shigoku/reports/2026-06-30_SGK-2026-0330_work_report.md
+- provisional_id: DOC-0349
+  task_id: SGK-2026-0332
+  doc_type: plan
+  title: 補助系モジュールへのshared safeguard段階展開
+  primary_doc: docs/shigoku/plans/2026-06-30_sgk-2026-0332_auxiliary-module-safeguard_plan.md
+  status: active
+  provisional: true
+  task_summary: distributed_sqli.py, second_order_assistant.py 等の実送信pathを棚卸し、shared
+    safeguard配下へ段階的に寄せる
+  parent_task_id: SGK-2026-0330
+  related_docs:
+  - docs/shigoku/reports/2026-06-30_SGK-2026-0330_work_report.md
+- provisional_id: DOC-0350
+  task_id: SGK-2026-0333
+  doc_type: plan
+  title: time-based SQLi policyのデフォルト有効化
+  primary_doc: docs/shigoku/plans/2026-06-30_sgk-2026-0333_timebased-sqli-policy_plan.md
+  status: active
+  provisional: true
+  task_summary: time-based SQLi policyのデフォルト有効化とpolicy matrixの設計
+  parent_task_id: SGK-2026-0330
+  related_docs:
+  - docs/shigoku/reports/2026-06-30_SGK-2026-0330_work_report.md
+- provisional_id: DOC-0351
+  task_id: SGK-2026-0334
+  doc_type: subtask_plan
+  title: 'P1b: 判断ツリー可視化＋shigoku-ops decision-tree CLI'
+  primary_doc: docs/shigoku/subtasks/2026-07-01_p1b-shigoku-ops-decision-tree-cli_subtask_plan.md
+  status: active
+  provisional: false
+  task_summary: 'P1b: 判断ツリー可視化＋shigoku-ops decision-tree CLI'
+  parent_task_id: SGK-2026-0320
+  related_docs:
+  - docs/shigoku/plans/2026-06-29_sgk-2026-0320_recon-resume-visibility-conversational-ops_plan.md
+  - docs/shigoku/subtasks/done/2026-06-29_sgk-2026-0322_reconstate-completion-parallel-checkpoint-decision-tree_subtask_plan.md
+  - docs/shigoku/plans/done/2026-06-24_sgk-2026-0298_internal-behavior-visibility-governance_plan.md
+  - docs/shigoku/subtasks/done/2026-06-24_sgk-2026-0300_run-narrative-target-profile-markdown_subtask_plan.md
+- provisional_id: DOC-0401
+  task_id: SGK-2026-0335
+  doc_type: subtask_plan
+  title: Bug Bounty向けScope Bundle入力正規化とGuard Policy Compile計画
+  primary_doc: docs/shigoku/subtasks/done/2026-07-01_bug-bounty-scope-bundle-guard-policy-compile_subtask_plan.md
+  status: done
+  provisional: false
+  task_summary: Bug Bounty向けScope Bundle入力正規化とGuard Policy Compile計画
+  parent_task_id: SGK-2026-0282
+  related_docs:
+  - docs/shigoku/subtasks/2026-06-21_sgk-2026-0282_bug-bounty-scope-control_subtask_plan.md
+  - docs/shigoku/specs/2026-07-01_sgk-2026-0335_bug-bounty-program-bundle-guard-policy-contract.md
+  - docs/shigoku/specs/2026-07-02_sgk-2026-0335_enforcement-points-and-killswitch.md
+  - docs/shigoku/specs/2026-07-02_sgk-2026-0335_metrics-and-negative-fixtures.md
+  - docs/shigoku/specs/2026-07-02_sgk-2026-0335_v1-acceptance-criteria.md
+  - docs/shigoku/manuals/2026-07-02_sgk-2026-0335_bugbounty-bundle-operator-runbook.md
+  - docs/shigoku/reports/2026-07-02_sgk-2026-0335_work_report.md
+  - docs/shigoku/worklogs/2026-07-02_sgk-2026-0335_work_log.md
+  - docs/shigoku/subtasks/2026-07-02_sgk-2026-0336_bugbounty-bundle-v1-followups_subtask_plan.md
+  - docs/shigoku/specs/bug_bounty_enhancements.md
+  - docs/shigoku/specs/modules/ETHICS_GUARD.md
+  - docs/shigoku/roadmaps/bug_bounty_enhancements_2026.md
+- provisional_id: DOC-0402
+  task_id: SGK-2026-0336
+  doc_type: subtask_plan
+  title: Bug Bounty bundle V1 deferred follow-ups
+  primary_doc: docs/shigoku/subtasks/2026-07-02_sgk-2026-0336_bugbounty-bundle-v1-followups_subtask_plan.md
+  status: active
+  provisional: false
+  task_summary: SGK-2026-0335 の V1 deferred tasks を追跡し、stale bundle detection, concurrent
+    update control, metrics export, auto-promotion, legacy --scope removal を管理する
+  parent_task_id: SGK-2026-0282
+  related_docs:
+  - docs/shigoku/subtasks/done/2026-07-01_bug-bounty-scope-bundle-guard-policy-compile_subtask_plan.md
+  - docs/shigoku/reports/2026-07-02_sgk-2026-0335_work_report.md
+  - docs/shigoku/specs/2026-07-02_sgk-2026-0335_v1-acceptance-criteria.md
+  - docs/shigoku/manuals/2026-07-02_sgk-2026-0335_bugbounty-bundle-operator-runbook.md
+- provisional_id: DOC-0403
+  task_id: SGK-2026-0337
+  doc_type: plan
+  title: SHIGOKU 詳細コマンドリファレンス整備
+  primary_doc: docs/shigoku/plans/done/2026-07-02_sgk-2026-0337_detailed-command-reference_plan.md
+  status: done
+  provisional: false
+  task_summary: SHIGOKU 詳細コマンドリファレンス整備
+  parent_task_id: SGK-2026-0001
+  related_docs:
+  - docs/shigoku/README.md
+  - docs/shigoku/manuals/REFERENCE.md
+  - docs/shigoku/manuals/USER_MANUAL.md
+  - docs/shigoku/manuals/QUICK_START.md
+  - docs/shigoku/manuals/2026-07-02_sgk-2026-0337_detailed-command-reference.md
+  - docs/shigoku/reports/2026-07-02_sgk-2026-0337_work_report.md
+  - docs/shigoku/worklogs/2026-07-02_sgk-2026-0337_work_log.md
+- provisional_id: DOC-0404
+  task_id: SGK-2026-0338
+  doc_type: plan
+  title: SHIGOKU ユーザーマニュアル・内部仕様書整備
+  primary_doc: docs/shigoku/plans/done/2026-07-02_sgk-2026-0338_user-manual-and-internal-spec_plan.md
+  status: done
+  provisional: false
+  task_summary: SHIGOKU ユーザーマニュアル・内部仕様書整備
+  parent_task_id: SGK-2026-0001
+  related_docs:
+  - docs/shigoku/README.md
+  - docs/shigoku/manuals/QUICK_START.md
+  - docs/shigoku/manuals/USER_MANUAL.md
+  - docs/shigoku/specs/TECHNICAL_SPEC_JA.md
+  - docs/shigoku/specs/ARCHITECTURE.md
+  - docs/shigoku/manuals/2026-07-02_sgk-2026-0337_detailed-command-reference.md
+  - docs/shigoku/manuals/2026-07-02_sgk-2026-0338_operator-user-manual.md
+  - docs/shigoku/specs/2026-07-02_sgk-2026-0338_internal-architecture-and-dataflow-spec.md
+  - docs/shigoku/reports/2026-07-02_sgk-2026-0338_work_report.md
+  - docs/shigoku/worklogs/2026-07-02_sgk-2026-0338_work_log.md
 doc_type_allowed_values:
 - spec
 - roadmap

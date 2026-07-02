@@ -5,7 +5,7 @@ status: done
 parent_task_id: null
 related_docs: []
 created_at: '2026-01-03'
-updated_at: '2026-05-19'
+updated_at: '2026-07-02'
 ---
 
 2026-01-03 | Planning | Intelligence Module | Phase 0-3 の機能拡張計画を策定、ユーザーと仕様を確認

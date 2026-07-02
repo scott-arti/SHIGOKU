@@ -7,7 +7,7 @@ related_docs:
 - docs/shigoku/plans/2026-05-19_sgk-2026-0220_b-2-ssrf-tester_plan.md
 - docs/shigoku/reports/2026-05-19_sgk-2026-0220_ssrf-tester_work_report.md
 created_at: '2026-05-19'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 ---
 
 # Work Log: SGK-2026-0220

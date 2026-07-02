@@ -5,7 +5,7 @@ status: active
 parent_task_id: null
 related_docs: []
 created_at: '2026-05-14'
-updated_at: '2026-05-19'
+updated_at: '2026-07-02'
 ---
 
 # Ver.1.x HITL Gate Policy (SCN08/10/12)

@@ -5,7 +5,7 @@ status: backlog
 parent_task_id: null
 related_docs: []
 created_at: '2026-02-13'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 ---
 
 # Implementation Plan: Phase 2 - 頭脳のアップグレード

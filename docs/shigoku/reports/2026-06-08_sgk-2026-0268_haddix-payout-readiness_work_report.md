@@ -8,7 +8,7 @@ related_docs:
 - docs/shigoku/roadmaps/bug_bounty_enhancements_2026.md
 title: "Haddix report payout-readiness output improvements 実施報告"
 created_at: "2026-06-08"
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 ---
 
 # 作業報告

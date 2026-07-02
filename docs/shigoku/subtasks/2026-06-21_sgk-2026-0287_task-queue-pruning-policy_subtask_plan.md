@@ -7,7 +7,7 @@ related_docs:
 - docs/shigoku/plans/2026-06-20_sgk-2026-0278_ver-2-planning-bundle-dev-mode-recon_plan.md
 title: Task Queue Pruning Policy 設計計画
 created_at: '2026-06-21'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 tags:
 - shigoku
 target: src/core/engine/task_queue.py, src/core/engine/master_conductor.py, src/core/engine/strategy_optimizer.py

@@ -4,12 +4,12 @@ doc_type: work_report
 status: done
 parent_task_id: SGK-2026-0244
 related_docs:
-- docs/shigoku/subtasks/2026-06-21_sgk-2026-0285_xss-detector-remove-stored-placeholder_subtask_plan.md
+- docs/shigoku/subtasks/done/2026-06-21_sgk-2026-0285_xss-detector-remove-stored-placeholder_subtask_plan.md
 - docs/shigoku/plans/2026-05-24_sgk-2026-0244_xss-hunter-enhancement_plan.md
 - src/core/detection/xss_detector.py
 - tests/core/detection/test_xss_detector.py
 created_at: '2026-06-21'
-updated_at: '2026-06-30'
+updated_at: '2026-07-02'
 ---
 
 # 作業報告書

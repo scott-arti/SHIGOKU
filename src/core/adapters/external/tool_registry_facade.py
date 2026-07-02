@@ -38,8 +38,8 @@ class ToolRegistryFacade:
         all_tools = facade.list_all()
     """
     
-    def __init__(self):
-        self._external = ExternalToolProvider()
+    def __init__(self, mode: str = "bugbounty"):
+        self._external = ExternalToolProvider(mode=mode)
         self._internal = InternalToolProvider()
         self._logger = logging.getLogger(__name__)
         
@@ -214,12 +214,26 @@ class ToolRegistryFacade:
 _facade_instance: Optional[ToolRegistryFacade] = None
 
 
-def get_tool_registry_facade() -> ToolRegistryFacade:
-    """ToolRegistryFacadeのシングルトンインスタンスを取得"""
+def get_tool_registry_facade(mode: str = "bugbounty") -> ToolRegistryFacade:
+    """ToolRegistryFacadeのシングルトンインスタンスを取得
+
+    If the existing singleton was created with a different mode, it is
+    replaced with a new instance for the requested mode.
+    """
     global _facade_instance
     if _facade_instance is None:
-        _facade_instance = ToolRegistryFacade()
+        _facade_instance = ToolRegistryFacade(mode=mode)
+    else:
+        current_mode = getattr(_facade_instance._external, "_mode", "bugbounty")
+        if current_mode != mode:
+            _facade_instance = ToolRegistryFacade(mode=mode)
     return _facade_instance
+
+
+def reset_tool_registry_facade() -> None:
+    """Reset the singleton (for tests)."""
+    global _facade_instance
+    _facade_instance = None
 
 
 # CLI検証用
