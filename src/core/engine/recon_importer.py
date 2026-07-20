@@ -258,6 +258,13 @@ def _load_single_artifact(
         artifact.informational_only = True
         return artifact
 
+    # SGK-2026-0281: Compute artifact_hash for provenance verification
+    try:
+        import hashlib
+        artifact.provenance["artifact_hash"] = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+    except Exception:
+        artifact.provenance["artifact_hash"] = "unavailable"
+
     if kind in ("recon_state", "takeover_candidates", "step8_classification", "httpx_json"):
         try:
             artifact.data = json.loads(raw)
@@ -279,11 +286,18 @@ def _load_single_artifact(
     # ---- Target mismatch check (only for recon_state) ----
     if kind == "recon_state" and target and isinstance(artifact.data, dict):
         state_target = artifact.data.get("target", "")
+        state_fp = artifact.data.get("target_fingerprint", "")
         if state_target and str(state_target).strip().lower() != target.strip().lower():
             artifact.reason_codes.append("target_mismatch")
             artifact.warnings.append(
                 f"Target mismatch: recon_state has '{state_target}', expected '{target}'"
             )
+        # SGK-2026-0281: carry fingerprint in provenance for verification
+        if state_fp:
+            artifact.provenance["target_fingerprint"] = state_fp
+        artifact.provenance["fingerprint_match"] = (
+            "target_mismatch" not in artifact.reason_codes
+        )
 
     # ---- Freshness scoring ----
     _apply_freshness(artifact, freshness_threshold)

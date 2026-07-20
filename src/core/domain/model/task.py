@@ -85,6 +85,15 @@ class Task:
     parent_id: Optional[str] = None
     replan_depth: int = 0
 
+    # SGK-2026-0287 Step 6-2: provisional dependency contracts.
+    # These fields provide the evidence basis for active deletion:
+    # only tasks with explicit dependency roots may be actively pruned.
+    # Tasks without any dependency evidence are kept (safe-side) or
+    # observed in shadow mode.
+    depends_on_task_ids: List[str] = field(default_factory=list)
+    supersedes_task_ids: List[str] = field(default_factory=list)
+    invalidated_by_event: Optional[str] = None
+
     # Legacy fields compatibility (Swarm uses tags)
     tags: List[str] = field(default_factory=list)
     is_aggressive: bool = False
@@ -122,6 +131,9 @@ class Task:
             "error": self.error,
             "tags": self.tags,
             "is_aggressive": self.is_aggressive,
+            "depends_on_task_ids": self.depends_on_task_ids,
+            "supersedes_task_ids": self.supersedes_task_ids,
+            "invalidated_by_event": self.invalidated_by_event,
         }
 
         # Phase 1: include metadata only when it has content
@@ -158,4 +170,7 @@ class Task:
             tags=d.get("tags", []),
             is_aggressive=d.get("is_aggressive", False),
             metadata=safe_metadata,
+            depends_on_task_ids=d.get("depends_on_task_ids", []),
+            supersedes_task_ids=d.get("supersedes_task_ids", []),
+            invalidated_by_event=d.get("invalidated_by_event"),
         )

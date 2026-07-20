@@ -81,6 +81,9 @@ class RecipeCandidate:
     # recipe trigger conditions (plan 3.1, 4.4)
     success_condition: Optional[str] = None
     stop_condition: Optional[str] = None
+    # ── SGK-2026-0260: suppression / allowlist ───────────────────────────
+    suppressed: bool = False
+    suppression_reason: Optional[str] = None
 
 
 # ── Freshness helpers ────────────────────────────────────────────────────
@@ -185,6 +188,79 @@ def extract_signals(candidate: TakeoverCandidate) -> Dict[str, Any]:
     return signals
 
 
+def extract_attack_surface_signal_map(signal: Dict[str, Any]) -> Dict[str, Any]:
+    """Derive a flat selector signal map from an AttackSurfaceSignal-like dict.
+
+    The recon signal bundle uses structured fields (`entity_type`,
+    `candidate_labels`, `auth_context`, `params`). Recipe matching still
+    operates on flat `required_signals` names, so this helper normalizes the
+    structured signal into recipe-friendly boolean flags.
+    """
+    normalized: Dict[str, Any] = {}
+
+    entity_type = str(signal.get("entity_type", "") or "").strip()
+    if entity_type:
+        normalized[entity_type] = True
+        normalized[f"entity_type.{entity_type}"] = True
+
+    primary_label = str(signal.get("primary_label", "") or "").strip()
+    if primary_label:
+        normalized[primary_label] = True
+        normalized[f"label.{primary_label}"] = True
+
+    labels = signal.get("candidate_labels", [])
+    if isinstance(labels, list):
+        for label in labels:
+            label_name = str(label or "").strip()
+            if not label_name:
+                continue
+            normalized[label_name] = True
+            normalized[f"label.{label_name}"] = True
+
+    auth_required = signal.get("auth_required")
+    if auth_required is not None:
+        normalized["auth_required"] = bool(auth_required)
+
+    auth_context = signal.get("auth_context", {})
+    if isinstance(auth_context, dict):
+        for key, value in auth_context.items():
+            key_name = str(key or "").strip()
+            if not key_name:
+                continue
+            normalized[key_name] = bool(value)
+            normalized[f"auth_context.{key_name}"] = bool(value)
+
+    params = signal.get("params", [])
+    if isinstance(params, list) and params:
+        normalized["has_params"] = True
+        for param in params:
+            if not isinstance(param, dict):
+                continue
+            location = str(param.get("location", "") or "").strip()
+            if location:
+                normalized[f"param_location.{location}"] = True
+            name = str(param.get("name", "") or "").strip()
+            if name:
+                normalized[f"param.{name}"] = True
+
+    source_observations = signal.get("source_observations", [])
+    if isinstance(source_observations, list):
+        for source in source_observations:
+            source_name = str(source or "").strip()
+            if source_name:
+                normalized[f"source.{source_name}"] = True
+
+    status = str(signal.get("status", "") or "").strip()
+    if status:
+        normalized[f"status.{status}"] = True
+
+    confidence = signal.get("confidence")
+    if isinstance(confidence, (int, float)):
+        normalized["confidence"] = float(confidence)
+
+    return normalized
+
+
 # ── RecipeLoader ─────────────────────────────────────────────────────────
 
 class RecipeLoader:
@@ -237,6 +313,9 @@ class RecipeLoader:
         self,
         context: Dict[str, Any],
         scope_policy: Optional["TakeoverScopePolicy"] = None,
+        *,
+        kg_context: Optional[Dict[str, Any]] = None,
+        active_suppression_keys: Optional[Set[str]] = None,
     ) -> List[RecipeCandidate]:
         """Match loaded recipes against the execution context using signal-based selection.
 
@@ -253,13 +332,22 @@ class RecipeLoader:
             unconditionally with score 0.0 (backward-compatible behaviour).
           - The same recipe may yield multiple ``RecipeCandidate`` objects
             for different takeover candidates.
+          - SGK-2026-0260: Recipes with unsupported step actions are
+            reported as suppressed with reason ``unsupported_action``.
+          - SGK-2026-0260: active_suppression_keys blocks re-execution
+            per (recipe_name, signal_identity).
 
         Args:
             context: Execution context dict, expected to contain
-                ``takeover_candidates`` (List[TakeoverCandidate]).
+                ``takeover_candidates`` (List[TakeoverCandidate]) and/or
+                ``attack_surface_signals`` (List[Dict]).
             scope_policy: Optional ``TakeoverScopePolicy`` for per-target
                 scope blocking. Default ``None`` is permissive (all
                 targets allowed).
+            kg_context: Optional KnowledgeGraph context dict for score
+                enrichment and suppression checks (SGK-2026-0260).
+            active_suppression_keys: Optional set of suppression keys to
+                block re-execution (SGK-2026-0260).
 
         Returns a list of ``RecipeCandidate`` (may be empty).
         """
@@ -267,6 +355,11 @@ class RecipeLoader:
         takeover_candidates: List[TakeoverCandidate] = context.get(
             "takeover_candidates", []
         )
+        attack_surface_signals: List[Dict[str, Any]] = context.get(
+            "attack_surface_signals",
+            context.get("endpoint_signals", []),
+        )
+        active_suppression_keys = active_suppression_keys or set()
 
         # ── Early scope-policy filtering (plan 3.3, 3.4.3, 4.5) ─────────
         if scope_policy is not None:
@@ -288,6 +381,11 @@ class RecipeLoader:
             trigger = recipe.trigger or {}
             trigger_type = str(trigger.get("type", "")).strip().lower()
 
+            # ── SGK-2026-0260: action allowlist pre-check ────────────────
+            allowlist_check = check_recipe_action_allowlist(recipe)
+            recipe_actions_ok = allowlist_check["ok"]
+            unsupported_actions = allowlist_check["unsupported_actions"]
+
             if trigger_type == "signal":
                 # ── signal-based matching (takeover / provider recipes) ──
                 required = _normalise_signal_list(trigger.get("required_signals", []))
@@ -295,7 +393,13 @@ class RecipeLoader:
 
                 if not required and not blocking:
                     # No signal constraints → match unconditionally
-                    results.append(RecipeCandidate(recipe=recipe))
+                    rc = RecipeCandidate(recipe=recipe)
+                    if not recipe_actions_ok:
+                        rc.suppressed = True
+                        rc.suppression_reason = (
+                            "unsupported_action:" + ",".join(unsupported_actions)
+                        )
+                    results.append(rc)
                     continue
 
                 for candidate in takeover_candidates:
@@ -315,10 +419,43 @@ class RecipeLoader:
                     freshness = signals.get("freshness_score", 0.0)
                     score = round(signal_ratio * freshness, 4)
 
+                    # ── SGK-2026-0260: KG enrichment ─────────────────
+                    signal_map_for_kg = signals.copy()
+                    signal_map_for_kg["_recipe_name"] = recipe.name
+                    kg_score, kg_additive, kg_suppressive = (
+                        _enrich_score_with_kg_context(score, signal_map_for_kg, kg_context)
+                    )
+
+                    # ── SGK-2026-0260: reasons construction ──────────
+                    candidate_reasons = sorted(required)
+                    if freshness >= 0.9:
+                        candidate_reasons.append("fresh_signal")
+                    candidate_reasons.extend(kg_additive)
+                    suppressive_notes: List[str] = list(kg_suppressive)
+                    candidate_suppressed = False
+                    suppression_reason: Optional[str] = None
+
+                    if not recipe_actions_ok:
+                        score = max(0.0, score - 0.3)
+                        suppressive_notes.append("unsupported_step_action")
+                        candidate_suppressed = True
+                        suppression_reason = "unsupported_action:" + ",".join(unsupported_actions)
+
+                    # ── SGK-2026-0260: suppression key check ────────
+                    if not candidate_suppressed:
+                        signal_key = candidate.candidate_id or candidate.subdomain
+                        if is_recipe_suppressed(
+                            active_suppression_keys, recipe.name, signal_key,
+                            also_check_endpoint=candidate.subdomain,
+                        ):
+                            candidate_suppressed = True
+                            suppression_reason = "suppression_key_active"
+
                     rc = RecipeCandidate(
                         recipe=recipe,
-                        score=score,
-                        reasons=sorted(required),
+                        score=round(max(0.0, min(1.0, score + kg_score - score)), 4)
+                        if kg_additive or kg_suppressive else score,
+                        reasons=candidate_reasons + suppressive_notes,
                         required_signals={k: bool(signals.get(k)) for k in required},
                         supporting_evidence={
                             "candidate_id": candidate.candidate_id,
@@ -330,22 +467,308 @@ class RecipeLoader:
                             "session_id": candidate.session_id,
                             "source_line": candidate.source_line,
                             "artifact_hash": candidate.artifact_hash,
+                            # SGK-2026-0260: KG enrichment trace
+                            "_kg_additive_reasons": kg_additive,
+                            "_kg_suppressive_reasons": kg_suppressive,
+                            "_kg_adjusted_score": kg_score,
                         },
                         manual_review_required=(
                             candidate.manual_claim_review_required or
                             bool(signals.get("manual_claim_review_required"))
                         ),
-                        # recipe trigger conditions (plan 3.1, 4.4)
                         success_condition=trigger.get("success_condition"),
                         stop_condition=trigger.get("stop_condition"),
+                        suppressed=candidate_suppressed,
+                        suppression_reason=suppression_reason,
+                    )
+                    results.append(rc)
+
+                for signal in attack_surface_signals:
+                    if not isinstance(signal, dict):
+                        continue
+
+                    signal_map = extract_attack_surface_signal_map(signal)
+
+                    if _any_signal_present(blocking, signal_map):
+                        continue
+
+                    matched, missing = _check_required_signals(required, signal_map)
+                    if not matched:
+                        continue
+
+                    confidence = float(signal.get("confidence", 0.0) or 0.0)
+                    score = round(max(0.0, min(1.0, confidence)), 4)
+
+                    # ── SGK-2026-0260: KG enrichment ─────────────────
+                    signal_map_for_kg = signal_map.copy()
+                    signal_map_for_kg["_recipe_name"] = recipe.name
+                    signal_map_for_kg["entity_type"] = signal.get("entity_type", "")
+                    kg_score, kg_additive, kg_suppressive = (
+                        _enrich_score_with_kg_context(score, signal_map_for_kg, kg_context)
+                    )
+
+                    # ── SGK-2026-0260: reasons construction ──────────
+                    candidate_reasons = sorted(required)
+                    if confidence >= 0.9:
+                        candidate_reasons.append("high_confidence")
+                    candidate_reasons.extend(kg_additive)
+                    suppressive_notes: List[str] = list(kg_suppressive)
+                    candidate_suppressed = False
+                    suppression_reason: Optional[str] = None
+
+                    if not recipe_actions_ok:
+                        score = max(0.0, score - 0.3)
+                        suppressive_notes.append("unsupported_step_action")
+                        candidate_suppressed = True
+                        suppression_reason = "unsupported_action:" + ",".join(unsupported_actions)
+
+                    # ── SGK-2026-0260: suppression key check ────────
+                    if not candidate_suppressed:
+                        signal_id = str(signal.get("signal_id", "") or "").strip()
+                        signal_url = str(signal.get("url", "") or "").strip()
+                        signal_identity = signal_id or signal_url
+                        if signal_identity and is_recipe_suppressed(
+                            active_suppression_keys, recipe.name, signal_identity,
+                            also_check_endpoint=signal_url if signal_url else None,
+                        ):
+                            candidate_suppressed = True
+                            suppression_reason = "suppression_key_active"
+
+                    rc = RecipeCandidate(
+                        recipe=recipe,
+                        score=round(max(0.0, min(1.0, score + kg_score - score)), 4)
+                        if kg_additive or kg_suppressive else score,
+                        reasons=candidate_reasons + suppressive_notes,
+                        required_signals={k: bool(signal_map.get(k)) for k in required},
+                        supporting_evidence={
+                            "signal_id": signal.get("signal_id"),
+                            "url": signal.get("url", ""),
+                            "method": signal.get("method", "GET"),
+                            "entity_type": signal.get("entity_type", ""),
+                            "primary_label": signal.get("primary_label", ""),
+                            "candidate_labels": list(signal.get("candidate_labels", [])),
+                            "why_suspicious": signal.get("why_suspicious", ""),
+                            "source_observations": list(signal.get("source_observations", [])),
+                            "confidence": confidence,
+                            "params": list(signal.get("params", [])),
+                            # SGK-2026-0260: KG enrichment trace
+                            "_kg_additive_reasons": kg_additive,
+                            "_kg_suppressive_reasons": kg_suppressive,
+                            "_kg_adjusted_score": kg_score,
+                        },
+                        manual_review_required=(
+                            str(signal.get("status", "") or "").strip() == "needs_swarm_review"
+                        ),
+                        success_condition=trigger.get("success_condition"),
+                        stop_condition=trigger.get("stop_condition"),
+                        suppressed=candidate_suppressed,
+                        suppression_reason=suppression_reason,
                     )
                     results.append(rc)
 
             else:
                 # ── backward-compatible unconditional match ──────────────
-                results.append(RecipeCandidate(recipe=recipe))
+                rc = RecipeCandidate(recipe=recipe)
+                if not recipe_actions_ok:
+                    rc.suppressed = True
+                    rc.suppression_reason = (
+                        "unsupported_action:" + ",".join(unsupported_actions)
+                    )
+                results.append(rc)
 
         return results
+
+
+# ── Allowlist filtering (SGK-2026-0260) ──────────────────────────────────
+
+
+def check_recipe_action_allowlist(
+    recipe: "Recipe",
+    *,
+    allowed: Optional[Set[str]] = None,
+) -> Dict[str, Any]:
+    """Check whether every step action in *recipe* is in the action allowlist.
+
+    Returns a dict with:
+      - ``ok`` (bool): True when every action is allowed.
+      - ``unsupported_actions`` (List[str]): disallowed action names found.
+      - ``error`` (str): empty when ok, else a concatenated reason note.
+    """
+    if allowed is None:
+        from src.core.engine.recipe_contracts import ALLOWED_RECIPE_STEP_ACTIONS
+        allowed = ALLOWED_RECIPE_STEP_ACTIONS
+
+    allowed_set = {str(a).strip() for a in allowed}
+    unsupported: List[str] = []
+    for step in recipe.steps:
+        action = str(step.action or "").strip()
+        if action and action not in allowed_set:
+            unsupported.append(action)
+
+    ok = len(unsupported) == 0
+    error = ""
+    if not ok:
+        error = "unsupported_actions:" + ",".join(sorted(set(unsupported)))
+    return {
+        "ok": ok,
+        "unsupported_actions": sorted(set(unsupported)),
+        "error": error,
+    }
+
+
+# ── Suppression key helpers (SGK-2026-0260) ──────────────────────────────
+
+
+def build_suppression_key(
+    recipe_name: str,
+    signal_identity: str,
+    *,
+    prefix: str = "signal",
+) -> str:
+    """Build a standard suppression key for recipe deduplication.
+
+    Format: ``{prefix}:{recipe_name}:{signal_identity}``
+
+    *prefix* should be ``"signal"`` or ``"endpoint"`` (use
+    ``SUPPRESSION_KEY_PREFIX_SIGNAL`` / ``SUPPRESSION_KEY_PREFIX_ENDPOINT``).
+    """
+    return f"{prefix}:{recipe_name}:{signal_identity}"
+
+
+def is_recipe_suppressed(
+    active_suppression_keys: Set[str],
+    recipe_name: str,
+    signal_identity: str,
+    *,
+    also_check_endpoint: Optional[str] = None,
+) -> bool:
+    """Return True when *recipe_name* + *signal_identity* (or endpoint) is
+    present in *active_suppression_keys*."""
+    signal_key = build_suppression_key(recipe_name, signal_identity)
+    if signal_key in active_suppression_keys:
+        return True
+    if also_check_endpoint:
+        ep_key = build_suppression_key(
+            recipe_name, also_check_endpoint,
+            prefix="endpoint",
+        )
+        if ep_key in active_suppression_keys:
+            return True
+    return False
+
+
+# ── KG enrichment helpers (SGK-2026-0260) ────────────────────────────────
+
+
+def _enrich_score_with_kg_context(
+    base_score: float,
+    signal_map: Dict[str, Any],
+    kg_context: Optional[Dict[str, Any]],
+) -> tuple[float, List[str], List[str]]:
+    """Adjust *base_score* using KnowledgeGraph context and return
+    (adjusted_score, additive_reasons, suppressive_reasons).
+
+    *kg_context* is expected to be a dict with optional keys:
+      - ``previous_recipe_runs``: List[str] of recipe names already run
+      - ``previous_recipe_outcomes``: Dict[str, str] mapping recipe_name → outcome
+      - ``nearby_findings``: List[Dict] of findings on adjacent endpoints
+      - ``nearby_endpoints``: List[Dict] of endpoints near this signal
+      - ``kg_freshness_score``: float (0.0–1.0) freshness from KG perspective
+      - ``tech_stack_context``: Dict[str, Any] of tech stack KG data
+    """
+    from src.core.engine.recipe_contracts import (
+        RECIPE_ADDITIVE_REASONS,
+        RECIPE_SUPPRESSIVE_REASONS,
+    )
+
+    additive: List[str] = []
+    suppressive: List[str] = []
+    adjusted = base_score
+
+    if not kg_context or not isinstance(kg_context, dict):
+        return adjusted, additive, suppressive
+
+    # ── KG freshness ─────────────────────────────────────────────────────
+    kg_freshness = kg_context.get("kg_freshness_score")
+    if isinstance(kg_freshness, (int, float)):
+        ff = float(kg_freshness)
+        if ff >= 0.8:
+            adjusted += 0.1
+            additive.append("high_freshness_score")
+        elif ff < 0.3:
+            adjusted -= 0.15
+            suppressive.append("kg_context_stale")
+
+    # ── Previous recipe runs ─────────────────────────────────────────────
+    previous_runs = kg_context.get("previous_recipe_runs", [])
+    previous_outcomes = kg_context.get("previous_recipe_outcomes", {})
+
+    recipe_name = signal_map.get("_recipe_name", "")
+    if isinstance(previous_runs, list) and recipe_name and recipe_name in previous_runs:
+        outcome = previous_outcomes.get(recipe_name, "unknown")
+        if outcome == "confirmed" or outcome == "success":
+            adjusted += 0.05
+            additive.append("previous_recipe_succeeded")
+        else:
+            adjusted -= 0.2
+            suppressive.append("previous_recipe_run_exists")
+            suppressive.append("previous_recipe_failed")
+
+    # ── Nearby findings ──────────────────────────────────────────────────
+    nearby_findings = kg_context.get("nearby_findings", [])
+    if isinstance(nearby_findings, list) and nearby_findings:
+        confirmed_nearby = any(
+            isinstance(f, dict) and f.get("status") == "confirmed"
+            for f in nearby_findings
+        )
+        if confirmed_nearby:
+            adjusted += 0.1
+            additive.append("nearby_finding_confirms")
+        else:
+            # mitigated or draft findings → slight penalty
+            mitigated_nearby = any(
+                isinstance(f, dict) and f.get("status") == "mitigated"
+                for f in nearby_findings
+            )
+            if mitigated_nearby:
+                adjusted -= 0.1
+                suppressive.append("nearby_finding_mitigated")
+
+    # ── Nearby endpoints ─────────────────────────────────────────────────
+    nearby_endpoints = kg_context.get("nearby_endpoints", [])
+    if isinstance(nearby_endpoints, list) and nearby_endpoints:
+        auth_nearby = any(
+            isinstance(ep, dict) and ep.get("surface_type") == "auth_surface"
+            for ep in nearby_endpoints
+        )
+        if auth_nearby:
+            adjusted += 0.05
+            additive.append("nearby_auth_surface")
+
+        same_surface = any(
+            isinstance(ep, dict)
+            and ep.get("surface_type")
+            and signal_map.get("entity_type")
+            and ep.get("surface_type") == signal_map.get("entity_type")
+            for ep in nearby_endpoints
+        )
+        if same_surface:
+            adjusted += 0.05
+            additive.append("nearby_endpoint_corroborates")
+
+    # ── Tech stack context ───────────────────────────────────────────────
+    tech_ctx = kg_context.get("tech_stack_context", {})
+    if isinstance(tech_ctx, dict):
+        tech_keywords = set(
+            str(k).lower() for k in tech_ctx.keys()
+        )
+        if tech_keywords:
+            adjusted += 0.02
+            additive.append("tech_stack_match")
+
+    # Clamp and round
+    adjusted = round(max(0.0, min(1.0, adjusted)), 4)
+    return adjusted, additive, suppressive
 
 
 # ── signal helpers (module-private) ──────────────────────────────────────

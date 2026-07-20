@@ -95,7 +95,7 @@ class AsyncNetworkClient:
         proxy_manager: Optional[ProxyChainManager] = None,
         default_timeout: int = 30,
         user_agent: str = "Shigoku-SwarmBot/1.0",
-        mode: str = "bugbounty",  # bugbounty, ctf, vulntest
+        mode: Optional[str] = None,  # None → resolve_run_mode() (settings.mode, else bugbounty)
         cookies: Optional[Dict[str, str]] = None,  # Explicit override
         event_bus: Optional[Any] = None,
         guard_context: Optional[Dict[str, Any]] = None,  # Phase 2: SGK-2026-0335
@@ -103,6 +103,16 @@ class AsyncNetworkClient:
         self.proxy_manager = proxy_manager
         self.default_timeout = default_timeout
         self.user_agent = user_agent
+        # Resolve run mode: explicit arg > global settings.mode > "bugbounty".
+        # Without this, bare AsyncNetworkClient() defaulted to "bugbounty" and
+        # the compiled scope guard fail-closed (policy_unavailable) on every
+        # vulntest/ctf request where no bundle is loaded. (SGK-2026-0335 補完)
+        if mode is None:
+            try:
+                from src.core.config.settings import resolve_run_mode
+                mode = resolve_run_mode()
+            except Exception:
+                mode = "bugbounty"
         self.mode = mode
         self._default_guard_context = guard_context  # explicit only; shared is read at request time
         self.event_bus = event_bus

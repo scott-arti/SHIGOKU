@@ -82,8 +82,16 @@ class LLMRoleResolver:
             # Fall back to default_role
             role = self._roles.get(self._default_role)
             if role is None:
+                if not self._roles:
+                    raise LLMResolutionError(
+                        f"No LLM roles are configured. Unable to resolve role "
+                        f"'{role_name}' (default_role='{self._default_role}'). "
+                        f"Verify that config/shigoku.yaml is being loaded correctly "
+                        f"and contains an 'llm.roles' section."
+                    )
                 raise LLMResolutionError(
-                    f"Default role '{self._default_role}' is not defined in config"
+                    f"Default role '{self._default_role}' is not defined in config. "
+                    f"Available roles: {sorted(self._roles.keys())}"
                 )
             # Return the default role's resolution
             resolved = self._resolve_role(self._default_role, role)

@@ -1,21 +1,24 @@
 ---
 task_id: SGK-2026-0284
 doc_type: subtask_plan
-status: active
-parent_task_id: SGK-2026-0278
+status: backlog
+parent_task_id: SGK-2026-0282
 related_docs:
-- docs/shigoku/plans/2026-06-20_sgk-2026-0278_ver-2-planning-bundle-dev-mode-recon_plan.md
+- docs/shigoku/subtasks/2026-06-21_sgk-2026-0282_bug-bounty-scope-control_subtask_plan.md
 - docs/shigoku/subtasks/2026-06-20_sgk-2026-0281_recon-resume-recipe-phasegate_subtask_plan.md
 - docs/shigoku/roadmaps/future_functions1.md
+- docs/shigoku/plans/done/2026-06-24_sgk-2026-0304_active_plan.md
 title: PhaseGate細粒度化計画
 created_at: '2026-06-21'
-updated_at: '2026-07-02'
+updated_at: '2026-07-21'
 tags:
 - shigoku
 target: src/core/engine/phase_gate.py, src/core/engine/master_conductor.py, src/core/security/ethics_guard.py
 ---
 
 # 実装計画書：PhaseGate細粒度化計画
+
+> 2026-07-17 統合メモ: `SGK-2026-0282` を scope policy と PhaseGate をまとめて扱う正本計画に切り替えたため、本計画は独立 `active` から外し、設計付録として保持する。今後の実装着手は `SGK-2026-0282` 配下で行い、本計画単独では着手しない。
 
 ## 1. 達成したいゴール（ユーザー視点）
 - Recon が終わった瞬間に Attack をまとめて開放するのではなく、得られた情報に応じて必要なタスクだけ順に開放できる。

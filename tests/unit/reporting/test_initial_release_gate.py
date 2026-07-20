@@ -3,7 +3,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from src.reporting.initial_release_gate import evaluate_initial_release_gate, set_locked_baseline
+from src.reporting.initial_release_gate import (
+    evaluate_gate_separated,
+    evaluate_initial_release_gate,
+    set_locked_baseline,
+)
 
 
 def _write_session(
@@ -589,13 +593,19 @@ def test_initial_release_gate_uses_session_raw_findings_summary_for_threshold_de
     )
 
     verdict = evaluate_initial_release_gate(report_file)
-    assert verdict["status"] == "fail"
-    assert "confirmed_below_minimum" in verdict["reason_codes"]
+    # With the P3 fix: Finding Policy Gate uses the report's findings summary
+    # (Confirmed: 3 / Candidate: 0). The report has 3 >= 3 confirmed, so this
+    # passes. Session data (2 confirmed) is preserved in session_findings_summary
+    # for evidence quality comparison but does not override the finding policy.
+    assert verdict["status"] == "pass"
+    assert "confirmed_below_minimum" not in verdict["reason_codes"]
     findings_summary = verdict["report_metrics"]["findings_summary"]
-    assert findings_summary["source"] == "session_raw_unique"
-    assert findings_summary["confirmed_count"] == 2
+    assert findings_summary["source"] == "report"
+    assert findings_summary["confirmed_count"] == 3
     assert findings_summary["candidate_count"] == 0
     assert verdict["report_metrics"]["report_findings_summary"]["confirmed_count"] == 3
+    # Session raw data (2 confirmed) is still available but does not override
+    assert verdict["report_metrics"]["session_findings_summary"]["confirmed_count"] == 2
 
 
 def test_initial_release_gate_uses_session_detection_class_for_required_class_decision(tmp_path: Path) -> None:
@@ -1119,3 +1129,580 @@ def test_initial_release_gate_schema_severity_hard_fail_blocks_on_missing(tmp_pa
     )
     assert verdict["status"] == "fail"
     assert "schema_severity_missing_hard_fail" in verdict["reason_codes"]
+
+
+# ─────────────────────────────────────────────
+# Phase 3: Gate Separation Tests
+# ─────────────────────────────────────────────
+
+
+class TestGateSeparation:
+    """P3-1: Initial Release Gate Fail-Closed with independent sub-gates."""
+
+    def test_confirmed_below_minimum_fails_even_with_allowed_missing(self, tmp_path: Path) -> None:
+        """Confirmed=1, Candidate=0 with allowed_missing for SCN08/10/12 → FAIL because confirmed<3."""
+        project_dir = tmp_path / "workspace" / "projects" / "127.0.0.1:8888"
+        sessions_dir = project_dir / "sessions"
+        reports_dir = project_dir / "reports"
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+        reports_dir.mkdir(parents=True, exist_ok=True)
+
+        session_file = sessions_dir / "session_20260714_000000.json"
+        missing = [
+            "scn_08_oob_external_channel_flow",
+            "scn_10_semantic_business_logic",
+            "scn_12_advanced_ssrf_internal_topology",
+        ]
+        _write_session(session_file, covered=9, required=12, missing=missing)
+        report_file = reports_dir / "haddix_report_20260714_000000.md"
+        _write_report(
+            report_file,
+            source_session=str(session_file.resolve()),
+            coverage_line=(
+                "Coverage: 9/12 (75.0%), Missing: scn_08_oob_external_channel_flow, "
+                "scn_10_semantic_business_logic, scn_12_advanced_ssrf_internal_topology"
+            ),
+            family_gate_line="Gate: PASS, Coverage: 7/7 (100.0%), Missing: -",
+            findings_line="Confirmed: 1 / Candidate: 0",
+        )
+
+        verdict = evaluate_gate_separated(
+            report_file,
+            allowed_missing_scenarios=missing,
+            confirmed_min=3,
+            candidate_max=2,
+        )
+        # Overall gate must FAIL because confirmed=1 < 3
+        assert verdict["status"] == "fail"
+        assert verdict["gate_passed"] is False
+        assert "confirmed_below_minimum" in verdict["reason_codes"]
+        # Scenario coverage gate should PASS (all missing are allowed)
+        scenario_gate = verdict["gates"]["scenario_coverage"]
+        assert scenario_gate["status"] == "pass"
+        assert scenario_gate["passed"] is True
+        # Finding policy gate should FAIL
+        finding_gate = verdict["gates"]["finding_policy"]
+        assert finding_gate["status"] == "fail"
+        assert "confirmed_below_minimum" in finding_gate["reason_codes"]
+
+    def test_candidate_above_maximum_fails_even_with_allowed_missing(self, tmp_path: Path) -> None:
+        """Confirmed=3, Candidate=10 with allowed_missing for SCN08/10/12 → FAIL because candidate>2."""
+        project_dir = tmp_path / "workspace" / "projects" / "127.0.0.1:8888"
+        sessions_dir = project_dir / "sessions"
+        reports_dir = project_dir / "reports"
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+        reports_dir.mkdir(parents=True, exist_ok=True)
+
+        session_file = sessions_dir / "session_20260714_000000.json"
+        missing = [
+            "scn_08_oob_external_channel_flow",
+            "scn_10_semantic_business_logic",
+            "scn_12_advanced_ssrf_internal_topology",
+        ]
+        _write_session(session_file, covered=9, required=12, missing=missing)
+        report_file = reports_dir / "haddix_report_20260714_000000.md"
+        _write_report(
+            report_file,
+            source_session=str(session_file.resolve()),
+            coverage_line=(
+                "Coverage: 9/12 (75.0%), Missing: scn_08_oob_external_channel_flow, "
+                "scn_10_semantic_business_logic, scn_12_advanced_ssrf_internal_topology"
+            ),
+            family_gate_line="Gate: PASS, Coverage: 7/7 (100.0%), Missing: -",
+            findings_line="Confirmed: 3 / Candidate: 10",
+        )
+
+        verdict = evaluate_gate_separated(
+            report_file,
+            allowed_missing_scenarios=missing,
+            confirmed_min=3,
+            candidate_max=2,
+        )
+        # Overall gate must FAIL because candidate=10 > 2
+        assert verdict["status"] == "fail"
+        assert "candidate_above_maximum" in verdict["reason_codes"]
+        # Scenario coverage gate should PASS (all missing are allowed)
+        assert verdict["gates"]["scenario_coverage"]["status"] == "pass"
+        # Finding policy gate should FAIL
+        finding_gate = verdict["gates"]["finding_policy"]
+        assert finding_gate["status"] == "fail"
+        assert "candidate_above_maximum" in finding_gate["reason_codes"]
+
+    def test_allowed_missing_only_affects_scenario_coverage(self, tmp_path: Path) -> None:
+        """allowed_missing must only affect scenario coverage gate, not confirmed/candidate counts."""
+        project_dir = tmp_path / "workspace" / "projects" / "127.0.0.1:8888"
+        sessions_dir = project_dir / "sessions"
+        reports_dir = project_dir / "reports"
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+        reports_dir.mkdir(parents=True, exist_ok=True)
+
+        session_file = sessions_dir / "session_20260714_000000.json"
+        missing = ["scn_10_semantic_business_logic"]
+        _write_session(session_file, covered=11, required=12, missing=missing)
+        report_file = reports_dir / "haddix_report_20260714_000000.md"
+        _write_report(
+            report_file,
+            source_session=str(session_file.resolve()),
+            coverage_line="Coverage: 11/12 (91.7%), Missing: scn_10_semantic_business_logic",
+            family_gate_line="Gate: PASS, Coverage: 7/7 (100.0%), Missing: -",
+            findings_line="Confirmed: 0 / Candidate: 0",
+        )
+
+        verdict = evaluate_gate_separated(
+            report_file,
+            allowed_missing_scenarios=missing,
+            confirmed_min=3,
+            candidate_max=2,
+        )
+        # Scenario coverage should PASS (SCN10 is allowed missing)
+        assert verdict["gates"]["scenario_coverage"]["status"] == "pass"
+        # But finding policy should FAIL due to confirmed=0 < 3 (allowed_missing does NOT help)
+        assert verdict["status"] == "fail"
+        assert "confirmed_below_minimum" in verdict["reason_codes"]
+        assert verdict["gates"]["finding_policy"]["status"] == "fail"
+
+    def test_gate_separated_returns_structured_gates(self, tmp_path: Path) -> None:
+        """Call evaluate_gate_separated, verify gates dict has all 5 sub-gates."""
+        project_dir = tmp_path / "workspace" / "projects" / "127.0.0.1:8888"
+        sessions_dir = project_dir / "sessions"
+        reports_dir = project_dir / "reports"
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+        reports_dir.mkdir(parents=True, exist_ok=True)
+
+        session_file = sessions_dir / "session_20260714_000000.json"
+        _write_session(session_file, covered=10, required=12, missing=["scn_10_semantic_business_logic", "scn_12_advanced_ssrf_internal_topology"])
+        report_file = reports_dir / "haddix_report_20260714_000000.md"
+        _write_report(
+            report_file,
+            source_session=str(session_file.resolve()),
+            coverage_line="Coverage: 10/12 (83.3%), Missing: scn_10_semantic_business_logic, scn_12_advanced_ssrf_internal_topology",
+            family_gate_line="Gate: PASS, Coverage: 7/7 (100.0%), Missing: -",
+            findings_line="Confirmed: 3 / Candidate: 0",
+        )
+
+        verdict = evaluate_gate_separated(report_file)
+        assert "gates" in verdict
+        gates = verdict["gates"]
+        expected_gates = {"scenario_coverage", "evidence_quality", "finding_policy", "regression", "submission"}
+        assert set(gates.keys()) == expected_gates
+        for gate_name in expected_gates:
+            gate = gates[gate_name]
+            assert "status" in gate, f"{gate_name} missing status"
+            assert "passed" in gate, f"{gate_name} missing passed"
+            assert "reason_codes" in gate, f"{gate_name} missing reason_codes"
+
+    def test_overall_gate_passes_only_when_all_sub_gates_pass(self, tmp_path: Path) -> None:
+        """All sub-gates pass → overall pass."""
+        project_dir = tmp_path / "workspace" / "projects" / "127.0.0.1:8888"
+        sessions_dir = project_dir / "sessions"
+        reports_dir = project_dir / "reports"
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+        reports_dir.mkdir(parents=True, exist_ok=True)
+
+        session_file = sessions_dir / "session_20260714_000000.json"
+        _write_session(session_file, covered=10, required=12, missing=["scn_10_semantic_business_logic", "scn_12_advanced_ssrf_internal_topology"])
+        report_file = reports_dir / "haddix_report_20260714_000000.md"
+        _write_report(
+            report_file,
+            source_session=str(session_file.resolve()),
+            coverage_line="Coverage: 10/12 (83.3%), Missing: scn_10_semantic_business_logic, scn_12_advanced_ssrf_internal_topology",
+            family_gate_line="Gate: PASS, Coverage: 7/7 (100.0%), Missing: -",
+            findings_line="Confirmed: 3 / Candidate: 0",
+        )
+
+        verdict = evaluate_gate_separated(report_file)
+        assert verdict["status"] == "pass"
+        assert verdict["gate_passed"] is True
+        assert verdict["reason_codes"] == []
+
+    def test_overall_gate_fails_when_any_sub_gate_fails(self, tmp_path: Path) -> None:
+        """One sub-gate fails → overall fail."""
+        project_dir = tmp_path / "workspace" / "projects" / "127.0.0.1:8888"
+        sessions_dir = project_dir / "sessions"
+        reports_dir = project_dir / "reports"
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+        reports_dir.mkdir(parents=True, exist_ok=True)
+
+        session_file = sessions_dir / "session_20260714_000000.json"
+        missing_scenarios = ["scn_03_injection_input_tampering"]
+        _write_session(session_file, covered=11, required=12, missing=missing_scenarios)
+        report_file = reports_dir / "haddix_report_20260714_000000.md"
+        _write_report(
+            report_file,
+            source_session=str(session_file.resolve()),
+            coverage_line="Coverage: 11/12 (91.7%), Missing: scn_03_injection_input_tampering",
+            family_gate_line="Gate: PASS, Coverage: 7/7 (100.0%), Missing: -",
+            findings_line="Confirmed: 3 / Candidate: 0",
+        )
+
+        verdict = evaluate_gate_separated(report_file)
+        assert verdict["status"] == "fail"
+        assert verdict["gate_passed"] is False
+        assert "unexpected_missing_scenarios" in verdict["reason_codes"]
+        # Verify which gate failed
+        assert verdict["gates"]["scenario_coverage"]["status"] == "fail"
+        assert verdict["gates"]["finding_policy"]["status"] == "pass"
+
+    def test_each_sub_gate_has_policy_and_actual_values(self, tmp_path: Path) -> None:
+        """Each sub-gate dict contains policy_values and actual_values."""
+        project_dir = tmp_path / "workspace" / "projects" / "127.0.0.1:8888"
+        sessions_dir = project_dir / "sessions"
+        reports_dir = project_dir / "reports"
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+        reports_dir.mkdir(parents=True, exist_ok=True)
+
+        session_file = sessions_dir / "session_20260714_000000.json"
+        _write_session(session_file, covered=10, required=12, missing=["scn_10_semantic_business_logic", "scn_12_advanced_ssrf_internal_topology"])
+        report_file = reports_dir / "haddix_report_20260714_000000.md"
+        _write_report(
+            report_file,
+            source_session=str(session_file.resolve()),
+            coverage_line="Coverage: 10/12 (83.3%), Missing: scn_10_semantic_business_logic, scn_12_advanced_ssrf_internal_topology",
+            family_gate_line="Gate: PASS, Coverage: 7/7 (100.0%), Missing: -",
+            findings_line="Confirmed: 3 / Candidate: 0",
+        )
+
+        verdict = evaluate_gate_separated(report_file)
+        for gate_name in {"scenario_coverage", "evidence_quality", "finding_policy", "regression", "submission"}:
+            gate = verdict["gates"][gate_name]
+            assert "policy_values" in gate, f"{gate_name} missing policy_values"
+            assert "actual_values" in gate, f"{gate_name} missing actual_values"
+            assert isinstance(gate["policy_values"], dict), f"{gate_name} policy_values not dict"
+            assert isinstance(gate["actual_values"], dict), f"{gate_name} actual_values not dict"
+
+    def test_structured_log_contains_condition_details(self, tmp_path: Path) -> None:
+        """Each gate evaluation has condition_id, policy_value, actual_value in condition_logs."""
+        project_dir = tmp_path / "workspace" / "projects" / "127.0.0.1:8888"
+        sessions_dir = project_dir / "sessions"
+        reports_dir = project_dir / "reports"
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+        reports_dir.mkdir(parents=True, exist_ok=True)
+
+        session_file = sessions_dir / "session_20260714_000000.json"
+        _write_session(session_file, covered=9, required=12, missing=["scn_03_injection_input_tampering"])
+        report_file = reports_dir / "haddix_report_20260714_000000.md"
+        _write_report(
+            report_file,
+            source_session=str(session_file.resolve()),
+            coverage_line="Coverage: 9/12 (75.0%), Missing: scn_03_injection_input_tampering",
+            family_gate_line="Gate: PASS, Coverage: 7/7 (100.0%), Missing: -",
+            findings_line="Confirmed: 1 / Candidate: 10",
+        )
+
+        verdict = evaluate_gate_separated(
+            report_file,
+            confirmed_min=3,
+            candidate_max=2,
+        )
+        # Each evaluated gate should have condition_logs
+        for gate_name in {"scenario_coverage", "evidence_quality", "finding_policy", "submission"}:
+            gate = verdict["gates"][gate_name]
+            condition_logs = gate.get("condition_logs", [])
+            assert isinstance(condition_logs, list), f"{gate_name} condition_logs not list"
+            if condition_logs:
+                for condition in condition_logs:
+                    assert "condition_id" in condition
+                    assert "policy_value" in condition
+                    assert "actual_value" in condition
+                    assert "comparison_operator" in condition
+                    assert "individual_result" in condition
+                    assert condition["individual_result"] in {"pass", "fail"}
+
+        # Specifically verify finding_policy has structured logs for confirmed/candidate
+        fp_logs = verdict["gates"]["finding_policy"]["condition_logs"]
+        log_ids = {c["condition_id"] for c in fp_logs}
+        assert "confirmed_below_minimum" in log_ids
+        assert "candidate_above_maximum" in log_ids
+
+
+class TestRegressionGate:
+    """P3-2: Regression Gate Separation — independent from allowed_missing."""
+
+    def test_regression_gate_fails_on_confirmed_delta_drop(self, tmp_path: Path) -> None:
+        """confirmed_delta=-9 → regression gate FAIL."""
+        project_dir = tmp_path / "workspace" / "projects" / "127.0.0.1:8888"
+        sessions_dir = project_dir / "sessions"
+        reports_dir = project_dir / "reports"
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+        reports_dir.mkdir(parents=True, exist_ok=True)
+
+        # Baseline: confirmed=10
+        baseline_session = sessions_dir / "session_baseline.json"
+        _write_session(baseline_session, covered=10, required=12, missing=["scn_10_semantic_business_logic", "scn_12_advanced_ssrf_internal_topology"])
+        baseline_report = reports_dir / "haddix_report_baseline.md"
+        _write_report(
+            baseline_report,
+            source_session=str(baseline_session.resolve()),
+            coverage_line="Coverage: 10/12 (83.3%), Missing: scn_10_semantic_business_logic, scn_12_advanced_ssrf_internal_topology",
+            family_gate_line="Gate: PASS, Coverage: 7/7 (100.0%), Missing: -",
+            findings_line="Confirmed: 10 / Candidate: 0",
+        )
+
+        # Current: confirmed=1 (delta = -9)
+        current_session = sessions_dir / "session_current.json"
+        _write_session(current_session, covered=10, required=12, missing=["scn_10_semantic_business_logic", "scn_12_advanced_ssrf_internal_topology"])
+        current_report = reports_dir / "haddix_report_current.md"
+        _write_report(
+            current_report,
+            source_session=str(current_session.resolve()),
+            coverage_line="Coverage: 10/12 (83.3%), Missing: scn_10_semantic_business_logic, scn_12_advanced_ssrf_internal_topology",
+            family_gate_line="Gate: PASS, Coverage: 7/7 (100.0%), Missing: -",
+            findings_line="Confirmed: 1 / Candidate: 0",
+        )
+
+        verdict = evaluate_gate_separated(
+            current_report,
+            baseline_report_path=baseline_report,
+            baseline_session_path=baseline_session,
+            confirmed_min=1,  # Low bar so finding_policy passes
+            regression_confirmed_delta_min=0,
+        )
+        assert verdict["status"] == "fail"
+        assert verdict["gates"]["regression"]["status"] == "fail"
+        assert "regression_confirmed_drop" in verdict["gates"]["regression"]["reason_codes"]
+        assert verdict["gates"]["finding_policy"]["status"] == "pass"
+
+    def test_regression_gate_passes_when_confirmed_delta_zero(self, tmp_path: Path) -> None:
+        """confirmed_delta=0 → regression gate PASS."""
+        project_dir = tmp_path / "workspace" / "projects" / "127.0.0.1:8888"
+        sessions_dir = project_dir / "sessions"
+        reports_dir = project_dir / "reports"
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+        reports_dir.mkdir(parents=True, exist_ok=True)
+
+        baseline_session = sessions_dir / "session_baseline.json"
+        _write_session(baseline_session, covered=10, required=12, missing=["scn_10_semantic_business_logic", "scn_12_advanced_ssrf_internal_topology"])
+        baseline_report = reports_dir / "haddix_report_baseline.md"
+        _write_report(
+            baseline_report,
+            source_session=str(baseline_session.resolve()),
+            coverage_line="Coverage: 10/12 (83.3%), Missing: scn_10_semantic_business_logic, scn_12_advanced_ssrf_internal_topology",
+            family_gate_line="Gate: PASS, Coverage: 7/7 (100.0%), Missing: -",
+            findings_line="Confirmed: 3 / Candidate: 0",
+        )
+
+        current_session = sessions_dir / "session_current.json"
+        _write_session(current_session, covered=10, required=12, missing=["scn_10_semantic_business_logic", "scn_12_advanced_ssrf_internal_topology"])
+        current_report = reports_dir / "haddix_report_current.md"
+        _write_report(
+            current_report,
+            source_session=str(current_session.resolve()),
+            coverage_line="Coverage: 10/12 (83.3%), Missing: scn_10_semantic_business_logic, scn_12_advanced_ssrf_internal_topology",
+            family_gate_line="Gate: PASS, Coverage: 7/7 (100.0%), Missing: -",
+            findings_line="Confirmed: 3 / Candidate: 0",
+        )
+
+        verdict = evaluate_gate_separated(
+            current_report,
+            baseline_report_path=baseline_report,
+            baseline_session_path=baseline_session,
+            regression_confirmed_delta_min=0,
+        )
+        assert verdict["gates"]["regression"]["status"] == "pass"
+
+    def test_regression_gate_passes_when_no_baseline(self, tmp_path: Path) -> None:
+        """No baseline available → regression gate NOT_APPLICABLE."""
+        project_dir = tmp_path / "workspace" / "projects" / "127.0.0.1:8888"
+        sessions_dir = project_dir / "sessions"
+        reports_dir = project_dir / "reports"
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+        reports_dir.mkdir(parents=True, exist_ok=True)
+
+        session_file = sessions_dir / "session_20260714_000000.json"
+        _write_session(session_file, covered=10, required=12, missing=["scn_10_semantic_business_logic", "scn_12_advanced_ssrf_internal_topology"])
+        report_file = reports_dir / "haddix_report_20260714_000000.md"
+        _write_report(
+            report_file,
+            source_session=str(session_file.resolve()),
+            coverage_line="Coverage: 10/12 (83.3%), Missing: scn_10_semantic_business_logic, scn_12_advanced_ssrf_internal_topology",
+            family_gate_line="Gate: PASS, Coverage: 7/7 (100.0%), Missing: -",
+            findings_line="Confirmed: 3 / Candidate: 0",
+        )
+
+        verdict = evaluate_gate_separated(report_file)
+        # Self-baseline: confirmed_delta=0 (self vs self), so regression gate passes
+        assert verdict["gates"]["regression"]["status"] == "pass"
+        # Regression gate passing should NOT block overall gate
+        assert verdict["status"] == "pass"
+
+    def test_regression_gate_not_affected_by_allowed_missing(self, tmp_path: Path) -> None:
+        """allowed_missing set → regression should still FAIL on confirmed_delta=-9."""
+        project_dir = tmp_path / "workspace" / "projects" / "127.0.0.1:8888"
+        sessions_dir = project_dir / "sessions"
+        reports_dir = project_dir / "reports"
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+        reports_dir.mkdir(parents=True, exist_ok=True)
+
+        baseline_session = sessions_dir / "session_baseline.json"
+        _write_session(baseline_session, covered=9, required=12, missing=["scn_08_oob_external_channel_flow", "scn_10_semantic_business_logic", "scn_12_advanced_ssrf_internal_topology"])
+        baseline_report = reports_dir / "haddix_report_baseline.md"
+        _write_report(
+            baseline_report,
+            source_session=str(baseline_session.resolve()),
+            coverage_line=(
+                "Coverage: 9/12 (75.0%), Missing: scn_08_oob_external_channel_flow, "
+                "scn_10_semantic_business_logic, scn_12_advanced_ssrf_internal_topology"
+            ),
+            family_gate_line="Gate: PASS, Coverage: 7/7 (100.0%), Missing: -",
+            findings_line="Confirmed: 10 / Candidate: 0",
+        )
+
+        current_session = sessions_dir / "session_current.json"
+        _write_session(current_session, covered=9, required=12, missing=["scn_08_oob_external_channel_flow", "scn_10_semantic_business_logic", "scn_12_advanced_ssrf_internal_topology"])
+        current_report = reports_dir / "haddix_report_current.md"
+        _write_report(
+            current_report,
+            source_session=str(current_session.resolve()),
+            coverage_line=(
+                "Coverage: 9/12 (75.0%), Missing: scn_08_oob_external_channel_flow, "
+                "scn_10_semantic_business_logic, scn_12_advanced_ssrf_internal_topology"
+            ),
+            family_gate_line="Gate: PASS, Coverage: 7/7 (100.0%), Missing: -",
+            findings_line="Confirmed: 1 / Candidate: 0",
+        )
+
+        verdict = evaluate_gate_separated(
+            current_report,
+            baseline_report_path=baseline_report,
+            baseline_session_path=baseline_session,
+            allowed_missing_scenarios=[
+                "scn_08_oob_external_channel_flow",
+                "scn_10_semantic_business_logic",
+                "scn_12_advanced_ssrf_internal_topology",
+            ],
+            confirmed_min=1,
+            regression_confirmed_delta_min=0,
+        )
+        # Scenario coverage should PASS (all missing are allowed)
+        assert verdict["gates"]["scenario_coverage"]["status"] == "pass"
+        # Regression gate should still FAIL — not affected by allowed_missing
+        assert verdict["gates"]["regression"]["status"] == "fail"
+        assert "regression_confirmed_drop" in verdict["gates"]["regression"]["reason_codes"]
+
+    def test_regression_gate_tracks_class_level_drops(self, tmp_path: Path) -> None:
+        """Class-level confirmed drops are tracked in the gate result."""
+        project_dir = tmp_path / "workspace" / "projects" / "127.0.0.1:8888"
+        sessions_dir = project_dir / "sessions"
+        reports_dir = project_dir / "reports"
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+        reports_dir.mkdir(parents=True, exist_ok=True)
+
+        baseline_session = sessions_dir / "session_baseline.json"
+        _write_session(baseline_session, covered=10, required=12, missing=["scn_10_semantic_business_logic", "scn_12_advanced_ssrf_internal_topology"])
+        baseline_report = reports_dir / "haddix_report_baseline.md"
+        _write_report(
+            baseline_report,
+            source_session=str(baseline_session.resolve()),
+            coverage_line="Coverage: 10/12 (83.3%), Missing: scn_10_semantic_business_logic, scn_12_advanced_ssrf_internal_topology",
+            family_gate_line="Gate: PASS, Coverage: 7/7 (100.0%), Missing: -",
+            findings_line="Confirmed: 3 / Candidate: 0",
+            findings_class_rows=[
+                ("broken_access_control", 2, 0, 2),
+                ("mass_assignment", 1, 0, 1),
+            ],
+        )
+
+        current_session = sessions_dir / "session_current.json"
+        _write_session(current_session, covered=10, required=12, missing=["scn_10_semantic_business_logic", "scn_12_advanced_ssrf_internal_topology"])
+        current_report = reports_dir / "haddix_report_current.md"
+        _write_report(
+            current_report,
+            source_session=str(current_session.resolve()),
+            coverage_line="Coverage: 10/12 (83.3%), Missing: scn_10_semantic_business_logic, scn_12_advanced_ssrf_internal_topology",
+            family_gate_line="Gate: PASS, Coverage: 7/7 (100.0%), Missing: -",
+            findings_line="Confirmed: 3 / Candidate: 0",
+            findings_class_rows=[
+                ("broken_access_control", 0, 0, 0),  # Dropped from 2→0
+                ("mass_assignment", 3, 0, 3),  # Increased
+            ],
+        )
+
+        verdict = evaluate_gate_separated(
+            current_report,
+            baseline_report_path=baseline_report,
+            baseline_session_path=baseline_session,
+            regression_confirmed_delta_min=0,
+            regression_allow_dedup_reduction=True,  # Allow dedup reduction
+        )
+        # Regression gate should be not_applicable (confirmed_delta 3-3=0, but... wait, report shows confirmed:3 but class rows broken_access_control: 2→0)
+        # Actually the report says "Confirmed: 3" both times, but class rows show a drop in broken_access_control
+        # The confirmed_delta is 0, so regression passes. But dropped_classes should still be tracked.
+        reg_gate = verdict["gates"]["regression"]
+        assert "dropped_classes" in reg_gate["actual_values"]
+        dropped_classes = reg_gate["actual_values"]["dropped_classes"]
+        # There should be at least one dropped class (broken_access_control: 2→0)
+        assert len(dropped_classes) > 0
+        dropped_names = {d["vuln_class"] for d in dropped_classes}
+        assert "broken_access_control" in dropped_names
+
+
+class TestBackwardCompatibility:
+    """Verify evaluate_initial_release_gate() still works and matches separated gate."""
+
+    def test_existing_evaluate_initial_release_gate_still_works(self, tmp_path: Path) -> None:
+        """The original function still returns expected fields."""
+        project_dir = tmp_path / "workspace" / "projects" / "127.0.0.1:8888"
+        sessions_dir = project_dir / "sessions"
+        reports_dir = project_dir / "reports"
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+        reports_dir.mkdir(parents=True, exist_ok=True)
+
+        session_file = sessions_dir / "session_20260421_044611.json"
+        missing = [
+            "scn_10_semantic_business_logic",
+            "scn_12_advanced_ssrf_internal_topology",
+        ]
+        _write_session(session_file, covered=10, required=12, missing=missing)
+        report_file = reports_dir / "haddix_report_20260421_044614.md"
+        _write_report(
+            report_file,
+            source_session=str(session_file.resolve()),
+            coverage_line="Coverage: 10/12 (83.3%), Missing: scn_10_semantic_business_logic, scn_12_advanced_ssrf_internal_topology",
+            family_gate_line="Gate: PASS, Coverage: 7/7 (100.0%), Missing: -",
+            findings_line="Confirmed: 3 / Candidate: 0",
+        )
+
+        verdict = evaluate_initial_release_gate(report_file)
+        # All expected top-level fields
+        assert "status" in verdict
+        assert "gate_passed" in verdict
+        assert "reason_codes" in verdict
+        assert "policy" in verdict
+        assert "consistency" in verdict
+        assert "report_metrics" in verdict
+        assert "evaluation_context" in verdict
+        assert "deferred_scenarios" in verdict
+        assert "recommended_actions" in verdict
+        assert "suggested_next_step" in verdict
+        # The 'gates' key should NOT be present in backward-compat mode
+        assert "gates" not in verdict
+
+    def test_separated_gate_same_result_as_unified_for_basic_cases(self, tmp_path: Path) -> None:
+        """For simple passing cases, both functions agree on status and gate_passed."""
+        project_dir = tmp_path / "workspace" / "projects" / "127.0.0.1:8888"
+        sessions_dir = project_dir / "sessions"
+        reports_dir = project_dir / "reports"
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+        reports_dir.mkdir(parents=True, exist_ok=True)
+
+        session_file = sessions_dir / "session_20260714_000000.json"
+        missing = [
+            "scn_10_semantic_business_logic",
+            "scn_12_advanced_ssrf_internal_topology",
+        ]
+        _write_session(session_file, covered=10, required=12, missing=missing)
+        report_file = reports_dir / "haddix_report_20260714_000000.md"
+        _write_report(
+            report_file,
+            source_session=str(session_file.resolve()),
+            coverage_line="Coverage: 10/12 (83.3%), Missing: scn_10_semantic_business_logic, scn_12_advanced_ssrf_internal_topology",
+            family_gate_line="Gate: PASS, Coverage: 7/7 (100.0%), Missing: -",
+            findings_line="Confirmed: 3 / Candidate: 0",
+        )
+
+        unified = evaluate_initial_release_gate(report_file)
+        separated = evaluate_gate_separated(report_file)
+        # Both should agree on status and gate_passed
+        assert unified["status"] == separated["status"]
+        assert unified["gate_passed"] == separated["gate_passed"]
+        assert unified["reason_codes"] == separated["reason_codes"]

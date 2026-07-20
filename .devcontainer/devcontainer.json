@@ -35,7 +35,9 @@
   
   "remoteEnv": {
     "CAI_GUARDRAILS": "true",
-    "CAI_TRACING": "false"
+    "CAI_TRACING": "false",
+    "SHIGOKU_WORKSPACE_ROOT": "/workspace",
+    "SHIGOKU_HOST_WORKSPACE_ROOT": "${localWorkspaceFolder}/workspace"
   },
   
   "features": {

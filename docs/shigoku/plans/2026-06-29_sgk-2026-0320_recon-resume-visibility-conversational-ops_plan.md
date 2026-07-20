@@ -17,7 +17,7 @@ related_docs:
 - docs/shigoku/subtasks/2026-06-29_sgk-2026-0326_flexible-report-generation-reinjection_subtask_plan.md
 title: 'Recon途中再開・可視化・対話型オペレーション 統合ロードマップ'
 created_at: '2026-06-29'
-updated_at: '2026-07-02'
+updated_at: '2026-07-21'
 tags:
 - shigoku
 - roadmap
@@ -26,7 +26,7 @@ target: src/recon/, src/core/engine/, src/reporting/, src/cli/, scripts/shigoku_
 
 # 統合ロードマップ：Recon途中再開・可視化・対話型オペレーション
 
-> 本書は、たたき台（ブラッシュアップ前提）の統合ロードマップである。個別計画書 SGK-2026-0321〜0326 と SGK-2026-0334 はすべて本ロードマップの子タスクとする。
+> 本書は、たたき台（ブラッシュアップ前提）の統合ロードマップである。個別計画書 SGK-2026-0321〜0326 と SGK-2026-0334 はすべて本ロードマップの子タスクとする。特に SGK-2026-0325 と SGK-2026-0326 は CLI と運用導線を共有する兄弟タスクとして扱い、完全統合は初期スコープに含めない。0325 は「入力側」、0326 は「出力側」として段階的に進める。
 
 ## 1. 達成したいゴール（ユーザー視点）
 - 長い Recon が中断しても途中成果を活かし、任意の step/ポイントから再開できる。
@@ -43,27 +43,29 @@ target: src/recon/, src/core/engine/, src/reporting/, src/cli/, scripts/shigoku_
 | **P1b** 可視化 | SGK-2026-0334 | 判断ツリー可視化＋shigoku-ops decision-tree CLI |
 | **P2** 運用 | SGK-2026-0323 | PhaseGate細粒度化＋過去Recon成果物再利用(`--import-recon`) |
 | **P3** 発展 | SGK-2026-0324 | 攻撃パスNeo4j UI＋脆弱性管理システム |
-| **A** 対話 | SGK-2026-0325 | 対話型オペレーション（チャットベース指揮 軽量版） |
-| **B** レポート | SGK-2026-0326 | 自由形式レポート生成→SHIGOKU再投入 |
+| **A** 対話 | SGK-2026-0325 | 入力側: 対話型オペレーション（チャットベース指揮 軽量版） |
+| **B** レポート | SGK-2026-0326 | 出力側: 自由形式レポート生成→SHIGOKU再投入（single-session最小版先行） |
 
 ## 3. 優先度と依存関係
 
-```
+```text
 P0 (0321) ──┐
 P1a (0322) ─┼─→ P2 (0323) ──→ P3 (0324)
+             │                 │
+             │                 └─→ B Phase C (0326 cross-session)
              │
-P1b (0334) ──┼─→ B (0326) ──┐
-             │               │
-             └───────────────┘  ← 可視化/抽出基盤が先行すると A でも再利用できる
-A (0325) ───── 依存: P0/P1a の step resume CLI、P1b/B のクエリ基盤
+P1b (0334) ──┼─→ B Phase A/B (0326 output side: single-session export/reinjection)
+             │                  │
+             │                  └─→ A (0325 input side) へ structured target file / endpoint list を受け渡し
+             └──────────────────→ A (0325 input side: resume + NL intent + CLI execution)
 ```
 
 - **P0/P1a** が最優先。ReconState.save()/load() と start_step/end_step はすでにコードに存在し、統合するだけで価値が出る。
 - **P1b** は P1a の checkpoint 契約を前提にしつつ、reporting/CLI 側で独立して進められる。
-- **B** は基盤が近い（`inspect_session_findings` + フィルタ/射影 + JSON envelope が既存）。P0/P1 と並行可能。
-- **A** は P0/P1a の「step resume CLI」と P1b/B の「クエリ/抽出基盤」に依存。軽量版（shigoku-ops ラッパー）は早期に一部可能。
+- **B** は「出力側」。基盤が近い（`inspect_session_findings` + フィルタ/射影 + JSON envelope が既存）ため、single-session の最小版は P0/P1 と並行可能。
+- **A** は「入力側」。P0/P1a の step resume CLI を土台に先行でき、B が出力する structured target file / endpoint list を後から受ける形で段階拡張する。
 - **P2** は P0/P1a の差分可視化が前提（freshness判定に差分が必要）。
-- **P3** は SGK-2026-0307（攻撃パスPhase2）と SGK-2026-0293（脆弱性管理）の設計を引き継ぐ。
+- **P3** は SGK-2026-0307（攻撃パスPhase2）と SGK-2026-0293（脆弱性管理）の設計を引き継ぐ。0326 の cross-session / FindingsRepository 連携はこの後段依存として扱う。
 
 ## 4. 現状の前提知識（実装踏まえた評価）
 
@@ -72,26 +74,30 @@ A (0325) ───── 依存: P0/P1a の step resume CLI、P1b/B のクエリ
 - `ReconState.save()/load()` が存在するが本番で未呼び出し（同 `pipeline.py:80/97`）。
 - Run Ledger / LLM Usage Summary / Run Narrative / Target Profile / Attack Path Markdown は SGK-2026-0298 系列で実装済み。
 - `inspect_session_findings(detection_class, fields, preset, max)` と JSON envelope 出力が既存。
+- `shigoku-ops` には `report loop` / `session findings` / `session resolve-from-report` などの運用補助 CLI があり、A/B 共有導線の土台にできる。
+- `--interactive` と `InteractiveBridge` が存在し、preflight / ProjectManager / MasterConductor 起動の橋渡しはすでにある。
 - `FindingsRepository`（SQLite `~/.shigoku/findings.db`）は存在するが CLI から未露出。
 
 ### 4.2 主なギャップ
 - `ReconState.save()` のフィールド不足（`tech_stack`/`screenshots_count`/`results` 未保存）＋並行タスク途中状態未保存。
 - 再開ポイント・差分の可視化がなく、前回結果との added/removed/modified 比較がない。
 - PhaseGate がバイナリ（INIT/RECON 常時解放 → ATTACK 一括解放）。
-- チャット/REPL インターフェースなし（旧 `src/cli/cli.py` は DEPRECATED）。実行中MCへのアドホックタスク注入はアーキテクチャ変更が必要。
-- エンドポイント一覧抽出・テンプレート化・逆投入 CLI が未整備。
+- `InteractiveBridge` はあるが、自由形式の会話ループ、NL→コマンド翻訳、`0326` 出力の入力受け渡しが未整備。
+- エンドポイント一覧抽出、structured target file 出力、single-session 逆投入 CLI が未整備。cross-session はさらに後段。
 
 ## 5. フェーズ分割と達成基準
-- **Phase 1（P0+P1a+P1b+B並行）**: Recon step resume 実用化、checkpoint/resume 堅牢化、判断ツリー可視化、柔軟レポート抽出の基盤完成。
-- **Phase 2（P2+A軽量）**: PhaseGate 細粒度化、import-recon、対話ラッパー（shigoku-ops 経由）。
-- **Phase 3（P3+A重量）**: Neo4j UI、脆弱性管理、実行中MC動的注入（次期アーキテクチャ）。
+- **Phase 1（P0+P1a+P1b+B最小版並行）**: Recon step resume 実用化、checkpoint/resume 堅牢化、判断ツリー可視化、single-session の抽出/再投入 artifact 基盤を固める。
+- **Phase 2（P2+A軽量+B出力拡張）**: PhaseGate 細粒度化、import-recon、対話ラッパー（shigoku-ops 経由）、A/B 共有 CLI 契約と structured artifact 運用を実用化する。
+- **Phase 3（P3+B cross-session+A重量）**: Neo4j UI、脆弱性管理、0326 の cross-session 連携、実行中MC動的注入（次期アーキテクチャ）。
 
 達成基準（共通）: 各子タスクは単体テスト＋可能なら実 session/report artifact で検証すること。
 
 ## 6. 既知のリスクと次回の申し送り（Backlog / 技術的負債）
 - [ ] [重要度:高] artifact reuse を急ぐと古い成果物混入で誤判定する。freshness/provenance を P2 で先設計（P0の差分基盤を利用）。
 - [ ] [重要度:高] 実行中MCへの動的タスク注入はアーキテクチャ変更を伴う。軽量版（外部エージェントが shigoku-ops を呼ぶ）を先行し、重量版は次期フェーズ。
+- [ ] [重要度:高] A/0325 の入力契約と B/0326 の出力契約がズレると、共有CLI導線が運用不能になる。structured target file / provenance / scope を最小共通 schema として先に固定する。
 - [ ] [重要度:中] チャット/レポート出力の機密値マスク。既存 redactor を再利用し、secret を出力に漏らさない。
+- [ ] [重要度:中] 人間向け Markdown と再投入用 machine-readable artifact を混同すると誤投入の原因になる。再投入の正本を構造化出力へ固定する。
 - [ ] [重要度:中] ReconState の保存フォーマット後方互換。schema_version を付け、旧セッション reader を壊さない。
 
 ### 6.1 work_report の deferred_tasks 記載例（推奨）

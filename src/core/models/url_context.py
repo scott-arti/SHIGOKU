@@ -166,3 +166,128 @@ class RichUrlContext:
             source="caido",
             forms=entry.get("forms", []),
         )
+
+
+# ──────────────────────────────────────────────
+# SGK-2026-0261: AttackSurfaceSignal — Recon 正本 output contract
+# ──────────────────────────────────────────────
+
+@dataclass
+class AttackSurfaceSignal:
+    """
+    Recon が生成する正規化された攻撃面シグナル。
+
+    RichUrlContext は移行用入力契約、AttackSurfaceSignal は正本出力契約。
+    MC / Swarm / KG の共通 handoff 形式として使用される。
+
+    v1 minimal schema: RichUrlContext + candidate_labels + why_suspicious
+    """
+
+    # ── identity ──
+    signal_id: str
+    entity_type: str  # "endpoint" | "param" | "auth_surface" | "js_surface" | "file_surface" | "workflow"
+
+    # ── target ──
+    url: str
+    method: str = "GET"
+
+    # ── classification ──
+    primary_label: str = ""                # 最も有力な攻撃面ラベル
+    candidate_labels: List[str] = field(default_factory=list)  # 複数候補
+    confidence: float = 0.0                # 0.0–1.0
+
+    # ── rationale ──
+    why_suspicious: str = ""               # 人間が読める理由
+    source_observations: List[str] = field(default_factory=list)  # "katana", "gau", "httpx", "caido", "playwright"
+
+    # ── context ──
+    auth_required: bool = False
+    auth_context: Dict[str, str] = field(default_factory=dict)  # cookie/bearer/csrf/scheme info
+    subdomain_context: Optional[SubdomainContext] = None
+    interaction_kind: str = "static"       # "static" | "dynamic" | "auth-flow" | "realtime"
+    lineage: str = ""                      # エントリソーストレース情報
+
+    # ── parameters ──
+    params: List[Dict[str, str]] = field(default_factory=list)  # [{name, location}]
+
+    # ── lifecycle ──
+    status: str = "active"                 # "active" | "suppressed" | "unknown" | "needs_swarm_review"
+    seen_count: int = 1
+    created_at: Optional[datetime] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "signal_id": self.signal_id,
+            "entity_type": self.entity_type,
+            "url": self.url,
+            "method": self.method,
+            "primary_label": self.primary_label,
+            "candidate_labels": list(self.candidate_labels),
+            "confidence": self.confidence,
+            "why_suspicious": self.why_suspicious,
+            "source_observations": list(self.source_observations),
+            "auth_required": self.auth_required,
+            "auth_context": dict(self.auth_context),
+            "subdomain_context": self.subdomain_context.to_dict() if self.subdomain_context else None,
+            "interaction_kind": self.interaction_kind,
+            "lineage": self.lineage,
+            "params": list(self.params),
+            "status": self.status,
+            "seen_count": self.seen_count,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+@dataclass
+class EndpointSignalBundle:
+    """
+    Endpoint 粒度の signal 集合。
+
+    host_surface_summary より細かい、個別 endpoint/parameter 単位の signal。
+    件数上限なし（全 endpoint 対象）。
+    """
+    signals: List[AttackSurfaceSignal] = field(default_factory=list)
+    source: str = ""                        # 生成元パイプライン run_id 等
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "signals": [s.to_dict() for s in self.signals],
+            "source": self.source,
+        }
+
+
+@dataclass
+class HostSurfaceSummary:
+    """
+    Host 粒度の攻撃面サマリ。
+
+    MC の第一優先入力。exploration_report + category 互換を含む。
+    入れてよい項目: host-level aggregates、category counts、coverage。
+    入れてはいけない項目: 個別 endpoint/parameter の詳細（そちらは EndpointSignalBundle）。
+    """
+    host: str = ""
+    total_endpoints: int = 0
+    total_signals: int = 0
+    category_counts: Dict[str, int] = field(default_factory=dict)  # file-count-tags 互換
+    surface_types: List[str] = field(default_factory=list)         # "auth_surface", "js_surface" 等
+    auth_level: str = "unknown"            # "anon" | "user" | "elevated" | "unknown"
+    tech_stack: List[str] = field(default_factory=list)
+    coverage_confidence: float = 0.0       # 探索の完全さ 0.0–1.0
+
+    # Fallback / compatibility
+    tagged_urls_compat: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    legacy_keys: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "host": self.host,
+            "total_endpoints": self.total_endpoints,
+            "total_signals": self.total_signals,
+            "category_counts": dict(self.category_counts),
+            "surface_types": list(self.surface_types),
+            "auth_level": self.auth_level,
+            "tech_stack": list(self.tech_stack),
+            "coverage_confidence": self.coverage_confidence,
+            "tagged_urls_compat": dict(self.tagged_urls_compat),
+            "legacy_keys": dict(self.legacy_keys),
+        }

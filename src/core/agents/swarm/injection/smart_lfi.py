@@ -65,13 +65,16 @@ INPUT: [Input]
         Specialist.__init__(self, config)
         ThoughtLoop.__init__(self, max_turns=8)
 
-        mode = "bugbounty"  # Bug Bounty fail-closed default
-        if config and isinstance(config, dict):
-             mode = config.get("mode", mode)
+        # Resolve run mode: config["mode"] (truthy) > global settings.mode >
+        # "bugbounty". Prevents Guard fail-close on vulntest/ctf runs.
+        from src.core.config.settings import resolve_run_mode
+        mode = resolve_run_mode(
+            config.get("mode") if (config and isinstance(config, dict)) else None
+        )
 
         self.llm = LLMClient(role="lfi_specialist")
         # SmartRequest requires an AsyncNetworkClient instance
-        self.network_client = AsyncNetworkClient()
+        self.network_client = AsyncNetworkClient(mode=mode)
         from src.core.security.execution_safeguard import get_execution_safeguard
         safeguard = get_execution_safeguard(mode=mode)
         self.smart_client = SmartRequest(network_client=self.network_client, execution_safeguard=safeguard)

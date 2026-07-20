@@ -1,5 +1,6 @@
 import logging
 from typing import List, Dict, Any, Optional, Set
+from src.core.engine import task_pruning_policy as task_pruning_policy_shared
 from src.core.engine.task_queue import DynamicTaskQueue
 
 logger = logging.getLogger(__name__)
@@ -30,46 +31,49 @@ class StrategyOptimizer:
 
     def review_strategy(self, task_queue: DynamicTaskQueue, knowledge_graph: Any, current_step: int) -> Dict[str, Any]:
         """
-        現在のタスクキューとナレッジグラフを分析し、最適化アクションを実行する
-        
+        Analyse the current task queue and knowledge graph, then return
+        optimisation actions. **Actual deletion is delegated to the
+        TaskPruningPolicy; this method only supplies candidate information.**
+
+        SGK-2026-0287 Step 6-3: StrategyOptimizer is now a candidate
+        provider only. Direct ``remove_tasks_for_assets()`` calls have
+        been removed.
+
         Args:
-            task_queue: 操作対象のタスクキュー
-            knowledge_graph: 分析対象のナレッジ
-            current_step: 現在のステップ数
-            
+            task_queue: The task queue (read-only for analysis).
+            knowledge_graph: Knowledge graph for inference.
+            current_step: Current execution step.
+
         Returns:
-            アクション結果のサマリー
+            Action summary dict with keys:
+            ``high_value_assets``, ``low_value_asset_candidates``,
+            ``boosted``.
+            The ``low_value_asset_candidates`` list is consumed by
+            ``TaskPruningPolicy`` for final prune decisions.
         """
         self.last_review_step = current_step
         logger.info("Starting strategy review at step %d (Mode: %s)", current_step, self.mode)
 
-        # 1. 資産の評価 (ROI算出)
-        # TODO: KnowledgeGraph(kg) から資産リストを取得するインターフェースを確認
-        # ここでは暫定的にキュー内のタスクからターゲットを抽出する
         high_value_assets = self._identify_high_value_assets(knowledge_graph, task_queue)
-        low_value_assets = self._identify_low_value_assets(knowledge_graph, task_queue)
+        low_value_asset_candidates = self._identify_low_value_assets(knowledge_graph, task_queue)
 
-        # 2. タスクの間引き (Pruning)
-        pruned_count = 0
-        if low_value_assets:
-            pruned_count = task_queue.remove_tasks_for_assets(low_value_assets)
-
-        # 3. 優先度ブースト (Boosting)
+        # Boost (kept as-is; boosting is not pruning)
         boosted_count = 0
         if high_value_assets:
-            # 高ROI資産に関連するタスクの優先度を 500 加算
             boosted_count = task_queue.boost_priority_for_assets(high_value_assets, 500)
 
         result = {
-            "pruned": pruned_count,
-            "boosted": boosted_count,
             "high_value_assets": high_value_assets,
-            "low_value_assets": low_value_assets
+            "low_value_asset_candidates": low_value_asset_candidates,
+            "boosted": boosted_count,
         }
-        
-        if pruned_count > 0 or boosted_count > 0:
-            logger.info("Strategy optimized: Pruned=%d, Boosted=%d", pruned_count, boosted_count)
-            
+
+        if low_value_asset_candidates or boosted_count > 0:
+            logger.info(
+                "Strategy reviewed: low_value_candidates=%d, boosted=%d",
+                len(low_value_asset_candidates), boosted_count,
+            )
+
         return result
 
     def _identify_high_value_assets(self, kg: Any, queue: DynamicTaskQueue) -> List[str]:
@@ -185,34 +189,4 @@ class StrategyOptimizer:
         間引き対象から除外すべきタスクを判定。
         シナリオカバレッジの中核タスクは low-value 判定しない。
         """
-        params = task.params if hasattr(task, "params") and isinstance(task.params, dict) else {}
-        source_category = str(params.get("source_category", "") or "").strip().lower()
-        category = str(params.get("category", "") or "").strip().lower()
-
-        if source_category in {
-            "scenario_probe_planner",
-            "scenario_probe_guard",
-            "coverage_backfill",
-            "coverage_backfill_guard",
-        }:
-            return True
-
-        if category == "csrf_candidate":
-            return True
-
-        if params.get("scenario_probe"):
-            return True
-
-        if bool(params.get("_coverage_guard_forced", False)):
-            return True
-
-        tags = getattr(task, "tags", []) or []
-        tags_lower = {str(tag).strip().lower() for tag in tags}
-        if "manual_verify" in tags_lower or "coverage_guard_forced" in tags_lower:
-            return True
-
-        task_name = str(getattr(task, "name", "") or "").upper()
-        if task_name.startswith("SCN"):
-            return True
-
-        return False
+        return task_pruning_policy_shared.is_coverage_critical_task(task)

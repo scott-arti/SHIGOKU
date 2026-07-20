@@ -384,33 +384,90 @@ async def test_bb_mode_uppercase_fail_closed():
     assert "Bundle preflight failed" in result.get("error", "")
 
 
-@pytest.mark.asyncio
-async def test_bb_mode_mixed_case_fail_closed():
-    """Mixed-case 'BugBounty' must still trigger bundle preflight."""
+# ---------------------------------------------------------------------------
+# SGK-2026-0339 regression: mode propagation / resolution centralization
+#
+# Root cause of the DVWA "5 tasks then abort" incident: interactive_bridge
+# never persisted target_info["mode"], and the _dispatch site hardcoded the
+# "bugbounty" default (while the scope fast-path used self.mode). A vulntest
+# run therefore degraded to bugbounty at task_002 (recon) and the bundle
+# preflight fail-closed on the bundle-less local target.
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_current_mode_name_normalizes_variants():
+    """_resolve_current_mode_name is the single source of truth and collapses
+    BUG_BOUNTY/bug_bounty/BUGBOUNTY -> bugbounty, CTF -> ctf, etc."""
     mc = MasterConductor.__new__(MasterConductor)
-    mc.mode = "BUGBOUNTY"
+    mc.context = SimpleNamespace(target_info={})
+
+    # target_info["mode"] is authoritative when present.
+    for raw, expected in [
+        ("vulntest", "vulntest"),
+        ("VULNTEST", "vulntest"),
+        ("bugbounty", "bugbounty"),
+        ("BUG_BOUNTY", "bugbounty"),
+        ("bug-bounty", "bugbounty"),
+        ("BugBounty", "bugbounty"),
+        ("BUGBOUNTY", "bugbounty"),
+        ("CTF", "ctf"),
+        ("ctf", "ctf"),
+    ]:
+        mc.context.target_info["mode"] = raw
+        assert mc._resolve_current_mode_name() == expected, f"raw={raw!r}"
+
+    # Fallback to self.mode (normalized) when target_info has no mode.
+    mc.context.target_info.pop("mode", None)
+    mc.mode = "BUG_BOUNTY"
+    assert mc._resolve_current_mode_name() == "bugbounty"
+    mc.mode = "vulntest"
+    assert mc._resolve_current_mode_name() == "vulntest"
+
+
+@pytest.mark.asyncio
+async def test_vulntest_mode_dispatch_gate_skips_bundle_preflight():
+    """Regression: a vulntest run must NOT trigger the bugbounty bundle
+    preflight at the _dispatch gate for non-verify_scope tasks (the exact
+    task_002 recon path that aborted DVWA after 5 tasks)."""
+    mc = MasterConductor.__new__(MasterConductor)
+    mc.mode = "vulntest"
     mc.context = SimpleNamespace(
         target_info={
-            "mode": "BugBounty",
-            "target": "www.tiktok.com",
+            "mode": "vulntest",
+            "target": "localhost:4280",
         }
     )
     mc.workspace = None
 
+    # Sentinel: the gate must never invoke the bundle resolver in vulntest.
+    calls = {"count": 0}
+
+    def _spy():
+        calls["count"] += 1
+        return {"_preflight_failed": True, "success": False, "error": "spy"}
+
+    mc._try_resolve_bugbounty_bundle = _spy
+
     task = Task(
-        id="task_001",
-        name="Scope Verification",
-        agent_type="scope_parser",
-        action="verify_scope",
-        params={"target": "www.tiktok.com"},
+        id="task_002",
+        name="Deep Reconnaissance",
+        agent_type="recon_master",
+        action="parallel_recon",
+        params={"target": "localhost:4280"},
     )
 
     guard = get_ethics_guard()
     previous_scope = guard.scope
     try:
-        result = await mc._dispatch(task)
+        try:
+            await mc._dispatch(task)
+        except Exception:
+            # Downstream dispatch may raise with a partially-constructed mc;
+            # this regression is about the *gate*, not the dispatch body.
+            pass
     finally:
         guard.scope = previous_scope
 
-    assert result.get("success") is False
-    assert "Bundle preflight failed" in result.get("error", "")
+    assert calls["count"] == 0, (
+        "vulntest mode must not invoke the bugbounty bundle preflight"
+    )

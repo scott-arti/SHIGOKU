@@ -144,6 +144,7 @@ You are a careful coding agent. Follow this workflow strictly:
 
 **実行ルール:**
 - 該当するファイルが存在する場合は、推測で動かず必ず中身をロードすること。
+- `docs/shigoku/learnings.md` の軽量ロード: 上記 rules を読む際、`rg "^\- \[topic: <キー>]" docs/shigoku/learnings.md` で **ヘッダ行のみ** 取得する。`<キー>` は rules ファイル名（`.md` 不要）と一致（`lessons` / `codingrules` / `report-session-consistency` / `reporting` / `cli-ops-routing` / `shigoku-docs` / `task-ledger` / `python-tests`）。detail 行（インデント済み・証拠・SGK-ID・長文）は一括ロード禁止。ヘッダの `when:` が今回の作業に合致する場合のみ、その1エントリの detail を個別 `read` せよ。
 - ユーザーへの最終報告時に、本タスクのために「どのルールファイルを参考にしたか」を必ず明記して報告せよ。
 
 ## 18) LLM設定統一ルール（SGK-2026-0292以降）

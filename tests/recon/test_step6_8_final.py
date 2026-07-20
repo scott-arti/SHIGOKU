@@ -115,6 +115,7 @@ async def test_step6_waf_integration(tmp_workspace):
     # httpx.json を作成
     httpx_data = [
         {"url": "https://www.example.com", "status_code": 200},
+        {"url": "https://api.example.com", "status_code": 200},
     ]
     httpx_file = pipeline._get_path("httpx", "json")
     httpx_file.write_text(json.dumps(httpx_data))
@@ -130,8 +131,11 @@ async def test_step6_waf_integration(tmp_workspace):
     # 検証
     assert "live_200" in result
     live_200_data = json.loads(result["live_200"].read_text())
-    assert len(live_200_data) == 1
-    assert live_200_data[0]["waf"] == "Cloudflare"
+    assert len(live_200_data) == 2
+    # www.example.com should have WAF = Cloudflare
+    www_entry = next((e for e in live_200_data if "www.example.com" in e.get("url", "")), None)
+    assert www_entry is not None
+    assert www_entry["waf"] == "Cloudflare"
 
 
 @pytest.mark.asyncio
@@ -295,4 +299,181 @@ async def test_step8_empty_result():
     
     # 検証
     assert isinstance(result, dict)
-    assert len(result) == 0
+    # SGK-2026-0261: _signal_bundle が常に含まれるようになった
+    signal_keys = {"_signal_bundle"}
+    actual_category_keys = [k for k in result if k not in signal_keys]
+    assert len(actual_category_keys) == 0
+    # signal bundle が存在し、空の signals であること
+    assert "_signal_bundle" in result
+    s_bundle = result["_signal_bundle"]
+    assert isinstance(s_bundle, dict)
+    assert len(s_bundle.get("_endpoint_signals", [])) == 0
+
+
+# ── SGK-2026-0261 regression tests ──
+
+@pytest.mark.asyncio
+async def test_signal_bundle_real_urls(tmp_workspace):
+    """SGK-2026-0261: signal bundle に実 URL が含まれ、file path ではないこと"""
+    pipeline = ReconPipeline(
+        config={"recon": {"max_concurrent_tasks": 4}},
+        project_manager=None,
+        target="*.example.com",
+        workspace_root=tmp_workspace,
+    )
+
+    # classified_files: live_200 カテゴリに実 URL を含む JSON を作成
+    json_data = [
+        {"url": "https://www.example.com", "subdomain": "www.example.com", "status_code": 200},
+        {"url": "https://api.example.com", "subdomain": "api.example.com", "status_code": 200},
+    ]
+    live_200_file = tmp_workspace / "live_200.json"
+    live_200_file.write_text(json.dumps(json_data))
+
+    classified_files = {"live_200": live_200_file}
+    result = await pipeline.step8_return_to_mc(classified_files)
+
+    bundle = result.get("_signal_bundle", {})
+    signals = bundle.get("_endpoint_signals", [])
+    assert len(signals) >= 2, f"Expected >=2 signals, got {len(signals)}"
+
+    for sig in signals:
+        url = sig.get("url", "")
+        assert url.startswith("http"), f"Signal URL should be real HTTP URL, got: {url}"
+        assert not url.endswith(".json"), f"Signal URL should not be a file path: {url}"
+        assert sig.get("method", "") in ("GET", "POST", "")
+
+
+@pytest.mark.asyncio
+async def test_signal_bundle_param_signals(tmp_workspace):
+    """SGK-2026-0261: signal bundle に entity_type=param の signal が生成されること"""
+    pipeline = ReconPipeline(
+        config={"recon": {"max_concurrent_tasks": 4}},
+        project_manager=None,
+        target="*.example.com",
+        workspace_root=tmp_workspace,
+    )
+
+    json_data = [
+        {"url": "https://app.example.com/search?q=test&id=42&redirect=/home", "status_code": 200, "method": "GET"},
+        {"url": "https://app.example.com/profile", "status_code": 200, "method": "GET",
+         "forms": [{"method": "POST", "inputs": [{"name": "username"}, {"name": "password"}]}]},
+    ]
+    live_200_file = tmp_workspace / "live_200.json"
+    live_200_file.write_text(json.dumps(json_data))
+
+    result = await pipeline.step8_return_to_mc({"live_200": live_200_file})
+
+    bundle = result.get("_signal_bundle", {})
+    signals = bundle.get("_endpoint_signals", [])
+
+    # endpoint signals (entity_type="endpoint")
+    endpoint_sigs = [s for s in signals if s.get("entity_type") == "endpoint"]
+    assert len(endpoint_sigs) >= 2, f"Expected >=2 endpoint signals, got {len(endpoint_sigs)}"
+
+    # param signals (entity_type="param")
+    param_sigs = [s for s in signals if s.get("entity_type") == "param"]
+    assert len(param_sigs) >= 3, f"Expected >=3 param signals (q, id, redirect, username, password), got {len(param_sigs)}"
+
+    # param_name が設定されていること
+    param_names = {s.get("primary_label", "") for s in param_sigs}
+    expected_params = {"q", "id", "redirect", "username", "password"}
+    assert expected_params.issubset(param_names) or expected_params & param_names, \
+        f"Param signals should include {expected_params}, got {param_names}"
+
+    # param location が query/form であること
+    locations = {s.get("params", [{}])[0].get("location", "") if s.get("params") else "" for s in param_sigs}
+    assert "query" in locations or "form" in locations, f"Param locations: {locations}"
+
+
+@pytest.mark.asyncio
+async def test_signal_bundle_real_source_observations(tmp_workspace):
+    """SGK-2026-0261: source_observations が entry の source フィールドから来ること"""
+    pipeline = ReconPipeline(
+        config={"recon": {"max_concurrent_tasks": 4}},
+        project_manager=None,
+        target="*.example.com",
+        workspace_root=tmp_workspace,
+    )
+
+    json_data = [
+        {"url": "https://www.example.com", "status_code": 200, "source": "katana"},
+    ]
+    live_200_file = tmp_workspace / "live_200.json"
+    live_200_file.write_text(json.dumps(json_data))
+
+    result = await pipeline.step8_return_to_mc({"live_200": live_200_file})
+
+    bundle = result.get("_signal_bundle", {})
+    signals = bundle.get("_endpoint_signals", [])
+    assert len(signals) >= 1
+
+    sig = signals[0]
+    sources = sig.get("source_observations", [])
+    assert "katana" in sources, f"source_observations should include 'katana', got {sources}"
+    assert sig.get("subdomain_context") is not None or sig.get("url", "").startswith("http"), \
+        "Signal should have either subdomain_context or real URL"
+    assert "confidence" in sig
+
+
+@pytest.mark.asyncio
+async def test_signal_bundle_auth_surface(tmp_workspace):
+    """SGK-2026-0261: auth 系カテゴリから auth_required な signal が生成されること"""
+    pipeline = ReconPipeline(
+        config={"recon": {"max_concurrent_tasks": 4}},
+        project_manager=None,
+        target="*.example.com",
+        workspace_root=tmp_workspace,
+    )
+
+    # live_401_302 カテゴリ（認証が必要なサブドメイン）
+    json_data = [
+        {"url": "https://login.example.com", "subdomain": "login.example.com", "status_code": 401},
+    ]
+    live_401_file = tmp_workspace / "live_401_302.json"
+    live_401_file.write_text(json.dumps(json_data))
+
+    result = await pipeline.step8_return_to_mc({"live_401_302": live_401_file})
+
+    bundle = result.get("_signal_bundle", {})
+    signals = bundle.get("_endpoint_signals", [])
+    assert len(signals) >= 1
+
+    sig = signals[0]
+    assert sig.get("auth_required") is True, \
+        f"live_401_302 signal should have auth_required=True, got: {sig.get('auth_required')}"
+    assert sig.get("entity_type") == "auth_surface", \
+        f"Expected auth_surface entity_type, got: {sig.get('entity_type')}"
+    assert "login" in sig.get("url", "").lower()
+
+
+@pytest.mark.asyncio
+async def test_signal_bundle_host_surface_summary(tmp_workspace):
+    """SGK-2026-0261: host_surface_summary にカテゴリ集計と tech_stack が含まれること"""
+    pipeline = ReconPipeline(
+        config={"recon": {"max_concurrent_tasks": 4}},
+        project_manager=None,
+        target="*.example.com",
+        workspace_root=tmp_workspace,
+    )
+
+    json_data = [
+        {"url": "https://www.example.com", "status_code": 200},
+        {"url": "https://api.example.com", "status_code": 200},
+        {"url": "https://admin.example.com", "status_code": 403},
+    ]
+    live_200_file = tmp_workspace / "live_200.json"
+    live_200_file.write_text(json.dumps(json_data[:2]))
+    live_403_file = tmp_workspace / "live_403.json"
+    live_403_file.write_text(json.dumps(json_data[2:]))
+
+    result = await pipeline.step8_return_to_mc({"live_200": live_200_file, "live_403": live_403_file})
+
+    bundle = result.get("_signal_bundle", {})
+    summary = bundle.get("_host_surface_summary", {})
+
+    assert isinstance(summary, dict)
+    assert summary.get("total_signals", 0) >= 3
+    assert "surface_types" in summary
+    assert "legacy_keys" in summary
+    assert "discovered_urls" in summary.get("legacy_keys", {})

@@ -132,9 +132,12 @@ CRITICAL RULES:
         Specialist.__init__(self, config)
         ThoughtLoop.__init__(self, max_turns=8)
 
-        mode = "bugbounty"  # Bug Bounty fail-closed default
-        if config and isinstance(config, dict):
-            mode = config.get("mode", mode)
+        # Resolve run mode: config["mode"] (truthy) > global settings.mode >
+        # "bugbounty". Prevents Guard fail-close on vulntest/ctf runs.
+        from src.core.config.settings import resolve_run_mode
+        mode = resolve_run_mode(
+            config.get("mode") if (config and isinstance(config, dict)) else None
+        )
 
         self.llm = LLMClient(role="cmd_ssrf_specialist")
         

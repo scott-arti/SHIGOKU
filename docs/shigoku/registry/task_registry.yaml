@@ -1,5 +1,5 @@
 version: 1
-updated_at: '2026-07-02'
+updated_at: '2026-07-17'
 namespace: SGK
 id_rules:
   core: SGK-YYYY-NNNN
@@ -2891,8 +2891,8 @@ tasks:
   task_id: SGK-2026-0259
   doc_type: subtask_plan
   title: 'Recipe高度化: 単一セッション高額Auth/JWT/OAuth検出強化'
-  primary_doc: docs/shigoku/subtasks/2026-06-03_sgk-2026-0259_recipe-auth-jwt-oauth_subtask_plan.md
-  status: active
+  primary_doc: docs/shigoku/subtasks/done/2026-06-03_sgk-2026-0259_recipe-auth-jwt-oauth_subtask_plan.md
+  status: done
   provisional: false
   task_summary: 'Recipe高度化: 単一セッション高額Auth/JWT/OAuth検出強化'
   parent_task_id: SGK-2026-0221
@@ -2901,6 +2901,8 @@ tasks:
   - docs/shigoku/subtasks/2026-05-20_sgk-2026-0221-s01_groupa_execution-path_subtask_plan.md
   - docs/shigoku/roadmaps/IMPLEMENTATION_ROADMAP.md
   - docs/shigoku/roadmaps/future_functions1.md
+  - docs/shigoku/reports/2026-07-20_sgk-2026-0259_auth-jwt-oauth-recipe_work_report.md
+  - docs/shigoku/worklogs/2026-07-20_sgk-2026-0259_auth-jwt-oauth-recipe_work_log.md
 - provisional_id: DOC-0277
   task_id: SGK-2026-0260
   doc_type: subtask_plan
@@ -2911,11 +2913,13 @@ tasks:
   task_summary: 'Recipe運用フロー改善: Recon起点の選抜・実行・Swarm連携'
   parent_task_id: SGK-2026-0221
   related_docs:
-  - docs/shigoku/subtasks/2026-06-03_sgk-2026-0259_recipe-auth-jwt-oauth_subtask_plan.md
+  - docs/shigoku/subtasks/done/2026-06-03_sgk-2026-0259_recipe-auth-jwt-oauth_subtask_plan.md
   - docs/shigoku/plans/2026-05-19_sgk-2026-0221_mock-optimizedreciperunner-discovery-graphql_plan.md
   - docs/shigoku/subtasks/2026-05-20_sgk-2026-0221-s01_groupa_execution-path_subtask_plan.md
   - docs/shigoku/roadmaps/IMPLEMENTATION_ROADMAP.md
   - docs/shigoku/roadmaps/future_functions1.md
+  - docs/shigoku/reports/2026-07-18_sgk-2026-0260_signal-recipe-selector-bridge_work_report.md
+  - docs/shigoku/worklogs/2026-07-18_sgk-2026-0260_signal-recipe-selector-bridge_work_log.md
 - provisional_id: DOC-0278
   task_id: SGK-2026-0261
   doc_type: subtask_plan
@@ -2927,7 +2931,8 @@ tasks:
   parent_task_id: SGK-2026-0221
   related_docs:
   - docs/shigoku/subtasks/2026-06-03_sgk-2026-0260_recipe-recon-swarm_subtask_plan.md
-  - docs/shigoku/subtasks/2026-06-03_sgk-2026-0259_recipe-auth-jwt-oauth_subtask_plan.md
+  - docs/shigoku/subtasks/2026-06-03_sgk-2026-0262_obsidian-rag-kg-recipe_subtask_plan.md
+  - docs/shigoku/subtasks/done/2026-06-03_sgk-2026-0259_recipe-auth-jwt-oauth_subtask_plan.md
   - docs/shigoku/plans/2026-05-19_sgk-2026-0221_mock-optimizedreciperunner-discovery-graphql_plan.md
   - docs/shigoku/subtasks/2026-05-20_sgk-2026-0221-s01_groupa_execution-path_subtask_plan.md
   - docs/shigoku/specs/design/recon_scenario.md
@@ -3174,8 +3179,10 @@ tasks:
   task_id: SGK-2026-0281
   doc_type: subtask_plan
   title: 'Recon運用再設計: Resume・再利用・Recipe/PhaseGate連携計画'
-  primary_doc: docs/shigoku/subtasks/2026-06-20_sgk-2026-0281_recon-resume-recipe-phasegate_subtask_plan.md
-  status: active
+  primary_doc: docs/shigoku/subtasks/done/2026-06-20_sgk-2026-0281_recon-resume-recipe-phasegate_subtask_plan.md
+  status: done
+  work_report: docs/shigoku/reports/2026-07-21_sgk-2026-0281_work_report.md
+  work_log: docs/shigoku/worklogs/2026-07-21_sgk-2026-0281_work_log.md
   provisional: false
   task_summary: 'Recon運用再設計: Resume・再利用・Recipe/PhaseGate連携計画'
   parent_task_id: SGK-2026-0278
@@ -3185,14 +3192,16 @@ tasks:
 - provisional_id: DOC-0299
   task_id: SGK-2026-0282
   doc_type: subtask_plan
-  title: Bug Bounty向けScope制御高度化計画
+  title: Bug Bounty向けScope・PhaseGate実行制御統合計画
   primary_doc: docs/shigoku/subtasks/2026-06-21_sgk-2026-0282_bug-bounty-scope-control_subtask_plan.md
   status: active
   provisional: false
-  task_summary: Bug Bounty向けScope制御高度化計画
+  task_summary: Bug Bounty向けScope・PhaseGate実行制御統合計画
   parent_task_id: SGK-2026-0278
   related_docs:
   - docs/shigoku/plans/2026-06-20_sgk-2026-0278_ver-2-planning-bundle-dev-mode-recon_plan.md
+  - docs/shigoku/subtasks/done/2026-06-21_sgk-2026-0284_phasegate-fine-grained_subtask_plan.md
+  - docs/shigoku/subtasks/2026-06-20_sgk-2026-0281_recon-resume-recipe-phasegate_subtask_plan.md
   - docs/shigoku/specs/bug_bounty_enhancements.md
   - docs/shigoku/roadmaps/bug_bounty_enhancements_2026.md
 - provisional_id: DOC-0300
@@ -3214,15 +3223,16 @@ tasks:
   task_id: SGK-2026-0284
   doc_type: subtask_plan
   title: PhaseGate細粒度化計画
-  primary_doc: docs/shigoku/subtasks/2026-06-21_sgk-2026-0284_phasegate-fine-grained_subtask_plan.md
-  status: active
+  primary_doc: docs/shigoku/subtasks/done/2026-06-21_sgk-2026-0284_phasegate-fine-grained_subtask_plan.md
+  status: backlog
   provisional: false
   task_summary: PhaseGate細粒度化計画
-  parent_task_id: SGK-2026-0278
+  parent_task_id: SGK-2026-0282
   related_docs:
-  - docs/shigoku/plans/2026-06-20_sgk-2026-0278_ver-2-planning-bundle-dev-mode-recon_plan.md
+  - docs/shigoku/subtasks/2026-06-21_sgk-2026-0282_bug-bounty-scope-control_subtask_plan.md
   - docs/shigoku/subtasks/2026-06-20_sgk-2026-0281_recon-resume-recipe-phasegate_subtask_plan.md
   - docs/shigoku/roadmaps/future_functions1.md
+  - docs/shigoku/plans/done/2026-06-24_sgk-2026-0304_active_plan.md
 - provisional_id: DOC-0302
   task_id: SGK-2026-0285
   doc_type: subtask_plan
@@ -3254,13 +3264,15 @@ tasks:
   task_id: SGK-2026-0287
   doc_type: subtask_plan
   title: Task Queue Pruning Policy 設計計画
-  primary_doc: docs/shigoku/subtasks/2026-06-21_sgk-2026-0287_task-queue-pruning-policy_subtask_plan.md
-  status: active
+  primary_doc: docs/shigoku/subtasks/done/2026-06-21_sgk-2026-0287_task-queue-pruning-policy_subtask_plan.md
+  status: done
   provisional: false
   task_summary: Task Queue Pruning Policy 設計計画
   parent_task_id: SGK-2026-0278
   related_docs:
   - docs/shigoku/plans/2026-06-20_sgk-2026-0278_ver-2-planning-bundle-dev-mode-recon_plan.md
+  - docs/shigoku/manuals/2026-07-17_sgk-2026-0287_pruning-operator-runbook.md
+  - docs/shigoku/worklogs/2026-07-17_sgk-2026-0287_implementation_work_log.md
 - provisional_id: DOC-0305
   task_id: SGK-2026-0288
   doc_type: subtask_plan
@@ -4000,6 +4012,208 @@ tasks:
   - docs/shigoku/specs/2026-07-02_sgk-2026-0338_internal-architecture-and-dataflow-spec.md
   - docs/shigoku/reports/2026-07-02_sgk-2026-0338_work_report.md
   - docs/shigoku/worklogs/2026-07-02_sgk-2026-0338_work_log.md
+- task_id: SGK-2026-0358
+  doc_type: plan
+  title: HADDIXレポート品質包括改善
+  primary_doc: docs/shigoku/plans/done/2026-07-14_sgk-2026-0358_haddix-report-quality-comprehensive-improvement_plan.md
+  status: done
+  provisional: false
+  task_summary: Evidence型システム、CORS分類、Gate分離、脆弱性クラス判定、Severity/Coverage品質指標、出力構造改善を含むHaddixレポート品質の包括的改善
+  parent_task_id: SGK-2026-0347
+  related_docs:
+  - docs/shigoku/plans/2026-07-07_haddix-report-bugbounty-quality-optimization_plan.md
+  - workspace/projects/localhost:4280/reports/haddix_report_20260713_234334.md
+- provisional_id: DOC-0405
+  task_id: SGK-2026-0359
+  doc_type: plan
+  title: DVWA Low Session Task Coverage and Auto Report Bundle Fix
+  primary_doc: docs/shigoku/plans/done/2026-07-14_sgk-2026-0359_dvwa-low-session-report-bundle-fix_plan.md
+  status: done
+  provisional: false
+  task_summary: DVWA low run の session保存先drift、auto report bundle欠落、scenario probe
+    cap落ちを修正
+  parent_task_id: null
+  related_docs:
+  - docs/shigoku/specs/TECHNICAL_SPEC_JA.md
+  - docs/shigoku/reports/2026-07-14_sgk-2026-0359_work_report.md
+  - docs/shigoku/worklogs/2026-07-14_sgk-2026-0359_work_log.md
+- provisional_id: DOC-0406
+  task_id: SGK-2026-0360
+  doc_type: plan
+  title: SCN06 Meta Observability Coverage Task Promotion Fix
+  primary_doc: docs/shigoku/plans/done/2026-07-14_sgk-2026-0360_scn06-meta-observability-coverage-task-promotion-fix_plan.md
+  status: done
+  provisional: false
+  task_summary: SCN06 meta-observability候補が派生タスク上限やpruningで落ちる問題を修正
+  parent_task_id: null
+  related_docs:
+  - docs/shigoku/plans/done/2026-07-14_sgk-2026-0359_dvwa-low-session-report-bundle-fix_plan.md
+  - docs/shigoku/reports/2026-07-14_sgk-2026-0360_work_report.md
+  - docs/shigoku/worklogs/2026-07-14_sgk-2026-0360_work_log.md
+- provisional_id: DOC-0407
+  task_id: SGK-2026-0361
+  doc_type: plan
+  title: Runtime Artifact Path Root Cause Fix
+  primary_doc: docs/shigoku/plans/done/2026-07-15_runtime-artifact-path-root-cause-fix_plan.md
+  status: done
+  provisional: false
+  task_summary: Runtime Artifact Path Root Cause Fix
+  parent_task_id: SGK-2026-0001
+  related_docs:
+  - docs/shigoku/reports/2026-07-15_sgk-2026-0361_work_report.md
+  - docs/shigoku/worklogs/2026-07-15_sgk-2026-0361_work_log.md
+- provisional_id: DOC-0408
+  task_id: SGK-2026-0362
+  doc_type: plan
+  title: Intervention Observe Mode Deferred Prompt Root Cause Fix
+  primary_doc: docs/shigoku/plans/done/2026-07-15_intervention-observe-mode-deferred-prompt-root-cause-fix_plan.md
+  status: done
+  provisional: false
+  task_summary: Intervention Observe Mode Deferred Prompt Root Cause Fix
+  parent_task_id: SGK-2026-0001
+  related_docs:
+  - docs/shigoku/reports/2026-07-15_sgk-2026-0362_work_report.md
+  - docs/shigoku/worklogs/2026-07-15_sgk-2026-0362_work_log.md
+- provisional_id: DOC-0409
+  task_id: SGK-2026-0363
+  doc_type: plan
+  title: Plan TDD Implementation Skill
+  primary_doc: docs/shigoku/plans/done/2026-07-15_sgk-2026-0363_plan-tdd-implementation-skill_plan.md
+  status: done
+  provisional: false
+  task_summary: Plan TDD Implementation Skill
+  parent_task_id: null
+  related_docs:
+  - docs/shigoku/reports/2026-07-15_sgk-2026-0363_work_report.md
+  - docs/shigoku/worklogs/2026-07-15_sgk-2026-0363_work_log.md
+- provisional_id: DOC-0410
+  task_id: SGK-2026-0364
+  doc_type: plan
+  title: Derived Task Admission Policy Cleanup and Coverage-Critical Consolidation
+  primary_doc: docs/shigoku/plans/done/2026-07-15_sgk-2026-0364_derived-task-admission-policy-cleanup_plan.md
+  status: done
+  provisional: false
+  task_summary: Derived task admission policy を source-aware 化し、coverage-critical
+    判定の重複を整理
+  parent_task_id: null
+  related_docs:
+  - docs/shigoku/reports/2026-07-15_sgk-2026-0364_work_report.md
+  - docs/shigoku/worklogs/2026-07-15_sgk-2026-0364_work_log.md
+  - docs/shigoku/plans/done/2026-07-14_sgk-2026-0359_dvwa-low-session-report-bundle-fix_plan.md
+  - docs/shigoku/plans/done/2026-07-14_sgk-2026-0360_scn06-meta-observability-coverage-task-promotion-fix_plan.md
+- provisional_id: DOC-0411
+  task_id: SGK-2026-0365
+  doc_type: plan
+  title: Injection Timeout Trace and Selection Observability
+  primary_doc: docs/shigoku/plans/done/2026-07-15_sgk-2026-0365_injection-timeout-trace-selection-observability_plan.md
+  status: done
+  provisional: false
+  task_summary: Injection timeout の原因追跡に必要な telemetry と target selection observability
+    を追加
+  parent_task_id: SGK-2026-0122
+  related_docs:
+  - docs/shigoku/specs/fix_injection_swarm.md
+  - docs/shigoku/reports/2026-07-15_sgk-2026-0365_work_report.md
+  - docs/shigoku/worklogs/2026-07-15_sgk-2026-0365_work_log.md
+  - workspace/projects/localhost:4280/reports/haddix_report_20260714_114645.md
+- provisional_id: DOC-0412
+  task_id: SGK-2026-0366
+  doc_type: plan
+  title: Skipped Task Reason Visibility and Shutdown Cancellation Cleanup
+  primary_doc: docs/shigoku/plans/done/2026-07-16_sgk-2026-0366_skipped-task-reason-visibility-and-shutdown-cancellation-cleanup_plan.md
+  status: done
+  provisional: false
+  task_summary: SKIPPED 理由の可視化と normal shutdown の CancelledError ノイズを整理
+  parent_task_id: SGK-2026-0364
+  related_docs:
+  - docs/shigoku/reports/2026-07-16_sgk-2026-0366_work_report.md
+  - docs/shigoku/worklogs/2026-07-16_sgk-2026-0366_work_log.md
+  - docs/shigoku/plans/done/2026-07-15_sgk-2026-0364_derived-task-admission-policy-cleanup_plan.md
+  - docs/shigoku/reports/2026-07-15_sgk-2026-0364_work_report.md
+- provisional_id: DOC-0413
+  task_id: SGK-2026-0367
+  doc_type: plan
+  title: Injection task ownership normalization and no-signal Phase2 suppression
+  primary_doc: docs/shigoku/plans/done/2026-07-16_injection-task-ownership-normalization-and-no-signal-phase2-suppression_plan.md
+  status: done
+  provisional: false
+  task_summary: Injection task ownership normalization and no-signal Phase2 suppression
+  parent_task_id: SGK-2026-0122
+  related_docs:
+  - docs/shigoku/specs/fix_injection_swarm.md
+  - docs/shigoku/plans/done/2026-07-15_sgk-2026-0365_injection-timeout-trace-selection-observability_plan.md
+  - docs/shigoku/reports/2026-07-15_sgk-2026-0365_work_report.md
+  - docs/shigoku/reports/2026-07-17_sgk-2026-0367_work_report.md
+  - docs/shigoku/worklogs/2026-07-17_sgk-2026-0367_work_log.md
+  - workspace/projects/localhost:4280/reports/haddix_report_20260715_151429.md
+- provisional_id: DOC-0414
+  task_id: SGK-2026-0368
+  doc_type: plan
+  title: DOM XSS latent parameter inference hardening
+  primary_doc: docs/shigoku/plans/2026-07-16_dom-xss-latent-parameter-inference-hardening_plan.md
+  status: active
+  provisional: false
+  task_summary: DOM XSS latent parameter inference hardening
+  parent_task_id: SGK-2026-0122
+  related_docs:
+  - docs/shigoku/specs/fix_injection_swarm.md
+  - docs/shigoku/plans/2026-07-16_injection-task-ownership-normalization-and-no-signal-phase2-suppression_plan.md
+  - docs/shigoku/plans/done/2026-07-15_sgk-2026-0365_injection-timeout-trace-selection-observability_plan.md
+  - workspace/projects/localhost:4280/reports/haddix_report_20260715_151429.md
+- provisional_id: DOC-0415
+  task_id: SGK-2026-0369
+  doc_type: plan
+  title: MasterConductor session save regression test fixture fix
+  primary_doc: docs/shigoku/plans/done/2026-07-16_sgk-2026-0369_master-conductor-session-save-test-fixture-fix_plan.md
+  status: done
+  provisional: false
+  task_summary: async_save_session skipped-reason regression test の fixture 不足を補い、session
+    save path を検証可能にする
+  parent_task_id: SGK-2026-0366
+  related_docs:
+  - docs/shigoku/reports/2026-07-16_sgk-2026-0369_work_report.md
+  - docs/shigoku/worklogs/2026-07-16_sgk-2026-0369_work_log.md
+  - docs/shigoku/plans/done/2026-07-16_sgk-2026-0366_skipped-task-reason-visibility-and-shutdown-cancellation-cleanup_plan.md
+  - docs/shigoku/reports/2026-07-16_sgk-2026-0366_work_report.md
+- provisional_id: DOC-0416
+  task_id: SGK-2026-0370
+  doc_type: subtask_plan
+  title: Bug Bounty compiled guard と PhaseGate capability 接続計画
+  primary_doc: docs/shigoku/subtasks/2026-07-17_sgk-2026-0370_bugbounty-compiled-guard-phasegate-bridge_subtask_plan.md
+  status: active
+  provisional: false
+  task_summary: Bug Bounty compiled guard と PhaseGate capability 接続計画
+  parent_task_id: SGK-2026-0282
+  related_docs:
+  - docs/shigoku/subtasks/2026-06-21_sgk-2026-0282_bug-bounty-scope-control_subtask_plan.md
+  - docs/shigoku/subtasks/done/2026-07-01_bug-bounty-scope-bundle-guard-policy-compile_subtask_plan.md
+  - docs/shigoku/subtasks/done/2026-06-29_sgk-2026-0323_phasegate-granularity-import-recon_subtask_plan.md
+  - docs/shigoku/subtasks/2026-07-02_sgk-2026-0336_bugbounty-bundle-v1-followups_subtask_plan.md
+  - docs/shigoku/specs/2026-07-01_sgk-2026-0335_bug-bounty-program-bundle-guard-policy-contract.md
+- provisional_id: DOC-0417
+  task_id: SGK-2026-0259
+  doc_type: work_report
+  title: "Auth/JWT/OAuth Recipe 群の固定契約化 (SGK-2026-0259)"
+  primary_doc: docs/shigoku/reports/2026-07-20_sgk-2026-0259_auth-jwt-oauth-recipe_work_report.md
+  status: done
+  provisional: false
+  task_summary: Auth/JWT/OAuth Recipe 群の実装完了報告書 (4新規+3移行)
+  parent_task_id: SGK-2026-0221
+  related_docs:
+  - docs/shigoku/subtasks/done/2026-06-03_sgk-2026-0259_recipe-auth-jwt-oauth_subtask_plan.md
+  - docs/shigoku/worklogs/2026-07-20_sgk-2026-0259_auth-jwt-oauth-recipe_work_log.md
+- provisional_id: DOC-0418
+  task_id: SGK-2026-0259
+  doc_type: work_log
+  title: "作業ログ: Auth/JWT/OAuth Recipe 固定契約化 (SGK-2026-0259)"
+  primary_doc: docs/shigoku/worklogs/2026-07-20_sgk-2026-0259_auth-jwt-oauth-recipe_work_log.md
+  status: done
+  provisional: false
+  task_summary: Auth/JWT/OAuth Recipe 固定契約化の作業ログ
+  parent_task_id: SGK-2026-0221
+  related_docs:
+  - docs/shigoku/subtasks/done/2026-06-03_sgk-2026-0259_recipe-auth-jwt-oauth_subtask_plan.md
+  - docs/shigoku/reports/2026-07-20_sgk-2026-0259_auth-jwt-oauth-recipe_work_report.md
 doc_type_allowed_values:
 - spec
 - roadmap

@@ -473,6 +473,180 @@ class InjectionManagerAgent(BaseManagerAgent):
             return ""
         return match.group(1).strip().lower()
 
+    @staticmethod
+    def _should_force_phase2_for_exception_target(task) -> bool:
+        """SGK-2026-0367: Check if target should force Phase 2
+        even without Phase 1 signals.
+
+        Suppression only applies to xss_candidate tasks.
+        Exception candidates within xss_candidate:
+        - client_route_dom category (always force)
+        - javascript/ path URLs
+        - hash-route URLs (#/) with query params
+        - method != GET (POST/PUT/DELETE surface)
+        - Content-Type: application/json
+        - has_form_tag is True
+        - param hints present (discovered_params, candidate_params, params_list)
+        """
+        params = getattr(task, "params", {}) or {}
+        category = str(params.get("category", "") or "").lower()
+        target_url = params.get("target", "") or getattr(task, "target", "") or ""
+
+        # client_route_dom is always a suppression exception
+        if category == "client_route_dom":
+            return True
+
+        # Non-XSS categories: let existing phase2_on_empty_phase1 logic decide.
+        # Only xss_candidate gets the no-signal suppression tightening.
+        if category != "xss_candidate":
+            return False
+
+        # --- xss_candidate-specific exceptions below ---
+
+        # Extract per-URL evidence first (primary source for method, content_type, has_form_tag)
+        _context = params.get("_context", {}) or {}
+        url_evidence_by_url = _context.get("url_evidence_by_url", {}) or {}
+        per_url_evidence = url_evidence_by_url.get(str(target_url), {}) or {}
+
+        # method != GET → POST/PUT surface, don't suppress
+        # Prefer per-URL evidence, fallback to task.params
+        method = str(
+            per_url_evidence.get("method")
+            or params.get("method", "GET")
+            or "GET"
+        ).upper()
+        if method != "GET":
+            return True
+
+        # Content-Type: application/json → programmatic API surface
+        # Prefer per-URL evidence response_headers, fallback to task.params
+        response_headers = per_url_evidence.get("response_headers", {}) or {}
+        content_type = str(
+            response_headers.get("Content-Type")
+            or response_headers.get("content-type")
+            or params.get("content_type", "")
+            or ""
+        ).lower()
+        if "json" in content_type:
+            return True
+
+        # has_form_tag → real form interaction surface
+        if bool(per_url_evidence.get("has_form_tag", False)):
+            return True
+
+        # param hints present → known injectable surface
+        for hint_key in ("discovered_params", "candidate_params", "params_list"):
+            hints = _context.get(hint_key)
+            if isinstance(hints, list) and len(hints) > 0:
+                return True
+
+        try:
+            from urllib.parse import parse_qs, urlparse
+
+            parsed = urlparse(str(target_url))
+            path_lower = (parsed.path or "").lower()
+            fragment = parsed.fragment or ""
+            query_keys = list(parse_qs(parsed.query, keep_blank_values=True).keys())
+        except Exception:
+            return False
+
+        # javascript/ path: DOM XSS entry point → don't suppress
+        if "javascript/" in path_lower:
+            return True
+
+        # hash-route with query params: SPA-specific DOM path → don't suppress
+        # urlparse puts everything after # into fragment, including ?params
+        has_fragment_query = "?" in (fragment or "")
+        if ("#/" in fragment or "#/" in target_url) and (query_keys or has_fragment_query):
+            return True
+
+        # Has query params but none of the above exceptions → suppress
+        return False
+
+    @staticmethod
+    def _summarize_selection_evidence(
+        url: str,
+        task_category: str,
+        url_evidence: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """次回比較に必要な URL 選定根拠だけを圧縮して残す。"""
+        parsed = urlparse(url)
+        query_keys = sorted(str(key) for key in parse_qs(parsed.query).keys())
+        response_headers = url_evidence.get("response_headers", {})
+        if not isinstance(response_headers, dict):
+            response_headers = {}
+        score_breakdown = url_evidence.get("score_breakdown", {})
+        if not isinstance(score_breakdown, dict):
+            score_breakdown = {}
+        return {
+            "task_category": str(task_category or ""),
+            "method": str(url_evidence.get("method") or "").upper(),
+            "source": str(url_evidence.get("source") or ""),
+            "response_status": int(url_evidence.get("response_status", 0) or 0),
+            "has_form_tag": bool(url_evidence.get("has_form_tag", False)),
+            "query_keys": query_keys,
+            "response_header_keys": sorted(str(key).lower() for key in response_headers.keys())[:12],
+            "ssrf_score": int(url_evidence.get("ssrf_score", 0) or 0),
+            "score_breakdown": score_breakdown,
+        }
+
+    @staticmethod
+    def _new_attempt_trace(
+        *,
+        target_url: str,
+        vuln_type: str,
+        retry_count: int,
+        timeout_seconds: int,
+        quick_mode: bool,
+        detection_mode: str,
+    ) -> Dict[str, Any]:
+        return {
+            "target_url": target_url,
+            "vuln_type": vuln_type,
+            "retry_count": int(retry_count),
+            "timeout_seconds": int(timeout_seconds),
+            "quick_mode": bool(quick_mode),
+            "detection_mode": str(detection_mode or ""),
+            "current_stage": "queued",
+            "history": [],
+            "_started_monotonic": asyncio.get_event_loop().time(),
+        }
+
+    @staticmethod
+    def _mark_attempt_trace(trace_context: Optional[Dict[str, Any]], stage: str, **details: Any) -> None:
+        if not isinstance(trace_context, dict):
+            return
+        started = float(trace_context.get("_started_monotonic", 0.0) or 0.0)
+        elapsed_seconds = 0.0
+        if started > 0:
+            elapsed_seconds = round(asyncio.get_event_loop().time() - started, 3)
+        entry: Dict[str, Any] = {
+            "stage": str(stage),
+            "elapsed_seconds": elapsed_seconds,
+        }
+        if details:
+            entry["details"] = details
+        history = trace_context.setdefault("history", [])
+        if isinstance(history, list):
+            history.append(entry)
+        trace_context["current_stage"] = str(stage)
+
+    @staticmethod
+    def _snapshot_attempt_trace(trace_context: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        if not isinstance(trace_context, dict):
+            return {}
+        history = trace_context.get("history", [])
+        return {
+            "target_url": trace_context.get("target_url", ""),
+            "vuln_type": trace_context.get("vuln_type", ""),
+            "retry_count": int(trace_context.get("retry_count", 0) or 0),
+            "timeout_seconds": int(trace_context.get("timeout_seconds", 0) or 0),
+            "quick_mode": bool(trace_context.get("quick_mode", False)),
+            "detection_mode": str(trace_context.get("detection_mode", "") or ""),
+            "current_stage": str(trace_context.get("current_stage", "") or ""),
+            "history": list(history) if isinstance(history, list) else [],
+        }
+
     def _generate_cache_key(self, url: str, vuln_type: str, params: Dict[str, Any]) -> str:
         """キャッシュキーを生成（profile/security/category を含めて再利用安全性を向上）。"""
         params = params or {}
@@ -619,8 +793,9 @@ class InjectionManagerAgent(BaseManagerAgent):
                 return candidate
 
         from src.core.infra.network_client import AsyncNetworkClient
+        from src.core.config.settings import resolve_run_mode
 
-        client = AsyncNetworkClient(mode="bugbounty")
+        client = AsyncNetworkClient(mode=resolve_run_mode())
         self._ephemeral_network_clients.append(client)
         return client
 
@@ -1834,7 +2009,8 @@ class InjectionManagerAgent(BaseManagerAgent):
 
         最適化:
         - 早期リターン：Phase 1 で脆弱性発見時は Phase 2 をスキップ
-        - 並列処理：PARALLEL_BATCH_SIZE ずつ並列実行（リソース枯渇防止）
+        - バッチ分割：PARALLEL_BATCH_SIZE ごとに対象を区切る
+          （現実装はバッチ内逐次処理。Ver.1 完成まで Injection 並列は行わない）
         - URL 優先度付け：重要な脆弱性を含む URL を優先チェック
         - キャッシュ：同一 URL/パラメータの重複チェックを防止
         - MAX_URLS_TO_CHECK: チェックする URL 数の上限（コスト爆発防止）
@@ -1894,14 +2070,20 @@ class InjectionManagerAgent(BaseManagerAgent):
             url_evidence_by_url=url_evidence_by_url,
             category=task_category,
         )
-        phase1_priority_plan = [
-            {
-                "url": url,
-                "priority_score": int(priority_score),
-                "priority_signals": list(priority_signals),
-            }
-            for url, priority_score, priority_signals in prioritized_targets[: self.MAX_URLS_TO_CHECK]
-        ]
+        selection_origin = str(task.params.get("selection_origin") or task_category or "")
+        phase1_priority_plan = []
+        for url, priority_score, priority_signals in prioritized_targets[: self.MAX_URLS_TO_CHECK]:
+            raw_evidence = url_evidence_by_url.get(url, {}) if isinstance(url_evidence_by_url, dict) else {}
+            url_evidence = raw_evidence if isinstance(raw_evidence, dict) else {}
+            phase1_priority_plan.append(
+                {
+                    "url": url,
+                    "priority_score": int(priority_score),
+                    "priority_signals": list(priority_signals),
+                    "selection_origin": selection_origin,
+                    "selection_evidence": self._summarize_selection_evidence(url, task_category, url_evidence),
+                }
+            )
         logger.info(
             "[%s] Phase 1: Deterministic attack on %d targets (prioritized, max %d)",
             self.name, len(prioritized_targets), self.MAX_URLS_TO_CHECK
@@ -1920,7 +2102,7 @@ class InjectionManagerAgent(BaseManagerAgent):
         timeout_cause_failures: Dict[str, int] = {}
         executed_keys: set[str] = set()
 
-        # 並列バッチ処理
+        # バッチ分割処理（現実装はバッチ内逐次処理）
         batch_size = self.PARALLEL_BATCH_SIZE
         for batch_start in range(0, min(len(prioritized_targets), self.MAX_URLS_TO_CHECK), batch_size):
             batch_end = min(batch_start + batch_size, len(prioritized_targets), self.MAX_URLS_TO_CHECK)
@@ -1943,6 +2125,12 @@ class InjectionManagerAgent(BaseManagerAgent):
             # quick_mode=False で検出率を維持しつつ、URL 単位 timeout で全体ハングを防ぐ
             for target_url, priority_score, priority_signals in batch:
                 vuln_type = classify_target_url(target_url, category=task_category)
+                url_evidence = {}
+                if isinstance(url_evidence_by_url, dict):
+                    raw_evidence = url_evidence_by_url.get(target_url, {})
+                    if isinstance(raw_evidence, dict):
+                        url_evidence = raw_evidence
+                selection_evidence = self._summarize_selection_evidence(target_url, task_category, url_evidence)
                 dedupe_key = f"{target_url}|{vuln_type}|{task_category}"
                 if dedupe_key in executed_keys:
                     self.current_context["url_results"].append({
@@ -1950,10 +2138,14 @@ class InjectionManagerAgent(BaseManagerAgent):
                         "vuln_type": vuln_type,
                         "status": "skipped",
                         "skip_reason": "dedupe_execution_key",
+                        "task_category": task_category,
+                        "selection_origin": selection_origin,
+                        "selection_evidence": selection_evidence,
                         "priority_score": int(priority_score),
                         "priority_signals": list(priority_signals),
                         "findings_count": 0,
                         "tested_params": [],
+                        "attempt_traces": [],
                         "detection_mode": "phase1",
                     })
                     continue
@@ -1967,12 +2159,6 @@ class InjectionManagerAgent(BaseManagerAgent):
                     ",".join(priority_signals[:4]),
                 )
 
-                # _context からフォーム情報を取得
-                url_evidence = {}
-                if isinstance(url_evidence_by_url, dict):
-                    raw_evidence = url_evidence_by_url.get(target_url, {})
-                    if isinstance(raw_evidence, dict):
-                        url_evidence = raw_evidence
                 resolved_method = str(
                     url_evidence.get("method")
                     or task.params.get("method", "GET")
@@ -1997,6 +2183,12 @@ class InjectionManagerAgent(BaseManagerAgent):
                     "category": str(task.params.get("category", "") or ""),
                     "detection_mode": "phase1",
                 }
+                # SGK-2026-0367: pass discovered params hints to specialist hunters
+                _task_ctx = task.params.get("_context", {}) or {}
+                for hint_key in ("discovered_params", "candidate_params", "params_list"):
+                    hints = _task_ctx.get(hint_key)
+                    if hints:
+                        base_params[hint_key] = hints
 
                 if vuln_type == "ssrf":
                     if task_category == CATEGORY_SSRF_CANDIDATE and ssrf_score < 40:
@@ -2005,12 +2197,16 @@ class InjectionManagerAgent(BaseManagerAgent):
                             "vuln_type": vuln_type,
                             "status": "skipped",
                             "skip_reason": "low_ssrf_score",
+                            "task_category": task_category,
+                            "selection_origin": selection_origin,
+                            "selection_evidence": selection_evidence,
                             "ssrf_score": ssrf_score,
                             "score_breakdown": url_evidence.get("score_breakdown", {}),
                             "priority_score": int(priority_score),
                             "priority_signals": list(priority_signals),
                             "findings_count": 0,
                             "tested_params": [],
+                            "attempt_traces": [],
                             "detection_mode": "phase1",
                         })
                         continue
@@ -2022,6 +2218,9 @@ class InjectionManagerAgent(BaseManagerAgent):
                             "vuln_type": vuln_type,
                             "status": "skipped",
                             "skip_reason": "ssrf_reachability_gate",
+                            "task_category": task_category,
+                            "selection_origin": selection_origin,
+                            "selection_evidence": selection_evidence,
                             "gate_reason": gate_reason,
                             "ssrf_score": ssrf_score,
                             "score_breakdown": url_evidence.get("score_breakdown", {}),
@@ -2029,6 +2228,7 @@ class InjectionManagerAgent(BaseManagerAgent):
                             "priority_signals": list(priority_signals),
                             "findings_count": 0,
                             "tested_params": [],
+                            "attempt_traces": [],
                             "detection_mode": "phase1",
                         })
                         continue
@@ -2102,10 +2302,21 @@ class InjectionManagerAgent(BaseManagerAgent):
                         "vuln_type": vuln_type,
                         "status": "skipped",
                         "skip_reason": "timeout_circuit_breaker_open",
+                        "task_category": task_category,
+                        "selection_origin": selection_origin,
+                        "selection_evidence": selection_evidence,
                         "priority_score": int(priority_score),
                         "priority_signals": list(priority_signals),
                         "findings_count": 0,
                         "tested_params": [],
+                        "attempt_traces": [],
+                        "timeout_diagnostics": {
+                            "timeout_cause_key": timeout_cause_key,
+                            "previous_timeout_failures": previous_timeout_failures,
+                            "circuit_breaker_threshold": self.TIMEOUT_CIRCUIT_BREAKER_THRESHOLD,
+                            "scan_profile": scan_profile,
+                            "manager_elapsed_seconds": round(asyncio.get_event_loop().time() - manager_start, 3),
+                        },
                         "detection_mode": "phase1",
                     })
                     continue
@@ -2134,54 +2345,78 @@ class InjectionManagerAgent(BaseManagerAgent):
                         manager_start=manager_start,
                         manager_timeout=manager_timeout,
                     )
+                    phase1_quick_mode = (
+                        (scan_profile == "ctf" and vuln_type == "xss")
+                        or vuln_type == "cmd_ssrf"
+                    )
+                    attempt_trace = self._new_attempt_trace(
+                        target_url=target_url,
+                        vuln_type=vuln_type,
+                        retry_count=retry_count,
+                        timeout_seconds=per_url_timeout,
+                        quick_mode=phase1_quick_mode,
+                        detection_mode="phase1",
+                    )
                     try:
-                        phase1_quick_mode = (
-                            (scan_profile == "ctf" and vuln_type == "xss")
-                            or vuln_type == "cmd_ssrf"
+                        self._mark_attempt_trace(
+                            attempt_trace,
+                            "await_process_single_url",
+                            selection_origin=selection_origin,
                         )
-                        result = await asyncio.wait_for(
+                        phase1_result = await asyncio.wait_for(
                             self._process_single_url(
                                 target_url,
                                 vuln_type,
                                 base_params,
                                 quick_mode=phase1_quick_mode,
+                                trace_context=attempt_trace,
                             ),
                             timeout=per_url_timeout
                         )
                         url_elapsed = asyncio.get_event_loop().time() - url_start
-                        findings_count = result.get("findings_count", 0)
-                        tested_params = result.get("tested_params", [])
+                        findings_count = phase1_result.get("findings_count", 0)
+                        tested_params = phase1_result.get("tested_params", [])
+                        self._mark_attempt_trace(
+                            attempt_trace,
+                            "completed",
+                            findings_count=int(findings_count),
+                            tested_params_count=len(tested_params),
+                        )
                         self.current_context["url_results"].append({
                             "url": target_url,
                             "vuln_type": vuln_type,
                             "status": "completed",
+                            "task_category": task_category,
+                            "selection_origin": selection_origin,
+                            "selection_evidence": selection_evidence,
                             "priority_score": int(priority_score),
                             "priority_signals": list(priority_signals),
                             "duration_seconds": round(url_elapsed, 3),
                             "retry_count": retry_count,
                             "findings_count": findings_count,
                             "tested_params": tested_params,
-                            "probe_sent": result.get("probe_sent"),
-                            "probe_skipped_reason": result.get("probe_skipped_reason", ""),
-                            "poc_request": result.get("probe_request_raw", ""),
-                            "poc_response": result.get("probe_response_raw", ""),
-                            "reflection_observed": result.get("reflection_observed", False),
-                            "xss_evidence": result.get("xss_evidence", ""),
-                            "blind_correlation": result.get("blind_correlation", {}),
-                            "unknown_profile": result.get("unknown_profile", {}),
-                            "comparison_checks": result.get("comparison_checks", []),
-                            "auth_context_matrix": result.get("auth_context_matrix", {}),
-                            "object_ab_comparison": result.get("object_ab_comparison", {}),
-                            "schema_candidate_params": result.get("schema_candidate_params", []),
-                            "single_request_validation": result.get("single_request_validation", True),
-                            "detection_mode": result.get("detection_mode", "phase1"),
+                            "attempt_traces": [self._snapshot_attempt_trace(attempt_trace)],
+                            "probe_sent": phase1_result.get("probe_sent"),
+                            "probe_skipped_reason": phase1_result.get("probe_skipped_reason", ""),
+                            "poc_request": phase1_result.get("probe_request_raw", ""),
+                            "poc_response": phase1_result.get("probe_response_raw", ""),
+                            "reflection_observed": phase1_result.get("reflection_observed", False),
+                            "xss_evidence": phase1_result.get("xss_evidence", ""),
+                            "blind_correlation": phase1_result.get("blind_correlation", {}),
+                            "unknown_profile": phase1_result.get("unknown_profile", {}),
+                            "comparison_checks": phase1_result.get("comparison_checks", []),
+                            "auth_context_matrix": phase1_result.get("auth_context_matrix", {}),
+                            "object_ab_comparison": phase1_result.get("object_ab_comparison", {}),
+                            "schema_candidate_params": phase1_result.get("schema_candidate_params", []),
+                            "single_request_validation": phase1_result.get("single_request_validation", True),
+                            "detection_mode": phase1_result.get("detection_mode", "phase1"),
                             "ssrf_score": ssrf_score if vuln_type == "ssrf" else 0,
                             "score_breakdown": score_breakdown if vuln_type == "ssrf" else {},
                         })
 
                         if findings_count > 0:
                             phase1_found_vuln = True
-                            detected_type = result.get("vuln_type", "unknown")
+                            detected_type = phase1_result.get("vuln_type", "unknown")
                             logger.info("[%s] Phase 1: %s vulnerability found on %s", self.name, detected_type, target_url)
                         break
                     except asyncio.TimeoutError:
@@ -2207,22 +2442,43 @@ class InjectionManagerAgent(BaseManagerAgent):
                         )
                         timeout_cause_failures[timeout_cause_key] = previous_timeout_failures + 1
                         timeout_tested_params = self._collect_recent_tested_params(vuln_type)
+                        last_stage_before_timeout = str(attempt_trace.get("current_stage", "") or "")
+                        self._mark_attempt_trace(
+                            attempt_trace,
+                            "timeout",
+                            timeout_seconds=int(per_url_timeout),
+                            retry_limit=int(effective_timeout_retries),
+                        )
                         self.current_context["url_results"].append({
                             "url": target_url,
                             "vuln_type": vuln_type,
                             "status": "timeout",
+                            "task_category": task_category,
+                            "selection_origin": selection_origin,
+                            "selection_evidence": selection_evidence,
                             "priority_score": int(priority_score),
                             "priority_signals": list(priority_signals),
                             "duration_seconds": per_url_timeout,
                             "retry_count": retry_count,
                             "findings_count": 0,
                             "tested_params": timeout_tested_params,
+                            "attempt_traces": [self._snapshot_attempt_trace(attempt_trace)],
                             "unknown_profile": {},
                             "comparison_checks": [],
                             "auth_context_matrix": {},
                             "object_ab_comparison": {},
                             "schema_candidate_params": [],
                             "single_request_validation": True,
+                            "timeout_diagnostics": {
+                                "timeout_cause_key": timeout_cause_key,
+                                "per_url_timeout_seconds": int(per_url_timeout),
+                                "retry_limit": int(effective_timeout_retries),
+                                "previous_timeout_failures": int(previous_timeout_failures),
+                                "circuit_breaker_threshold": int(self.TIMEOUT_CIRCUIT_BREAKER_THRESHOLD),
+                                "scan_profile": scan_profile,
+                                "manager_elapsed_seconds": round(asyncio.get_event_loop().time() - manager_start, 3),
+                                "last_stage_before_timeout": last_stage_before_timeout,
+                            },
                             "detection_mode": "phase1",
                             "ssrf_score": ssrf_score if vuln_type == "ssrf" else 0,
                             "score_breakdown": score_breakdown if vuln_type == "ssrf" else {},
@@ -2231,22 +2487,38 @@ class InjectionManagerAgent(BaseManagerAgent):
                     except Exception as exc:
                         logger.error("[%s] Phase 1 error on %s: %s", self.name, target_url, exc)
                         error_tested_params = self._collect_recent_tested_params(vuln_type)
+                        last_stage_before_error = str(attempt_trace.get("current_stage", "") or "")
+                        self._mark_attempt_trace(
+                            attempt_trace,
+                            "error",
+                            error_type=type(exc).__name__,
+                        )
                         self.current_context["url_results"].append({
                             "url": target_url,
                             "vuln_type": vuln_type,
                             "status": "error",
+                            "task_category": task_category,
+                            "selection_origin": selection_origin,
+                            "selection_evidence": selection_evidence,
                             "priority_score": int(priority_score),
                             "priority_signals": list(priority_signals),
                             "error": str(exc),
                             "retry_count": retry_count,
                             "findings_count": 0,
                             "tested_params": error_tested_params,
+                            "attempt_traces": [self._snapshot_attempt_trace(attempt_trace)],
                             "unknown_profile": {},
                             "comparison_checks": [],
                             "auth_context_matrix": {},
                             "object_ab_comparison": {},
                             "schema_candidate_params": [],
                             "single_request_validation": True,
+                            "error_diagnostics": {
+                                "error_type": type(exc).__name__,
+                                "scan_profile": scan_profile,
+                                "manager_elapsed_seconds": round(asyncio.get_event_loop().time() - manager_start, 3),
+                                "last_stage_before_error": last_stage_before_error,
+                            },
                             "detection_mode": "phase1",
                             "ssrf_score": ssrf_score if vuln_type == "ssrf" else 0,
                             "score_breakdown": score_breakdown if vuln_type == "ssrf" else {},
@@ -2341,18 +2613,70 @@ class InjectionManagerAgent(BaseManagerAgent):
         )
         if bool(getattr(settings, "phase2_on_empty_force_disable", False)):
             phase2_on_empty_phase1 = False
+
+        # SGK-2026-0367: decomposed skip reason for session evidence
+        phase2_block_reason: list[str] = []
+        if not phase1_findings:
+            phase2_block_reason.append("no_phase1_findings")
+        if not phase1_signals["tool_error"]:
+            phase2_block_reason.append("no_tool_error")
+        if not phase1_signals["weak_signal"]:
+            phase2_block_reason.append("no_weak_signal")
+        if not high_risk_requires_phase2:
+            phase2_block_reason.append("risk_not_met")
+        if not phase2_on_empty_phase1:
+            phase2_block_reason.append("phase2_on_empty_disabled")
+
+        # SGK-2026-0367: exception targets that should NOT skip Phase 2
+        # even without signals (client_route_dom, javascript/, hash-route with query)
+        force_phase2 = self._should_force_phase2_for_exception_target(task)
+
+        # SGK-2026-0367: safety switches
+        suppress_enabled = bool(getattr(settings, "xss_no_signal_phase2_suppress_enabled", True))
+        shadow_only = bool(getattr(settings, "xss_no_signal_phase2_shadow_only", False))
+
         should_skip_phase2 = (
-            not phase1_findings
+            suppress_enabled
+            and not shadow_only  # shadow mode: observe but don't actually skip
+            and not phase1_findings
             and not phase1_signals["tool_error"]
             and not phase1_signals["weak_signal"]
             and not high_risk_requires_phase2
             and not phase2_on_empty_phase1
+            and not force_phase2
         )
 
-        if should_skip_phase2:
+        # Shadow mode: record evidence but still proceed to Phase 2
+        if shadow_only and suppress_enabled and not phase1_findings and not force_phase2:
             logger.info(
-                "[%s] Skipping Phase 2: no findings/signals and no risk-forced vuln types.",
-                self.name,
+                "[%s] Shadow mode: would skip Phase 2 but proceeding for observation. "
+                "phase2_block_reason=%s task_category=%s",
+                self.name, phase2_block_reason, task_category,
+            )
+
+        if should_skip_phase2:
+            # SGK-2026-0367: enrich session evidence with decomposed skip reason
+            target_for_evidence = task.params.get("target", "") or getattr(task, "target", "")
+            selection_origin = task.params.get("selection_origin", "")
+            try:
+                parsed = urlparse(str(target_for_evidence))
+                query_keys = sorted(str(k) for k in parse_qs(parsed.query).keys())
+            except Exception:
+                query_keys = []
+
+            # Extract first URL's evidence for priority signals
+            first_url_evidence: dict = {}
+            if phase1_url_results:
+                first_result = phase1_url_results[0] if isinstance(phase1_url_results, list) else {}
+                first_url_evidence = (
+                    first_result.get("selection_evidence", {})
+                    if isinstance(first_result, dict)
+                    else {}
+                )
+
+            logger.info(
+                "[%s] Skipping Phase 2: no findings/signals, phase2_block_reason=%s, force_phase2=%s.",
+                self.name, phase2_block_reason, force_phase2,
             )
             return SwarmResult(
                 findings=phase1_findings,
@@ -2360,6 +2684,7 @@ class InjectionManagerAgent(BaseManagerAgent):
                 execution_log=[{
                     "phase": "phase1_summary",
                     "reason": "phase1_safe_skip_no_signal",
+                    "phase2_block_reason": phase2_block_reason,
                     "urls_checked": urls_checked,
                     "manager_timeout_seconds": manager_timeout,
                     "per_url_timeout_seconds": default_per_url_timeout,
@@ -2376,6 +2701,23 @@ class InjectionManagerAgent(BaseManagerAgent):
                     "risk_override": risk_override,
                     "high_risk_requires_phase2": high_risk_requires_phase2,
                     "phase2_forced_by_risk": phase2_forced_by_risk,
+                    # SGK-2026-0367: enriched skip evidence
+                    "selection_origin": selection_origin,
+                    "target_url": target_for_evidence,
+                    "response_status": first_url_evidence.get("response_status", 0),
+                    "has_form_tag": first_url_evidence.get("has_form_tag", False),
+                    "query_keys": query_keys,
+                    "priority_score": (
+                        phase1_priority_plan[0].get("priority_score", 0)
+                        if phase1_priority_plan
+                        else 0
+                    ),
+                    "priority_signals": (
+                        phase1_priority_plan[0].get("priority_signals", [])
+                        if phase1_priority_plan
+                        else []
+                    ),
+                    "force_phase2_exception": force_phase2,
                 }],
                 swarm_name=self.name,
                 total_specialists=1,
@@ -2489,7 +2831,14 @@ class InjectionManagerAgent(BaseManagerAgent):
         })
         return result
 
-    async def _process_single_url(self, url: str, vuln_type: str, base_params: Dict[str, Any], quick_mode: bool = False) -> Dict[str, Any]:
+    async def _process_single_url(
+        self,
+        url: str,
+        vuln_type: str,
+        base_params: Dict[str, Any],
+        quick_mode: bool = False,
+        trace_context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         """
         単一 URL を処理するヘルパーメソッド。
         
@@ -2519,9 +2868,17 @@ class InjectionManagerAgent(BaseManagerAgent):
         probe_request_raw = ""
         probe_response_raw = ""
         detection_mode = self._resolve_detection_mode(base_params, "phase1")
+        self._mark_attempt_trace(
+            trace_context,
+            "dispatch_start",
+            vuln_type=vuln_type,
+            quick_mode=bool(quick_mode),
+            detection_mode=detection_mode,
+        )
 
         try:
             if vuln_type == "sqli":
+                self._mark_attempt_trace(trace_context, "sqli:start")
                 sqli_result = await self.run_sqli_hunter(url=url, params=base_params, quick_mode=quick_mode)
                 findings_count = sqli_result.get("findings_count", 0)
                 tested_params = sanitize_tested_params(sqli_result.get("tested_params", []), excluded_params=self.EXCLUDED_TESTED_PARAMS)
@@ -2531,12 +2888,14 @@ class InjectionManagerAgent(BaseManagerAgent):
                 findings_list = self.current_context["findings"][-findings_count:] if findings_count > 0 else []
                 if findings_count == 0:
                     # SQLi 発見なしの場合、XSS のみ実行
+                    self._mark_attempt_trace(trace_context, "xss_fallback_after_sqli:start")
                     xss_result = await self.run_xss_hunter(url=url, params=base_params, quick_mode=quick_mode)
                     tested_params = sanitize_tested_params(tested_params + xss_result.get("tested_params", []), excluded_params=self.EXCLUDED_TESTED_PARAMS)
                     reflection_observed = bool(xss_result.get("reflection_observed", False))
                     xss_evidence = str(xss_result.get("evidence", "") or "")
 
             elif vuln_type == "xss":
+                self._mark_attempt_trace(trace_context, "xss:start")
                 xss_result = await self.run_xss_hunter(url=url, params=base_params, quick_mode=quick_mode)
                 findings_count = xss_result.get("findings_count", 0)
                 tested_params = sanitize_tested_params(xss_result.get("tested_params", []), excluded_params=self.EXCLUDED_TESTED_PARAMS)
@@ -2545,35 +2904,41 @@ class InjectionManagerAgent(BaseManagerAgent):
                 xss_evidence = str(xss_result.get("evidence", "") or "")
 
             elif vuln_type == "lfi":
+                self._mark_attempt_trace(trace_context, "lfi:start")
                 lfi_result = await self.run_lfi_check(url=url, params=base_params)
                 findings_count = lfi_result.get("findings_count", 0)
                 tested_params = sanitize_tested_params(lfi_result.get("tested_params", []), excluded_params=self.EXCLUDED_TESTED_PARAMS)
                 findings_list = self.current_context["findings"][-findings_count:] if findings_count > 0 else []
 
             elif vuln_type == "ssti":
+                self._mark_attempt_trace(trace_context, "ssti:start")
                 ssti_result = await self.run_ssti_hunter(url=url, params=base_params)
                 findings_count = ssti_result.get("findings_count", 0)
                 tested_params = sanitize_tested_params(ssti_result.get("tested_params", []), excluded_params=self.EXCLUDED_TESTED_PARAMS)
                 findings_list = self.current_context["findings"][-findings_count:] if findings_count > 0 else []
 
             elif vuln_type == "cors":
+                self._mark_attempt_trace(trace_context, "cors:start")
                 cors_result = await self.run_cors_hunter(url=url, params=base_params)
                 findings_count = cors_result.get("findings_count", 0)
                 tested_params = sanitize_tested_params(cors_result.get("tested_params", []), excluded_params=self.EXCLUDED_TESTED_PARAMS)
                 findings_list = self.current_context["findings"][-findings_count:] if findings_count > 0 else []
 
             elif vuln_type == "crlf":
+                self._mark_attempt_trace(trace_context, "crlf:start")
                 crlf_result = await self.run_crlf_hunter(url=url, params=base_params)
                 findings_count = crlf_result.get("findings_count", 0)
                 tested_params = sanitize_tested_params(crlf_result.get("tested_params", []), excluded_params=self.EXCLUDED_TESTED_PARAMS)
                 findings_list = self.current_context["findings"][-findings_count:] if findings_count > 0 else []
 
             elif vuln_type == "redirect":
+                self._mark_attempt_trace(trace_context, "redirect:start")
                 redirect_result = await self.run_open_redirect_check(url=url, params=base_params)
                 findings_count = redirect_result.get("findings_count", 0)
                 findings_list = self.current_context["findings"][-findings_count:] if findings_count > 0 else []
 
             elif vuln_type == "cmd_ssrf":
+                self._mark_attempt_trace(trace_context, "cmd_ssrf:start")
                 cmd_result = await self.run_cmd_ssrf_hunter(url=url, params=base_params)
                 findings_count = cmd_result.get("findings_count", 0)
                 tested_params = sanitize_tested_params(cmd_result.get("tested_params", []), excluded_params=self.EXCLUDED_TESTED_PARAMS)
@@ -2583,24 +2948,28 @@ class InjectionManagerAgent(BaseManagerAgent):
                 findings_list = self.current_context["findings"][-findings_count:] if findings_count > 0 else []
 
             elif vuln_type == "ssrf":
+                self._mark_attempt_trace(trace_context, "ssrf:start")
                 ssrf_result = await self.run_ssrf_hunter(url=url, params=base_params)
                 findings_count = ssrf_result.get("findings_count", 0)
                 tested_params = sanitize_tested_params(ssrf_result.get("tested_params", []), excluded_params=self.EXCLUDED_TESTED_PARAMS)
                 findings_list = self.current_context["findings"][-findings_count:] if findings_count > 0 else []
 
             elif vuln_type == "csrf":
+                self._mark_attempt_trace(trace_context, "csrf:start")
                 csrf_result = await self._run_csrf_minimal_check(url=url, base_params=base_params)
                 findings_count = csrf_result.get("findings_count", 0)
                 tested_params = sanitize_tested_params(csrf_result.get("tested_params", []), excluded_params=self.EXCLUDED_TESTED_PARAMS)
                 findings_list = self.current_context["findings"][-findings_count:] if findings_count > 0 else []
 
             elif vuln_type == "api":
+                self._mark_attempt_trace(trace_context, "api:start")
                 api_result = await self._run_api_minimal_check(url=url, base_params=base_params)
                 findings_count = api_result.get("findings_count", 0)
                 tested_params = sanitize_tested_params(api_result.get("tested_params", []), excluded_params=self.EXCLUDED_TESTED_PARAMS)
 
             elif vuln_type == "admin":
                 # BizLogicSwarm代替: adminエンドポイント認可バイパス試行
+                self._mark_attempt_trace(trace_context, "admin:start")
                 admin_result = await self.run_admin_check(url=url, params=base_params)
                 findings_count = admin_result.get("findings_count", 0)
                 tested_params = sanitize_tested_params(admin_result.get("tested_params", []), excluded_params=self.EXCLUDED_TESTED_PARAMS)
@@ -2608,6 +2977,7 @@ class InjectionManagerAgent(BaseManagerAgent):
                 blind_correlation = {}  # adminチェックは現状未対応
 
             else:  # unknown: 仮説駆動で対象 Specialist のみ実行
+                self._mark_attempt_trace(trace_context, "unknown:start")
                 unknown_classification_only = self._coerce_bool(
                     (self.current_context.get("params", {}) if isinstance(self.current_context, dict) else {}).get("unknown_classification_only"),
                     default=True,
@@ -2694,7 +3064,18 @@ class InjectionManagerAgent(BaseManagerAgent):
                 detection_mode=detection_mode,
             )
 
+            self._mark_attempt_trace(
+                trace_context,
+                "process_single_url:return",
+                findings_count=int(findings_count),
+                tested_params_count=len(tested_params),
+            )
         except Exception as exc:
+            self._mark_attempt_trace(
+                trace_context,
+                "process_single_url:error",
+                error_type=type(exc).__name__,
+            )
             logger.error("[%s] _process_single_url error on %s: %s", self.name, url, exc)
             # エラー時もキャッシュに保存（再試行防止）
             cache_key = self._generate_cache_key(url, vuln_type, base_params)

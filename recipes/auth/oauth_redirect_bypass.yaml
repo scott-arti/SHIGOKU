@@ -1,10 +1,53 @@
 name: oauth_redirect_bypass
-description: "OAuth Redirect URI Bypass"
-tags: ["auth", "oauth"]
-severity: "high"
-target_condition: "tech_stack.auth == 'oauth'"
+description: "Golden Recipe: OAuth Redirect URI Bypass and PKCE Downgrade"
+agent: swarm
+trigger:
+  type: signal
+  required_signals:
+    - auth_endpoint
+    - oauth
+    - oauth_callback
+  success_condition: "redirect_validation_bypassed_or_pkce_downgrade_accepted"
+  stop_condition: "no_oauth_callback_or_probe_blocked_or_evidence_insufficient"
+tags:
+  - auth
+  - oauth
+  - redirect
+severity: high
 steps:
-  - tool: "oauth_dancer"
-    action: "redirect_bypass"
-  - tool: "oauth_dancer"
-    action: "pkce_downgrade"
+  - id: step_0
+    name: "Attempt redirect URI bypass"
+    action: "auth_attack"
+    params:
+      probe_type: "redirect_bypass"
+      techniques:
+        - open_redirect
+        - subdomain_hijack
+        - path_traversal
+    dependencies: []
+  - id: step_1
+    name: "Attempt PKCE downgrade"
+    action: "auth_attack"
+    params:
+      probe_type: "pkce_downgrade"
+      techniques:
+        - code_challenge_removal
+        - plain_verifier
+    dependencies: []
+  - id: step_2
+    name: "Check bypass results"
+    action: "analyze"
+    params:
+      check: "redirect_bypass_validation"
+    dependencies:
+      - step_0
+      - step_1
+  - id: step_3
+    name: "Collect bypass evidence"
+    action: "report"
+    params:
+      evidence_type: "oauth_redirect_bypass"
+    dependencies:
+      - step_0
+      - step_1
+      - step_2

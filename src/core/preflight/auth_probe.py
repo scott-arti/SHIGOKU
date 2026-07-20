@@ -630,8 +630,11 @@ class AuthProbe:
             result.classification = AuthClassification.RATE_LIMITED
             return result
 
-        # Rule 7: has_challenge → WAF_CHALLENGE
-        if result.has_challenge:
+        # Rule 7: has_challenge AND error status → WAF_CHALLENGE.
+        # A 200 with challenge-like body markers (e.g. "blocked" / "security
+        # check" in legitimate page text) is a false positive — fall through
+        # to later rules (LOGIN_PAGE / AUTHENTICATED / UNKNOWN).
+        if result.has_challenge and result.status_code >= 400:
             result.classification = AuthClassification.WAF_CHALLENGE
             return result
 

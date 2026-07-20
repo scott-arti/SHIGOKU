@@ -27,14 +27,15 @@ def test_should_review():
 
 def test_review_strategy_bug_bounty(mock_queue):
     optimizer = StrategyOptimizer(config={"mode": "BUG_BOUNTY"})
-    # KnowledgeGraph は現状 Any なので Mock で渡す
     kg = MagicMock()
     
     result = optimizer.review_strategy(mock_queue, kg, current_step=10)
     
-    assert result["pruned"] == 2  # png and css
+    # SGK-2026-0287: StrategyOptimizer is now a candidate provider only.
+    # No direct deletion — candidates are consumed by TaskPruningPolicy.
+    assert len(result["low_value_asset_candidates"]) == 1  # logo.png (css not in static ext list)
     assert result["boosted"] == 2  # admin and api
-    assert len(mock_queue) == 3  # 5 - 2
+    assert len(mock_queue) == 5  # queue is NOT mutated by review_strategy
     
     # 優先度順に並んでいるはず
     t1 = mock_queue.pop()
@@ -53,3 +54,34 @@ def test_review_strategy_ctf(mock_queue):
     # flag.txt がブースト対象に含まれていること
     assert any("flag.txt" in asset for asset in result["high_value_assets"])
     assert result["boosted"] == 3  # admin, api, flag
+
+def test_identify_low_value_assets_keeps_scn06_meta_observability():
+    queue = DynamicTaskQueue()
+    queue.add(
+        MagicMock(
+            id="scn06",
+            name="Meta Exposure",
+            agent_type="DiscoverySwarm",
+            priority=10,
+            params={
+                "target": "http://example.com/config/config.inc.php.dist",
+                "category": "meta_observability",
+                "scenario_id": "scn_06_data_exposure_diff",
+            },
+            tags=[],
+        )
+    )
+    queue.add(
+        MagicMock(
+            id="logo",
+            name="Logo",
+            agent_type="discovery",
+            priority=10,
+            params={"target": "http://example.com/logo.png"},
+            tags=[],
+        )
+    )
+
+    optimizer = StrategyOptimizer(config={"mode": "BUG_BOUNTY"})
+
+    assert optimizer._identify_low_value_assets(MagicMock(), queue) == ["http://example.com/logo.png"]

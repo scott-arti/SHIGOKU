@@ -105,3 +105,26 @@ def test_list_projects(temp_project_dir):
     assert len(projects) == 2
     names = sorted([p["project_name"] for p in projects])
     assert names == ["proj1", "proj2"]
+
+
+def test_default_base_dir_is_repo_root_stable(tmp_path, monkeypatch):
+    """Default workspace/projects must not drift when launched from workspace/."""
+    monkeypatch.chdir(tmp_path)
+    repo_root = Path(__file__).resolve().parents[2]
+
+    manager = ProjectManager("http://localhost:4280")
+
+    assert manager.base_dir.resolve() == (repo_root / "workspace" / "projects").resolve()
+    assert manager.project_dir.resolve() == (repo_root / "workspace" / "projects" / "localhost:4280").resolve()
+    assert manager.project_dir.resolve() != (tmp_path / "workspace" / "projects" / "localhost:4280").resolve()
+
+
+def test_default_base_dir_prefers_configured_workspace_root(monkeypatch, tmp_path):
+    """Container/runtime workspace must be configurable instead of drifting to /app/workspace."""
+    workspace_root = tmp_path / "runtime-workspace"
+    monkeypatch.setenv("SHIGOKU_WORKSPACE_ROOT", str(workspace_root))
+
+    manager = ProjectManager("http://localhost:4280")
+
+    assert manager.base_dir == workspace_root / "projects"
+    assert manager.project_dir == workspace_root / "projects" / "localhost:4280"

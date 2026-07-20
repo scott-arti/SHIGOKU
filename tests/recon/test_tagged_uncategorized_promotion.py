@@ -521,3 +521,65 @@ def test_generate_tasks_for_meta_observability_applies_budget_cap(tmp_path: Path
     targets = meta_task.params.get("targets", [])
     assert isinstance(targets, list)
     assert len(targets) == 2
+
+
+# ---------------------------------------------------------------------------
+# SGK-2026-0367: pipeline sibling task _context isolation
+# ---------------------------------------------------------------------------
+
+def test_pipeline_sibling_tasks_do_not_share_mutable_context_objects(tmp_path: Path):
+    """main task と cmd_focus task が _context の可変オブジェクトを共有しないこと"""
+    import copy
+
+    pipeline = _new_pipeline(tmp_path, config={
+        "scan": {
+            "tagged_candidate_target_cap": 5,
+            "tagged_candidate_scan_window": 500,
+        }
+    })
+    mc = pipeline.mc
+    tagged_dir = tmp_path / "project" / "tagged_urls"
+    tagged_file = tagged_dir / "20260401_target_tagged_xss_candidate.jsonl"
+    _write_jsonl(
+        tagged_file,
+        [
+            {"url": "https://app.example.com/search?q=test", "method": "GET",
+             "forms": [{"method": "GET", "inputs": [{"name": "q"}]}],
+             "response_headers": {"Content-Type": "text/html"},
+             "response_body_snippet": "<form><input name='q'></form>",
+             "has_form_tag": True},
+            {"url": "https://app.example.com/exec/ping", "method": "GET",
+             "forms": [{"method": "GET", "inputs": [{"name": "ip"}]}],
+             "response_headers": {"Content-Type": "text/html"},
+             "response_body_snippet": "<form><input name='ip'></form>",
+             "has_form_tag": True},
+        ],
+    )
+
+    tags = pipeline._map_tagged_category_to_tags("xss_candidate")
+    pipeline._generate_tasks_for_tagged_urls("xss_candidate", tagged_file, tags)
+
+    tasks = mc.added_tasks
+    assert len(tasks) >= 2, f"Expected at least 2 tasks, got {len(tasks)}"
+
+    task_a = tasks[0]
+    task_b = tasks[1]
+    ctx_a = task_a.params.get("_context", {})
+    ctx_b = task_b.params.get("_context", {})
+
+    # Dicts must be different objects (deep copy)
+    assert ctx_a is not ctx_b, "_context dict objects must be distinct"
+
+    # forms_by_url must be different objects
+    forms_a = ctx_a.get("forms_by_url", {})
+    forms_b = ctx_b.get("forms_by_url", {})
+    assert forms_a is not forms_b, "forms_by_url dict must be distinct between siblings"
+
+    # url_evidence_by_url must be different objects
+    ev_a = ctx_a.get("url_evidence_by_url", {})
+    ev_b = ctx_b.get("url_evidence_by_url", {})
+    assert ev_a is not ev_b, "url_evidence_by_url dict must be distinct between siblings"
+
+    # Mutating one task's _context should not affect the other
+    ctx_a["_mutated"] = True
+    assert "_mutated" not in ctx_b, "_context mutation leaked to sibling task"

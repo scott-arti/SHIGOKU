@@ -29,6 +29,8 @@ services:
       - SHIGOKU_TRACING=${SHIGOKU_TRACING:-false}
       - SHIGOKU_NEO4J_PASSWORD=${SHIGOKU_NEO4J_PASSWORD:-password}
       - SHIGOKU_DEV_MODE=${SHIGOKU_DEV_MODE:-false}
+      - SHIGOKU_WORKSPACE_ROOT=/workspace
+      - SHIGOKU_HOST_WORKSPACE_ROOT=${PWD}/workspace
     stdin_open: true
     tty: true
     # Network mode for accessing host services

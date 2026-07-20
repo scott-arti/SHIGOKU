@@ -11,6 +11,7 @@ Wildcard Recon フローと並行タスク処理を提供する。
 from __future__ import annotations
 
 import asyncio
+import copy
 import json as _json
 import logging
 import os
@@ -2890,9 +2891,7 @@ class ReconPipeline:
             if not data:
                 return None
             
-            # 元々の I/F が list | dict | None なので、要素が1つならその要素を返す
-            # (ただし whatweb のようにリスト前提の場合はリストのままの方が良いが、
-            #  このメソッドの利用箇所に依存する)
+            # robust_json_loads は常に list を返す。要素が1つならその要素を返す
             if len(data) == 1:
                 return data[0]
             return data
@@ -2963,21 +2962,25 @@ class ReconPipeline:
         
         logger.info("[Step 7] Saving to ProjectManager completed: %d files", len(classified_files))
     
-    async def step8_return_to_mc(self, classified_files: dict[str, Path]) -> dict[str, dict]:
+    async def step8_return_to_mc(self, classified_files: dict[str, Path]) -> dict[str, Any]:
         """Step 8: MasterConductor へ結果返却
-        
+
         分類ファイルのメタデータ付き辞書を返却。
-        
+        SGK-2026-0261: signal bundle (host_surface_summary + endpoint_signal_bundle) を併存返却。
+
         Args:
             classified_files: 分類ファイルの辞書
-        
+
         Returns:
             {category: {file, count, description, tags}} の辞書
+            + _signal_bundle: {host_surface_summary, endpoint_signal_bundle} (0261)
         """
         import json
-        
+        import os
+        import uuid
+
         logger.info("[Step 8] Preparing results for MasterConductor")
-        
+
         DESCRIPTIONS = {
             "live_200": "200 OKを返すライブサブドメイン",
             "live_403": "403 Forbiddenを返すサブドメイン（バイパス試行対象）",
@@ -3001,7 +3004,7 @@ class ReconPipeline:
             "buckets": "S3/GCS/Azure等のクラウドストレージバケット",
             "asn": "ASN情報",
         }
-        
+
         # カテゴリ → Swarm ルーティング用タグ
         CATEGORY_TAGS = {
             "live_200": ["has_params", "api_endpoint"],
@@ -3026,15 +3029,19 @@ class ReconPipeline:
             "buckets": ["cloud_url"],
             "asn": [],
         }
-        
-        result = {}
+
+        # SGK-2026-0261: task 作成の正本は MC。direct enqueue は既定で抑制。
+        # SHIGOKU_RECON_LEGACY_ENQUEUE=1 でのみ旧経路の直接 enqueue を許可する
+        _legacy_enqueue = os.environ.get("SHIGOKU_RECON_LEGACY_ENQUEUE", "0") == "1"
+
+        result: dict[str, Any] = {}
         direct_enqueue_skip_categories = {"meta_observability", "realtime"}
         for category, file_path in classified_files.items():
             try:
                 # ファイルからcount取得
                 data = json.loads(file_path.read_text())
                 count = len(data) if isinstance(data, list) else 1
-                
+
                 result[category] = {
                     "file": str(file_path),
                     "count": count,
@@ -3043,95 +3050,454 @@ class ReconPipeline:
                 }
             except Exception as e:
                 logger.warning("Failed to read %s: %s", category, e)
-        
-        # Step 3b で保存した tagged_urls を読み込み
-        tagged_urls_dir = self.pm.project_dir / "tagged_urls"
-        if tagged_urls_dir.exists():
-            tagged_candidates = self._collect_step8_tagged_candidates(tagged_urls_dir)
-            for file_path in tagged_candidates:
-                try:
-                    # ファイル名からカテゴリ推定 (e.g. 20260211_target_tagged_id_param.jsonl -> id_param)
-                    category = file_path.stem.split("_tagged_")[-1]
-                    # promoted ファイルは uncategorized 処理時に取り込み済みのため再読込しない
-                    if "_promoted_" in category:
-                        logger.debug("Skipping promoted tagged file to avoid duplicate counting: %s", file_path.name)
-                        continue
-                    if category == "uncategorized":
-                        promoted = self._promote_uncategorized_tagged_file(file_path)
-                        existing_promoted_pattern = f"{file_path.stem}_promoted_*.jsonl"
-                        for promoted_path in sorted(file_path.parent.glob(existing_promoted_pattern)):
-                            promoted_category = str(promoted_path.stem.split("_promoted_")[-1] or "").strip()
-                            if not promoted_category:
-                                continue
-                            if promoted_category not in promoted:
-                                promoted[promoted_category] = promoted_path
-                        for promoted_category, promoted_path in promoted.items():
-                            promoted_count = 0
-                            with open(promoted_path, "r", encoding="utf-8") as pf:
-                                promoted_count = sum(1 for _ in pf)
-                            if promoted_count <= 0:
-                                continue
-                            promoted_tags = self._map_tagged_category_to_tags(promoted_category)
-                            result_key = f"tagged_{promoted_category}"
-                            existing = result.get(result_key)
-                            if existing:
-                                existing["count"] = int(existing.get("count", 0)) + promoted_count
-                            else:
-                                result[result_key] = {
-                                    "file": str(promoted_path),
-                                    "count": promoted_count,
-                                    "description": f"Tagged URLs ({promoted_category}) [promoted from uncategorized]",
-                                    "tags": promoted_tags,
-                                }
-                            if (
-                                self.mc
-                                and promoted_count > 0
-                                and promoted_category not in direct_enqueue_skip_categories
-                            ):
-                                self._generate_tasks_for_tagged_urls(promoted_category, promoted_path, promoted_tags)
-                            elif self.mc and promoted_count > 0:
-                                logger.debug(
-                                    "Skipping direct enqueue for promoted category '%s' (handled by MC expansion)",
-                                    promoted_category,
-                                )
 
-                    count = 0
-                    with open(file_path, "r") as f:
-                        count = sum(1 for _ in f)
-                    
-                    if count > 0:
-                        mapped_tags = self._map_tagged_category_to_tags(category)
-                        
-                        result[f"tagged_{category}"] = {
-                            "file": str(file_path),
-                            "count": count,
-                            "description": f"Tagged URLs ({category})",
-                            "tags": mapped_tags,
-                        }
-                        
-                        # MasterConductorに直接タスクを追加（Phase 3b統合）
-                        if self.mc and count > 0 and category not in direct_enqueue_skip_categories:
-                            self._generate_tasks_for_tagged_urls(category, file_path, mapped_tags)
-                        elif self.mc and count > 0:
+        # Step 3b で保存した tagged_urls を読み込み
+        tagged_candidates: list[Path] = []
+        if self.pm:
+            tagged_urls_dir = self.pm.project_dir / "tagged_urls"
+            if tagged_urls_dir.exists():
+                tagged_candidates = self._collect_step8_tagged_candidates(tagged_urls_dir)
+        else:
+            logger.debug("[Step 8] ProjectManager not available, skipping tagged_urls")
+        for file_path in tagged_candidates:
+            try:
+                # ファイル名からカテゴリ推定 (e.g. 20260211_target_tagged_id_param.jsonl -> id_param)
+                category = file_path.stem.split("_tagged_")[-1]
+                # promoted ファイルは uncategorized 処理時に取り込み済みのため再読込しない
+                if "_promoted_" in category:
+                    logger.debug("Skipping promoted tagged file to avoid duplicate counting: %s", file_path.name)
+                    continue
+                if category == "uncategorized":
+                    promoted = self._promote_uncategorized_tagged_file(file_path)
+                    existing_promoted_pattern = f"{file_path.stem}_promoted_*.jsonl"
+                    for promoted_path in sorted(file_path.parent.glob(existing_promoted_pattern)):
+                        promoted_category = str(promoted_path.stem.split("_promoted_")[-1] or "").strip()
+                        if not promoted_category:
+                            continue
+                        if promoted_category not in promoted:
+                            promoted[promoted_category] = promoted_path
+                    for promoted_category, promoted_path in promoted.items():
+                        promoted_count = 0
+                        with open(promoted_path, "r", encoding="utf-8") as pf:
+                            promoted_count = sum(1 for _ in pf)
+                        if promoted_count <= 0:
+                            continue
+                        promoted_tags = self._map_tagged_category_to_tags(promoted_category)
+                        result_key = f"tagged_{promoted_category}"
+                        existing = result.get(result_key)
+                        if existing:
+                            existing["count"] = int(existing.get("count", 0)) + promoted_count
+                        else:
+                            result[result_key] = {
+                                "file": str(promoted_path),
+                                "count": promoted_count,
+                                "description": f"Tagged URLs ({promoted_category}) [promoted from uncategorized]",
+                                "tags": promoted_tags,
+                            }
+                        # SGK-2026-0261: direct enqueue は既定で抑制、legacy flag 時のみ許可
+                        if _legacy_enqueue and (
+                            self.mc
+                            and promoted_count > 0
+                            and promoted_category not in direct_enqueue_skip_categories
+                        ):
+                            self._generate_tasks_for_tagged_urls(promoted_category, promoted_path, promoted_tags)
+                        elif self.mc and promoted_count > 0:
                             logger.debug(
-                                "Skipping direct enqueue for category '%s' (handled by MC expansion)",
-                                category,
+                                "Skipping direct enqueue for promoted category '%s' (handled by MC expansion)",
+                                promoted_category,
                             )
-                            
-                except Exception as e:
-                    logger.warning("Failed to read tagged urls %s: %s", file_path, e)
-        
+
+                count = 0
+                with open(file_path, "r") as f:
+                    count = sum(1 for _ in f)
+
+                if count > 0:
+                    mapped_tags = self._map_tagged_category_to_tags(category)
+
+                    result[f"tagged_{category}"] = {
+                        "file": str(file_path),
+                        "count": count,
+                        "description": f"Tagged URLs ({category})",
+                        "tags": mapped_tags,
+                    }
+
+                    # SGK-2026-0261: direct enqueue は既定で抑制、legacy flag 時のみ許可
+                    if _legacy_enqueue and (self.mc and count > 0 and category not in direct_enqueue_skip_categories):
+                        self._generate_tasks_for_tagged_urls(category, file_path, mapped_tags)
+                    elif self.mc and count > 0:
+                        logger.debug(
+                            "Skipping direct enqueue for category '%s' (handled by MC expansion)",
+                            category,
+                        )
+            except Exception as e:
+                logger.warning("Failed to read tagged urls %s: %s", file_path, e)
+
         # tech_stack からタグを追加
         if self.state.tech_stack:
             result["_tech_stack"] = {
                 "technologies": self.state.tech_stack,
                 "tags": self._generate_tech_tags(self.state.tech_stack),
             }
-        
-        logger.info("[Step 8] Returning %d categorized results to MC", len(result))
-        
+
+        # ── SGK-2026-0261: signal bundle 生成 ──
+        signal_bundle = self._build_step8_signal_bundle(result, tagged_candidates)
+
+        result["_signal_bundle"] = signal_bundle
+
+        logger.info(
+            "[Step 8] Returning %d categorized results + signal bundle (%d signals) to MC",
+            len(result) - 1,  # exclude _signal_bundle itself
+            len(signal_bundle.get("_endpoint_signals", [])),
+        )
+
         return result
-    
+
+    def _build_step8_signal_bundle(
+        self, result: dict[str, Any], tagged_candidates: list[Path]
+    ) -> dict[str, Any]:
+        """SGK-2026-0261: classified_files / tagged_urls から signal bundle を構築"""
+        import json as json_mod
+        import uuid
+        from datetime import datetime, timezone
+        from urllib.parse import urlparse, parse_qs
+
+        run_id = str(uuid.uuid4())
+        signals: list[dict[str, Any]] = []
+        category_endpoint_counts: dict[str, int] = {}
+        category_signal_counts: dict[str, int] = {}
+        surface_types: set[str] = set()
+        seen_url_keys: set[str] = set()  # dedupe by url+method
+
+        def _url_key(url: str, method: str) -> str:
+            return f"{method}:{url}"
+
+        def _build_signal(
+            url: str,
+            method: str,
+            entry: dict[str, Any] | None,
+            category: str,
+            tags: list[str],
+            lineage: str,
+        ) -> dict[str, Any]:
+            entity_type, primary_label, candidate_labels, interaction_kind = self._infer_surface_info(category, tags)
+
+            # -- source_observations: entry の source フィールドを優先、なければ pipeline --
+            sources: list[str] = []
+            if entry and entry.get("source"):
+                src = str(entry["source"]).strip()
+                if src:
+                    sources.append(src)
+            if not sources:
+                sources.append("pipeline")
+
+            # -- auth context --
+            auth_required = category in ("live_401_302", "high_value", "auth", "jwt_detected")
+            auth_ctx: dict[str, str] = {}
+            if entry:
+                if entry.get("auth_required"):
+                    auth_required = True
+                for auth_key in ("cookie_present", "bearer_present", "csrf_present", "auth_scheme"):
+                    val = entry.get(auth_key)
+                    if val is not None:
+                        auth_ctx[auth_key] = str(val)
+                # headers から認証情報を抽出
+                hdrs = entry.get("headers") or entry.get("response_headers") or {}
+                if isinstance(hdrs, dict):
+                    for hkey in ("authorization", "cookie", "set-cookie", "www-authenticate"):
+                        hv = hdrs.get(hkey) or hdrs.get(hkey.title())
+                        if hv:
+                            auth_ctx[hkey] = str(hv)[:100]
+
+            # -- subdomain_context --
+            subdomain_ctx: dict[str, Any] | None = None
+            if entry:
+                sub = entry.get("subdomain", "") or entry.get("host", "")
+                if sub:
+                    subdomain_ctx = {"subdomain": sub}
+                    for sk in ("status_code", "ports", "waf", "tech_stack", "category_tags"):
+                        sv = entry.get(sk)
+                        if sv is not None:
+                            subdomain_ctx[sk] = sv
+
+            # -- confidence: entry 由来のタグがあれば上方修正 --
+            confidence = 0.6
+            if entry:
+                entry_tags = entry.get("tags") or entry.get("classifier_tags")
+                if isinstance(entry_tags, list) and len(entry_tags) > 0:
+                    confidence = 0.75
+
+            # Extract param info from URL or entry
+            params: list[dict[str, str]] = []
+            if entry:
+                # query_params から
+                qp = entry.get("query_params", {})
+                if isinstance(qp, dict):
+                    for pname in qp:
+                        params.append({"name": pname, "location": "query"})
+                # forms から
+                forms = entry.get("forms", [])
+                if isinstance(forms, list):
+                    for form in forms:
+                        if isinstance(form, dict):
+                            for inp in form.get("inputs", []):
+                                if isinstance(inp, dict) and inp.get("name"):
+                                    params.append({"name": inp["name"], "location": "form"})
+                # URL から query string 抽出 (fallback)
+                if not params:
+                    try:
+                        from urllib.parse import urlparse as _up, parse_qs as _pq
+                        qstring = _up(url).query
+                        if qstring:
+                            for pname in _pq(qstring).keys():
+                                params.append({"name": pname, "location": "query"})
+                    except Exception:
+                        pass
+
+            param_names = [p["name"] for p in params]
+            why = f"Category '{category}'"
+            if param_names:
+                why += f" (params: {', '.join(param_names[:5])})"
+
+            return {
+                "signal_id": f"{run_id}:{lineage}:{_url_key(url, method)}",
+                "entity_type": entity_type,
+                "url": url,
+                "method": method,
+                "primary_label": primary_label,
+                "candidate_labels": candidate_labels.copy(),
+                "confidence": confidence,
+                "why_suspicious": why,
+                "source_observations": sources,
+                "auth_required": auth_required,
+                "auth_context": auth_ctx,
+                "subdomain_context": subdomain_ctx,
+                "interaction_kind": interaction_kind,
+                "lineage": lineage,
+                "params": params,
+                "status": "active",
+                "seen_count": 1,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+        def _build_param_signal(
+            endpoint_signal: dict[str, Any],
+            param_name: str,
+            param_location: str,
+        ) -> dict[str, Any]:
+            """Parameter 専用 signal を生成"""
+            return {
+                "signal_id": f"{endpoint_signal['signal_id']}:param:{param_location}:{param_name}",
+                "entity_type": "param",
+                "url": endpoint_signal["url"],
+                "method": endpoint_signal["method"],
+                "primary_label": param_name,
+                "candidate_labels": list(endpoint_signal.get("candidate_labels", [])),
+                "confidence": endpoint_signal.get("confidence", 0.5),
+                "why_suspicious": (
+                    f"Parameter '{param_name}' ({param_location}) found on "
+                    f"{endpoint_signal.get('entity_type', 'endpoint')} '{endpoint_signal['url']}'"
+                ),
+                "source_observations": list(endpoint_signal.get("source_observations", [])),
+                "auth_required": endpoint_signal.get("auth_required", False),
+                "auth_context": dict(endpoint_signal.get("auth_context", {})),
+                "subdomain_context": endpoint_signal.get("subdomain_context"),
+                "interaction_kind": endpoint_signal.get("interaction_kind", "static"),
+                "lineage": f"{endpoint_signal.get('lineage', '')}:param:{param_location}",
+                "params": [{"name": param_name, "location": param_location}],
+                "status": "active",
+                "seen_count": 1,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+        # --- classified_files 由来: JSON ファイルから実 URL を抽出 ---
+        for category, data in result.items():
+            if category.startswith("_") or category.startswith("tagged_"):
+                continue
+            count = int(data.get("count", 0))
+            if count <= 0:
+                continue
+            file_path_str = data.get("file", "")
+            tags = data.get("tags", []) if isinstance(data.get("tags"), list) else []
+
+            category_total = 0
+            try:
+                file_content = Path(file_path_str).read_text() if file_path_str else ""
+                if file_content:
+                    entries = json_mod.loads(file_content)
+                    if isinstance(entries, list):
+                        for entry in entries:
+                            if not isinstance(entry, dict):
+                                continue
+                            url = entry.get("url", "") or entry.get("subdomain", "")
+                            if not url:
+                                continue
+                            # Normalize URL
+                            if not url.startswith("http"):
+                                url = f"https://{url}"
+                            method = entry.get("method", "GET") or "GET"
+                            url_k = _url_key(url, method)
+                            if url_k in seen_url_keys:
+                                continue
+                            seen_url_keys.add(url_k)
+
+                            sig = _build_signal(url, method, entry, category, tags, f"classified:{category}")
+                            signals.append(sig)
+                            category_total += 1
+                            # param signal の生成
+                            for param_info in sig.get("params", []):
+                                pname = param_info.get("name", "") if isinstance(param_info, dict) else str(param_info)
+                                if pname:
+                                    psig = _build_param_signal(sig, pname, param_info.get("location", "query") if isinstance(param_info, dict) else "query")
+                                    signals.append(psig)
+                                    category_total += 1
+            except Exception:
+                pass
+
+            if category_total > 0:
+                # endpoint signal と param signal を分離集計
+                cat_signals = [s for s in signals if s.get("lineage", "").startswith(f"classified:{category}")]
+                cat_endpoints = len([s for s in cat_signals if s.get("entity_type") != "param"])
+                cat_params = len([s for s in cat_signals if s.get("entity_type") == "param"])
+                category_endpoint_counts[category] = cat_endpoints
+                category_signal_counts[category] = cat_endpoints + cat_params
+                surface_types.add(self._infer_surface_info(category, tags)[0])
+                if cat_params > 0:
+                    surface_types.add("param")
+
+        # --- tagged_urls 由来: JSONL から実 URL を抽出 ---
+        seen_tagged_keys: set[str] = set()
+        for file_path in tagged_candidates:
+            category = file_path.stem.split("_tagged_")[-1]
+            if "_promoted_" in category:
+                continue
+
+            result_key = f"tagged_{category}"
+            tagged_data = result.get(result_key, {})
+            tags = tagged_data.get("tags", []) if isinstance(tagged_data.get("tags"), list) else []
+
+            dedup_key = f"tagged:{category}"
+            if dedup_key in seen_tagged_keys:
+                continue
+            seen_tagged_keys.add(dedup_key)
+
+            tagged_category_total = 0
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            entry = json_mod.loads(line)
+                        except Exception:
+                            continue
+                        if not isinstance(entry, dict):
+                            continue
+                        url = entry.get("url", "")
+                        if not url:
+                            continue
+                        method = entry.get("method", "GET") or "GET"
+                        url_k = _url_key(url, method)
+                        if url_k in seen_url_keys:
+                            continue
+                        seen_url_keys.add(url_k)
+
+                        sig = _build_signal(url, method, entry, category, tags, f"tagged:{category}")
+                        signals.append(sig)
+                        tagged_category_total += 1
+                        # param signal の生成
+                        for param_info in sig.get("params", []):
+                            pname = param_info.get("name", "") if isinstance(param_info, dict) else str(param_info)
+                            if pname:
+                                psig = _build_param_signal(sig, pname, param_info.get("location", "query") if isinstance(param_info, dict) else "query")
+                                signals.append(psig)
+                                tagged_category_total += 1
+            except Exception:
+                pass
+
+            if tagged_category_total > 0:
+                tagged_key = f"tagged_{category}"
+                tag_signals = [s for s in signals if s.get("lineage", "").startswith(f"tagged:{category}")]
+                tag_endpoints = len([s for s in tag_signals if s.get("entity_type") != "param"])
+                tag_params = len([s for s in tag_signals if s.get("entity_type") == "param"])
+                category_endpoint_counts[tagged_key] = tag_endpoints
+                category_signal_counts[tagged_key] = tag_endpoints + tag_params
+                surface_types.add(self._infer_surface_info(category, tags)[0])
+
+        # --- HostSurfaceSummary ---
+        host = ""
+        try:
+            host = urlparse(str(self.target or "")).hostname or ""
+        except Exception:
+            pass
+
+        total_endpoints = sum(
+            v for k, v in category_endpoint_counts.items() if not k.startswith("tagged_")
+        )
+        total_signals = len(signals)
+
+        # 互換用 category_counts: endpoint 件数のみ（param 信号含まず）
+        compat_counts = dict(category_endpoint_counts)
+        for k, v in category_endpoint_counts.items():
+            if k not in compat_counts:
+                compat_counts[k] = v
+
+        host_surface_summary: dict[str, Any] = {
+            "host": host,
+            "total_endpoints": total_endpoints,
+            "total_signals": total_signals,
+            "category_counts": compat_counts,
+            "surface_types": list(surface_types),
+            "auth_level": "unknown",
+            "tech_stack": self.state.tech_stack if self.state.tech_stack else [],
+            "coverage_confidence": 1.0 if total_endpoints > 0 else 0.0,
+            "tagged_urls_compat": {
+                k: v for k, v in result.items() if k.startswith("tagged_")
+            },
+            "legacy_keys": {
+                "discovered_urls": total_endpoints,
+                "classified_files": [
+                    k for k in result if not k.startswith("_") and not k.startswith("tagged_")
+                ],
+            },
+        }
+
+        return {
+            "_run_id": run_id,
+            "_host_surface_summary": host_surface_summary,
+            "_endpoint_signals": signals,
+        }
+
+    @staticmethod
+    def _infer_surface_info(
+        category: str, tags: list[str],
+    ) -> tuple[str, str, list[str], str]:
+        """カテゴリ/タグから entity_type, primary_label, candidate_labels, interaction_kind を推論"""
+        entity_type = "endpoint"
+        if category in ("auth", "jwt_detected", "live_401_302", "high_value") or "auth" in category.lower():
+            entity_type = "auth_surface"
+        elif category in ("client_route_dom", "js_file") or "js" in category.lower():
+            entity_type = "js_surface"
+        elif category in ("file_param", "upload", "file_exposure_upload") or "file" in category.lower():
+            entity_type = "file_surface"
+        elif category in ("basket_order", "workflow", "realtime") or "workflow" in category.lower():
+            entity_type = "workflow"
+
+        primary_label = category
+        candidate_labels = list(tags) if tags else [category]
+        if not candidate_labels:
+            candidate_labels = ["api_endpoint"]
+
+        interaction_kind = "static"
+        if entity_type == "workflow" or category == "realtime":
+            interaction_kind = "realtime"
+        elif entity_type == "auth_surface":
+            interaction_kind = "auth-flow"
+        elif category in ("id_param", "redirect_param", "product_search", "xss_candidate"):
+            interaction_kind = "dynamic"
+
+        return entity_type, primary_label, candidate_labels, interaction_kind
+
     def _generate_tech_tags(self, tech_stack: list[str]) -> list[str]:
         """tech_stack から Swarm ルーティング用タグを生成"""
         tags = []
@@ -4163,24 +4529,25 @@ class ReconPipeline:
             if scan_profile not in {"bbpt", "ctf"}:
                 scan_profile = "bbpt"
 
-            # フォーム情報を context に追加
-            context_with_forms = self.state.__dict__ if self.state else {}
+            # SGK-2026-0367: task-local _context — do not share self.state.__dict__
+            _base_context: dict[str, Any] = {}
             if forms_by_url:
-                context_with_forms["forms_by_url"] = forms_by_url
+                _base_context["forms_by_url"] = forms_by_url
                 logger.info(f"Added forms info for {len(forms_by_url)} URLs")
             if url_evidence_by_url:
-                context_with_forms["url_evidence_by_url"] = url_evidence_by_url
+                _base_context["url_evidence_by_url"] = url_evidence_by_url
                 logger.info(f"Added URL evidence for {len(url_evidence_by_url)} URLs")
-            context_with_forms["scan_profile"] = scan_profile
+            _base_context["scan_profile"] = scan_profile
 
-            # タスク生成
+            # タスク生成 — deep copy _context per task so sibling tasks don't share mutable objects
             task_params = {
                 "targets": urls,
                 "source_file": str(file_path),
                 "category": category,
                 "tags": tags,
                 "scan_profile": scan_profile,
-                "_context": context_with_forms
+                "selection_origin": f"recon.tagged_{category}",
+                "_context": copy.deepcopy(_base_context)
             }
 
             if task_config["agent"] == "InjectionManagerAgent":
@@ -4232,10 +4599,11 @@ class ReconPipeline:
                             "category": "command_injection",
                             "tags": ["cmd_candidate", "rce_candidate", "ssrf_candidate"],
                             "scan_profile": scan_profile,
+                            "selection_origin": f"recon.tagged_{category}.cmd_focus",
                             "phase1_force_full_coverage": True,
                             "phase1_stop_on_first_hit": False,
                             "phase1_early_return_on_findings": False,
-                            "_context": context_with_forms,
+                            "_context": copy.deepcopy(_base_context),
                         },
                         priority=max(task_config["priority"], 88),
                     )

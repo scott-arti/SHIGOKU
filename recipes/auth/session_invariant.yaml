@@ -1,0 +1,41 @@
+name: session_invariant
+description: "Golden Recipe: Detect session token/capability/role inconsistencies"
+agent: swarm
+trigger:
+  type: signal
+  required_signals:
+    - auth_endpoint
+    - session_cookie
+  success_condition: "token_or_capability_invariant_broken"
+  stop_condition: "no_session_surface_or_probe_blocked_or_evidence_insufficient"
+tags:
+  - auth
+  - session
+  - invariant
+severity: high
+steps:
+  - id: step_0
+    name: "Probe session invariants"
+    action: "auth_attack"
+    params:
+      probe_type: "session_invariant"
+      techniques:
+        - token_replay
+        - capability_escalation
+        - role_confusion
+    dependencies: []
+  - id: step_1
+    name: "Confirm session invariant breaks"
+    action: "analyze"
+    params:
+      check: "session_invariant_validation"
+    dependencies:
+      - step_0
+  - id: step_2
+    name: "Collect session evidence"
+    action: "report"
+    params:
+      evidence_type: "session_invariant"
+    dependencies:
+      - step_0
+      - step_1

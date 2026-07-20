@@ -84,35 +84,35 @@ EXPECTED_ROUTING = {
 }
 
 
-def test_determine_swarms():
-    """Test 1: determine_swarms() ルーティングロジック"""
+def _determine_swarms():
+    """Helper: determine_swarms() ルーティングロジックテスト（結果 dict を返す）"""
     from src.core.engine.swarm_dispatcher import SwarmDispatcher
-    
+
     logger.info("=" * 60)
     logger.info("Test 1: determine_swarms() Routing Logic")
     logger.info("=" * 60)
-    
+
     dispatcher = SwarmDispatcher()
     results = []
-    
+
     for tags, expected in EXPECTED_ROUTING.items():
         actual = dispatcher.determine_swarms(list(tags))
         passed = actual == expected
-        
+
         results.append({
             "tags": tags,
             "expected": expected,
             "actual": actual,
             "passed": passed,
         })
-        
+
         status = "✅" if passed else "❌"
         logger.info("%s Tags %s -> Expected: %s, Got: %s",
                    status, tags, expected, actual)
-    
+
     passed_count = sum(1 for r in results if r["passed"])
     logger.info("Result: %d/%d passed", passed_count, len(results))
-    
+
     return {
         "test": "determine_swarms",
         "passed": passed_count,
@@ -121,36 +121,42 @@ def test_determine_swarms():
     }
 
 
-def test_tag_to_swarm_mapping():
-    """Test 2: TAG_TO_SWARMマッピングの整合性"""
+def test_determine_swarms():
+    """Test 1: determine_swarms() ルーティングロジック（assert ラッパー）"""
+    result = _determine_swarms()
+    assert result["passed"] == result["total"], \
+        f"determine_swarms: {result['passed']}/{result['total']} passed"
+
+
+
+def _tag_to_swarm_mapping():
+    """Helper: TAG_TO_SWARM マッピング整合性テスト（結果 dict を返す）"""
     from src.core.engine.swarm_dispatcher import TAG_TO_SWARM, SUBDOMAIN_TAG_TO_SWARM, URL_TAG_TO_SWARM
-    
+
     logger.info("=" * 60)
     logger.info("Test 2: TAG_TO_SWARM Mapping Integrity")
     logger.info("=" * 60)
-    
+
     results = []
-    
-    # tagging_rules.yaml のタグがマッピングに存在するか
+
     expected_url_tags = [
         "auth", "admin", "admin_blocked", "id_param", "redirect_param",
         "file_param", "upload", "debug_info", "jwt_detected",
     ]
-    
+
     for tag in expected_url_tags:
         exists = tag in TAG_TO_SWARM
         swarm = TAG_TO_SWARM.get(tag, "NOT_FOUND")
-        
+
         results.append({
             "tag": tag,
             "exists_in_mapping": exists,
             "swarm": swarm,
         })
-        
+
         status = "✅" if exists else "❌"
         logger.info("%s Tag '%s' -> Swarm: %s", status, tag, swarm)
-    
-    # MC Payload のタグもチェック
+
     for category, data in SAMPLE_MC_PAYLOAD.items():
         if category.startswith("_"):
             continue
@@ -164,10 +170,10 @@ def test_tag_to_swarm_mapping():
                 })
                 logger.info("⚠️  MC Payload tag '%s' -> %s",
                            tag, "Found" if exists else "NOT_FOUND")
-    
+
     passed = sum(1 for r in results if r["exists_in_mapping"])
     logger.info("Result: %d/%d tags mapped", passed, len(results))
-    
+
     return {
         "test": "tag_to_swarm_mapping",
         "mapped": passed,
@@ -175,6 +181,12 @@ def test_tag_to_swarm_mapping():
         "details": results,
     }
 
+
+def test_tag_to_swarm_mapping():
+    """Test 2: TAG_TO_SWARM マッピング整合性（assert ラッパー）"""
+    result = _tag_to_swarm_mapping()
+    assert result["mapped"] == result["total"], \
+        f"tag_to_swarm_mapping: {result['mapped']}/{result['total']} tags mapped"
 
 async def test_dispatch_with_mock_swarm():
     """Test 3: dispatch() でモックSwarmが正しくコンテキストを受け取るか"""
@@ -344,11 +356,11 @@ async def run_all_tests():
     
     try:
         # Test 1: determine_swarms
-        result1 = test_determine_swarms()
+        result1 = _determine_swarms()
         all_results["tests"].append(result1)
-        
+
         # Test 2: TAG_TO_SWARM mapping
-        result2 = test_tag_to_swarm_mapping()
+        result2 = _tag_to_swarm_mapping()
         all_results["tests"].append(result2)
         
         # Test 3: dispatch with mock

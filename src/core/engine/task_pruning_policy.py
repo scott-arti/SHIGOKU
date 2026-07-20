@@ -1,9 +1,10 @@
 """
-TaskPruningPolicy: shadow decision engine for retiring/superseding/invalidating
+TaskPruningPolicy: decision engine for retiring/superseding/invalidating
 pending tasks that are no longer needed.
 
-SGK-2026-0287 Step 1: Minimal data model + shadow mode.
-Phase 6 will connect decisions to DecisionType enum and decision_traces sink.
+SGK-2026-0287: Steps 1-3 (data model, shadow mode, conductor integration).
+SGK-2026-0287 Steps 4-5: pruning_mode contract, single authority, fail-closed,
+                         decision trace schema, reason_code mappings.
 """
 import logging
 from dataclasses import dataclass, field
@@ -11,6 +12,116 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Set
 
 logger = logging.getLogger(__name__)
+
+# ────────────────────────────────────────────────────────────────────────────
+# pruning_mode resolution: single source of truth (SGK-2026-0287 Step 4-1)
+# ────────────────────────────────────────────────────────────────────────────
+
+VALID_PRUNING_MODES: Set[str] = {"shadow", "active"}
+
+
+def resolve_pruning_mode(
+    raw: Optional[str] = None,
+    killswitch_enabled: bool = False,
+) -> str:
+    """Resolve the effective pruning mode from config.
+
+    **This is the single authority for pruning_mode.**  Callers MUST NOT
+    re-interpret ``shadow`` / ``active`` locally.
+
+    Args:
+        raw: Raw value from config (``settings.pruning_mode``).
+             Any value outside ``{shadow, active}`` is fail-closed to ``shadow``.
+        killswitch_enabled: If ``True``, the result is always ``shadow``.
+            Candidate traces are still recorded; deletion count is guaranteed 0.
+
+    Returns:
+        ``"shadow"`` or ``"active"``.
+
+    Session-level override contract (SGK-2026-0287 Step 4-2):
+        - The **only** allowed configuration path is via the global config
+          (``config/shigoku.yaml`` / ``SHIGOKU_PRUNING_MODE`` env var).
+        - Session artifacts and resume paths MUST NOT override ``pruning_mode``.
+        - On resume, the stored session mode is ignored; the current config
+          value from ``resolve_pruning_mode()`` takes precedence.
+    """
+    if killswitch_enabled:
+        logger.info("Pruning killswitch active — forcing shadow mode")
+        return "shadow"
+
+    mode = str(raw or "").strip().lower()
+    if mode not in VALID_PRUNING_MODES:
+        logger.warning(
+            "Invalid pruning_mode %r; fail-closed to shadow", raw,
+        )
+        return "shadow"
+
+    return mode
+
+
+COVERAGE_CRITICAL_SOURCE_CATEGORIES: Set[str] = {
+    "scenario_probe_planner",
+    "scenario_probe_guard",
+    "coverage_backfill",
+    "coverage_backfill_guard",
+    "tagged_meta_observability",
+}
+
+COVERAGE_CRITICAL_CATEGORIES: Set[str] = {
+    "csrf_candidate",
+    "meta_observability",
+    "file_exposure_upload",
+    "debug_info",
+}
+
+COVERAGE_CRITICAL_TAGS: Set[str] = {
+    "manual_verify",
+    "coverage_guard_forced",
+}
+
+SCN06_DATA_EXPOSURE_SCENARIO_ID = "scn_06_data_exposure_diff"
+
+UNCAPPED_DERIVED_TASK_SOURCES: Set[str] = {
+    "recon_result",
+    "dynamic_recipe",
+    "pending_fuzz",
+}
+
+
+def is_coverage_critical_task(task: Any) -> bool:
+    params = getattr(task, "params", None)
+    if not isinstance(params, dict):
+        params = {}
+
+    source_category = str(params.get("source_category", "") or "").strip().lower()
+    if source_category in COVERAGE_CRITICAL_SOURCE_CATEGORIES:
+        return True
+
+    category = str(params.get("category", "") or "").strip().lower()
+    if category in COVERAGE_CRITICAL_CATEGORIES:
+        return True
+
+    if str(params.get("scenario_id", "") or "").strip().lower() == SCN06_DATA_EXPOSURE_SCENARIO_ID:
+        return True
+
+    if params.get("scenario_probe"):
+        return True
+
+    if bool(params.get("_coverage_guard_forced", False)):
+        return True
+
+    tags = getattr(task, "tags", None) or []
+    tags_lower = {str(tag).strip().lower() for tag in tags}
+    if tags_lower & COVERAGE_CRITICAL_TAGS:
+        return True
+
+    task_name = str(getattr(task, "name", "") or "").upper()
+    return task_name.startswith("SCN")
+
+
+def should_apply_derived_task_limit(source: str) -> bool:
+    normalized_source = str(source or "").strip().lower()
+    return normalized_source not in UNCAPPED_DERIVED_TASK_SOURCES
 
 
 # =============================================================================
@@ -22,26 +133,42 @@ class TaskPruningDecision:
     """
     A single pruning decision for a task.
 
-    Fields:
+    Mandatory fields (SGK-2026-0287 Step 5-1):
         task_id: The task being considered for pruning.
         lifecycle_status: "retired" | "superseded" | "invalidated".
-        reason_code: Machine-readable reason (e.g. "duplicate", "out_of_scope",
-                     "stale_snapshot", "chain_completed", "chain_low_value").
+        reason_code: Machine-readable reason (see REASON_CODE_TO_REASONING).
+        before_count: Queue size before pruning (from caller).
+        after_count: Queue size after pruning (from caller).
+        mode: "shadow" | "active" — effective pruning_mode at decision time.
+        timestamp: When the decision was made.
+
+    Optional fields:
+        trigger_task_id: Task whose completion triggered this decision.
         trigger_event_id: Optional event that triggered this decision.
         evidence_key: Optional key for tracing back the evidence (e.g.
                       finding ID, snapshot version).
-        protected: Whether this task is protected from actual deletion.
-        timestamp: When the decision was made.
-        shadow_only: True = record only, do not remove from queue.
+        finding_ids: Related finding IDs that informed this decision.
+        protected: Whether this task is protected from actual deletion
+                   (always True for shadow mode; may be False for active).
     """
     task_id: str
     lifecycle_status: str
     reason_code: str
+    before_count: int = 0
+    after_count: int = 0
+    trigger_task_id: Optional[str] = None
     trigger_event_id: Optional[str] = None
     evidence_key: Optional[str] = None
+    finding_ids: List[str] = field(default_factory=list)
     protected: bool = False
+    mode: str = "shadow"
     timestamp: datetime = field(default_factory=datetime.now)
-    shadow_only: bool = True
+
+    # -- Backward-compat alias kept during migration --
+    @property
+    def shadow_only(self) -> bool:
+        """True if mode == "shadow" (backward compat)."""
+        return self.mode == "shadow"
 
     def to_dict(self) -> dict:
         """Serialize to a dict compatible with decision_traces sink."""
@@ -50,12 +177,58 @@ class TaskPruningDecision:
             "task_id": self.task_id,
             "lifecycle_status": self.lifecycle_status,
             "reason_code": self.reason_code,
+            "trigger_task_id": self.trigger_task_id,
             "trigger_event_id": self.trigger_event_id,
             "evidence_key": self.evidence_key,
+            "finding_ids": self.finding_ids,
             "protected": self.protected,
-            "timestamp": self.timestamp.isoformat(),
+            "before_count": self.before_count,
+            "after_count": self.after_count,
+            "mode": self.mode,
             "shadow_only": self.shadow_only,
+            "timestamp": self.timestamp.isoformat(),
         }
+
+
+# =============================================================================
+# Reason-code mapping (SGK-2026-0287 Step 5-2)
+# =============================================================================
+
+# Machine-readable reason_code  ->  Human-readable reasoning for reports.
+# The report formatter reads ``reason_code`` from the decision dict and maps
+# it through this table. Downstream consumers MUST NOT re-interpret reason_code
+# outside of this mapping.
+REASON_CODE_TO_REASONING: Dict[str, str] = {
+    "duplicate": "Duplicate task (same agent_type + target + action); "
+                 "lower-priority copy was pruned.",
+    "out_of_scope": "Task targets an asset or URL that the scope parser "
+                    "determined to be out-of-scope.",
+    "chain_low_value": "Chain follow-up task superseded by existing findings; "
+                       "no remaining attack value.",
+    "stale_snapshot": "Task was based on a snapshot that is now outdated.",
+    "chain_completed": "Parent chain task completed successfully; "
+                       "follow-up is no longer needed.",
+    "low_value_static_asset": "Task targets a static asset (image, font, etc.) "
+                              "with negligible security value.",
+    "protected_skip": "Task was a pruning candidate but protected from deletion "
+                      "(coverage-critical or gate-essential).",
+    "eval_failure_skip": "Pruning evaluation failed; deletion was stopped "
+                         "(fail-closed in active mode).",
+    "killswitch_active": "Pruning killswitch is enabled; "
+                         "deletion suppressed, candidate recorded.",
+    "unsupported_task_type": "Task type is not yet approved for active deletion; "
+                             "observed in shadow mode.",
+}
+
+
+def get_reasoning(reason_code: str) -> str:
+    """Return the human-readable reasoning for a reason_code.
+
+    Falls back to the raw reason_code if no mapping exists.
+    """
+    return REASON_CODE_TO_REASONING.get(
+        reason_code, f"Pruned (reason: {reason_code})"
+    )
 
 
 # =============================================================================
@@ -86,20 +259,6 @@ class TaskPruningPolicy:
         "evidence",
     }
 
-    # Source categories in params that indicate protection
-    PROTECTED_SOURCE_CATEGORIES: Set[str] = {
-        "scenario_probe_planner",
-        "scenario_probe_guard",
-        "coverage_backfill",
-        "coverage_backfill_guard",
-    }
-
-    # Tags that indicate protection
-    PROTECTED_TAGS: Set[str] = {
-        "manual_verify",
-        "coverage_guard_forced",
-    }
-
     # Tags that indicate out-of-scope
     OUT_OF_SCOPE_TAGS: Set[str] = {
         "out_of_scope",
@@ -113,12 +272,42 @@ class TaskPruningPolicy:
         "waiting_dependency",
     }
 
-    def __init__(self, shadow_only: bool = True):
+    # SGK-2026-0287 Step 8-2: Low-value static asset heuristics
+    # Tasks matching these patterns are candidates for pruning.
+    LOW_VALUE_STATIC_EXTENSIONS: Set[str] = {
+        ".jpg", ".jpeg", ".png", ".gif", ".ico", ".woff", ".woff2", ".ttf", ".svg",
+        ".mp4", ".webp", ".pdf", ".zip", ".gz", ".tar",
+    }
+
+    LOW_VALUE_EXCLUDE_PATTERNS: Set[str] = {
+        "/node_modules/", "/static/javascript/", "/assets/images/",
+        "jquery", "bootstrap", "font-awesome", "google-analytics",
+    }
+
+    # SGK-2026-0287 Step 8-3: Competition ordering.
+    # When a task is eligible for both boosting and pruning, boost takes
+    # priority. Tasks with priority at or above this threshold are treated
+    # as boosted and excluded from pruning candidates. This prevents
+    # a task being pruned after an earlier boost (boost runs first in
+    # StrategyOptimizer.review_strategy, prune runs later in
+    # _evaluate_pruning_policy).
+    BOOST_PRIORITY_THRESHOLD: int = 200
+
+    def __init__(self, mode: str = "shadow"):
         """
         Args:
-            shadow_only: If True, only record decisions; do not delete.
+            mode: Effective pruning mode from ``resolve_pruning_mode()``.
+                  "shadow": record decisions only, no actual deletion.
+                  "active": apply actual deletions (requires gate).
         """
-        self.shadow_only = shadow_only
+        resolved = resolve_pruning_mode(raw=mode)
+        self.mode = resolved
+
+    # -- Backward compat --
+    @property
+    def shadow_only(self) -> bool:
+        """True if mode == "shadow" (backward compat)."""
+        return self.mode == "shadow"
 
     # ----------------------------------------------------------------
     # Public API
@@ -153,6 +342,10 @@ class TaskPruningPolicy:
         # Filter out in-flight tasks (F3: running/admitted/waiting_dependency)
         pending_tasks = [t for t in pending_tasks if not self._is_in_flight(t)]
 
+        # SGK-2026-0287 Step 8-3: Boost takes priority over prune.
+        # Tasks with boosted priority are excluded from pruning candidates.
+        pending_tasks = [t for t in pending_tasks if not self._is_boosted(t)]
+
         # Build a map for quick lookups
         task_map = {self._task_id(t): t for t in pending_tasks}
 
@@ -164,6 +357,9 @@ class TaskPruningPolicy:
 
         # ---- Rule 3: Chain completed / low-value follow-up ----
         self._detect_chain_low_value(pending_tasks, completed_task, findings, decisions)
+
+        # ---- Rule 4: Low-value static asset (SGK-2026-0287 Step 8-2) ----
+        self._detect_low_value_static_asset(pending_tasks, decisions)
 
         return decisions
 
@@ -177,33 +373,13 @@ class TaskPruningPolicy:
 
         Protection criteria (OR):
         1. agent_type in PROTECTED_AGENT_TYPES
-        2. params.source_category in PROTECTED_SOURCE_CATEGORIES
-        3. tags contain manual_verify or coverage_guard_forced
-        4. params.scenario_probe is truthy
-        5. params._coverage_guard_forced is truthy
-        6. Task name starts with "SCN"
+        2. task matches shared coverage-critical protection rules
         """
         agent_type = str(getattr(task, "agent_type", "") or "").strip().lower()
         if agent_type in self.PROTECTED_AGENT_TYPES:
             return True
 
-        params = getattr(task, "params", None) or {}
-        if isinstance(params, dict):
-            source_cat = str(params.get("source_category", "") or "").strip().lower()
-            if source_cat in self.PROTECTED_SOURCE_CATEGORIES:
-                return True
-            if params.get("scenario_probe"):
-                return True
-            if bool(params.get("_coverage_guard_forced", False)):
-                return True
-
-        tags = getattr(task, "tags", None) or []
-        tags_lower = {str(t).strip().lower() for t in tags}
-        if tags_lower & self.PROTECTED_TAGS:
-            return True
-
-        task_name = str(getattr(task, "name", "") or "").upper()
-        if task_name.startswith("SCN"):
+        if is_coverage_critical_task(task):
             return True
 
         return False
@@ -218,6 +394,16 @@ class TaskPruningPolicy:
             return False  # No state attribute → treat as pending
         state_str = str(getattr(state, "value", state) or "").strip().lower()
         return state_str in self.IN_FLIGHT_STATES
+
+    def _is_boosted(self, task: Any) -> bool:
+        """Check if a task's priority exceeds the boost threshold.
+
+        SGK-2026-0287 Step 8-3: Boost takes priority over prune.
+        Tasks boosted by ``StrategyOptimizer.boost_priority_for_assets()``
+        (priority += 500) will exceed this threshold and be excluded from
+        pruning.
+        """
+        return getattr(task, "priority", 0) >= self.BOOST_PRIORITY_THRESHOLD
 
     # ----------------------------------------------------------------
     # Private rule implementations
@@ -256,7 +442,7 @@ class TaskPruningPolicy:
                     reason_code="duplicate",
                     evidence_key=f"dedupe:{key}",
                     protected=False,
-                    shadow_only=self.shadow_only,
+                    mode=self.mode,
                 ))
 
     def _detect_out_of_scope(
@@ -289,7 +475,7 @@ class TaskPruningPolicy:
                     reason_code="out_of_scope",
                     evidence_key=None,
                     protected=False,
-                    shadow_only=self.shadow_only,
+                    mode=self.mode,
                 ))
 
     def _detect_chain_low_value(
@@ -340,8 +526,77 @@ class TaskPruningPolicy:
                             reason_code="chain_low_value",
                             evidence_key=parent_vuln,
                             protected=False,
-                            shadow_only=self.shadow_only,
+                            mode=self.mode,
                         ))
+
+    def _detect_low_value_static_asset(
+        self,
+        pending_tasks: List[Any],
+        decisions: List[TaskPruningDecision],
+    ) -> None:
+        """Rule 4: Detect tasks targeting low-value static assets.
+
+        Tasks whose target URL ends with a known static extension or
+        matches a low-value exclude pattern are candidates for pruning.
+        Duplicate base-path variants (query-param diffs) are also
+        flagged when not tagged as injection/auth/logic.
+
+        SGK-2026-0287 Step 8-2: This rule was migrated from
+        ``StrategyOptimizer._identify_low_value_assets()``.
+        """
+        already_decided: Set[str] = {d.task_id for d in decisions}
+        seen_paths: Set[str] = set()
+        for t in pending_tasks:
+            if self._is_protected(t):
+                continue
+
+            tid = self._task_id(t)
+            if tid in already_decided:
+                continue
+
+            target = str(getattr(t, "target", "") or "").strip().lower()
+            if not target:
+                continue
+
+            # Check static extension
+            if any(target.endswith(ext) for ext in self.LOW_VALUE_STATIC_EXTENSIONS):
+                decisions.append(TaskPruningDecision(
+                    task_id=self._task_id(t),
+                    lifecycle_status="retired",
+                    reason_code="low_value_static_asset",
+                    evidence_key=target,
+                    protected=False,
+                    mode=self.mode,
+                ))
+                continue
+
+            # Check exclude patterns
+            if any(pat in target for pat in self.LOW_VALUE_EXCLUDE_PATTERNS):
+                decisions.append(TaskPruningDecision(
+                    task_id=self._task_id(t),
+                    lifecycle_status="retired",
+                    reason_code="low_value_static_asset",
+                    evidence_key=target,
+                    protected=False,
+                    mode=self.mode,
+                ))
+                continue
+
+            # Duplicate base-path check (query param variants)
+            base_path = target.split("?")[0]
+            if base_path in seen_paths:
+                tags = getattr(t, "tags", None) or []
+                if not any(tag in tags for tag in ["injection", "auth", "logic"]):
+                    decisions.append(TaskPruningDecision(
+                        task_id=self._task_id(t),
+                        lifecycle_status="retired",
+                        reason_code="low_value_static_asset",
+                        evidence_key=base_path,
+                        protected=False,
+                        mode=self.mode,
+                    ))
+                    continue
+            seen_paths.add(base_path)
 
     # ----------------------------------------------------------------
     # Utility helpers

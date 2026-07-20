@@ -7,6 +7,7 @@ ProjectManager: プロジェクト単位でのハンティング管理
 
 import logging
 import json
+import os
 import yaml
 import shutil
 import asyncio
@@ -19,6 +20,71 @@ from typing import Optional, List, Dict, Any
 from src.core.infra.async_writer import get_async_writer
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_PROJECTS_BASE_DIR = "workspace/projects"
+
+
+def _project_root() -> Path:
+    """Return the repository root used for default workspace paths."""
+    return Path(__file__).resolve().parents[3]
+
+
+def _env_path(name: str) -> Path | None:
+    raw_value = os.getenv(name, "").strip()
+    if not raw_value:
+        return None
+    path = Path(raw_value).expanduser()
+    if not path.is_absolute():
+        path = _project_root() / path
+    return path
+
+
+def _default_projects_base_dir() -> Path:
+    projects_dir = _env_path("SHIGOKU_WORKSPACE_PROJECTS_DIR")
+    if projects_dir is not None:
+        return projects_dir
+
+    workspace_root = _env_path("SHIGOKU_WORKSPACE_ROOT")
+    if workspace_root is not None:
+        return workspace_root / "projects"
+
+    return _project_root() / DEFAULT_PROJECTS_BASE_DIR
+
+
+def _resolve_base_dir(base_dir: str | Path) -> Path:
+    base_path = Path(base_dir).expanduser()
+    if base_path.as_posix().rstrip("/") == DEFAULT_PROJECTS_BASE_DIR:
+        return _default_projects_base_dir()
+    if not base_path.is_absolute():
+        base_path = _project_root() / base_path
+    return base_path
+
+
+def format_workspace_display_path(path: str | Path) -> str:
+    """Return a host-facing workspace path when a container-to-host mapping is configured."""
+    host_workspace_root = _env_path("SHIGOKU_HOST_WORKSPACE_ROOT")
+    if host_workspace_root is None:
+        return str(path)
+
+    candidate = Path(path).expanduser()
+    runtime_roots = [
+        _env_path("SHIGOKU_WORKSPACE_ROOT"),
+        _default_projects_base_dir().parent,
+        _project_root() / "workspace",
+        Path("/workspace"),
+        Path("/app/workspace"),
+    ]
+
+    for runtime_root in runtime_roots:
+        if runtime_root is None:
+            continue
+        try:
+            relative_path = candidate.relative_to(runtime_root)
+        except ValueError:
+            continue
+        return str(host_workspace_root / relative_path)
+
+    return str(path)
 
 
 @dataclass
@@ -73,7 +139,7 @@ class ProjectManager:
     def __init__(
         self,
         project_name: str,
-        base_dir: str = "workspace/projects"
+        base_dir: str = DEFAULT_PROJECTS_BASE_DIR
     ):
         # プロジェクト名の正規化 (URLスキーム削除)
         if project_name.startswith("http://"):
@@ -86,7 +152,7 @@ class ProjectManager:
         
         self.project_name = project_name
         
-        self.base_dir = Path(base_dir)
+        self.base_dir = _resolve_base_dir(base_dir)
         self.project_dir = self.base_dir / project_name
         
         # プロジェクト設定
@@ -440,7 +506,7 @@ class ProjectManager:
         return sorted(findings_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
 
     @classmethod
-    def list_projects(cls, base_dir: str = "workspace/projects") -> List[dict]:
+    def list_projects(cls, base_dir: str = DEFAULT_PROJECTS_BASE_DIR) -> List[dict]:
         """
         全プロジェクトの一覧を取得
 
@@ -450,7 +516,7 @@ class ProjectManager:
         Returns:
             プロジェクト情報のリスト (辞書形式)
         """
-        projects_node = Path(base_dir)
+        projects_node = _resolve_base_dir(base_dir)
         if not projects_node.exists() or not projects_node.is_dir():
             return []
 

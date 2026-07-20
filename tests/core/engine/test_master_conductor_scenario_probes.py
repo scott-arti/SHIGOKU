@@ -21,7 +21,11 @@ def _new_mc(
     required_vuln_families: list[str] | None = None,
 ) -> MasterConductor:
     mc = MasterConductor.__new__(MasterConductor)
-    mc.phase_gate = SimpleNamespace(can_create_task=lambda _phase: (True, "ok"))
+    mc.phase_gate = SimpleNamespace(
+        can_create_task=lambda _phase: (True, "ok"),
+        can_create_attack_task=lambda _category, _metadata: (True, "ok"),
+        get_phase_data=lambda _phase: SimpleNamespace(critical_findings=[]),
+    )
     mc.context = SimpleNamespace(
         discovered_assets=discovered_assets if discovered_assets is not None else ["https://app.example.com/profile?view=full"],
         target_info={
@@ -34,7 +38,87 @@ def _new_mc(
     mc.project_manager = None
     mc.workspace = SimpleNamespace(user_sessions={})
     mc.intervention_policy = InterventionPolicy(settings.get_intervention_scenarios())
+    mc.run_ledger_recorder = SimpleNamespace(record=lambda **_kwargs: None)
     return mc
+
+
+class _QueueSpy:
+    def __init__(self) -> None:
+        self.items: list[Task] = []
+
+    def get_by_id(self, _task_id: str):
+        return None
+
+    def add(self, task: Task) -> None:
+        self.items.append(task)
+
+    def __len__(self) -> int:
+        return len(self.items)
+
+
+def test_add_tasks_keeps_recon_result_tasks_when_derived_limit_is_reached(monkeypatch):
+    mc = _new_mc(required_vuln_families=["api"])
+    mc.task_queue = _QueueSpy()
+    mc._injected_task_ids = set()
+    mc._derived_task_count = 1
+    monkeypatch.setattr(settings, "max_derived_tasks_per_session", 1)
+
+    normal_task = Task(
+        id="normal-derived",
+        name="Normal Derived",
+        agent_type="InjectionSwarm",
+        action="scan",
+        phase="attack",
+        params={"target": "https://app.example.com/api/v1/users?id=1"},
+        target="https://app.example.com/api/v1/users?id=1",
+        priority=50,
+    )
+    scenario_probe = Task(
+        id="scenario-probe",
+        name="Scenario Probe",
+        agent_type="InjectionSwarm",
+        action="scan",
+        phase="attack",
+        params={
+            "source_category": "scenario_probe_planner",
+            "scenario_probe": "scn_11_multi_vector_chain",
+            "target": "https://app.example.com/api/v1/users?id=1",
+        },
+        target="https://app.example.com/api/v1/users?id=1",
+        priority=50,
+    )
+
+    assert mc._add_tasks([normal_task, scenario_probe], source="recon_result") == 2
+    assert [task.id for task in mc.task_queue.items] == ["normal-derived", "scenario-probe"]
+    assert mc._derived_task_count == 1
+
+
+def test_add_tasks_does_not_globally_exempt_scn06_when_dynamic_source_limit_is_reached(monkeypatch):
+    mc = _new_mc(required_vuln_families=["api"])
+    mc.task_queue = _QueueSpy()
+    mc._injected_task_ids = set()
+    mc._derived_task_count = 1
+    monkeypatch.setattr(settings, "max_derived_tasks_per_session", 1)
+
+    meta_task = Task(
+        id="meta-observability",
+        name="Meta/Observability Exposure Scan",
+        agent_type="DiscoverySwarm",
+        action="scan",
+        phase="attack",
+        params={
+            "source_category": "tagged_meta_observability",
+            "category": "meta_observability",
+            "scenario_id": "scn_06_data_exposure_diff",
+            "target": "https://app.example.com/config/config.inc.php.dist",
+        },
+        target="https://app.example.com/config/config.inc.php.dist",
+        priority=50,
+    )
+
+    assert mc._add_tasks([meta_task], source="react") == 0
+    assert mc.task_queue.items == []
+    assert mc._derived_task_count == 1
 
 
 def test_create_attack_tasks_adds_missing_probe_tasks_for_core_and_high_friction_scenarios(tmp_path: Path):
@@ -458,14 +542,22 @@ def test_create_attack_tasks_auth_replays_history_targets_when_sparse(tmp_path: 
         if task.params.get("category") == "auth" and task.params.get("source_category") == "tagged_auth"
     ]
     task_targets = {str(task.params.get("target", "") or "") for task in auth_tasks}
-    evidence = auth_tasks[0].params.get("_context", {}).get("url_evidence_by_url", {})
+    # SGK-2026-0367: per-URL evidence — look up each URL's task and check its evidence
+    settings_url_task = next(
+        (t for t in auth_tasks if t.params.get("target") == "https://app.example.com/account/settings"),
+        None,
+    )
+    settings_evidence = (
+        (settings_url_task.params.get("_context", {}) or {}).get("url_evidence_by_url", {})
+        if settings_url_task else {}
+    )
 
     assert len(auth_tasks) >= 3
     assert "https://app.example.com/account/profile" in task_targets
     assert "https://app.example.com/account/settings" in task_targets
     assert "https://app.example.com/account/security" in task_targets
     assert "https://external.example.net/account" not in task_targets
-    assert evidence.get("https://app.example.com/account/settings", {}).get("source") == "mc_history_replay"
+    assert settings_evidence.get("https://app.example.com/account/settings", {}).get("source") == "mc_history_replay"
 
 
 def test_create_attack_tasks_api_endpoint_replays_alias_history_targets_when_sparse(tmp_path: Path):
@@ -510,14 +602,22 @@ def test_create_attack_tasks_api_endpoint_replays_alias_history_targets_when_spa
         if task.params.get("category") == "api_endpoint" and task.params.get("source_category") == "tagged_api_endpoint"
     ]
     task_targets = {str(task.params.get("target", "") or "") for task in api_tasks}
-    evidence = api_tasks[0].params.get("_context", {}).get("url_evidence_by_url", {})
+    # SGK-2026-0367: per-URL evidence lookup
+    replay_url_task = next(
+        (t for t in api_tasks if t.params.get("target") == "https://app.example.com/api/v2/orders?status=open"),
+        None,
+    )
+    replay_evidence = (
+        (replay_url_task.params.get("_context", {}) or {}).get("url_evidence_by_url", {})
+        if replay_url_task else {}
+    )
 
     assert api_tasks
     assert "https://app.example.com/api/v1/profile" in task_targets
     assert "https://app.example.com/api/v2/orders?status=open" in task_targets
     assert "https://external.example.net/api/v2/orders?status=open" not in task_targets
     assert "https://app.example.com/static/js/app.js?v=1" not in task_targets
-    assert evidence.get("https://app.example.com/api/v2/orders?status=open", {}).get("source") == "mc_history_replay"
+    assert replay_evidence.get("https://app.example.com/api/v2/orders?status=open", {}).get("source") == "mc_history_replay"
 
 
 def test_create_attack_tasks_admin_replays_auth_history_targets_when_sparse(tmp_path: Path):
@@ -562,13 +662,21 @@ def test_create_attack_tasks_admin_replays_auth_history_targets_when_sparse(tmp_
         if task.params.get("category") == "admin" and task.params.get("source_category") == "tagged_admin"
     ]
     task_targets = {str(task.params.get("target", "") or "") for task in admin_tasks}
-    evidence = admin_tasks[0].params.get("_context", {}).get("url_evidence_by_url", {})
+    # SGK-2026-0367: per-URL evidence
+    admin_users_task = next(
+        (t for t in admin_tasks if t.params.get("target") == "https://app.example.com/admin/users"),
+        None,
+    )
+    admin_users_evidence = (
+        (admin_users_task.params.get("_context", {}) or {}).get("url_evidence_by_url", {})
+        if admin_users_task else {}
+    )
 
     assert admin_tasks
     assert "https://app.example.com/admin/dashboard" in task_targets
     assert "https://app.example.com/admin/users" in task_targets
     assert "https://external.example.net/admin/users" not in task_targets
-    assert evidence.get("https://app.example.com/admin/users", {}).get("source") == "mc_history_replay"
+    assert admin_users_evidence.get("https://app.example.com/admin/users", {}).get("source") == "mc_history_replay"
 
 
 def test_resolve_in_scope_hosts_includes_target_and_scope_domains():

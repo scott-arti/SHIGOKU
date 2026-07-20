@@ -724,6 +724,82 @@ class SwarmDispatcher:
         
         return results
     
+    async def dispatch_signal(
+        self,
+        signal: dict,
+        task_name: str = "signal_analysis",
+    ) -> List[SwarmResult]:
+        """
+        SGK-2026-0261: Signal bundle の signal dict を dispatch_rich_url() 互換で処理。
+
+        signal dict から RichUrlContext + TagMatch を合成し、既存の dispatch_rich_url()
+        経由で Swarm にルーティングする。全面刷新せず互換経路として実装。
+
+        Args:
+            signal: AttackSurfaceSignal.to_dict() 相当の dict
+            task_name: タスク名
+
+        Returns:
+            SwarmResult のリスト
+        """
+        from src.core.models.url_context import RichUrlContext, TagMatch
+        from urllib.parse import urlparse
+
+        url = signal.get("url", "")
+        method = signal.get("method", "GET")
+
+        # Signal dict の candidate_labels から TagMatch リストを合成
+        synthetic_tags: list[TagMatch] = []
+        primary = signal.get("primary_label", "")
+        candidate_labels = signal.get("candidate_labels", [])
+
+        # primary_label を最も有力な tag として先頭に置く
+        ordered_labels: list[str] = []
+        if primary and primary not in ordered_labels:
+            ordered_labels.append(primary)
+        for label in candidate_labels:
+            if label and label not in ordered_labels:
+                ordered_labels.append(label)
+
+        for label in ordered_labels:
+            synthetic_tags.append(TagMatch(
+                tag=label,
+                rule_name=f"signal:{signal.get('entity_type', 'endpoint')}",
+                matched_on="signal_bundle",
+                matched_value=url,
+                param_name=None,
+            ))
+
+        # RichUrlContext を合成（最低限のフィールド）
+        synthetic_ctx = RichUrlContext(
+            url=url,
+            method=method,
+            subdomain_context=None,
+            tags=synthetic_tags,
+            headers={},
+            body=None,
+            response_status=0,
+            response_headers={},
+            response_body_preview="",
+            auth_context={},
+            source="signal_bundle",
+            forms=[],
+        )
+
+        # 認証情報があればセット
+        if signal.get("auth_required"):
+            synthetic_ctx.auth_context = {"auth_required": "true"}
+
+        logger.info(
+            "[dispatch_signal] %s -> %d labels, entity_type=%s",
+            url, len(ordered_labels), signal.get("entity_type", "endpoint"),
+        )
+
+        return await self.dispatch_rich_url(
+            rich_context=synthetic_ctx,
+            task_name=task_name,
+        )
+
     async def _dispatch_to_single_swarm(
         self,
         swarm_name: str,

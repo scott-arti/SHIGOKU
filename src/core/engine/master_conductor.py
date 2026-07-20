@@ -35,6 +35,7 @@ from src.config import settings
 from src.core.engine.smart_scheduler import SmartScheduler, ScheduledTask
 from src.core.notifications.notifier import get_notifier, Notifier
 from src.core.engine.phase_gate import get_phase_gate, Phase
+from src.core.engine import task_pruning_policy as task_pruning_policy_shared
 from src.core.domain.model.task import Task, TaskState
 from src.commands import print_step, print_result
 from src.core.infra.event_bus import get_event_bus, Event, EventType
@@ -48,7 +49,7 @@ from src.core.factory import AgentFactory
 from src.core.engine.attack_planner import AttackPlanner
 from src.core.engine.intervention_policy import InterventionPolicy
 from src.core.engine.recipe_contracts import validate_task_schema
-from src.core.engine.recipe_loader import TakeoverCandidate
+from src.core.engine.recipe_loader import TakeoverCandidate, RecipeCandidate, build_suppression_key
 from src.core.engine.master_conductor_hitl_snapshot import snapshot_task_for_hitl
 from src.core.engine.master_conductor_hitl_ticket import build_pending_hitl_ticket
 from src.core.engine.master_conductor_session_service import (
@@ -90,7 +91,7 @@ from src.core.engine.lane_policy import LanePolicy
 from src.core.engine.mutex_policy import MutexPolicy
 from src.core.engine.admission_policy import ActionAdmissionPolicy
 from src.core.engine.snapshot_validity import check_snapshot_validity
-from src.core.engine.task_pruning_policy import TaskPruningPolicy
+from src.core.engine.task_pruning_policy import TaskPruningPolicy, resolve_pruning_mode, get_reasoning
 from src.core.engine.post_batch_feedback import PostBatchFeedback
 
 _SCN_CATALOG_DEFAULTS: tuple[tuple[str, str], ...] = (
@@ -332,6 +333,75 @@ def _resolve_bundle_by_id(
     )
 
 
+# ── SGK-2026-0260: recipe follow-up decision builder ─────────────────────
+
+
+def _build_recipe_follow_up_decision(result_bundle: dict) -> dict:
+    """Analyze recipe execution results and produce a follow-up decision.
+
+    Uses the vocabulary from ``RECIPE_FOLLOW_UP_REASONS`` in recipe_contracts.
+    Returns a dict with ``decision``, ``reasons``, ``confidence``.
+    """
+    from src.core.engine.recipe_contracts import RECIPE_FOLLOW_UP_REASONS
+
+    decision = "no_follow_up_needed"
+    reasons: list = []
+    confidence = 0.0
+
+    if not isinstance(result_bundle, dict):
+        return {"decision": decision, "reasons": reasons, "confidence": confidence}
+
+    success = bool(result_bundle.get("success", False))
+    summary = result_bundle.get("summary", {}) if isinstance(result_bundle.get("summary"), dict) else {}
+    total = int(summary.get("total_steps", 0) or 0)
+    success_count = int(summary.get("success_count", 0) or 0)
+    blocked = int(summary.get("blocked_steps", 0) or 0)
+    failed_count = int(summary.get("failed_steps", 0) or 0)
+
+    # ── all blocked → nothing to follow up ────────────────────────────
+    if total > 0 and blocked == total:
+        return {"decision": "no_follow_up_needed",
+                "reasons": ["recipe_completely_blocked"],
+                "confidence": 0.95}
+
+    # ── all failed → manual review ────────────────────────────────────
+    if total > 0 and failed_count == total:
+        return {"decision": "recommend_manual_review",
+                "reasons": ["recipe_failed"],
+                "confidence": 0.9}
+
+    # ── successful with evidence → check for new signals ──────────────
+    steps = result_bundle.get("steps", {}) if isinstance(result_bundle.get("steps"), dict) else {}
+    new_signals_found = False
+    for step_result in steps.values():
+        if not isinstance(step_result, dict):
+            continue
+        data = step_result.get("data", {})
+        if isinstance(data, dict) and data.get("new_attack_surface"):
+            new_signals_found = True
+        if isinstance(data, dict) and data.get("adjacent_endpoints"):
+            new_signals_found = True
+
+    if success and new_signals_found:
+        return {"decision": "recommend_specialized_swarm",
+                "reasons": ["new_signal_discovered"],
+                "confidence": 0.85}
+
+    # ── partial success → recommend specialized swarm ─────────────────
+    if total > 0 and 0 < success_count < total:
+        return {"decision": "recommend_specialized_swarm",
+                "reasons": ["recipe_partial_success"],
+                "confidence": 0.6}
+
+    # ── full success, no new signals → done ───────────────────────────
+    if success:
+        return {"decision": "no_follow_up_needed",
+                "reasons": ["recipe_completed_cleanly"],
+                "confidence": 0.9}
+
+    # ── default ───────────────────────────────────────────────────────
+    return {"decision": "no_follow_up_needed", "reasons": reasons, "confidence": confidence}
+
 
 class MasterConductor:
     """
@@ -388,9 +458,15 @@ class MasterConductor:
         self._takeover_probe_dedupe = None
         
         # Phase 2 Spec: モードの取得
-        self.mode = getattr(settings, "environment", "BUG_BOUNTY") 
-        if hasattr(settings, "ctf_target") and settings.ctf_target:
-             self.mode = "CTF"
+        # SGK-2026-0339: read the real ``settings.mode`` field. The legacy
+        # ``settings.environment`` attribute never existed, so this always
+        # returned the "BUG_BOUNTY" default and silently ignored the mode
+        # configured via CLI/config (e.g. a vulntest run was seen as bugbounty).
+        _raw_mode = str(getattr(settings, "mode", "") or "").strip().lower()
+        if (hasattr(settings, "ctf_target") and settings.ctf_target) or _raw_mode == "ctf":
+            self.mode = "CTF"
+        else:
+            self.mode = _raw_mode or "bugbounty"
              
         self.flag_format = getattr(settings, "ctf_flag_format", "flag{.*}")
         
@@ -522,6 +598,9 @@ class MasterConductor:
         # 注入済みタスクおよび処理済み技術の重複防止用
         self._injected_task_ids: set[str] = set()
         self._processed_techs: set[str] = set()
+        # SGK-2026-0367: injection task ownership tracking
+        # key = (normalized_url, vuln_family, execution_path)
+        self._owned_injection_targets: set[tuple[str, str, str]] = set()
         self.pending_hitl: list[dict[str, Any]] = []
 
         # Shared Network Client (Connection Pooling)
@@ -1024,6 +1103,7 @@ class MasterConductor:
     def shutdown(self):
         """同期および非同期からのシャットダウン・エントリーポイント"""
         import asyncio
+        from concurrent.futures import CancelledError as FutureCancelledError
         try:
             loop = self._get_loop()
             if loop.is_running():
@@ -1031,6 +1111,11 @@ class MasterConductor:
                 return future.result(timeout=30)
             else:
                 loop.run_until_complete(self._async_shutdown())
+        except (asyncio.CancelledError, FutureCancelledError) as e:
+            if getattr(self, "_finished_normally", False):
+                logger.debug("Shutdown completed with expected cancellation cleanup: %r", e)
+            else:
+                logger.info("Shutdown completed with task cancellation during cleanup: %r", e)
         except Exception as e:
             logger.error("Shutdown error: %r", e)
         finally:
@@ -1224,6 +1309,24 @@ class MasterConductor:
 
         if "intervention_gate_pending_hitl" in combined or "pending hitl" in combined:
             return "INTERVENTION_PENDING_HITL"
+        if "intervention_gate_deferred_manual_v1" in combined or "deferred for manual validation" in combined:
+            return "INTERVENTION_DEFERRED_MANUAL"
+        if "intervention_gate_denied" in combined or "blocked by intervention gate" in combined:
+            return "INTERVENTION_DENIED"
+
+        if "state_assertion_precondition_missing" in combined:
+            return "STATE_ASSERTION_PRECONDITION_MISSING"
+        if "state_assertion_postcondition_missing" in combined:
+            return "STATE_ASSERTION_POSTCONDITION_MISSING"
+        if "state_assertion_stale_auth_context" in combined:
+            return "STATE_ASSERTION_STALE_AUTH_CONTEXT"
+
+        if "stale_snapshot" in combined:
+            return "STALE_SNAPSHOT"
+        if "stale_recon_snapshot" in combined:
+            return "STALE_RECON_SNAPSHOT"
+        if "stale_auth_context" in combined:
+            return "STALE_AUTH_CONTEXT"
 
         if "phase2_timeout" in combined or ("phase2" in combined and "timeout" in combined):
             return "TIMEOUT_PHASE2"
@@ -1479,6 +1582,190 @@ class MasterConductor:
             if needle in normalized:
                 families.add(family)
         return families
+
+    # ------------------------------------------------------------------
+    # SGK-2026-0367: Injection task ownership normalization helpers
+    # ------------------------------------------------------------------
+
+    _INJECTION_AGENT_TYPES = frozenset({
+        "InjectionSwarm",
+        "InjectionManagerAgent",
+    })
+
+    _INJECTION_CATEGORIES = frozenset({
+        "id_param",
+        "redirect_param",
+        "file_param",
+        "xss_candidate",
+        "api_candidate",
+        "api_endpoint",
+        "api_data",
+        "product_search",
+        "feedback_review",
+        "client_route_dom",
+        "csrf_candidate",
+        "command_injection",
+    })
+
+    @staticmethod
+    def _normalize_url_for_ownership(url: str) -> str:
+        """Normalize a URL for ownership dedup key.
+
+        Normalizes: scheme, host, default port removal, trailing slash, hash fragment.
+        Preserves: sorted query keys + values for dedup granularity.
+        """
+        from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+
+        if not url:
+            return ""
+        try:
+            parsed = urlparse(str(url).strip())
+            # Strip trailing slash, hash fragment
+            path = (parsed.path or "").rstrip("/")
+            if not path:
+                path = "/"
+            scheme = parsed.scheme.lower() or "http"
+            netloc = (parsed.netloc or "").lower()
+            # Remove default port for dedup equivalence
+            if ":" in netloc:
+                host, _, port = netloc.partition(":")
+                if (scheme == "http" and port == "80") or (scheme == "https" and port == "443"):
+                    netloc = host
+            # Preserve sorted query keys for dedup (different keys = different target)
+            qs = ""
+            if parsed.query:
+                qp = parse_qs(parsed.query, keep_blank_values=True)
+                # Only preserve key names (sorted), drop values for dedup granularity
+                qs = "&".join(sorted(qp.keys()))
+            return urlunparse((scheme, netloc, path, "", qs, ""))
+        except Exception:
+            return str(url).strip().rstrip("/")
+
+    def _is_injection_task(self, task: Task) -> bool:
+        """Check if a task is an injection-type task eligible for ownership tracking."""
+        agent_type = str(getattr(task, "agent_type", "") or "")
+        if agent_type in self._INJECTION_AGENT_TYPES:
+            return True
+        params = getattr(task, "params", {}) or {}
+        category = str(params.get("category", "") or "").lower()
+        if category in self._INJECTION_CATEGORIES:
+            return True
+        return False
+
+    def _make_ownership_key(self, url: str, category: str, execution_path: str) -> tuple[str, str, str]:
+        """Build an ownership key (normalized_url, vuln_family, execution_path) for dedup.
+
+        Same (url, family, execution_path) cannot be owned twice.
+        Different execution_path or different family on same URL are allowed.
+        """
+        normalized_url = self._normalize_url_for_ownership(url)
+        families = self._map_category_to_vuln_families(category)
+        sorted_families = sorted(families)
+        primary_family = sorted_families[0] if sorted_families else category
+        return (normalized_url, primary_family, execution_path)
+
+    @staticmethod
+    def _normalize_execution_path(raw: str) -> str:
+        """SGK-2026-0367: Normalize raw selection_origin to canonical ownership
+        execution_path. This ensures that recon.pipeline and master_conductor
+        tasks for the same (url, family) are deduplicated.
+
+        Canonical values: recon_tagged, coverage_backfill, coverage_backfill_guard,
+        history_replay, fallback.
+        """
+        if not raw:
+            return ""
+        raw = str(raw).strip()
+        # recon.tagged_* and master_conductor.recon.* → recon_tagged
+        if raw.startswith("recon.tagged_") or raw.startswith("master_conductor.recon."):
+            return "recon_tagged"
+        # Exact matches for the fixed vocabulary
+        if raw in ("coverage_backfill", "coverage_backfill_guard", "history_replay", "fallback"):
+            return raw
+        return raw
+
+    def _check_and_claim_ownership(self, task: Task) -> bool:
+        """Check ownership for an injection task. Returns True if ownership is available
+        (task should proceed), False if already owned (task should be suppressed).
+
+        Execution path is derived from task.params["selection_origin"] so that
+        claim and release use the same source identifier.
+
+        Gated by settings.injection_ownership_dedup_enabled.
+        """
+        if not bool(getattr(settings, "injection_ownership_dedup_enabled", True)):
+            return True  # Feature flag disabled — bypass ownership check
+
+        if not self._is_injection_task(task):
+            return True  # Non-injection tasks always pass
+
+        params = getattr(task, "params", {}) or {}
+        target = params.get("target", "") or getattr(task, "target", "") or ""
+        category = str(params.get("category", "") or "").lower()
+        ep = self._normalize_execution_path(params.get("selection_origin", "") or "")
+
+        if not target or not category:
+            return True  # Can't determine ownership key, allow
+
+        # Multiple families per category: claim each one
+        families = self._map_category_to_vuln_families(category)
+        if not families:
+            return True
+
+        normalized_url = self._normalize_url_for_ownership(target)
+        already_owned = False
+        for family in families:
+            key = (normalized_url, family, ep)
+            if key in self._owned_injection_targets:
+                already_owned = True
+                break
+
+        if already_owned:
+            logger.info(
+                "Suppressing injection task %s (category=%s url=%s exec_path=%s) — ownership already claimed",
+                task.id, category, normalized_url, ep,
+            )
+            return False
+
+        # Claim ownership for all families
+        for family in families:
+            self._owned_injection_targets.add((normalized_url, family, ep))
+        logger.debug(
+            "Ownership claimed: task=%s url=%s families=%s exec_path=%s",
+            task.id, normalized_url, sorted(families), ep,
+        )
+        return True
+
+    def _release_ownership(self, task: Task) -> None:
+        """SGK-2026-0367: Release injection task ownership when task completes."""
+        if not self._is_injection_task(task):
+            return
+        params = getattr(task, "params", {}) or {}
+        target = params.get("target", "") or getattr(task, "target", "") or ""
+        category = str(params.get("category", "") or "").lower()
+        selection_origin = params.get("selection_origin", "")
+        if not target or not category:
+            return
+        families = self._map_category_to_vuln_families(category)
+        if not families:
+            return
+        normalized_url = self._normalize_url_for_ownership(target)
+        ep = self._normalize_execution_path(selection_origin or "")
+        removed = 0
+        for family in families:
+            key = (normalized_url, family, ep)
+            if key in self._owned_injection_targets:
+                self._owned_injection_targets.discard(key)
+                removed += 1
+        if removed > 0:
+            logger.debug(
+                "Ownership released: task=%s url=%s families=%s exec_path=%s",
+                task.id, normalized_url, sorted(families), ep,
+            )
+
+    # ------------------------------------------------------------------
+    # End SGK-2026-0367 helpers
+    # ------------------------------------------------------------------
 
     def _evaluate_vuln_family_coverage(self) -> dict[str, Any]:
         required_families = self._resolve_required_vuln_families()
@@ -3029,6 +3316,29 @@ class MasterConductor:
         failure_meta["recorded_at"] = int(time.time())
         params["_failure"] = failure_meta
 
+    def _ensure_task_reason_code(self, task: Task) -> str:
+        reason_code = str(getattr(task, "failure_reason_code", "") or "").strip()
+        if reason_code:
+            return reason_code
+
+        reason_code = self._normalize_failure_reason_code(
+            str(getattr(task, "failure_phase", "") or ""),
+            getattr(task, "failure_reason", "") or getattr(task, "error", ""),
+            getattr(task, "error", ""),
+        )
+
+        task_state = getattr(task, "state", TaskState.PENDING)
+        if isinstance(task_state, TaskState):
+            task_state_str = task_state.value
+        else:
+            task_state_str = str(task_state or "").strip().lower()
+
+        if task_state_str == TaskState.SKIPPED.value and reason_code == "UNEXPECTED_EXCEPTION":
+            reason_code = "TASK_SKIPPED"
+
+        task.failure_reason_code = reason_code
+        return reason_code
+
     def _dispatch_with_timeout_retry(self, task: Task, timeout_override: Optional[int] = None) -> dict:
         """timeout 起因失敗の軽量リトライ（エージェント別上限あり）"""
         max_timeout_retry = self._resolve_timeout_retry_limit(task)
@@ -3180,6 +3490,7 @@ class MasterConductor:
         
         # #4: 派生タスク上限チェック
         max_derived = settings.max_derived_tasks_per_session
+        apply_derived_limit = task_pruning_policy_shared.should_apply_derived_task_limit(source)
         added_count = 0
         
         # aggressive ターゲット取得
@@ -3188,16 +3499,22 @@ class MasterConductor:
         max_boost = 3.0
         
         for task in tasks:
-            if self._derived_task_count >= max_derived:
+            if apply_derived_limit and self._derived_task_count >= max_derived:
                 logger.warning(
-                    f"Derived task limit ({max_derived}) reached. "
-                    f"Skipping {len(tasks) - added_count} tasks from {source}."
+                    "Derived task limit (%s) reached for source=%s. Skipping task %s.",
+                    max_derived,
+                    source,
+                    task.id,
                 )
-                break
+                continue
             
             # 7.1 IDベースの重複排除 (#9: 重複回避)
             if self.task_queue.get_by_id(task.id) or task.id in self._injected_task_ids:
                 logger.debug(f"Task {task.id} ({task.name}) already in queue or processed, skipping.")
+                continue
+
+            # SGK-2026-0367: injection task ownership dedup
+            if not self._check_and_claim_ownership(task):
                 continue
 
             # P3-1: 高価値トリガーに基づく動的優先度ブースト
@@ -3294,7 +3611,8 @@ class MasterConductor:
             
             self.task_queue.add(task)
             self._injected_task_ids.add(task.id) # 履歴に記録
-            self._derived_task_count += 1
+            if self._should_count_against_derived_task_limit(task, source=source):
+                self._derived_task_count += 1
             added_count += 1
         
         # 優先度順にソート (DynamicTaskQueue handles sorting automatically on add)
@@ -3302,6 +3620,11 @@ class MasterConductor:
             logger.debug(f"Added {added_count} tasks from {source}, queue size: {len(self.task_queue)}")
         
         return added_count
+
+    def _should_count_against_derived_task_limit(self, task: Task, source: Optional[str] = None) -> bool:
+        if source is not None:
+            return task_pruning_policy_shared.should_apply_derived_task_limit(source)
+        return not task_pruning_policy_shared.is_coverage_critical_task(task)
 
     def _calculate_dynamic_priority_boost(self, task: Task, max_boost: float = 3.0) -> tuple[float, list[str]]:
         """
@@ -3554,6 +3877,15 @@ class MasterConductor:
         import json
 
         try:
+            for task in self.completed_tasks:
+                task_state = getattr(task, "state", TaskState.PENDING)
+                if isinstance(task_state, TaskState):
+                    task_state_str = task_state.value
+                else:
+                    task_state_str = str(task_state or "").strip().lower()
+                if task_state_str in {TaskState.FAILED.value, TaskState.SKIPPED.value}:
+                    self._ensure_task_reason_code(task)
+
             coverage_gate = self._evaluate_vuln_family_coverage()
             scenario_coverage = self._evaluate_intervention_scenario_coverage()
             # データの準備
@@ -5789,10 +6121,101 @@ class MasterConductor:
         summary = result_bundle.get("summary", {}) if isinstance(result_bundle, dict) else {}
         total_steps = int(summary.get("total_steps", 0) or 0)
         failed_steps = int(summary.get("failed_steps", 0) or 0)
+
+        # ── SGK-2026-0260: follow-up decision ─────────────────────────
+        follow_up = _build_recipe_follow_up_decision(result_bundle)
+
+        # ── SGK-2026-0260: suppression keys (signal + endpoint level) ──
+        signal_id = str(task.params.get("recipe_signal_id", "") or "").strip()
+        signal_url = str(task.params.get("target", "") or target).strip()
+        suppression_key_signal = (
+            f"signal:{recipe_name}:{signal_id}" if signal_id else ""
+        )
+        suppression_key_endpoint = (
+            f"endpoint:{recipe_name}:{signal_url}" if signal_url else ""
+        )
+        # ── SGK-2026-0260: create follow-up swarm task if needed ───────
+        follow_up_task = None
+        if follow_up.get("decision") == "recommend_specialized_swarm":
+            follow_up_task = Task(
+                id=f"followup_{recipe_name}_{uuid.uuid4().hex[:8]}",
+                name=f"Follow-up after Recipe: {recipe_name}",
+                agent_type="swarm",
+                action="scan",
+                priority=85,
+                parent_id=task.id,
+                params={
+                    "target": target,
+                    "recipe_name": recipe_name,
+                    "follow_up_reasons": follow_up.get("reasons", []),
+                    "follow_up_decision": follow_up.get("decision", ""),
+                    "source_recipe_result": {
+                        "success": result_bundle.get("success", False),
+                        "summary": summary,
+                        "verdict": result_bundle.get("takeover_verdict"),
+                    },
+                    "selection_origin": "recipe_follow_up",
+                    "tags": ["follow_up_swarm"],
+                },
+            )
+            try:
+                if hasattr(self, "task_queue") and self.task_queue is not None:
+                    self.task_queue.add(follow_up_task)
+                    logger.info(
+                        "[SGK-2026-0260] Created follow-up swarm task %s after recipe %s: %s",
+                        follow_up_task.id, recipe_name, follow_up.get("reasons"),
+                    )
+            except Exception as e:
+                logger.warning("Failed to queue follow-up task for recipe %s: %s", recipe_name, e)
+
+        # ── SGK-2026-0260: persist to KG ─────────────────────────────
+        if hasattr(self, "graph") and self.graph:
+            try:
+                self.graph.store_recipe_run(
+                    recipe_name=recipe_name,
+                    target=target,
+                    success=bool(result_bundle.get("success", False)),
+                    summary=summary,
+                    verdict=result_bundle.get("takeover_verdict", ""),
+                    verdict_reason_codes=result_bundle.get("verdict_reason_codes", []),
+                    run_id=getattr(self, "_current_run_id", ""),
+                    suppression_key_signal=suppression_key_signal,
+                    suppression_key_endpoint=suppression_key_endpoint,
+                )
+                # ── also store suppression key for cross-run dedup ────
+                signal_id = str(task.params.get("recipe_signal_id", "") or "").strip()
+                if signal_id:
+                    suppression_key = f"signal:{recipe_name}:{signal_id}"
+                    if hasattr(self, "run_ledger_recorder") and self.run_ledger_recorder:
+                        try:
+                            self.run_ledger_recorder.record(
+                                event_type="RECIPE_EXECUTED",
+                                phase="attack",
+                                actor_type="master_conductor",
+                                actor_name="recipe_runner",
+                                task_id=task.id,
+                                action=f"run_recipe:{recipe_name}",
+                                result="success" if result_bundle.get("success") else "failed",
+                                source_refs={
+                                    "suppression_key": suppression_key,
+                                    "recipe_name": recipe_name,
+                                    "signal_id": signal_id,
+                                    "follow_up_decision": follow_up.get("decision"),
+                                },
+                            )
+                        except Exception:
+                            pass
+            except Exception as kg_exc:
+                logger.warning(
+                    "[SGK-2026-0260] KG persistence failed for recipe %s (non-fatal): %s",
+                    recipe_name, kg_exc,
+                )
+
         return {
             "success": bool(result_bundle.get("success", False)),
             "message": f"Recipe {recipe_name} executed: total={total_steps}, failed={failed_steps}",
             "data": result_bundle,
+            "follow_up": follow_up,
         }
     
     def _ensure_react_observation_lock(self):
@@ -5869,6 +6292,7 @@ class MasterConductor:
             return None
 
         self._mark_task_invalidated(task, reason, "start")
+        self._record_failure_context(task, "validity_check", reason)
         try:
             task.state = TaskState.SKIPPED
         except Exception:
@@ -5909,6 +6333,7 @@ class MasterConductor:
 
         metadata["lifecycle_status"] = "rejected"
         metadata["lifecycle_reason"] = result.reason_code
+        self._record_failure_context(task, "state_assertion", result.reason_code)
         try:
             task.state = TaskState.SKIPPED
         except Exception:
@@ -6199,40 +6624,204 @@ class MasterConductor:
                 self._add_tasks(follow_ups, source="event_chaining")
 
     def _evaluate_pruning_policy(self, batch_tasks: list) -> None:
-        """Evaluate TaskPruningPolicy and record shadow decisions.
-        
-        SGK-2026-0287 Step 3: Called after post-batch feedback to evaluate
-        the current queue for prune candidates. Results are appended to
-        _shadow_decisions for session persistence.
+        """Evaluate TaskPruningPolicy and record decisions.
+
+        SGK-2026-0287 Steps 4-5, 9: Uses ``resolve_pruning_mode()`` as the
+        single authority. Tracks pruning metrics for observability. Injects
+        audit identifiers (queue_snapshot_id, candidate_task_ids) into
+        decision traces. Fail-closed on evaluation failure.
+
+        Decisions are appended to ``_pruning_decisions`` for session
+        persistence and downstream report consumption.
         """
+        import uuid as _uuid_module
+
+        # ── Lazy init ───────────────────────────────────────────────────
+        if not hasattr(self, '_pruning_policy'):
+            effective_mode = resolve_pruning_mode(
+                raw=getattr(settings, 'pruning_mode', 'shadow'),
+                killswitch_enabled=getattr(settings, 'pruning_killswitch_enabled', False),
+            )
+            self._pruning_policy = TaskPruningPolicy(mode=effective_mode)
+        if not hasattr(self, '_pruning_decisions'):
+            self._pruning_decisions = []
+        # Backward compat alias
+        if not hasattr(self, '_shadow_decisions'):
+            self._shadow_decisions = self._pruning_decisions
+        # SGK-2026-0287 Step 9-1: pruning metrics counters
+        if not hasattr(self, '_pruning_candidates_total'):
+            self._pruning_candidates_total = 0
+        if not hasattr(self, '_pruning_applied_total'):
+            self._pruning_applied_total = 0
+        if not hasattr(self, '_pruning_protected_skip_total'):
+            self._pruning_protected_skip_total = 0
+        if not hasattr(self, '_pruning_eval_failures_total'):
+            self._pruning_eval_failures_total = 0
+
+        # ── Capture queue snapshot before evaluation ────────────────────
         try:
-            if not hasattr(self, '_pruning_policy'):
-                self._pruning_policy = TaskPruningPolicy(shadow_only=True)
-            
-            if not hasattr(self, '_shadow_decisions'):
-                self._shadow_decisions = []
-            
+            before_count = len(self.task_queue)
+            pending_ids_before = self.task_queue.get_pending_task_ids()
+        except Exception:
+            before_count = 0
+            pending_ids_before = []
+
+        # SGK-2026-0287 Step 9-2: queue snapshot identifier for audit
+        queue_snapshot_id = f"qsnap_{_uuid_module.uuid4().hex[:12]}"
+
+        try:
             # Collect recent findings from the batch results
             recent_findings = []
             if hasattr(self, 'accumulated_context'):
                 recent_findings = getattr(self.accumulated_context, 'critical_findings', []) or []
-            
+
+            # Collect finding IDs for audit trail
+            finding_ids: list[str] = []
+            for f in recent_findings:
+                fid = f.get("id") if isinstance(f, dict) else getattr(f, "id", None)
+                if fid:
+                    finding_ids.append(str(fid))
+
+            trigger_task_id = batch_tasks[-1].id if batch_tasks else None
+
             decisions = self._pruning_policy.evaluate(
                 queue_snapshot=self.task_queue,
                 completed_task=batch_tasks[-1] if batch_tasks else None,
                 findings=recent_findings,
             )
-            
-            for decision in decisions:
-                self._shadow_decisions.append(decision.to_dict())
-            
-            if decisions:
-                logger.debug(
-                    "Pruning policy evaluated: %d candidate(s) found (shadow_only=True)",
-                    len(decisions),
-                )
         except Exception as e:
-            logger.warning("Pruning policy evaluation failed: %s", e)
+            # ── Fail-closed (SGK-2026-0287 Step 4-4, 9-3) ─────────────
+            from datetime import datetime as _dt
+            mode = getattr(self._pruning_policy, 'mode', 'shadow')
+            self._pruning_eval_failures_total += 1
+            logger.error(
+                "Pruning policy evaluation failed (mode=%s snapshot=%s): %s",
+                mode, queue_snapshot_id, e,
+                exc_info=True,
+            )
+            failure_decision = {
+                "decision_type": "task_pruning_eval_failure",
+                "reason_code": "eval_failure_skip",
+                "reasoning": get_reasoning("eval_failure_skip"),
+                "mode": mode,
+                "before_count": before_count,
+                "after_count": before_count,
+                "protected": True,
+                "timestamp": _dt.now().isoformat(),
+                "error": str(e),
+                "queue_snapshot_id": queue_snapshot_id,
+            }
+            self._pruning_decisions.append(failure_decision)
+            # SGK-2026-0287 Step 9-3: triage hint for evaluation failure
+            logger.warning(
+                "TRIAGE: pruning eval failure — inspect queue_snapshot_id=%s, "
+                "before_count=%d, mode=%s",
+                queue_snapshot_id, before_count, mode,
+            )
+            return
+
+        # ── Augment decisions with trigger info ─────────────────────────
+        candidate_task_ids = [d.task_id for d in decisions]
+        trigger_task_id = trigger_task_id
+        finding_ids_list = finding_ids
+
+        for decision in decisions:
+            decision.trigger_task_id = trigger_task_id
+            decision.finding_ids = finding_ids_list
+
+        # ── Build decision dicts for shared deletion executor ────────────
+        decision_dicts = [
+            {
+                "task_id": d.task_id,
+                "reason_code": d.reason_code,
+                "protected": d.protected,
+            }
+            for d in decisions
+        ]
+
+        # ── Execute deletions via shared executor (SGK-2026-0287 Step 7) ─
+        mode = getattr(self._pruning_policy, 'mode', 'shadow')
+        _prune_start = time.time()
+        prune_result: dict = {}
+        prune_error: Optional[str] = None
+
+        try:
+            prune_result = self.task_queue.prune_by_decisions(
+                decisions=decision_dicts,
+                mode=mode,
+            )
+        except Exception as _pe:
+            # Fail-closed: exception during deletion stops the operation
+            prune_error = str(_pe)
+            logger.error(
+                "Prune execution failed (mode=%s snapshot=%s): %s",
+                mode, queue_snapshot_id, _pe,
+                exc_info=True,
+            )
+            self._pruning_eval_failures_total += 1
+            prune_result = {
+                "requested_ids": candidate_task_ids,
+                "applied_ids": [],
+                "skipped_ids": candidate_task_ids,
+                "missing_ids": [],
+                "before_count": before_count,
+                "after_count": before_count,
+                "mode": mode,
+                "reason_codes": {tid: d.reason_code for tid, d in zip(candidate_task_ids, decisions)},
+            }
+
+        # SGK-2026-0287 Step 9-1: queue_rebuild_seconds metric
+        queue_rebuild_seconds = time.time() - _prune_start
+        if not hasattr(self, '_queue_rebuild_seconds'):
+            self._queue_rebuild_seconds: list[float] = []
+        self._queue_rebuild_seconds.append(queue_rebuild_seconds)
+
+        after_count = prune_result.get("after_count", before_count)
+        applied_ids = prune_result.get("applied_ids", [])
+        skipped_ids = prune_result.get("skipped_ids", [])
+
+        # ── Update metrics from executor result ──────────────────────────
+        self._pruning_applied_total += len(applied_ids)
+
+        # ── Augment decisions with final counts ──────────────────────────
+        for decision in decisions:
+            decision.before_count = before_count
+            decision.after_count = after_count
+
+        # ── Record decisions with audit identifiers ─────────────────────
+        for decision in decisions:
+            d = decision.to_dict()
+            # SGK-2026-0287 Step 9-2: inject audit identifiers
+            d["queue_snapshot_id"] = queue_snapshot_id
+            d["candidate_task_ids"] = candidate_task_ids
+            d["prune_execution"] = {
+                "applied_ids": applied_ids,
+                "skipped_ids": skipped_ids,
+                "missing_ids": prune_result.get("missing_ids", []),
+                "queue_rebuild_seconds": round(queue_rebuild_seconds, 4),
+                "error": prune_error,
+            }
+            # Inject reasoning for downstream report consumption
+            d["reasoning"] = get_reasoning(decision.reason_code)
+            self._pruning_decisions.append(d)
+
+        # ── Aggregate metrics (SGK-2026-0287 Step 9-1) ──────────────────
+        if decisions:
+            protected_count = sum(1 for d in decisions if d.protected)
+            non_protected_count = len(decisions) - protected_count
+            self._pruning_candidates_total += len(decisions)
+            self._pruning_protected_skip_total += len(skipped_ids)
+            logger.info(
+                "Pruning executed: snapshot=%s candidates=%d protected=%d "
+                "applied=%d skipped=%d mode=%s rebuild=%.4fs",
+                queue_snapshot_id, len(decisions), protected_count,
+                len(applied_ids), len(skipped_ids), mode, queue_rebuild_seconds,
+            )
+            if candidate_task_ids:
+                logger.debug(
+                    "Pruning candidate IDs (snapshot=%s): %s",
+                    queue_snapshot_id, candidate_task_ids,
+                )
 
     def execute_with_replan(self, max_tasks: int = None) -> dict:
         """
@@ -6576,6 +7165,7 @@ class MasterConductor:
                 ["Total Tasks", summary["total_tasks"]],
                 ["Success", summary["success"]],
                 ["Failed", summary["failed"]],
+                ["Skipped", summary.get("skipped", 0)],
                 ["Replanned", summary["replanned"]],
                 ["Success Rate", f"{summary['success_rate']:.1%}"],
                 ["Discovered Assets", len(summary["discovered_assets"])],
@@ -6613,6 +7203,17 @@ class MasterConductor:
                             for code, count in summary.get("failed_reason_codes", {}).items()
                         )
                         if summary.get("failed_reason_codes")
+                        else "-"
+                    ),
+                ],
+                [
+                    "Skipped Reasons",
+                    (
+                        ", ".join(
+                            f"{code}={count}"
+                            for code, count in summary.get("skipped_reason_codes", {}).items()
+                        )
+                        if summary.get("skipped_reason_codes")
                         else "-"
                     ),
                 ],
@@ -8223,6 +8824,7 @@ class MasterConductor:
                         logger.warning(f"Max replan depth ({self.max_replan_depth}) reached for task: {task.id}")
             
             self.completed_tasks.append(task)
+            self._release_ownership(task)  # SGK-2026-0367
             self._mark_pending_hitl_done(task, success=bool(result.get("success", False)))
             
             # #9: チェックポイント保存（5タスクごと）
@@ -8242,6 +8844,7 @@ class MasterConductor:
             failure_reason = "timeout_exception" if self._is_timeout_related(e) else type(e).__name__
             self._record_failure_context(task, "dispatch_exception", failure_reason)
             self.completed_tasks.append(task)
+            self._release_ownership(task)  # SGK-2026-0367
             self._mark_pending_hitl_done(task, success=False)
             logger.error("Task execution error: %s", e)
             
@@ -8311,10 +8914,7 @@ class MasterConductor:
             target_info_update["in_scope_domains"] = in_scope_domains
 
         # ---- Bug Bounty bundle preflight (Phase 1: SGK-2026-0335) ----------
-        current_mode = self.context.target_info.get(
-            "mode",
-            getattr(self, "mode", "").lower() if getattr(self, "mode", None) else "bugbounty",
-        ).lower()
+        current_mode = self._resolve_current_mode_name()
         if current_mode == "bugbounty":
             bundle_result = self._try_resolve_bugbounty_bundle()
             if isinstance(bundle_result, dict) and bundle_result.get("_preflight_failed"):
@@ -8438,7 +9038,48 @@ class MasterConductor:
             "compiled_guard_policy_path": resolved.compiled_policy_path,
             "scope_source": "compiled_guard_policy",
         }
-    
+
+    # ------------------------------------------------------------------
+    # Mode resolution (SGK-2026-0339)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _normalize_mode_name(value) -> str:
+        """Normalize a mode token to its canonical lowercase form.
+
+        ``BUG_BOUNTY`` / ``bug_bounty`` / ``BUGBOUNTY`` all collapse to
+        ``bugbounty`` so the scope fast-path, the dispatch gate and the
+        phase filter agree on the active mode.
+        """
+        if not value:
+            return "bugbounty"
+        token = str(value).strip().lower().replace("-", "").replace("_", "")
+        aliases = {
+            "bugbounty": "bugbounty",
+            "bb": "bugbounty",
+            "vulntest": "vulntest",
+            "ctf": "ctf",
+        }
+        return aliases.get(token, token)
+
+    def _resolve_current_mode_name(self) -> str:
+        """Single source of truth for the current run mode.
+
+        Priority: ``context.target_info["mode"]`` (persisted by
+        ``interactive_bridge`` at session start) -> ``self.mode`` ->
+        ``"bugbounty"``. Every value is normalized through
+        :meth:`_normalize_mode_name`, so callers never see raw variants
+        like ``BUG_BOUNTY``.
+
+        Centralizing this here removes the class of bug where different
+        dispatch sites picked different defaults (one used ``self.mode``,
+        another hardcoded ``"bugbounty"``) and a vulntest run silently
+        degraded to bugbounty, tripping the SGK-2026-0335 bundle preflight.
+        """
+        raw = self.context.target_info.get("mode")
+        if not raw:
+            raw = getattr(self, "mode", "") or "bugbounty"
+        return self._normalize_mode_name(raw)
+
     async def _dispatch(self, task: Task) -> dict:
         """タスクを適切なエージェントにディスパッチ"""
         logger.debug(f"Entering _dispatch with task {task.agent_type}")
@@ -8446,7 +9087,7 @@ class MasterConductor:
         if task.agent_type == "scope_parser" and getattr(task, "action", "") == "verify_scope":
             return self._dispatch_scope_verification_fast_path(task)
         
-        current_mode = self.context.target_info.get("mode", "bugbounty").lower()
+        current_mode = self._resolve_current_mode_name()
 
         # ---- Bug Bounty bundle readiness gate (Phase 1: SGK-2026-0335) ------
         # Ensure bundle was resolved before any non-verify_scope task runs.
@@ -8533,7 +9174,7 @@ class MasterConductor:
             pass
         
         # === Phase 1: フェーズベースフィルタリング (CTFモード限定) ===
-        current_mode = self.context.target_info.get("mode", "bugbounty").lower()
+        current_mode = self._resolve_current_mode_name()
         
         if current_mode == "ctf":
             from src.core.engine.agent_registry import is_agent_available
@@ -8742,28 +9383,45 @@ class MasterConductor:
 
                 logger.info(f"Dispatching ReconPipeline for target: {target}")
                 
-                # Resume support: restore previous state if resume_state_path is set
+                # Resume support: validate via shared validator (fail-closed), then restore state
                 resume_source = str(self.context.target_info.get("resume_source", "") or "").strip()
                 resume_state_path = str(self.context.target_info.get("resume_state_path", "") or "").strip()
+                target = str(self.context.target_info.get("target", "") or "").strip()
+                resume_verdict = None
                 resume_state = None
-                if resume_state_path:
+                if resume_state_path and target:
                     try:
                         from pathlib import Path
                         from src.recon.pipeline import ReconState
-                        loaded = ReconState.load(Path(resume_state_path))
-                        if loaded and loaded.run_id:
+                        # SGK-2026-0281: shared validator path — no raw ReconState.load() bypass
+                        verdict = ReconState.validate_for_resume(Path(resume_state_path), target)
+                        resume_verdict = verdict
+                        logger.info(
+                            "Resume verdict: can_resume=%s reason_code=%s next_step=%s",
+                            verdict["can_resume"],
+                            verdict.get("reason_code", "unknown"),
+                            verdict.get("next_step"),
+                        )
+                        if verdict["can_resume"] and verdict.get("state"):
+                            state_from_verdict = verdict["state"]
                             effective_source = resume_source if resume_source in ("resume", "resume_override") else "resume"
-                            loaded.rebind_for_resume(resume_source=effective_source)
-                            resume_state = loaded
+                            state_from_verdict.rebind_for_resume(resume_source=effective_source)
+                            resume_state = state_from_verdict
                             logger.info(
-                                "Resume state loaded: run_id=%s diff_base_run_id=%s step=%d completed=%s",
+                                "Resume state loaded via shared validator: run_id=%s diff_base_run_id=%s reason_code=%s source=%s",
                                 resume_state.run_id,
                                 resume_state.diff_base_run_id,
-                                resume_state.current_step,
-                                resume_state.completed_steps[-1] if resume_state.completed_steps else "none",
+                                verdict["reason_code"],
+                                effective_source,
+                            )
+                        elif not verdict["can_resume"]:
+                            logger.warning(
+                                "Resume rejected by shared validator: reason_code=%s message=%s",
+                                verdict.get("reason_code", "unknown"),
+                                verdict.get("reason_message", ""),
                             )
                     except Exception as e:
-                        logger.warning("Failed to load resume state from %s: %s", resume_state_path, e)
+                        logger.warning("Failed to validate resume state from %s: %s", resume_state_path, e)
                 
                 # ReconPipeline 初期化 (MC を渡す)
                 pipeline = ReconPipeline(
@@ -8824,21 +9482,58 @@ class MasterConductor:
 
                 if merged_results:
                     self.phase_gate.set_classified_files(Phase.RECON, merged_results)
-                    
-                    # 成果があれば ATTACK フェーズをアンロック
-                    has_results = any(v.get("count", 0) > 0 for v in merged_results.values())
+
+                    # SGK-2026-0281: ATTACK unlock requires in-scope actionable signals,
+                    # not merely count > 0. Non-actionable and metadata-only categories are excluded.
+                    non_actionable_categories = {"uncategorized", "external_link", "invalid_candidate"}
+                    actionable_categories: dict[str, int] = {}
+                    signal_bundle_has_signals = False
+                    for cat, data in merged_results.items():
+                        if cat.startswith("_"):
+                            # SGK-2026-0281: _signal_bundle is actionable if it contains signals
+                            if cat == "_signal_bundle" and isinstance(data, dict):
+                                sigs = data.get("_endpoint_signals", [])
+                                if isinstance(sigs, list) and len(sigs) > 0:
+                                    signal_bundle_has_signals = True
+                            continue
+                        if cat in non_actionable_categories:
+                            continue
+                        count = data.get("count", 0) if isinstance(data, dict) else 0
+                        if count > 0:
+                            actionable_categories[cat] = count
+
+                    has_actionable_results = bool(actionable_categories) or signal_bundle_has_signals
                     bundle = self._load_import_recon_bundle()
-                    if has_results:
+                    if has_actionable_results:
                         self.phase_gate.unlock(Phase.ATTACK)
-                        logger.info("ATTACK phase unlocked due to recon results")
-                        
+                        logger.info(
+                            "ATTACK phase unlocked: %d actionable categories (%s)%s",
+                            len(actionable_categories),
+                            ", ".join(sorted(actionable_categories.keys())[:5]),
+                            " + signal_bundle" if signal_bundle_has_signals else "",
+                        )
+
                         # Attack タスクを生成(サブエージェント生成)
                         attack_tasks = self._create_attack_tasks_from_recon(merged_results)
                         if attack_tasks:
-                            self._add_tasks(attack_tasks, source="recon_result")
-                            logger.info(f"Added {len(attack_tasks)} attack tasks to queue")
+                            added_attack_tasks = self._add_tasks(attack_tasks, source="recon_result")
+                            logger.info(
+                                "Queued %d of %d generated attack tasks from recon results",
+                                added_attack_tasks,
+                                len(attack_tasks),
+                            )
+                        else:
+                            logger.info(
+                                "No attack tasks generated from recon results (actionable categories: %s)",
+                                ", ".join(sorted(actionable_categories.keys())) if actionable_categories else "none",
+                            )
                     elif bundle is not None and not bundle.accepted:
                         logger.warning("ATTACK phase NOT unlocked: all imported artifacts rejected")
+                    else:
+                        logger.warning(
+                            "ATTACK phase NOT unlocked: no actionable signals found in %d merged categories",
+                            len(merged_results),
+                        )
                 
                 # Recon実行完了フラグをセット（重複実行防止）
                 self._recon_executed = True
@@ -9493,6 +10188,7 @@ class MasterConductor:
         guard_params: dict[str, Any] = {
             "category": "csrf_candidate",
             "source_category": "coverage_backfill_guard",
+            "selection_origin": "coverage_backfill_guard",
             "count": 1,
             "tags": ["csrf_candidate", "auth_endpoint", "coverage_guard_forced"],
             "targets": [target],
@@ -9547,7 +10243,8 @@ class MasterConductor:
             return False
         task_queue.add(guard_task)
         self._injected_task_ids.add(guard_task.id)
-        self._derived_task_count += 1
+        if self._should_count_against_derived_task_limit(guard_task):
+            self._derived_task_count += 1
         logger.warning(
             "Global CSRF coverage guard injected (source=%s, target=%s, task_id=%s)",
             trigger_source,
@@ -9583,6 +10280,7 @@ class MasterConductor:
         guard_params: dict[str, Any] = {
             "category": "xss_candidate",
             "source_category": "coverage_backfill_guard",
+            "selection_origin": "coverage_backfill_guard",
             "count": 1,
             "tags": ["xss_candidate", "sqli_candidate", "coverage_guard_forced"],
             "targets": [target],
@@ -9636,7 +10334,8 @@ class MasterConductor:
             return False
         task_queue.add(guard_task)
         self._injected_task_ids.add(guard_task.id)
-        self._derived_task_count += 1
+        if self._should_count_against_derived_task_limit(guard_task):
+            self._derived_task_count += 1
         logger.warning(
             "Global XSS coverage guard injected (source=%s, target=%s, task_id=%s)",
             trigger_source,
@@ -9720,7 +10419,8 @@ class MasterConductor:
             return False
         task_queue.add(guard_task)
         self._injected_task_ids.add(guard_task.id)
-        self._derived_task_count += 1
+        if self._should_count_against_derived_task_limit(guard_task):
+            self._derived_task_count += 1
         logger.warning(
             "Global OOB scenario guard injected (source=%s, target=%s, task_id=%s)",
             trigger_source,
@@ -9810,6 +10510,9 @@ class MasterConductor:
 
         Fresh results always take precedence over imported for the same category.
         Imported categories not present in fresh are added with provenance annotation.
+
+        SGK-2026-0281: Provenance includes artifact_hash for accepted artifacts
+        and fingerprint_match status. Only accepted artifacts contribute to results.
         """
         bundle = self._load_import_recon_bundle()
         if bundle is None or not bundle.accepted:
@@ -9817,17 +10520,39 @@ class MasterConductor:
 
         merged = dict(fresh_results) if fresh_results else {}
 
+        # SGK-2026-0281: Aggregate provenance from accepted artifacts
+        accepted_hashes: list[str] = []
+        accepted_fingerprints: list[str] = []
+        for a in bundle.accepted_artifacts:
+            ah = a.provenance.get("artifact_hash", "")
+            if ah and ah != "unavailable":
+                accepted_hashes.append(ah)
+            tfp = a.provenance.get("target_fingerprint", "")
+            if tfp:
+                accepted_fingerprints.append(tfp)
+
+        base_provenance = {
+            "import_dir": str(bundle.import_dir),
+            "import_time": bundle.import_timestamp,
+            "accepted_artifact_hashes": accepted_hashes[:20],  # cap at 20
+            "accepted_count": len(bundle.accepted_artifacts),
+            "rejected_count": len(bundle.rejected_artifacts),
+            "stale_count": len(bundle.stale_artifacts),
+        }
+        if accepted_fingerprints:
+            base_provenance["target_fingerprints"] = list(set(accepted_fingerprints))
+
         for category, data in bundle.normalized_results.items():
             if category not in merged:
                 # Add imported category not present in fresh
                 imported_data = dict(data) if isinstance(data, dict) else {"count": 0, "file": ""}
                 imported_data.setdefault("_source", "imported")
-                imported_data.setdefault("_import_provenance", {"import_dir": str(bundle.import_dir), "import_time": bundle.import_timestamp})
+                imported_data.setdefault("_import_provenance", dict(base_provenance))
                 merged[category] = imported_data
                 logger.debug("Imported recon category '%s' added (not in fresh)", category)
             else:
                 # Fresh exists — keep fresh, annotate with imported provenance
-                merged[category].setdefault("_import_provenance", {"import_dir": str(bundle.import_dir), "import_time": bundle.import_timestamp})
+                merged[category].setdefault("_import_provenance", dict(base_provenance))
                 logger.debug("Imported recon category '%s' superseded by fresh results", category)
 
         return merged
@@ -9836,9 +10561,13 @@ class MasterConductor:
         """
         Recon 結果から Attack タスクを生成
 
+        SGK-2026-0261: _signal_bundle が存在する場合は signal-first routing を優先し、
+        旧 tagged_urls 読み戻しは fallback 時のみ使用する。
+
         Args:
             recon_results: step8_return_to_mc が返す分類結果
                           {category: {file, count, description}}
+                          + _signal_bundle: {_host_surface_summary, _endpoint_signals} (0261)
 
         Returns:
             生成されたタスクのリスト
@@ -9877,8 +10606,367 @@ class MasterConductor:
             "xss_candidate": ("XSS/Injection Scan on Forms", "InjectionSwarm", "injection"),
         }
 
-        # 各分類結果からタスクを生成
+        # ── SGK-2026-0261: signal-first routing ──
+        signal_bundle = recon_results.get("_signal_bundle", {}) if isinstance(recon_results, dict) else {}
+        host_summary = signal_bundle.get("_host_surface_summary", {}) if isinstance(signal_bundle, dict) else {}
+        endpoint_signals = signal_bundle.get("_endpoint_signals", []) if isinstance(signal_bundle, dict) else []
+
+        def _signal_identity(signal_like: dict) -> str:
+            signal_id = str(signal_like.get("signal_id", "") or "").strip()
+            if signal_id:
+                return signal_id
+            url = str(signal_like.get("url", "") or "").strip()
+            primary = str(
+                signal_like.get("primary_label", "")
+                or signal_like.get("entity_type", "")
+                or ""
+            ).strip()
+            if url and primary:
+                return f"{url}#{primary}"
+            return url
+
+        signal_generated_count = 0
+        recipe_generated_count = 0
+        routed_signal_ids: set[str] = set()
+        signal_swarm_reason_by_id: dict[str, str] = {}
+        recipe_selection_threshold = 0.75
+        # SGK-2026-0260: track suppression keys to prevent re-execution
+        active_suppression_keys: set[str] = set()
+        suppressed_recipe_count = 0
+        # SGK-2026-0281: decision matrix tracking for observability
+        decision_stats: dict[str, int] = {
+            "recipe_executed": 0,
+            "manual_review_required": 0,
+            "low_confidence": 0,
+            "unsupported_action": 0,
+            "suppression_active": 0,
+            "swarm_fallback": 0,
+            "no_recipe_match": 0,
+            "gate_rejected": 0,
+        }
+        # ── Load suppression keys from KG (cross-run dedup) ───────────
+        if hasattr(self, "graph") and self.graph:
+            try:
+                target_domain = str(self.context.target_info.get("target", "") or "")
+                if target_domain:
+                    kg_runs = self.graph.get_recipe_runs_for_domain(target_domain)
+                    if isinstance(kg_runs, dict):
+                        # Load real suppression keys stored by previous recipe runs
+                        for sk in kg_runs.get("suppression_keys", []):
+                            if sk:
+                                active_suppression_keys.add(sk)
+            except Exception:
+                pass
+        recipe_loader = getattr(self, "recipe_loader", None)
+        if recipe_loader and endpoint_signals:
+            # ── SGK-2026-0260: KG context for enrichment ────────────────
+            kg_context: Optional[dict] = None
+            if hasattr(self, "graph") and self.graph:
+                try:
+                    target_domain = str(self.context.target_info.get("target", "") or "")
+                    kg_tech = (
+                        self.graph.get_tech_stack(target_domain)
+                        if target_domain and hasattr(self.graph, "get_tech_stack") else {}
+                    )
+                    kg_runs = (
+                        self.graph.get_recipe_runs_for_domain(target_domain)
+                        if target_domain and hasattr(self.graph, "get_recipe_runs_for_domain")
+                        else {}
+                    )
+                    # Gather nearby findings from signal URLs
+                    nearby_findings = []
+                    for sig in endpoint_signals:
+                        if isinstance(sig, dict) and sig.get("url"):
+                            sig_findings = self.graph.get_nearby_findings(
+                                sig["url"], max_distance=5,
+                            ) if hasattr(self.graph, "get_nearby_findings") else []
+                            nearby_findings.extend(sig_findings)
+                            if len(nearby_findings) >= 10:
+                                break
+                    kg_context = {
+                        "tech_stack_context": kg_tech if isinstance(kg_tech, dict) else {},
+                        "previous_recipe_runs": kg_runs.get("previous_recipe_runs", []),
+                        "previous_recipe_outcomes": kg_runs.get("previous_recipe_outcomes", {}),
+                        "nearby_findings": nearby_findings[:10],
+                        "nearby_endpoints": [],  # populated by signal proximity in future
+                    }
+                except Exception:
+                    kg_context = None
+
+            recipe_context = {
+                "tech_stack": self.context.target_info.get("tech_stack", []),
+                "target": self.context.target_info.get("target", ""),
+                "attack_surface_signals": endpoint_signals,
+                "host_surface_summary": host_summary,
+                "auth_headers": self.context.target_info.get("auth_headers", {}),
+                "cookies": self.context.target_info.get("cookies", {}),
+                "bearer_token": self.context.target_info.get("bearer_token", ""),
+            }
+            recipe_candidates = recipe_loader.match_recipes_to_context(
+                recipe_context,
+                kg_context=kg_context,
+                active_suppression_keys=active_suppression_keys,
+            )
+            recipe_candidates_by_signal: dict[str, list] = {}
+            for rc in recipe_candidates:
+                signal_key = _signal_identity(rc.supporting_evidence)
+                if not signal_key:
+                    continue
+                recipe_candidates_by_signal.setdefault(signal_key, []).append(rc)
+
+            for signal in endpoint_signals:
+                if not isinstance(signal, dict):
+                    continue
+                signal_key = _signal_identity(signal)
+                if not signal_key:
+                    continue
+                signal_candidates = recipe_candidates_by_signal.get(signal_key, [])
+                if not signal_candidates:
+                    signal_swarm_reason_by_id[signal_key] = "no_recipe_match"
+                    decision_stats["no_recipe_match"] += 1
+                    continue
+
+                # ── SGK-2026-0260: filter suppressed candidates ─────────
+                unsuppressed = [rc for rc in signal_candidates if not rc.suppressed]
+                suppressed = [rc for rc in signal_candidates if rc.suppressed]
+                if suppressed:
+                    for _rc in suppressed:
+                        suppressed_recipe_count += 1
+                        active_suppression_keys.add(
+                            build_suppression_key(
+                                recipe_name=_rc.recipe.name,
+                                signal_identity=(
+                                    _rc.supporting_evidence.get("signal_id")
+                                    or _rc.supporting_evidence.get("candidate_id")
+                                    or signal_key
+                                ),
+                                prefix=(
+                                    "signal"
+                                    if _rc.supporting_evidence.get("signal_id")
+                                    or _rc.supporting_evidence.get("url")
+                                    else "endpoint"
+                                ),
+                            )
+                        )
+                        logger.debug(
+                            "[SGK-2026-0260] Suppressed recipe candidate %s for signal %s: %s",
+                            _rc.recipe.name,
+                            signal_key,
+                            _rc.suppression_reason,
+                        )
+                if suppressed and not unsuppressed:
+                    # All candidates suppressed → record reason and fall to swarm
+                    suppression_reasons = set(
+                        str(rc.suppression_reason or "") for rc in suppressed
+                    )
+                    if "suppression_key_active" in suppression_reasons:
+                        signal_swarm_reason_by_id[signal_key] = "suppression_active"
+                        decision_stats["suppression_active"] += 1
+                    elif any("unsupported_action" in (r or "") for r in suppression_reasons):
+                        signal_swarm_reason_by_id[signal_key] = "unsupported_action"
+                        decision_stats["unsupported_action"] += 1
+                    else:
+                        signal_swarm_reason_by_id[signal_key] = "suppression_active"
+                        decision_stats["suppression_active"] += 1
+                    continue
+
+                # Use unsuppressed candidates for deterministic selection
+                effective_candidates = unsuppressed if unsuppressed else signal_candidates
+
+                deterministic_candidates = [
+                    rc
+                    for rc in effective_candidates
+                    if not rc.manual_review_required
+                    and rc.score >= recipe_selection_threshold
+                ]
+                if not deterministic_candidates:
+                    if any(rc.manual_review_required for rc in signal_candidates):
+                        signal_swarm_reason_by_id[signal_key] = "manual_review_required"
+                        decision_stats["manual_review_required"] += 1
+                    else:
+                        signal_swarm_reason_by_id[signal_key] = "low_confidence"
+                        decision_stats["low_confidence"] += 1
+                    continue
+
+                deterministic_candidates.sort(
+                    key=lambda rc: (-rc.score, -len(rc.reasons), rc.recipe.name)
+                )
+                rc = deterministic_candidates[0]
+                recipe = rc.recipe
+                recipe_target = (
+                    rc.supporting_evidence.get("url")
+                    or self.context.target_info.get("target", "")
+                )
+                recipe_task = Task(
+                    id=f"recipe_exec_{recipe.name}_{uuid.uuid4().hex[:8]}",
+                    name=f"Optimized Recipe: {recipe.name}",
+                    agent_type="swarm",
+                    action="run_recipe",
+                    params={
+                        "recipe_name": recipe.name,
+                        "target": recipe_target,
+                        "selector_score": rc.score,
+                        "selector_reasons": rc.reasons,
+                        "recipe_signal_id": rc.supporting_evidence.get("signal_id"),
+                        "signal_entity_type": rc.supporting_evidence.get("entity_type"),
+                        "signal_primary_label": rc.supporting_evidence.get("primary_label"),
+                        "manual_review_required": rc.manual_review_required,
+                        "selection_origin": "recipe_selector.signal_bundle",
+                        "recipe_selection_mode": "deterministic_signal",
+                        "recipe_suppression_key": f"{recipe.name}:{signal_key}",
+                    },
+                    priority=100,
+                )
+                task_contract = validate_task_schema(recipe_task)
+                if not task_contract.get("ok", False):
+                    logger.warning(
+                        "Skip invalid recon-derived recipe task contract for %s: %s",
+                        recipe.name,
+                        task_contract.get("errors", []),
+                    )
+                    continue
+                tasks.append(recipe_task)
+                recipe_generated_count += 1
+                decision_stats["recipe_executed"] += 1
+                routed_signal_ids.add(signal_key)
+
+        if endpoint_signals:
+            logger.info(
+                "[SGK-2026-0261] Signal-first routing: %d signals available for task creation",
+                len(endpoint_signals),
+            )
+            # signal をカテゴリごとにグループ化
+            signals_by_category: dict[str, list[dict]] = {}
+            swarm_reasons_by_category: dict[str, set[str]] = {}
+            for sig in endpoint_signals:
+                if not isinstance(sig, dict):
+                    continue
+                signal_key = _signal_identity(sig)
+                if signal_key and signal_key in routed_signal_ids:
+                    continue
+                primary = sig.get("primary_label", "")
+                if not primary:
+                    continue
+                # primary_label から normalized category を導出
+                # tagged_{category} 形式の場合は prefix を取り除く
+                if primary.startswith("tagged_"):
+                    primary = primary[7:]
+                signals_by_category.setdefault(primary, []).append(sig)
+                if signal_key:
+                    swarm_reasons_by_category.setdefault(primary, set()).add(
+                        signal_swarm_reason_by_id.get(signal_key, "no_recipe_match")
+                    )
+
+            for normalized_category, sigs in signals_by_category.items():
+                if normalized_category in non_actionable_categories:
+                    continue
+                if normalized_category not in category_map:
+                    logger.debug(
+                        "[SGK-2026-0261] Signal category '%s' not in category_map, skipping",
+                        normalized_category,
+                    )
+                    continue
+
+                total_count = sum(s.get("seen_count", 1) for s in sigs)
+                name, agent_type, swarm_type = category_map[normalized_category]
+                task_name = f"{name} ({total_count} signals)"
+
+                # Extract real target URLs from signals
+                signal_urls: list[str] = list({
+                    s.get("url", "")
+                    for s in sigs
+                    if s.get("url", "") and s.get("url", "").startswith("http")
+                })
+                primary_target = signal_urls[0] if signal_urls else ""
+
+                actual_agent = agent_type
+                tags = list({
+                    label
+                    for s in sigs
+                    for label in s.get("candidate_labels", [])
+                })
+                if not tags:
+                    tags = [normalized_category]
+
+                task_id = str(uuid.uuid4())
+                task = Task(
+                    id=task_id,
+                    name=task_name,
+                    agent_type=actual_agent,
+                    action="scan",
+                    priority=80,
+                    params={
+                        "task_id": task_id,
+                        "task_name": task_name,
+                        "target": primary_target,
+                        "targets": signal_urls,
+                        "targets_file": "",
+                        "tags": tags,
+                        "category": normalized_category,
+                        "signal_count": total_count,
+                        "swarm_type": swarm_type,
+                        "selection_origin": f"signal_bundle.{normalized_category}",
+                        "recipe_to_swarm_reason": (
+                            sorted(swarm_reasons_by_category.get(normalized_category, {"no_recipe_match"}))[0]
+                        ),
+                        "recipe_to_swarm_reasons": sorted(
+                            swarm_reasons_by_category.get(normalized_category, {"no_recipe_match"})
+                        ),
+                        "_source": "signal_bundle",
+                        "_run_id": signal_bundle.get("_run_id", ""),
+                    },
+                )
+                tasks.append(task)
+                signal_generated_count += 1
+
+            if signal_generated_count > 0 or recipe_generated_count > 0:
+                logger.info(
+                    "[SGK-2026-0261] Signal-first routing: %d signals → %d scan tasks, %d recipe tasks, %d suppressed",
+                    len(endpoint_signals),
+                    signal_generated_count,
+                    recipe_generated_count,
+                    suppressed_recipe_count,
+                )
+                # SGK-2026-0281: decision matrix trace for observability
+                logger.info(
+                    "[SGK-2026-0281] Decision matrix: recipe=%d manual_review=%d low_confidence=%d "
+                    "unsupported_action=%d suppression=%d no_match=%d swarm_fallback=%d gate_rejected=%d",
+                    decision_stats["recipe_executed"],
+                    decision_stats["manual_review_required"],
+                    decision_stats["low_confidence"],
+                    decision_stats["unsupported_action"],
+                    decision_stats["suppression_active"],
+                    decision_stats["no_recipe_match"],
+                    decision_stats["swarm_fallback"],
+                    decision_stats["gate_rejected"],
+                )
+                # SGK-2026-0261: signal bundle を KG に永続化
+                if hasattr(self, "graph") and self.graph:
+                    try:
+                        stored = self.graph.store_signal_bundle(signal_bundle)
+                        logger.debug("[SGK-2026-0261] KG persistence: stored %d signals", stored)
+                    except Exception as kg_exc:
+                        logger.warning("[SGK-2026-0261] KG persistence failed (non-fatal): %s", kg_exc)
+
+        # Fallback: signal bundle が存在しないか空の場合のみ旧 tagged_urls 経路を使用
+        if signal_generated_count == 0 and recipe_generated_count == 0:
+            logger.debug(
+                "[SGK-2026-0261] No signals available, falling back to tagged_urls routing"
+            )
+        else:
+            # SGK-2026-0261: signal-first routing が成功したので fallback をスキップ
+            logger.info(
+                "[SGK-2026-0261] Signal-first routing succeeded (%d scan tasks, %d recipe tasks); skipping fallback",
+                signal_generated_count,
+                recipe_generated_count,
+            )
+            return tasks
+
+        # 各分類結果からタスクを生成（fallback path: signal 未生成時のみ）
         for category, data in recon_results.items():
+            # 内部キーはスキップ
+            if category.startswith("_"):
+                continue
             original_category = category
             normalized_category = category[7:] if category.startswith("tagged_") else category
             count = data.get("count", 0)
@@ -9914,6 +11002,7 @@ class MasterConductor:
                 logger.warning(
                     "Gate rejected category '%s': %s", normalized_category, gate_reason
                 )
+                decision_stats["gate_rejected"] += 1
                 continue
 
             # カテゴリマップにあればそれを使用、なければ汎用タスクを生成
@@ -10266,6 +11355,7 @@ class MasterConductor:
                     "source_category": original_category,
                     "count": count,
                     "tags": tag_map.get(normalized_category, [normalized_category]),
+                    "selection_origin": f"master_conductor.recon.{normalized_category}",
                     "_context": {
                         "discovered_endpoints": self.context.discovered_assets[:10],
                         "auth_tokens": self.context.target_info.get("auth_tokens", {}),
@@ -10526,6 +11616,7 @@ class MasterConductor:
                 csrf_task_params: dict[str, Any] = {
                     "category": "csrf_candidate",
                     "source_category": "coverage_backfill",
+                    "selection_origin": "coverage_backfill",
                     "count": len(csrf_seed_targets),
                     "tags": ["csrf_candidate", "auth_endpoint"],
                     "targets": csrf_seed_targets,
@@ -10616,6 +11707,7 @@ class MasterConductor:
                 emergency_params: dict[str, Any] = {
                     "category": "csrf_candidate",
                     "source_category": "coverage_backfill_guard",
+                    "selection_origin": "coverage_backfill_guard",
                     "count": 1,
                     "tags": ["csrf_candidate", "auth_endpoint", "coverage_guard_forced"],
                     "targets": [emergency_target],
@@ -10724,6 +11816,7 @@ class MasterConductor:
                 api_task_params: dict[str, Any] = {
                     "category": "api_data",
                     "source_category": "coverage_backfill",
+                    "selection_origin": "coverage_backfill",
                     "count": len(api_seed_targets),
                     "tags": ["api_endpoint", "has_params"],
                     "targets": api_seed_targets,
@@ -10899,6 +11992,7 @@ class MasterConductor:
                 xss_task_params: dict[str, Any] = {
                     "category": "xss_candidate",
                     "source_category": "coverage_backfill",
+                    "selection_origin": "coverage_backfill",
                     "count": len(xss_seed_targets),
                     "tags": ["xss_candidate", "sqli_candidate"],
                     "targets": xss_seed_targets,
@@ -10958,6 +12052,7 @@ class MasterConductor:
                 emergency_params: dict[str, Any] = {
                     "category": "xss_candidate",
                     "source_category": "coverage_backfill_guard",
+                    "selection_origin": "coverage_backfill_guard",
                     "count": 1,
                     "tags": ["xss_candidate", "sqli_candidate", "coverage_guard_forced"],
                     "targets": [emergency_target],
@@ -11063,6 +12158,7 @@ class MasterConductor:
                 access_logic_params: dict[str, Any] = {
                     "category": "admin",
                     "source_category": "coverage_backfill",
+                    "selection_origin": "coverage_backfill",
                     "count": len(access_logic_targets),
                     "tags": ["admin_panel", "auth_required", "api_endpoint"],
                     "targets": access_logic_targets,
@@ -11178,10 +12274,7 @@ class MasterConductor:
         prioritized_tasks: list[Task] = []
         regular_tasks: list[Task] = []
         for queued_task in final_tasks:
-            queued_params = queued_task.params if isinstance(getattr(queued_task, "params", None), dict) else {}
-            source_category = str(queued_params.get("source_category", "") or "").strip().lower()
-            category = str(queued_params.get("category", "") or "").strip().lower()
-            if source_category in {"coverage_backfill", "scenario_probe_planner"} or category == "csrf_candidate":
+            if task_pruning_policy_shared.is_coverage_critical_task(queued_task):
                 prioritized_tasks.append(queued_task)
             else:
                 regular_tasks.append(queued_task)
@@ -11299,29 +12392,26 @@ class MasterConductor:
         total = len(self.completed_tasks)
         success = len([t for t in self.completed_tasks if t.state == TaskState.SUCCESS])
         failed = len([t for t in self.completed_tasks if t.state == TaskState.FAILED])
+        skipped = len([t for t in self.completed_tasks if t.state == TaskState.SKIPPED])
         replanned = len([t for t in self.completed_tasks if t.state == TaskState.REPLANNED])
         failed_reason_codes: dict[str, int] = {}
+        skipped_reason_codes: dict[str, int] = {}
         failed_failure_categories: dict[str, int] = {}
         unknown_failure_count = 0
         for task in self.completed_tasks:
-            if task.state != TaskState.FAILED:
-                continue
-            reason_code = str(getattr(task, "failure_reason_code", "") or "").strip()
-            if not reason_code:
-                reason_code = self._normalize_failure_reason_code(
-                    str(getattr(task, "failure_phase", "") or ""),
-                    getattr(task, "failure_reason", "") or getattr(task, "error", ""),
-                    getattr(task, "error", ""),
+            if task.state == TaskState.FAILED:
+                reason_code = self._ensure_task_reason_code(task)
+                failed_reason_codes[reason_code] = failed_reason_codes.get(reason_code, 0) + 1
+                failure_category = classify_failure_pattern(
+                    reason_code=reason_code,
+                    error_message=str(getattr(task, "error", "") or ""),
                 )
-                task.failure_reason_code = reason_code
-            failed_reason_codes[reason_code] = failed_reason_codes.get(reason_code, 0) + 1
-            failure_category = classify_failure_pattern(
-                reason_code=reason_code,
-                error_message=str(getattr(task, "error", "") or ""),
-            )
-            failed_failure_categories[failure_category] = failed_failure_categories.get(failure_category, 0) + 1
-            if failure_category == "unknown":
-                unknown_failure_count += 1
+                failed_failure_categories[failure_category] = failed_failure_categories.get(failure_category, 0) + 1
+                if failure_category == "unknown":
+                    unknown_failure_count += 1
+            elif task.state == TaskState.SKIPPED:
+                reason_code = self._ensure_task_reason_code(task)
+                skipped_reason_codes[reason_code] = skipped_reason_codes.get(reason_code, 0) + 1
         unknown_rate = unknown_failure_count / failed if failed > 0 else 0.0
         execution_log = getattr(self, "execution_log", None)
         records = execution_log.get_all() if execution_log is not None and hasattr(execution_log, "get_all") else []
@@ -11363,6 +12453,7 @@ class MasterConductor:
             "total_tasks": total,
             "success": success,
             "failed": failed,
+            "skipped": skipped,
             "replanned": replanned,
             "success_rate": success / total if total > 0 else 0,
             "discovered_assets": self.context.discovered_assets,
@@ -11384,6 +12475,7 @@ class MasterConductor:
             "scenario_covered": int(scenario_coverage.get("covered_count", 0) or 0),
             "pending_hitl_count": len(pending_hitl_items),
             "failed_reason_codes": dict(sorted(failed_reason_codes.items(), key=lambda kv: (-kv[1], kv[0]))),
+            "skipped_reason_codes": dict(sorted(skipped_reason_codes.items(), key=lambda kv: (-kv[1], kv[0]))),
             "failed_failure_categories": dict(sorted(failed_failure_categories.items(), key=lambda kv: (-kv[1], kv[0]))),
             "unknown_failure_count": unknown_failure_count,
             "unknown_rate": unknown_rate,

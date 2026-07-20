@@ -147,29 +147,41 @@ def infer_sessions_dir(report_path: Path) -> Path | None:
     return None
 
 
+def _workspace_compat_candidates(container_path: Path, anchor_path: Path | None = None) -> list[Path]:
+    if not container_path.is_absolute() or "workspace" not in container_path.parts:
+        return [container_path]
+
+    workspace_index = container_path.parts.index("workspace")
+    rel_under_workspace = Path(*container_path.parts[workspace_index + 1:])
+    candidates: list[Path] = []
+
+    if anchor_path is not None:
+        anchor_parts = anchor_path.resolve().parts
+        if "workspace" in anchor_parts:
+            idx = anchor_parts.index("workspace")
+            if idx >= 1:
+                host_prefix = Path(anchor_parts[0])
+                for token in anchor_parts[1:idx]:
+                    host_prefix = host_prefix / token
+                candidates.append((host_prefix / "workspace" / rel_under_workspace).resolve())
+
+    candidates.append((Path.cwd() / "workspace" / rel_under_workspace).resolve())
+    repo_root = Path(__file__).resolve().parents[2]
+    candidates.append((repo_root / "workspace" / rel_under_workspace).resolve())
+    candidates.append(container_path)
+    return candidates
+
+
 def _resolve_source_session_path(raw_source: str, report_path: Path, sessions_dir: Path | None) -> Path | None:
     source_candidate = Path(str(raw_source).strip())
     candidates: list[Path] = []
     if source_candidate.is_absolute():
         # Docker path compatibility:
-        # report header may contain container path like /workspace/projects/.../session_*.json.
+        # report header may contain container path like
+        # /workspace/projects/... or /app/workspace/projects/.../session_*.json.
         # この場合、ホスト/一時ディレクトリ上にある report 側 workspace を優先する。
-        parts = source_candidate.parts
-        if len(parts) >= 2 and parts[1] == "workspace":
-            rel_under_workspace = Path(*parts[2:])
-            report_parts = report_path.resolve().parts
-            if "workspace" in report_parts:
-                idx = report_parts.index("workspace")
-                if idx >= 1:
-                    host_prefix = Path(report_parts[0])
-                    for token in report_parts[1:idx]:
-                        host_prefix = host_prefix / token
-                    candidates.append((host_prefix / "workspace" / rel_under_workspace).resolve())
-            repo_root = Path(__file__).resolve().parents[2]
-            candidates.append((repo_root / "workspace" / rel_under_workspace).resolve())
-            candidates.append((Path.cwd() / "workspace" / rel_under_workspace).resolve())
-            # literal container path は最後にフォールバック
-            candidates.append(source_candidate)
+        if "workspace" in source_candidate.parts:
+            candidates.extend(_workspace_compat_candidates(source_candidate, anchor_path=report_path))
         else:
             candidates.append(source_candidate)
     else:
@@ -336,7 +348,15 @@ def verify_report_session_consistency(
 ) -> dict[str, Any]:
     reason_codes: list[str] = []
 
-    report_file = Path(report_path).expanduser().resolve()
+    raw_report_file = Path(report_path).expanduser()
+    if raw_report_file.exists():
+        report_file = raw_report_file.resolve()
+    else:
+        report_file = raw_report_file.resolve()
+        for candidate in _workspace_compat_candidates(report_file):
+            if candidate.exists():
+                report_file = candidate
+                break
     if not report_file.exists():
         return {
             "status": "blocked",

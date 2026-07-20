@@ -4,6 +4,7 @@ HaddixFormatter: Jason Haddix スタイルの脆弱性レポートフォーマ�
 Phase 6.5: Bug Bounty 向けレポート生成
 """
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List, Optional
@@ -56,6 +57,50 @@ _SCENARIO_TO_DETECTION_CLASS = {
     "scn_04_endpoint_enumeration_bfla": "endpoint_bfla",
     "scn_07_token_trust_boundary": "access_control",
 }
+
+
+# Probe execution states for execution notes rendering
+PROBE_STATE_NOT_APPLICABLE = "not_applicable"     # No parameters needed (e.g., CORS checks)
+PROBE_STATE_NOT_DISCOVERED = "not_discovered"     # Parameters not found
+PROBE_STATE_SKIPPED = "skipped"                   # Intentionally skipped
+PROBE_STATE_EXECUTED = "executed"                 # Probe executed
+PROBE_STATE_INSTRUMENTATION_MISSING = "instrumentation_missing"  # Instrumentation missing
+
+# ---------------------------------------------------------------------------
+# Coverage stage constants (P5-3)
+# ---------------------------------------------------------------------------
+
+COVERAGE_SURFACE_DISCOVERED = "surface_discovered"        # Endpoints/params found
+COVERAGE_DETECTOR_EXECUTED = "detector_executed"           # Detector sent probes
+COVERAGE_EVIDENCE_COLLECTED = "evidence_collected"         # Real evidence saved
+COVERAGE_CANDIDATE_GENERATED = "candidate_generated"       # Candidate created
+COVERAGE_FINDING_CONFIRMED = "finding_confirmed"           # Confirmed finding exists
+
+# Per-module execution time budgets (seconds)
+MODULE_TIME_BUDGETS = {
+    "sqli": 180,
+    "blind_sqli": 240,
+    "xss": 210,
+    "command_injection": 180,
+    "csrf": 60,
+    "cors": 30,
+    "lfi": 120,
+    "open_redirect": 60,
+    "api": 90,
+    "default": 120,
+}
+SLOW_PROBE_THRESHOLD_SECONDS = 300.0  # Warning threshold
+
+# Phase labels for long-running task breakdown
+PHASE_LABELS = [
+    "navigation",
+    "network_wait",
+    "dom_rendering",
+    "payload_execution_wait",
+    "retry",
+    "browser_startup",
+    "teardown",
+]
 
 
 @dataclass
@@ -136,6 +181,20 @@ class HaddixFormatter:
         self._suppressed_findings: List[Dict[str, Any]] = []
 
     @staticmethod
+    def classify_duration_status(vuln_type: str, duration_seconds: float, status: str) -> str:
+        """Classify a task's duration status.
+        Returns: 'normal', 'completed_long_running', 'timeout'
+        """
+        budget = MODULE_TIME_BUDGETS.get(vuln_type, MODULE_TIME_BUDGETS["default"])
+        if status == "timeout":
+            return "timeout"
+        if duration_seconds > budget:
+            return "completed_long_running"
+        if duration_seconds >= SLOW_PROBE_THRESHOLD_SECONDS:
+            return "completed_long_running"
+        return "normal"
+
+    @staticmethod
     def _now_jst() -> datetime:
         if ZoneInfo is not None:
             try:
@@ -189,6 +248,14 @@ class HaddixFormatter:
             status = str(raw_note.get("status", "") or "").strip()
             key = (url, vuln_type.lower(), status.lower())
 
+            probe_sent_val = raw_note.get("probe_sent")
+            if isinstance(probe_sent_val, bool):
+                probe_sent = probe_sent_val
+            else:
+                probe_sent = None
+
+            probe_state_val = str(raw_note.get("probe_state", "") or "").strip()
+
             normalized_note: Dict[str, Any] = {
                 "url": url,
                 "vuln_type": vuln_type,
@@ -196,8 +263,11 @@ class HaddixFormatter:
                 "duration_seconds": raw_note.get("duration_seconds"),
                 "retry_count": int(raw_note.get("retry_count", 0) or 0),
                 "tested_params": self._normalize_string_list(raw_note.get("tested_params", [])),
-                "probe_sent": raw_note.get("probe_sent") if isinstance(raw_note.get("probe_sent"), bool) else None,
+                "probe_sent": probe_sent,
+                "probe_state": probe_state_val,
                 "probe_skipped_reason": str(raw_note.get("probe_skipped_reason", "") or "").strip(),
+                "probe_skip_reason_code": str(raw_note.get("probe_skip_reason_code", "") or "").strip(),
+                "probe_evidence_id": str(raw_note.get("probe_evidence_id", "") or "").strip(),
                 "blind_correlation": raw_note.get("blind_correlation", {})
                 if isinstance(raw_note.get("blind_correlation"), dict)
                 else {},
@@ -230,14 +300,30 @@ class HaddixFormatter:
             normalized_probe_sent = normalized_note.get("probe_sent")
             if normalized_probe_sent is True:
                 current["probe_sent"] = True
+                current["probe_state"] = PROBE_STATE_EXECUTED
                 current["probe_skipped_reason"] = ""
+                current["probe_skip_reason_code"] = ""
             elif current_probe_sent is None and normalized_probe_sent is False:
                 current["probe_sent"] = False
+                current["probe_state"] = normalized_note.get("probe_state", current.get("probe_state", ""))
             if current.get("probe_sent") is not True:
                 current_reason = str(current.get("probe_skipped_reason", "") or "").strip()
                 normalized_reason = str(normalized_note.get("probe_skipped_reason", "") or "").strip()
                 if not current_reason and normalized_reason:
                     current["probe_skipped_reason"] = normalized_reason
+                current_code = str(current.get("probe_skip_reason_code", "") or "").strip()
+                normalized_code = str(normalized_note.get("probe_skip_reason_code", "") or "").strip()
+                if not current_code and normalized_code:
+                    current["probe_skip_reason_code"] = normalized_code
+                current_evidence_id = str(current.get("probe_evidence_id", "") or "").strip()
+                normalized_evidence_id = str(normalized_note.get("probe_evidence_id", "") or "").strip()
+                if not current_evidence_id and normalized_evidence_id:
+                    current["probe_evidence_id"] = normalized_evidence_id
+            # Merge probe_state: prefer more specific states over defaults
+            current_state = str(current.get("probe_state", "") or "").strip()
+            normalized_state = str(normalized_note.get("probe_state", "") or "").strip()
+            if not current_state and normalized_state:
+                current["probe_state"] = normalized_state
             current["blind_correlation"] = self._pick_stronger_blind_correlation(
                 current.get("blind_correlation", {}),
                 normalized_note.get("blind_correlation", {}),
@@ -285,11 +371,24 @@ class HaddixFormatter:
             if token:
                 candidates.append(token)
 
+        # Evidence quality reason codes are already validated domain-specific
+        # codes and must pass through without the standard-code filter.
+        eq_codes = self._normalize_string_list(
+            additional_info.get("evidence_quality_reason_codes", [])
+        )
+
         normalized: List[str] = []
         for candidate in candidates:
             code = self._normalize_unconfirmed_reason_code(candidate)
             if code and code not in normalized:
                 normalized.append(code)
+
+        # Append evidence quality codes after the standard filter so
+        # domain-specific codes like state_change_not_verified survive.
+        for code in eq_codes:
+            if code and code not in normalized:
+                normalized.append(code)
+
         return normalized
 
     def _infer_unconfirmed_reason_code(
@@ -441,7 +540,7 @@ class HaddixFormatter:
         if authz_note:
             summary = f"{summary} | AuthZ differential: {authz_note}" if summary else f"AuthZ differential: {authz_note}"
 
-        steps = list(data.get("steps_to_reproduce", []))
+        steps = list(data.get("steps_to_reproduce") or data.get("reproduction_steps", []))
         payloads_used = self._extract_payloads(data, additional_info)
         blind_steps = self._build_blind_repro_steps(additional_info)
         authz_steps = self._build_authz_repro_steps(additional_info)
@@ -522,6 +621,8 @@ class HaddixFormatter:
             completed_count = 0
             error_count = 0
             retry_total = 0
+            completed_long_running_count = 0
+            budget_violations: Dict[str, int] = {}
             for note in self._execution_notes:
                 url = self._normalize_url_string(str(note.get("url", "")))
                 vuln_type = str(note.get("vuln_type", ""))
@@ -538,28 +639,72 @@ class HaddixFormatter:
                 retry_count = note.get("retry_count", 0)
                 retry_total += int(retry_count or 0)
                 tested_params = note.get("tested_params", [])
-                tested_params_str = ", ".join(str(p) for p in tested_params) if tested_params else "-"
                 probe_sent = note.get("probe_sent")
+                probe_state = str(note.get("probe_state", "") or "").strip()
+                if probe_state == PROBE_STATE_NOT_APPLICABLE:
+                    tested_params_str = "N/A"
+                elif not tested_params:
+                    tested_params_str = "none discovered"
+                else:
+                    tested_params_str = ", ".join(str(p) for p in tested_params)
                 if probe_sent is True:
                     probe_sent_str = "yes"
+                elif probe_state == PROBE_STATE_NOT_APPLICABLE:
+                    probe_sent_str = "N/A"
+                elif probe_state == PROBE_STATE_SKIPPED:
+                    probe_sent_str = "no (skipped)"
+                elif probe_state == PROBE_STATE_NOT_DISCOVERED:
+                    probe_sent_str = "no (no params)"
+                elif probe_state == PROBE_STATE_INSTRUMENTATION_MISSING:
+                    probe_sent_str = "no (no instr.)"
                 elif probe_sent is False:
                     probe_sent_str = "no"
                 else:
-                    probe_sent_str = "-"
-                probe_skipped_reason = str(note.get("probe_skipped_reason", "") or "").strip() or "-"
+                    probe_sent_str = "unknown"
+                probe_skipped_reason = str(note.get("probe_skipped_reason", "") or "").strip()
+                probe_skip_reason_code = str(note.get("probe_skip_reason_code", "") or "").strip()
+                if probe_sent is True or probe_state == PROBE_STATE_NOT_APPLICABLE:
+                    probe_skipped_reason_str = "-"
+                elif probe_skip_reason_code:
+                    probe_skipped_reason_str = probe_skip_reason_code
+                elif probe_skipped_reason:
+                    probe_skipped_reason_str = probe_skipped_reason
+                else:
+                    probe_skipped_reason_str = "unspecified"
                 blind_correlation = note.get("blind_correlation", {})
                 blind_summary = self._format_blind_summary(blind_correlation)
                 lines.append(
-                    f"| `{url}` | {vuln_type} | {status} | {duration_str} | {retry_count} | {tested_params_str} | {probe_sent_str} | {probe_skipped_reason} | {blind_summary} |"
+                    f"| `{url}` | {vuln_type} | {status} | {duration_str} | {retry_count} | {tested_params_str} | {probe_sent_str} | {probe_skipped_reason_str} | {blind_summary} |"
                 )
+                # Track long-running completed vs budget violations
+                duration_val = float(duration) if duration is not None else 0.0
+                duration_status = self.classify_duration_status(vuln_type, duration_val, status)
+                if duration_status == "completed_long_running":
+                    completed_long_running_count += 1
+                    budget = MODULE_TIME_BUDGETS.get(vuln_type, MODULE_TIME_BUDGETS["default"])
+                    if duration_val > budget:
+                        budget_violations[vuln_type] = budget_violations.get(vuln_type, 0) + 1
+
             lines.append("")
             total_notes = len(self._execution_notes)
             timeout_rate = (timeout_count / total_notes * 100.0) if total_notes else 0.0
             avg_retry = (retry_total / total_notes) if total_notes else 0.0
             lines.append(
                 f"KPI: total={total_notes}, completed={completed_count}, timeout={timeout_count}, "
-                f"error={error_count}, timeout_rate={timeout_rate:.1f}%, avg_retry={avg_retry:.2f}"
+                f"error={error_count}, completed_long_running={completed_long_running_count}, "
+                f"timeout_rate={timeout_rate:.1f}%, avg_retry={avg_retry:.2f}"
             )
+            if completed_long_running_count > 0:
+                lines.append(
+                    f"Long-Running Warning: {completed_long_running_count} completed task(s) exceeded "
+                    f"per-module budget or {SLOW_PROBE_THRESHOLD_SECONDS:.0f}s slow-probe threshold. "
+                    "Investigate lightweight probes or timeout tuning for stability."
+                )
+            if budget_violations:
+                violation_parts = ", ".join(
+                    f"{vuln_type}:{count}" for vuln_type, count in sorted(budget_violations.items())
+                )
+                lines.append(f"Budget Violations (type:count): {violation_parts}")
             lines.append("")
 
         if self._scenario_coverage:
@@ -981,6 +1126,15 @@ class HaddixFormatter:
             lines.append("")
             lines.append("```http")
             lines.append(finding.poc_response)
+            lines.append("```")
+        additional_info = finding.additional_info if isinstance(finding.additional_info, dict) else {}
+        poc_html = str(additional_info.get("poc_html", "") or "").strip()
+        if poc_html:
+            lines.append("")
+            lines.append("##### PoC HTML (Browser Execution)")
+            lines.append("")
+            lines.append("```html")
+            lines.append(poc_html)
             lines.append("```")
         if finding.payloads_used:
             lines.append("")
@@ -1452,7 +1606,7 @@ class HaddixFormatter:
                 f"検証対象パラメータ `{', '.join(tested_params)}` に同条件で再入力し、同一挙動を確認する。"
             )
         if detection_mode:
-            payload_steps.append(f"検知モード `{detection_mode}` で同手順を再実行し、同じ結果になることを確認する。")
+            payload_steps.append(f"検知モード `{detection_mode}` で同手順を再実行し、脆弱挙動が再現しないことを確認する。")
 
         if finding.steps_to_reproduce:
             steps = payload_steps + finding.steps_to_reproduce
@@ -1891,6 +2045,332 @@ class HaddixFormatter:
             ),
         )
 
+    # ------------------------------------------------------------------
+    # Coverage stage computation (P5-3)
+    # ------------------------------------------------------------------
+
+    def compute_coverage_stages(self) -> Dict[str, int]:
+        """Count findings at each coverage stage.
+
+        Returns counts per stage from surface_discovered to finding_confirmed.
+        Scenario backfill does NOT inflate the finding_confirmed count — only
+        findings with real evidence are counted at confirmed stage.
+        """
+        counts: Dict[str, int] = {
+            COVERAGE_SURFACE_DISCOVERED: 0,
+            COVERAGE_DETECTOR_EXECUTED: 0,
+            COVERAGE_EVIDENCE_COLLECTED: 0,
+            COVERAGE_CANDIDATE_GENERATED: 0,
+            COVERAGE_FINDING_CONFIRMED: 0,
+        }
+
+        # Execution notes: each note with tested_params or probe_sent contributes
+        # to surface_discovered and detector_executed.
+        for note in self._execution_notes:
+            if not isinstance(note, dict):
+                continue
+            params = note.get("tested_params", [])
+            if isinstance(params, list) and any(str(p).strip() for p in params):
+                counts[COVERAGE_SURFACE_DISCOVERED] += 1
+            probe_sent = note.get("probe_sent")
+            if probe_sent is True:
+                counts[COVERAGE_DETECTOR_EXECUTED] += 1
+
+        confirmed, candidates = self._split_findings_by_confirmation(self._findings)
+
+        for finding in self._findings:
+            info = finding.additional_info if isinstance(finding.additional_info, dict) else {}
+            # Evidence collected: any finding with real request/response evidence
+            has_request = bool(str(finding.poc_request or "").strip())
+            has_response = bool(str(finding.poc_response or "").strip())
+            if has_request and has_response:
+                counts[COVERAGE_EVIDENCE_COLLECTED] += 1
+            # Candidate generated: heuristic candidate or verification_required
+            if self._is_candidate_finding(finding):
+                counts[COVERAGE_CANDIDATE_GENERATED] += 1
+
+        # Finding confirmed: only real confirmed findings, NOT inflated by
+        # scenario backfill. Each confirmed finding must have real evidence.
+        for finding in confirmed:
+            has_request = bool(str(finding.poc_request or "").strip())
+            has_response = bool(str(finding.poc_response or "").strip())
+            # Confirmed findings require full PoC evidence per the
+            # _split_findings_by_confirmation logic.
+            counts[COVERAGE_FINDING_CONFIRMED] += 1
+
+        return counts
+
+    @staticmethod
+    def build_memo_map_markdown_table(findings: List[HaddixFinding]) -> str:
+        """Generate the Finding Memo Map Markdown table from structured data.
+        The Markdown table must match the JSON content exactly."""
+        lines: List[str] = []
+        lines.append(
+            "| Finding ID | Reason Codes | Payload in Request | Response Kind | "
+            "Timing Evidence ID | Browser Trace ID | Detector Observations | Validation State |"
+        )
+        lines.append(
+            "|------------|--------------|--------------------|---------------|"
+            "--------------------|------------------|----------------------|------------------|"
+        )
+        for finding in findings:
+            memo_map = build_finding_memo_map(finding)
+            finding_id = memo_map.get("finding_id", "-")
+            reason_codes = ", ".join(memo_map.get("reason_codes", [])) or "-"
+            payload_in_request = "yes" if memo_map.get("payload_in_request") else "no"
+            response_kind = memo_map.get("response_kind", "-")
+            timing_evidence_id = memo_map.get("timing_evidence_id") or "-"
+            browser_trace_id = memo_map.get("browser_trace_id") or "-"
+            detector_observations = ", ".join(memo_map.get("detector_observations", [])) or "-"
+            validation_state = memo_map.get("validation_state", "candidate")
+            lines.append(
+                f"| {finding_id} | {reason_codes} | {payload_in_request} | {response_kind} | "
+                f"{timing_evidence_id} | {browser_trace_id} | {detector_observations} | {validation_state} |"
+            )
+        return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Finding Memo Map (P6-2)
+# ---------------------------------------------------------------------------
+
+
+def build_finding_memo_map(finding: HaddixFinding) -> Dict[str, Any]:
+    """Build a structured JSON-compatible memo map for a candidate finding.
+
+    Returns:
+    {
+        "finding_id": "C1",
+        "reason_codes": [...],
+        "payload_in_request": bool,
+        "response_kind": str,
+        "timing_evidence_id": str or None,
+        "browser_trace_id": str or None,
+        "detector_observations": [...],
+        "validation_state": "candidate"|"confirmed",
+    }
+    """
+    additional_info = finding.additional_info if isinstance(finding.additional_info, dict) else {}
+    reason_codes = additional_info.get("reason_codes", [])
+
+    # Check if payload is in PoC request
+    payloads = finding.payloads_used or []
+    poc_request = str(finding.poc_request or "").strip()
+    payload_in_request = bool(poc_request) and any(
+        str(p).strip() in poc_request for p in payloads if str(p).strip()
+    )
+
+    # Response kind
+    poc_response = str(finding.poc_response or "").strip()
+    if poc_response:
+        if re.match(r"^HTTP/[\d.]+\s+[1-9]\d*\b", poc_response):
+            response_kind = "real_http"
+        elif re.match(r"^HTTP/[\d.]+\s+0\b", poc_response):
+            response_kind = "synthetic_detector_note"
+        else:
+            response_kind = "real_http"
+    else:
+        response_kind = "none"
+
+    # Timing evidence
+    blind = additional_info.get("blind_correlation", {}) if isinstance(additional_info.get("blind_correlation"), dict) else {}
+    time_based = blind.get("time_based", {}) if isinstance(blind.get("time_based"), dict) else {}
+    timing_samples = blind.get("timing_samples", {}) if isinstance(blind.get("timing_samples"), dict) else {}
+    if not timing_samples:
+        timing_samples = time_based.get("timing_samples", {}) if isinstance(time_based.get("timing_samples"), dict) else {}
+    timing_evidence_id = str(timing_samples.get("evidence_id", "") or "").strip() or None
+
+    # Browser trace
+    browser_exec = additional_info.get("browser_execution", {}) if isinstance(additional_info.get("browser_execution"), dict) else {}
+    browser_trace_id = str(browser_exec.get("browser_trace_id", "") or "").strip() or None
+
+    # Detector observations
+    detector_observations: List[str] = []
+    if additional_info.get("detection_mode"):
+        detector_observations.append(f"detection_mode={additional_info['detection_mode']}")
+    if additional_info.get("discovered_by"):
+        detector_observations.append(f"discovered_by={additional_info['discovered_by']}")
+
+    # Validation state
+    detection_mode = str(additional_info.get("detection_mode", "") or "").strip().lower()
+    heuristic_candidate = bool(additional_info.get("heuristic_candidate"))
+    verification_required = bool(additional_info.get("verification_required"))
+    has_poc = bool(poc_request) and bool(poc_response)
+    if not has_poc or heuristic_candidate or verification_required or detection_mode in {"heuristic_fallback"}:
+        validation_state = "candidate"
+    else:
+        validation_state = "confirmed"
+
+    # Finding ID
+    finding_id = str(additional_info.get("finding_id", "") or "").strip() or f"C{hash(finding.title) & 0xFFFF:X}"
+
+    return {
+        "finding_id": finding_id,
+        "reason_codes": list(reason_codes) if isinstance(reason_codes, list) else [],
+        "payload_in_request": payload_in_request,
+        "response_kind": response_kind,
+        "timing_evidence_id": timing_evidence_id,
+        "browser_trace_id": browser_trace_id,
+        "detector_observations": detector_observations,
+        "validation_state": validation_state,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Submission readiness (P5-2)
+# ---------------------------------------------------------------------------
+
+
+def compute_submission_readiness(finding: HaddixFinding) -> Dict[str, Any]:
+    """Evaluate whether a finding meets all Bug Bounty submission readiness criteria.
+
+    Returns a dict with ``submission_ready`` (True only if ALL requirements
+    are met), a ``score`` (0-100), per-requirement booleans, and a list of
+    ``failures`` (requirement names that failed).
+    """
+    info = finding.additional_info if isinstance(finding.additional_info, dict) else {}
+    has_request = bool(str(finding.poc_request or "").strip())
+    has_response = bool(str(finding.poc_response or "").strip())
+
+    # Determine evidence type
+    if has_response:
+        resp = str(finding.poc_response or "").strip()
+        is_synthetic = resp.startswith("HTTP/1.1 0") or resp.startswith("HTTP/1.0 0")
+        is_real_http = has_request and has_response and not is_synthetic
+    else:
+        is_synthetic = False
+        is_real_http = False
+
+    # Repro steps completeness
+    steps = finding.steps_to_reproduce or []
+    steps_text = " ".join(str(s).lower() for s in steps)
+    has_placeholder = "再構成してください" in steps_text
+
+    requirements = {
+        "has_real_evidence": is_real_http,
+        "payload_matches_request": bool(finding.payloads_used) and bool(has_request),
+        "repro_steps_complete": len(steps) > 0 and not has_placeholder,
+        "attack_confirmed": not bool(info.get("heuristic_candidate")) and not bool(info.get("verification_required")),
+        "impact_proven": bool(info.get("csrf_state_change")) or bool(info.get("authz_differential")) or bool(info.get("command_execution_evidence")) or bool(info.get("browser_execution")) or bool(info.get("file_marker_excerpt")) or bool(has_response),
+        "severity_grounded": bool(finding.severity and finding.severity.lower() in {"critical", "high", "medium", "low", "info"}),
+        "class_template_exists": bool(finding.vuln_type),
+        "secrets_masked": True,  # Redaction is applied by formatter; assume passed
+    }
+
+    failures = [req for req, met in requirements.items() if not met]
+    score = (len(requirements) - len(failures)) / max(len(requirements), 1) * 100.0
+    submission_ready = len(failures) == 0
+
+    return {
+        "submission_ready": submission_ready,
+        "score": round(score, 1),
+        "requirements": requirements,
+        "failures": failures,
+    }
+
+
+def validate_submission_ready(finding: HaddixFinding) -> bool:
+    """Return True if the finding meets all submission readiness criteria."""
+    result = compute_submission_readiness(finding)
+    return result["submission_ready"]
+
+
+# ---------------------------------------------------------------------------
+# Missing scenario detail (P5-4)
+# ---------------------------------------------------------------------------
+
+_HIGH_FRICTION_SCENARIOS: Dict[str, Dict[str, str]] = {
+    "scn_08_oob_external_channel_flow": {
+        "route": "human_preferred",
+        "missing_reason": "External channel flows (password reset, email verification, invite) "
+                         "require controlled out-of-band infrastructure for callback "
+                         "verification. SHIGOKU cannot safely operate this channel in "
+                         "the current environment.",
+        "required_operator_input": "Select a high-impact out-of-band flow (e.g., password "
+                                   "reset) and supply the external callback URL for token "
+                                   "delivery channel abuse validation.",
+        "safe_execution_constraint": "External callback infrastructure must be isolated "
+                                     "from production and must not generate real emails "
+                                     "or notifications to actual users.",
+        "completion_criteria": "Documented reproducible token-delivery-channel abuse path "
+                               "with clear account takeover impact.",
+    },
+    "scn_10_semantic_business_logic": {
+        "route": "human_preferred",
+        "missing_reason": "Semantic business logic scenarios require domain-specific "
+                         "knowledge of acceptable vs. unacceptable business outcomes "
+                         "that cannot be inferred from HTTP traffic alone.",
+        "required_operator_input": "Select one high-impact business workflow (approval, "
+                                   "pricing, policy enforcement) and define the unacceptable "
+                                   "business outcome to target.",
+        "safe_execution_constraint": "Manual operations only; automated state tampering "
+                                     "must be scoped to a controlled test environment.",
+        "completion_criteria": "Documented reproducible workflow-abuse path with clear "
+                               "business impact and state/value tampering evidence.",
+    },
+    "scn_11_multi_vector_chain": {
+        "route": "hybrid_shigoku_assisted",
+        "missing_reason": "Multi-vector attacks require chaining cross-endpoint trust "
+                         "transitions that span multiple detector outputs. The current "
+                         "execution model performs single-vector attacks per endpoint.",
+        "required_operator_input": "Provide seed endpoints and trust-boundary parameters "
+                                   "for cross-vector chaining analysis.",
+        "safe_execution_constraint": "Chained attacks must not mutate production data. "
+                                     "Read-only path traversal preferred.",
+        "completion_criteria": "Documented multi-step chain: BOLA/IDOR foothold → mass "
+                               "assignment or role mutation → privilege escalation confirmed.",
+    },
+    "scn_12_advanced_ssrf_internal_topology": {
+        "route": "shigoku_assisted",
+        "missing_reason": "Internal topology SSRF requires access to host-specific routing "
+                         "information and live internal network visibility that is not "
+                         "available in the standard external scan mode.",
+        "required_operator_input": "Identify URL fetcher/server-side connector endpoints "
+                                   "and provide internal host target list.",
+        "safe_execution_constraint": "SSRF probes must target controlled internal hosts "
+                                     "only. Cloud metadata endpoints (169.254.169.254) "
+                                     "must be tested only against authorized targets.",
+        "completion_criteria": "Controlled callback URL → internal host probing → "
+                               "metadata/internal API access confirmed.",
+    },
+    "scn_02_mass_assignment_object_update": {
+        "route": "shigoku_only",
+        "missing_reason": "Mass assignment probe requires discovery of writable parameters "
+                         "on object-update endpoints. If no writable endpoints were "
+                         "discovered during surface mapping, the detector cannot execute.",
+        "required_operator_input": "Provide a seed list of writable endpoints (POST/PUT/PATCH) "
+                                   "for the target application.",
+        "safe_execution_constraint": "Probes must use safe mutation values that do not "
+                                     "persist or affect production data.",
+        "completion_criteria": "Privilege-sensitive parameter accepted by the server, "
+                               "confirmed by state-change or response differential.",
+    },
+}
+
+
+def build_missing_scenario_detail(scenario_id: str) -> Dict[str, str]:
+    """Return structured detail for a missing scenario.
+
+    Args:
+        scenario_id: The scenario identifier (e.g., "scn_08_oob_external_channel_flow")
+
+    Returns:
+        Dict with keys: scenario_id, route, missing_reason,
+        required_operator_input, safe_execution_constraint, completion_criteria.
+    """
+    normalized_id = str(scenario_id or "").strip().lower()
+    detail = _HIGH_FRICTION_SCENARIOS.get(normalized_id)
+    if detail is not None:
+        return {"scenario_id": normalized_id, **detail}
+    return {
+        "scenario_id": normalized_id,
+        "route": "",
+        "missing_reason": "Scenario not covered in this run. Manual assessment required.",
+        "required_operator_input": "Initiate manual assessment for this scenario.",
+        "safe_execution_constraint": "Manual processes only.",
+        "completion_criteria": "Document reproducible attack path with clear impact evidence.",
+    }
+
 
 def generate_haddix_report(
     findings: List[Dict[str, Any]],
@@ -1904,21 +2384,30 @@ def generate_haddix_report(
     initial_release_gate: Optional[Dict[str, Any]] = None,
     source_session: str = "",
 ) -> None:
+    """Generate the canonical Haddix report.
+
+    Markdown output now delegates to the submission/internal split renderer so
+    direct callers and CLI-generated reports use the same report path. JSON
+    output keeps the legacy structured formatter for compatibility.
     """
-    ファインディングからHaddixスタイルレポートを生成
-    
-    Args:
-        findings: ファインディングの辞書リスト
-        target: ターゲットURL
-        output_path: 出力ファイルパス
-        program_name: プログラム名（オプション）
-        format_type: "markdown" or "json"
-        execution_notes: 実行ログ由来の補足情報
-        scenario_coverage: SCN01-12 のシナリオカバレッジ情報
-        vulnerability_family_coverage: 脆弱性ファミリーカバレッジゲート情報
-        initial_release_gate: 初期版リリースゲート評価結果
-        source_session: レポート生成元セッションファイル
-    """
+    if format_type != "json":
+        from src.reporting.haddix_submission_internal_formatter import (
+            generate_haddix_submission_internal_report,
+        )
+
+        generate_haddix_submission_internal_report(
+            findings=findings,
+            target=target,
+            output_path=output_path,
+            program_name=program_name,
+            execution_notes=execution_notes,
+            scenario_coverage=scenario_coverage,
+            vulnerability_family_coverage=vulnerability_family_coverage,
+            initial_release_gate=initial_release_gate,
+            source_session=source_session,
+        )
+        return
+
     formatter = HaddixFormatter()
     formatter.set_target(target, program_name)
     formatter.set_source_session(source_session)
@@ -1926,11 +2415,8 @@ def generate_haddix_report(
     formatter.set_scenario_coverage(scenario_coverage or {})
     formatter.set_vulnerability_family_coverage(vulnerability_family_coverage or {})
     formatter.set_initial_release_gate(initial_release_gate or {})
-    
+
     for f in findings:
         formatter.add_finding_from_dict(f)
-    
-    if format_type == "json":
-        formatter.save_json(output_path)
-    else:
-        formatter.save_markdown(output_path)
+
+    formatter.save_json(output_path)

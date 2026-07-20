@@ -24,10 +24,15 @@ def test_create_attack_tasks_routes_api_candidate_to_injection_swarm(tmp_path: P
     )
 
     mc = MasterConductor.__new__(MasterConductor)
-    mc.phase_gate = SimpleNamespace(can_create_task=lambda _phase: (True, "ok"))
+    mc.phase_gate = SimpleNamespace(
+        can_create_task=lambda _phase: (True, "ok"),
+        can_create_attack_task=lambda _cat, _meta: (True, "ok"),
+        get_phase_data=lambda _phase: SimpleNamespace(critical_findings=[]),
+    )
     mc.context = SimpleNamespace(discovered_assets=[], target_info={"auth_tokens": {}, "tech_stack": []})
     mc.project_manager = None
     mc.workspace = SimpleNamespace(user_sessions={})
+    mc.run_ledger_recorder = SimpleNamespace(record=lambda **kw: None)
 
     recon_results = {
         "tagged_api_candidate": {
@@ -59,10 +64,15 @@ def test_create_attack_tasks_routes_csrf_candidate_to_injection_swarm(tmp_path: 
     )
 
     mc = MasterConductor.__new__(MasterConductor)
-    mc.phase_gate = SimpleNamespace(can_create_task=lambda _phase: (True, "ok"))
+    mc.phase_gate = SimpleNamespace(
+        can_create_task=lambda _phase: (True, "ok"),
+        can_create_attack_task=lambda _cat, _meta: (True, "ok"),
+        get_phase_data=lambda _phase: SimpleNamespace(critical_findings=[]),
+    )
     mc.context = SimpleNamespace(discovered_assets=[], target_info={"auth_tokens": {}, "tech_stack": []})
     mc.project_manager = None
     mc.workspace = SimpleNamespace(user_sessions={})
+    mc.run_ledger_recorder = SimpleNamespace(record=lambda **kw: None)
 
     recon_results = {
         "tagged_csrf_candidate": {
@@ -94,13 +104,18 @@ def test_create_attack_tasks_skips_low_value_static_xss_candidate_targets(tmp_pa
     )
 
     mc = MasterConductor.__new__(MasterConductor)
-    mc.phase_gate = SimpleNamespace(can_create_task=lambda _phase: (True, "ok"))
+    mc.phase_gate = SimpleNamespace(
+        can_create_task=lambda _phase: (True, "ok"),
+        can_create_attack_task=lambda _cat, _meta: (True, "ok"),
+        get_phase_data=lambda _phase: SimpleNamespace(critical_findings=[]),
+    )
     mc.context = SimpleNamespace(
         discovered_assets=[],
         target_info={"required_vuln_families": ["xss"], "auth_tokens": {}, "tech_stack": []},
     )
     mc.project_manager = None
     mc.workspace = SimpleNamespace(user_sessions={})
+    mc.run_ledger_recorder = SimpleNamespace(record=lambda **kw: None)
 
     recon_results = {
         "tagged_xss_candidate": {
@@ -132,13 +147,18 @@ def test_create_attack_tasks_xss_candidate_falls_back_to_discovered_asset_when_o
     )
 
     mc = MasterConductor.__new__(MasterConductor)
-    mc.phase_gate = SimpleNamespace(can_create_task=lambda _phase: (True, "ok"))
+    mc.phase_gate = SimpleNamespace(
+        can_create_task=lambda _phase: (True, "ok"),
+        can_create_attack_task=lambda _cat, _meta: (True, "ok"),
+        get_phase_data=lambda _phase: SimpleNamespace(critical_findings=[]),
+    )
     mc.context = SimpleNamespace(
         discovered_assets=["http://127.0.0.1:8888/", fallback_dynamic, "127.0.0.1"],
         target_info={"required_vuln_families": ["xss"], "auth_tokens": {}, "tech_stack": []},
     )
     mc.project_manager = None
     mc.workspace = SimpleNamespace(user_sessions={})
+    mc.run_ledger_recorder = SimpleNamespace(record=lambda **kw: None)
 
     recon_results = {
         "tagged_xss_candidate": {
@@ -169,7 +189,11 @@ def test_create_attack_tasks_skips_low_value_only_api_data_category_task(tmp_pat
     )
 
     mc = MasterConductor.__new__(MasterConductor)
-    mc.phase_gate = SimpleNamespace(can_create_task=lambda _phase: (True, "ok"))
+    mc.phase_gate = SimpleNamespace(
+        can_create_task=lambda _phase: (True, "ok"),
+        can_create_attack_task=lambda _cat, _meta: (True, "ok"),
+        get_phase_data=lambda _phase: SimpleNamespace(critical_findings=[]),
+    )
     mc.context = SimpleNamespace(
         discovered_assets=[],
         target_info={
@@ -181,6 +205,7 @@ def test_create_attack_tasks_skips_low_value_only_api_data_category_task(tmp_pat
     )
     mc.project_manager = None
     mc.workspace = SimpleNamespace(user_sessions={})
+    mc.run_ledger_recorder = SimpleNamespace(record=lambda **kw: None)
 
     recon_results = {
         "tagged_api_data": {
@@ -219,7 +244,11 @@ def test_create_attack_tasks_skips_low_value_only_csrf_category_task(tmp_path: P
     )
 
     mc = MasterConductor.__new__(MasterConductor)
-    mc.phase_gate = SimpleNamespace(can_create_task=lambda _phase: (True, "ok"))
+    mc.phase_gate = SimpleNamespace(
+        can_create_task=lambda _phase: (True, "ok"),
+        can_create_attack_task=lambda _cat, _meta: (True, "ok"),
+        get_phase_data=lambda _phase: SimpleNamespace(critical_findings=[]),
+    )
     mc.context = SimpleNamespace(
         discovered_assets=[],
         target_info={
@@ -231,6 +260,7 @@ def test_create_attack_tasks_skips_low_value_only_csrf_category_task(tmp_path: P
     )
     mc.project_manager = None
     mc.workspace = SimpleNamespace(user_sessions={})
+    mc.run_ledger_recorder = SimpleNamespace(record=lambda **kw: None)
 
     recon_results = {
         "tagged_csrf_candidate": {
@@ -268,7 +298,11 @@ def test_create_attack_tasks_propagates_context_auth_headers(tmp_path: Path):
     )
 
     mc = MasterConductor.__new__(MasterConductor)
-    mc.phase_gate = SimpleNamespace(can_create_task=lambda _phase: (True, "ok"))
+    mc.phase_gate = SimpleNamespace(
+        can_create_task=lambda _phase: (True, "ok"),
+        can_create_attack_task=lambda _cat, _meta: (True, "ok"),
+        get_phase_data=lambda _phase: SimpleNamespace(critical_findings=[]),
+    )
     mc.context = SimpleNamespace(
         discovered_assets=[],
         target_info={
@@ -281,6 +315,7 @@ def test_create_attack_tasks_propagates_context_auth_headers(tmp_path: Path):
     )
     mc.project_manager = None
     mc.workspace = SimpleNamespace(user_sessions={})
+    mc.run_ledger_recorder = SimpleNamespace(record=lambda **kw: None)
 
     recon_results = {
         "tagged_api_candidate": {
@@ -309,7 +344,11 @@ def test_create_attack_tasks_backfills_csrf_candidate_when_missing(tmp_path: Pat
     )
 
     mc = MasterConductor.__new__(MasterConductor)
-    mc.phase_gate = SimpleNamespace(can_create_task=lambda _phase: (True, "ok"))
+    mc.phase_gate = SimpleNamespace(
+        can_create_task=lambda _phase: (True, "ok"),
+        can_create_attack_task=lambda _cat, _meta: (True, "ok"),
+        get_phase_data=lambda _phase: SimpleNamespace(critical_findings=[]),
+    )
     mc.context = SimpleNamespace(
         discovered_assets=[],
         target_info={
@@ -321,6 +360,7 @@ def test_create_attack_tasks_backfills_csrf_candidate_when_missing(tmp_path: Pat
     )
     mc.project_manager = None
     mc.workspace = SimpleNamespace(user_sessions={})
+    mc.run_ledger_recorder = SimpleNamespace(record=lambda **kw: None)
 
     recon_results = {
         "tagged_api_data": {
@@ -348,7 +388,11 @@ def test_create_attack_tasks_backfills_csrf_candidate_when_missing(tmp_path: Pat
 
 def test_create_attack_tasks_csrf_backfill_uses_in_scope_host_when_target_is_missing():
     mc = MasterConductor.__new__(MasterConductor)
-    mc.phase_gate = SimpleNamespace(can_create_task=lambda _phase: (True, "ok"))
+    mc.phase_gate = SimpleNamespace(
+        can_create_task=lambda _phase: (True, "ok"),
+        can_create_attack_task=lambda _cat, _meta: (True, "ok"),
+        get_phase_data=lambda _phase: SimpleNamespace(critical_findings=[]),
+    )
     mc.context = SimpleNamespace(
         discovered_assets=[],
         target_info={
@@ -360,6 +404,7 @@ def test_create_attack_tasks_csrf_backfill_uses_in_scope_host_when_target_is_mis
     )
     mc.project_manager = None
     mc.workspace = SimpleNamespace(user_sessions={})
+    mc.run_ledger_recorder = SimpleNamespace(record=lambda **kw: None)
     mc.target = ""
 
     tasks = mc._create_attack_tasks_from_recon({})
@@ -376,7 +421,11 @@ def test_create_attack_tasks_csrf_backfill_uses_in_scope_host_when_target_is_mis
 
 def test_create_attack_tasks_forces_csrf_guard_task_when_seed_resolution_returns_empty():
     mc = MasterConductor.__new__(MasterConductor)
-    mc.phase_gate = SimpleNamespace(can_create_task=lambda _phase: (True, "ok"))
+    mc.phase_gate = SimpleNamespace(
+        can_create_task=lambda _phase: (True, "ok"),
+        can_create_attack_task=lambda _cat, _meta: (True, "ok"),
+        get_phase_data=lambda _phase: SimpleNamespace(critical_findings=[]),
+    )
     mc.context = SimpleNamespace(
         discovered_assets=[],
         target_info={
@@ -388,6 +437,7 @@ def test_create_attack_tasks_forces_csrf_guard_task_when_seed_resolution_returns
     )
     mc.project_manager = None
     mc.workspace = SimpleNamespace(user_sessions={})
+    mc.run_ledger_recorder = SimpleNamespace(record=lambda **kw: None)
     mc.target = "http://127.0.0.1:8888/"
 
     # Simulate worst-case planner path where both seed collection and refinement return empty.
@@ -407,7 +457,11 @@ def test_create_attack_tasks_forces_csrf_guard_task_when_seed_resolution_returns
 
 def test_create_attack_tasks_forces_xss_guard_task_when_seed_resolution_returns_empty():
     mc = MasterConductor.__new__(MasterConductor)
-    mc.phase_gate = SimpleNamespace(can_create_task=lambda _phase: (True, "ok"))
+    mc.phase_gate = SimpleNamespace(
+        can_create_task=lambda _phase: (True, "ok"),
+        can_create_attack_task=lambda _cat, _meta: (True, "ok"),
+        get_phase_data=lambda _phase: SimpleNamespace(critical_findings=[]),
+    )
     mc.context = SimpleNamespace(
         discovered_assets=[],
         target_info={
@@ -419,6 +473,7 @@ def test_create_attack_tasks_forces_xss_guard_task_when_seed_resolution_returns_
     )
     mc.project_manager = None
     mc.workspace = SimpleNamespace(user_sessions={})
+    mc.run_ledger_recorder = SimpleNamespace(record=lambda **kw: None)
     mc.target = ""
 
     mc._collect_xss_seed_targets = lambda recon_results, budget: ([], {})  # type: ignore[assignment]
@@ -575,7 +630,11 @@ def test_create_attack_tasks_csrf_backfill_root_only_disables_phase2_on_empty(tm
     )
 
     mc = MasterConductor.__new__(MasterConductor)
-    mc.phase_gate = SimpleNamespace(can_create_task=lambda _phase: (True, "ok"))
+    mc.phase_gate = SimpleNamespace(
+        can_create_task=lambda _phase: (True, "ok"),
+        can_create_attack_task=lambda _cat, _meta: (True, "ok"),
+        get_phase_data=lambda _phase: SimpleNamespace(critical_findings=[]),
+    )
     mc.context = SimpleNamespace(
         discovered_assets=[],
         target_info={
@@ -587,6 +646,7 @@ def test_create_attack_tasks_csrf_backfill_root_only_disables_phase2_on_empty(tm
     )
     mc.project_manager = None
     mc.workspace = SimpleNamespace(user_sessions={})
+    mc.run_ledger_recorder = SimpleNamespace(record=lambda **kw: None)
 
     recon_results = {
         "tagged_api_data": {
@@ -615,7 +675,11 @@ def test_create_attack_tasks_backfills_api_injection_when_missing(tmp_path: Path
     )
 
     mc = MasterConductor.__new__(MasterConductor)
-    mc.phase_gate = SimpleNamespace(can_create_task=lambda _phase: (True, "ok"))
+    mc.phase_gate = SimpleNamespace(
+        can_create_task=lambda _phase: (True, "ok"),
+        can_create_attack_task=lambda _cat, _meta: (True, "ok"),
+        get_phase_data=lambda _phase: SimpleNamespace(critical_findings=[]),
+    )
     mc.context = SimpleNamespace(
         discovered_assets=[],
         target_info={
@@ -627,6 +691,7 @@ def test_create_attack_tasks_backfills_api_injection_when_missing(tmp_path: Path
     )
     mc.project_manager = None
     mc.workspace = SimpleNamespace(user_sessions={})
+    mc.run_ledger_recorder = SimpleNamespace(record=lambda **kw: None)
 
     recon_results = {
         "tagged_xss_candidate": {
@@ -664,7 +729,11 @@ def test_create_attack_tasks_api_backfill_root_only_disables_phase2_on_empty(tmp
     )
 
     mc = MasterConductor.__new__(MasterConductor)
-    mc.phase_gate = SimpleNamespace(can_create_task=lambda _phase: (True, "ok"))
+    mc.phase_gate = SimpleNamespace(
+        can_create_task=lambda _phase: (True, "ok"),
+        can_create_attack_task=lambda _cat, _meta: (True, "ok"),
+        get_phase_data=lambda _phase: SimpleNamespace(critical_findings=[]),
+    )
     mc.context = SimpleNamespace(
         discovered_assets=[],
         target_info={
@@ -676,6 +745,7 @@ def test_create_attack_tasks_api_backfill_root_only_disables_phase2_on_empty(tmp
     )
     mc.project_manager = None
     mc.workspace = SimpleNamespace(user_sessions={})
+    mc.run_ledger_recorder = SimpleNamespace(record=lambda **kw: None)
 
     recon_results = {
         "tagged_xss_candidate": {
@@ -708,7 +778,11 @@ def test_create_attack_tasks_api_backfill_uses_discovered_non_root_asset(tmp_pat
     )
 
     mc = MasterConductor.__new__(MasterConductor)
-    mc.phase_gate = SimpleNamespace(can_create_task=lambda _phase: (True, "ok"))
+    mc.phase_gate = SimpleNamespace(
+        can_create_task=lambda _phase: (True, "ok"),
+        can_create_attack_task=lambda _cat, _meta: (True, "ok"),
+        get_phase_data=lambda _phase: SimpleNamespace(critical_findings=[]),
+    )
     mc.context = SimpleNamespace(
         discovered_assets=[
             "https://app.example.com/",
@@ -723,6 +797,7 @@ def test_create_attack_tasks_api_backfill_uses_discovered_non_root_asset(tmp_pat
     )
     mc.project_manager = None
     mc.workspace = SimpleNamespace(user_sessions={})
+    mc.run_ledger_recorder = SimpleNamespace(record=lambda **kw: None)
 
     recon_results = {
         "tagged_xss_candidate": {
@@ -755,7 +830,11 @@ def test_create_attack_tasks_does_not_backfill_api_injection_when_already_covere
     )
 
     mc = MasterConductor.__new__(MasterConductor)
-    mc.phase_gate = SimpleNamespace(can_create_task=lambda _phase: (True, "ok"))
+    mc.phase_gate = SimpleNamespace(
+        can_create_task=lambda _phase: (True, "ok"),
+        can_create_attack_task=lambda _cat, _meta: (True, "ok"),
+        get_phase_data=lambda _phase: SimpleNamespace(critical_findings=[]),
+    )
     mc.context = SimpleNamespace(
         discovered_assets=[],
         target_info={
@@ -767,6 +846,7 @@ def test_create_attack_tasks_does_not_backfill_api_injection_when_already_covere
     )
     mc.project_manager = None
     mc.workspace = SimpleNamespace(user_sessions={})
+    mc.run_ledger_recorder = SimpleNamespace(record=lambda **kw: None)
 
     recon_results = {
         "tagged_api_data": {
@@ -796,7 +876,11 @@ def test_create_attack_tasks_backfills_access_logic_when_missing(tmp_path: Path)
     )
 
     mc = MasterConductor.__new__(MasterConductor)
-    mc.phase_gate = SimpleNamespace(can_create_task=lambda _phase: (True, "ok"))
+    mc.phase_gate = SimpleNamespace(
+        can_create_task=lambda _phase: (True, "ok"),
+        can_create_attack_task=lambda _cat, _meta: (True, "ok"),
+        get_phase_data=lambda _phase: SimpleNamespace(critical_findings=[]),
+    )
     mc.context = SimpleNamespace(
         discovered_assets=[],
         target_info={
@@ -808,6 +892,7 @@ def test_create_attack_tasks_backfills_access_logic_when_missing(tmp_path: Path)
     )
     mc.project_manager = None
     mc.workspace = SimpleNamespace(user_sessions={})
+    mc.run_ledger_recorder = SimpleNamespace(record=lambda **kw: None)
 
     recon_results = {
         "tagged_api_data": {
@@ -839,7 +924,11 @@ def test_create_attack_tasks_backfills_xss_when_missing(tmp_path: Path):
     )
 
     mc = MasterConductor.__new__(MasterConductor)
-    mc.phase_gate = SimpleNamespace(can_create_task=lambda _phase: (True, "ok"))
+    mc.phase_gate = SimpleNamespace(
+        can_create_task=lambda _phase: (True, "ok"),
+        can_create_attack_task=lambda _cat, _meta: (True, "ok"),
+        get_phase_data=lambda _phase: SimpleNamespace(critical_findings=[]),
+    )
     mc.context = SimpleNamespace(
         discovered_assets=[],
         target_info={
@@ -851,6 +940,7 @@ def test_create_attack_tasks_backfills_xss_when_missing(tmp_path: Path):
     )
     mc.project_manager = None
     mc.workspace = SimpleNamespace(user_sessions={})
+    mc.run_ledger_recorder = SimpleNamespace(record=lambda **kw: None)
 
     recon_results = {
         "tagged_api_data": {
@@ -884,7 +974,11 @@ def test_create_attack_tasks_backfills_xss_even_when_indirect_xss_mapped_categor
     )
 
     mc = MasterConductor.__new__(MasterConductor)
-    mc.phase_gate = SimpleNamespace(can_create_task=lambda _phase: (True, "ok"))
+    mc.phase_gate = SimpleNamespace(
+        can_create_task=lambda _phase: (True, "ok"),
+        can_create_attack_task=lambda _cat, _meta: (True, "ok"),
+        get_phase_data=lambda _phase: SimpleNamespace(critical_findings=[]),
+    )
     mc.context = SimpleNamespace(
         discovered_assets=[],
         target_info={
@@ -896,6 +990,7 @@ def test_create_attack_tasks_backfills_xss_even_when_indirect_xss_mapped_categor
     )
     mc.project_manager = None
     mc.workspace = SimpleNamespace(user_sessions={})
+    mc.run_ledger_recorder = SimpleNamespace(record=lambda **kw: None)
 
     recon_results = {
         "tagged_id_param": {
@@ -929,7 +1024,11 @@ def test_create_attack_tasks_backfills_xss_with_root_fallback_when_no_high_value
     )
 
     mc = MasterConductor.__new__(MasterConductor)
-    mc.phase_gate = SimpleNamespace(can_create_task=lambda _phase: (True, "ok"))
+    mc.phase_gate = SimpleNamespace(
+        can_create_task=lambda _phase: (True, "ok"),
+        can_create_attack_task=lambda _cat, _meta: (True, "ok"),
+        get_phase_data=lambda _phase: SimpleNamespace(critical_findings=[]),
+    )
     mc.context = SimpleNamespace(
         discovered_assets=[],
         target_info={
@@ -941,6 +1040,7 @@ def test_create_attack_tasks_backfills_xss_with_root_fallback_when_no_high_value
     )
     mc.project_manager = None
     mc.workspace = SimpleNamespace(user_sessions={})
+    mc.run_ledger_recorder = SimpleNamespace(record=lambda **kw: None)
 
     recon_results = {
         "tagged_api_data": {
@@ -973,7 +1073,11 @@ def test_create_attack_tasks_backfills_xss_tops_up_targets_from_discovered_asset
     )
 
     mc = MasterConductor.__new__(MasterConductor)
-    mc.phase_gate = SimpleNamespace(can_create_task=lambda _phase: (True, "ok"))
+    mc.phase_gate = SimpleNamespace(
+        can_create_task=lambda _phase: (True, "ok"),
+        can_create_attack_task=lambda _cat, _meta: (True, "ok"),
+        get_phase_data=lambda _phase: SimpleNamespace(critical_findings=[]),
+    )
     mc.context = SimpleNamespace(
         discovered_assets=[
             "https://app.example.com/",
@@ -989,6 +1093,7 @@ def test_create_attack_tasks_backfills_xss_tops_up_targets_from_discovered_asset
     )
     mc.project_manager = None
     mc.workspace = SimpleNamespace(user_sessions={})
+    mc.run_ledger_recorder = SimpleNamespace(record=lambda **kw: None)
 
     recon_results = {
         "tagged_api_data": {
@@ -1025,7 +1130,11 @@ def test_create_attack_tasks_skips_access_logic_backfill_when_admin_present(tmp_
     )
 
     mc = MasterConductor.__new__(MasterConductor)
-    mc.phase_gate = SimpleNamespace(can_create_task=lambda _phase: (True, "ok"))
+    mc.phase_gate = SimpleNamespace(
+        can_create_task=lambda _phase: (True, "ok"),
+        can_create_attack_task=lambda _cat, _meta: (True, "ok"),
+        get_phase_data=lambda _phase: SimpleNamespace(critical_findings=[]),
+    )
     mc.context = SimpleNamespace(
         discovered_assets=[],
         target_info={
@@ -1037,6 +1146,7 @@ def test_create_attack_tasks_skips_access_logic_backfill_when_admin_present(tmp_
     )
     mc.project_manager = None
     mc.workspace = SimpleNamespace(user_sessions={})
+    mc.run_ledger_recorder = SimpleNamespace(record=lambda **kw: None)
 
     recon_results = {
         "tagged_admin": {
@@ -1062,7 +1172,11 @@ def test_create_attack_tasks_does_not_backfill_csrf_when_not_required(tmp_path: 
     )
 
     mc = MasterConductor.__new__(MasterConductor)
-    mc.phase_gate = SimpleNamespace(can_create_task=lambda _phase: (True, "ok"))
+    mc.phase_gate = SimpleNamespace(
+        can_create_task=lambda _phase: (True, "ok"),
+        can_create_attack_task=lambda _cat, _meta: (True, "ok"),
+        get_phase_data=lambda _phase: SimpleNamespace(critical_findings=[]),
+    )
     mc.context = SimpleNamespace(
         discovered_assets=[],
         target_info={
@@ -1074,6 +1188,7 @@ def test_create_attack_tasks_does_not_backfill_csrf_when_not_required(tmp_path: 
     )
     mc.project_manager = None
     mc.workspace = SimpleNamespace(user_sessions={})
+    mc.run_ledger_recorder = SimpleNamespace(record=lambda **kw: None)
 
     recon_results = {
         "tagged_api_data": {
@@ -1100,7 +1215,11 @@ def test_create_attack_tasks_csrf_backfill_prefers_state_changing_target_over_ro
     )
 
     mc = MasterConductor.__new__(MasterConductor)
-    mc.phase_gate = SimpleNamespace(can_create_task=lambda _phase: (True, "ok"))
+    mc.phase_gate = SimpleNamespace(
+        can_create_task=lambda _phase: (True, "ok"),
+        can_create_attack_task=lambda _cat, _meta: (True, "ok"),
+        get_phase_data=lambda _phase: SimpleNamespace(critical_findings=[]),
+    )
     mc.context = SimpleNamespace(
         discovered_assets=[],
         target_info={
@@ -1112,6 +1231,7 @@ def test_create_attack_tasks_csrf_backfill_prefers_state_changing_target_over_ro
     )
     mc.project_manager = None
     mc.workspace = SimpleNamespace(user_sessions={})
+    mc.run_ledger_recorder = SimpleNamespace(record=lambda **kw: None)
 
     recon_results = {
         "tagged_api_data": {
@@ -1143,7 +1263,11 @@ def test_create_attack_tasks_csrf_backfill_uses_uncategorized_non_root_seed(tmp_
     )
 
     mc = MasterConductor.__new__(MasterConductor)
-    mc.phase_gate = SimpleNamespace(can_create_task=lambda _phase: (True, "ok"))
+    mc.phase_gate = SimpleNamespace(
+        can_create_task=lambda _phase: (True, "ok"),
+        can_create_attack_task=lambda _cat, _meta: (True, "ok"),
+        get_phase_data=lambda _phase: SimpleNamespace(critical_findings=[]),
+    )
     mc.context = SimpleNamespace(
         discovered_assets=[],
         target_info={
@@ -1155,6 +1279,7 @@ def test_create_attack_tasks_csrf_backfill_uses_uncategorized_non_root_seed(tmp_
     )
     mc.project_manager = None
     mc.workspace = SimpleNamespace(user_sessions={})
+    mc.run_ledger_recorder = SimpleNamespace(record=lambda **kw: None)
 
     recon_results = {
         "tagged_uncategorized": {
@@ -1196,7 +1321,11 @@ def test_create_attack_tasks_backfill_skips_emoji_404_uncategorized_seed(tmp_pat
     )
 
     mc = MasterConductor.__new__(MasterConductor)
-    mc.phase_gate = SimpleNamespace(can_create_task=lambda _phase: (True, "ok"))
+    mc.phase_gate = SimpleNamespace(
+        can_create_task=lambda _phase: (True, "ok"),
+        can_create_attack_task=lambda _cat, _meta: (True, "ok"),
+        get_phase_data=lambda _phase: SimpleNamespace(critical_findings=[]),
+    )
     mc.context = SimpleNamespace(
         discovered_assets=[],
         target_info={
@@ -1208,6 +1337,7 @@ def test_create_attack_tasks_backfill_skips_emoji_404_uncategorized_seed(tmp_pat
     )
     mc.project_manager = None
     mc.workspace = SimpleNamespace(user_sessions={})
+    mc.run_ledger_recorder = SimpleNamespace(record=lambda **kw: None)
 
     recon_results = {
         "tagged_uncategorized": {
@@ -1256,7 +1386,11 @@ def test_create_attack_tasks_backfills_csrf_from_projects_prefixed_recon_file(tm
     )
 
     mc = MasterConductor.__new__(MasterConductor)
-    mc.phase_gate = SimpleNamespace(can_create_task=lambda _phase: (True, "ok"))
+    mc.phase_gate = SimpleNamespace(
+        can_create_task=lambda _phase: (True, "ok"),
+        can_create_attack_task=lambda _cat, _meta: (True, "ok"),
+        get_phase_data=lambda _phase: SimpleNamespace(critical_findings=[]),
+    )
     mc.context = SimpleNamespace(
         discovered_assets=[],
         target_info={
@@ -1268,6 +1402,7 @@ def test_create_attack_tasks_backfills_csrf_from_projects_prefixed_recon_file(tm
     )
     mc.project_manager = SimpleNamespace(project_dir=project_dir)
     mc.workspace = SimpleNamespace(user_sessions={}, root=workspace_root)
+    mc.run_ledger_recorder = SimpleNamespace(record=lambda **kw: None)
 
     recon_results = {
         "tagged_api_data": {
@@ -1296,10 +1431,15 @@ def test_create_attack_tasks_id_param_sets_phase2_time_caps(tmp_path: Path):
     )
 
     mc = MasterConductor.__new__(MasterConductor)
-    mc.phase_gate = SimpleNamespace(can_create_task=lambda _phase: (True, "ok"))
+    mc.phase_gate = SimpleNamespace(
+        can_create_task=lambda _phase: (True, "ok"),
+        can_create_attack_task=lambda _cat, _meta: (True, "ok"),
+        get_phase_data=lambda _phase: SimpleNamespace(critical_findings=[]),
+    )
     mc.context = SimpleNamespace(discovered_assets=[], target_info={"auth_tokens": {}, "tech_stack": []})
     mc.project_manager = None
     mc.workspace = SimpleNamespace(user_sessions={})
+    mc.run_ledger_recorder = SimpleNamespace(record=lambda **kw: None)
 
     recon_results = {
         "tagged_id_param": {

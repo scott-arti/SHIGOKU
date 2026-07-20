@@ -290,6 +290,99 @@ class KnowledgeGraph:
         except Exception as e:
             logger.error(f"Failed to store recon result for {tool_name}: {e}")
 
+    # ── SGK-2026-0261: Signal Bundle Persistence ──
+
+    def store_signal_bundle(self, signal_bundle: dict) -> int:
+        """
+        Recon signal bundle を KG に永続化。
+
+        既存 store_recon_result() は置き換えず、専用入口として追加。
+        Endpoint ノードに signal プロパティを追記し、後続の dedupe/reference に利用可能にする。
+
+        Args:
+            signal_bundle: step8_return_to_mc の _signal_bundle dict
+                           {_run_id, _host_surface_summary, _endpoint_signals}
+
+        Returns:
+            保存した signal 数
+        """
+        if not self.driver:
+            return 0
+        if not signal_bundle or not isinstance(signal_bundle, dict):
+            return 0
+
+        endpoint_signals = signal_bundle.get("_endpoint_signals", [])
+        if not isinstance(endpoint_signals, list) or len(endpoint_signals) == 0:
+            return 0
+
+        run_id = signal_bundle.get("_run_id", "")
+        stored_count = 0
+
+        try:
+            with self.driver.session() as session:
+                for sig in endpoint_signals:
+                    if not isinstance(sig, dict):
+                        continue
+                    url = sig.get("url", "")
+                    method = sig.get("method", "GET")
+                    if not url:
+                        continue
+
+                    session.run(
+                        """
+                        MERGE (s:AttackSurfaceSignal {signal_id: $signal_id})
+                        SET s.entity_type = $entity_type,
+                            s.url = $url,
+                            s.method = $method,
+                            s.primary_label = $primary_label,
+                            s.candidate_labels = $candidate_labels,
+                            s.confidence = $confidence,
+                            s.why_suspicious = $why_suspicious,
+                            s.source_observations = $source_observations,
+                            s.auth_required = $auth_required,
+                            s.auth_context = $auth_context,
+                            s.interaction_kind = $interaction_kind,
+                            s.lineage = $lineage,
+                            s.signal_status = $status,
+                            s.params = $params,
+                            s.seen_count = $seen_count,
+                            s.run_id = $run_id,
+                            s.updated_at = $timestamp
+                        WITH s
+                        MERGE (e:Endpoint {url: $url, method: $method})
+                        MERGE (s)-[:TARGETS_ENDPOINT]->(e)
+                        """,
+                        url=url,
+                        method=method,
+                        signal_id=sig.get("signal_id", ""),
+                        entity_type=sig.get("entity_type", ""),
+                        primary_label=sig.get("primary_label", ""),
+                        candidate_labels=sig.get("candidate_labels", []),
+                        confidence=sig.get("confidence", 0.5),
+                        why_suspicious=sig.get("why_suspicious", ""),
+                        source_observations=sig.get("source_observations", []),
+                        auth_required=sig.get("auth_required", False),
+                        auth_context=sig.get("auth_context", {}),
+                        interaction_kind=sig.get("interaction_kind", "static"),
+                        lineage=sig.get("lineage", ""),
+                        params=sig.get("params", []),
+                        status=sig.get("status", "active"),
+                        seen_count=sig.get("seen_count", 1),
+                        run_id=run_id,
+                        timestamp=datetime.now().isoformat(),
+                    )
+                    stored_count += 1
+
+            logger.info(
+                "[SGK-2026-0261] Stored %d endpoint signals in KG (run_id=%s)",
+                stored_count,
+                run_id,
+            )
+        except Exception as e:
+            logger.error("Failed to store signal bundle in KG: %s", e)
+
+        return stored_count
+
     # --- Rich Schema Operations (Ported from models/graph.py) ---
 
     def create_endpoint(self, url: str, method: str = "GET", **props) -> str:
@@ -364,6 +457,162 @@ class KnowledgeGraph:
         """
         with self.driver.session() as session:
             session.run(query, domain=domain, ip=ip, timestamp=datetime.now().isoformat())
+
+    # ── SGK-2026-0260: RecipeRun persistence ──────────────────────────────
+
+    def store_recipe_run(
+        self,
+        recipe_name: str,
+        target: str,
+        success: bool,
+        summary: Dict[str, Any],
+        verdict: Optional[str] = None,
+        verdict_reason_codes: Optional[list] = None,
+        run_id: str = "",
+        suppression_key_signal: str = "",
+        suppression_key_endpoint: str = "",
+    ) -> str:
+        """Persist a recipe execution result as a :RecipeRun node.
+
+        Links the run to the target :Endpoint node via :EXECUTED_AGAINST.
+        Also stores suppression keys for cross-run dedup.
+        Returns the elementId of the created node, or empty string on failure.
+        """
+        if not self.driver:
+            return ""
+        query = """
+        MERGE (r:RecipeRun {key: $key})
+        SET r.recipe_name = $recipe_name,
+            r.target = $target,
+            r.success = $success,
+            r.summary = $summary,
+            r.verdict = $verdict,
+            r.verdict_reason_codes = $verdict_reason_codes,
+            r.run_id = $run_id,
+            r.suppression_key_signal = $suppression_key_signal,
+            r.suppression_key_endpoint = $suppression_key_endpoint,
+            r.executed_at = $timestamp
+        WITH r
+        MERGE (e:Endpoint {url: $target, method: $method})
+        MERGE (r)-[:EXECUTED_AGAINST]->(e)
+        RETURN elementId(r) as node_id
+        """
+        key = f"{recipe_name}:{target}"
+        try:
+            with self.driver.session() as session:
+                result = session.run(
+                    query,
+                    key=key,
+                    recipe_name=recipe_name,
+                    target=target,
+                    success=success,
+                    summary=summary,
+                    verdict=verdict or "",
+                    verdict_reason_codes=verdict_reason_codes or [],
+                    run_id=run_id,
+                    suppression_key_signal=suppression_key_signal,
+                    suppression_key_endpoint=suppression_key_endpoint,
+                    method="GET",
+                    timestamp=datetime.now().isoformat(),
+                )
+                record = result.single()
+                return record["node_id"] if record else ""
+        except Exception as e:
+            logger.error("Failed to store recipe run in KG: %s", e)
+            return ""
+
+    def get_recipe_runs_for_domain(
+        self,
+        domain_name: str,
+        limit: int = 20,
+    ) -> Dict[str, Any]:
+        """Query previous recipe runs for a domain.
+
+        Returns dict with:
+          - ``previous_recipe_runs``: List[str] of recipe names
+          - ``previous_recipe_outcomes``: Dict[str, str] mapping recipe_name → outcome
+          - ``suppression_keys``: List[str] of stored suppression keys
+        """
+        if not self.driver:
+            return {"previous_recipe_runs": [], "previous_recipe_outcomes": {}, "suppression_keys": []}
+        query = """
+        MATCH (r:RecipeRun)-[:EXECUTED_AGAINST]->(e:Endpoint)
+        WHERE e.url CONTAINS $domain
+        RETURN r.recipe_name AS name, r.success AS success,
+               r.suppression_key_signal AS sk_signal,
+               r.suppression_key_endpoint AS sk_endpoint
+        ORDER BY r.executed_at DESC LIMIT $limit
+        """
+        try:
+            with self.driver.session() as session:
+                result = session.run(query, domain=domain_name, limit=limit)
+                previous_runs: List[str] = []
+                outcomes: Dict[str, str] = {}
+                suppression_keys: List[str] = []
+                seen = set()
+                for record in result:
+                    name = record["name"]
+                    if name and name not in seen:
+                        seen.add(name)
+                        previous_runs.append(name)
+                        outcomes[name] = "success" if record["success"] else "failed"
+                    # Collect suppression keys
+                    for sk_key in ("sk_signal", "sk_endpoint"):
+                        val = record.get(sk_key, "")
+                        if val and val not in suppression_keys:
+                            suppression_keys.append(val)
+                return {
+                    "previous_recipe_runs": previous_runs,
+                    "previous_recipe_outcomes": outcomes,
+                    "suppression_keys": suppression_keys,
+                }
+        except Exception as e:
+            logger.warning("Failed to query recipe runs from KG: %s", e)
+            return {"previous_recipe_runs": [], "previous_recipe_outcomes": {}, "suppression_keys": []}
+
+    def get_nearby_findings(
+        self,
+        target_url: str,
+        max_distance: int = 5,
+    ) -> list:
+        """Query findings on endpoints near *target_url*.
+
+        Returns a list of dicts with ``status``, ``type``, ``severity``, ``title``.
+        """
+        if not self.driver:
+            return []
+        # Simple approximation: find all Findings on the same domain
+        from urllib.parse import urlparse
+        try:
+            parsed = urlparse(target_url)
+            domain = parsed.netloc or parsed.hostname or ""
+        except Exception:
+            domain = ""
+        if not domain:
+            return []
+        query = """
+        MATCH (f:Finding)-[:VULNERABLE_TO]-(e:Endpoint)
+        WHERE e.url CONTAINS $domain
+        RETURN f.type AS type, f.severity AS severity, f.title AS title
+        LIMIT $max_distance
+        """
+        try:
+            with self.driver.session() as session:
+                result = session.run(query, domain=domain, max_distance=max_distance)
+                findings = []
+                for record in result:
+                    finding_type = record.get("type", "")
+                    status = "confirmed"  # KG findings are always confirmed
+                    findings.append({
+                        "status": status,
+                        "type": finding_type,
+                        "severity": record.get("severity", ""),
+                        "title": record.get("title", ""),
+                    })
+                return findings
+        except Exception as e:
+            logger.warning("Failed to query nearby findings from KG: %s", e)
+            return []
 
     # --- Advanced Queries ---
 

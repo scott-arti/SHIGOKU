@@ -5,6 +5,22 @@ import json
 from src.core.engine.master_conductor import MasterConductor
 
 
+def _phase_gate_stub() -> SimpleNamespace:
+    return SimpleNamespace(
+        can_create_task=lambda _phase: (True, "ok"),
+        can_create_attack_task=lambda _category, _metadata: (True, "ok"),
+        get_phase_data=lambda _phase: SimpleNamespace(critical_findings=[]),
+    )
+
+
+def _attach_minimal_mc_state(mc: MasterConductor) -> None:
+    mc.phase_gate = _phase_gate_stub()
+    mc.context = SimpleNamespace(discovered_assets=[], target_info={"auth_tokens": {}, "tech_stack": []})
+    mc.project_manager = None
+    mc.workspace = SimpleNamespace(user_sessions={})
+    mc.run_ledger_recorder = SimpleNamespace(record=lambda **_kwargs: None)
+
+
 def _write_jsonl(path: Path, rows: list[dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
@@ -28,10 +44,7 @@ def test_create_attack_tasks_caps_realtime_targets_with_normalized_dedup(tmp_pat
     )
 
     mc = MasterConductor.__new__(MasterConductor)
-    mc.phase_gate = SimpleNamespace(can_create_task=lambda _phase: (True, "ok"))
-    mc.context = SimpleNamespace(discovered_assets=[], target_info={"auth_tokens": {}, "tech_stack": []})
-    mc.project_manager = None
-    mc.workspace = SimpleNamespace(user_sessions={})
+    _attach_minimal_mc_state(mc)
 
     recon_results = {
         "tagged_realtime": {
@@ -58,10 +71,7 @@ def test_create_attack_tasks_skips_non_actionable_categories(tmp_path: Path):
     _write_jsonl(invalid_file, [{"url": "https://app.example.com/%7B%7Bhref%7D%7D"}])
 
     mc = MasterConductor.__new__(MasterConductor)
-    mc.phase_gate = SimpleNamespace(can_create_task=lambda _phase: (True, "ok"))
-    mc.context = SimpleNamespace(discovered_assets=[], target_info={"auth_tokens": {}, "tech_stack": []})
-    mc.project_manager = None
-    mc.workspace = SimpleNamespace(user_sessions={})
+    _attach_minimal_mc_state(mc)
 
     recon_results = {
         "tagged_external_link": {
@@ -96,10 +106,7 @@ def test_create_attack_tasks_caps_meta_observability_targets(tmp_path: Path):
     )
 
     mc = MasterConductor.__new__(MasterConductor)
-    mc.phase_gate = SimpleNamespace(can_create_task=lambda _phase: (True, "ok"))
-    mc.context = SimpleNamespace(discovered_assets=[], target_info={"auth_tokens": {}, "tech_stack": []})
-    mc.project_manager = None
-    mc.workspace = SimpleNamespace(user_sessions={})
+    _attach_minimal_mc_state(mc)
 
     recon_results = {
         "tagged_meta_observability": {

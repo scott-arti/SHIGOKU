@@ -1,6 +1,6 @@
 """
 Integration tests for MasterConductor + TaskPruningPolicy connection.
-SGK-2026-0287 Step 6: Verify pruning decisions are recorded in _shadow_decisions.
+SGK-2026-0287 Step 6: Verify pruning decisions are recorded in _pruning_decisions.
 """
 import pytest
 import threading
@@ -29,8 +29,10 @@ def _new_minimal_conductor() -> MasterConductor:
     mc = MasterConductor.__new__(MasterConductor)
     mc._state_lock = threading.RLock()
     mc.task_queue = DynamicTaskQueue()
-    mc._shadow_decisions = []
-    mc._pruning_policy = TaskPruningPolicy(shadow_only=True)
+    # _pruning_decisions is the canonical list; _pruning_decisions is
+    # an alias set by _evaluate_pruning_policy on first call.
+    mc._pruning_decisions = []
+    mc._pruning_policy = TaskPruningPolicy(mode="shadow")
     return mc
 
 
@@ -52,22 +54,22 @@ class TestMasterConductorPruningIntegration:
         assert isinstance(mc._pruning_policy, TaskPruningPolicy)
         assert mc._pruning_policy.shadow_only is True
 
-    def test_shadow_decisions_initialized_lazily(self):
-        """_shadow_decisions is created if missing."""
+    def test_pruning_decisions_initialized_lazily(self):
+        """_pruning_decisions is created if missing."""
         mc = MasterConductor.__new__(MasterConductor)
         mc._state_lock = threading.RLock()
         mc.task_queue = DynamicTaskQueue()
-        mc._pruning_policy = TaskPruningPolicy(shadow_only=True)
+        mc._pruning_policy = TaskPruningPolicy(mode="shadow")
 
-        assert not hasattr(mc, '_shadow_decisions')
+        assert not hasattr(mc, '_pruning_decisions')
 
         mc._evaluate_pruning_policy([])
 
-        assert hasattr(mc, '_shadow_decisions')
-        assert mc._shadow_decisions == []
+        assert hasattr(mc, '_pruning_decisions')
+        assert mc._pruning_decisions == []
 
-    def test_decisions_recorded_in_shadow_decisions(self):
-        """Out-of-scope tasks generate decisions recorded in _shadow_decisions."""
+    def test_decisions_recorded_in_pruning_decisions(self):
+        """Out-of-scope tasks generate decisions recorded in _pruning_decisions."""
         mc = _new_minimal_conductor()
 
         # Add an out-of-scope task
@@ -78,13 +80,13 @@ class TestMasterConductorPruningIntegration:
         )
         mc.task_queue.add(task)
 
-        initial_count = len(mc._shadow_decisions)
+        initial_count = len(mc._pruning_decisions)
         mc._evaluate_pruning_policy([task])
 
         # Should have at least one new decision
-        assert len(mc._shadow_decisions) > initial_count
+        assert len(mc._pruning_decisions) > initial_count
         # The decision should have the right format
-        last = mc._shadow_decisions[-1]
+        last = mc._pruning_decisions[-1]
         assert isinstance(last, dict)
         assert last["task_id"] == "task_oos"
         assert last["lifecycle_status"] == "retired"
@@ -106,7 +108,7 @@ class TestMasterConductorPruningIntegration:
         mc._evaluate_pruning_policy([t1])
 
         # Should find the duplicate lower-priority task
-        dup_decisions = [d for d in mc._shadow_decisions
+        dup_decisions = [d for d in mc._pruning_decisions
                          if d.get("reason_code") == "duplicate"]
         assert len(dup_decisions) >= 1
         dup = dup_decisions[0]
@@ -121,18 +123,18 @@ class TestMasterConductorPruningIntegration:
                         params={"out_of_scope": True})  # even if out of scope
         mc.task_queue.add(task)
 
-        initial_count = len(mc._shadow_decisions)
+        initial_count = len(mc._pruning_decisions)
         mc._evaluate_pruning_policy([task])
 
         # No new decisions for protected tasks
-        assert len(mc._shadow_decisions) == initial_count
+        assert len(mc._pruning_decisions) == initial_count
 
     def test_empty_queue_produces_no_decisions(self):
         """Empty queue evaluation does not crash and produces no decisions."""
         mc = _new_minimal_conductor()
-        initial_count = len(mc._shadow_decisions)
+        initial_count = len(mc._pruning_decisions)
         mc._evaluate_pruning_policy([])
-        assert len(mc._shadow_decisions) == initial_count
+        assert len(mc._pruning_decisions) == initial_count
 
     def test_decision_to_dict_format_compatible_with_decision_traces(self):
         """Decisions stored have the format expected by decision_traces sink."""
@@ -143,7 +145,7 @@ class TestMasterConductorPruningIntegration:
         mc.task_queue.add(task)
         mc._evaluate_pruning_policy([task])
 
-        decision = mc._shadow_decisions[-1]
+        decision = mc._pruning_decisions[-1]
         # Check all required fields for decision_traces compatibility
         assert "decision_type" in decision
         assert decision["decision_type"] in (
@@ -180,7 +182,7 @@ class TestMasterConductorPruningIntegration:
 
         mc._evaluate_pruning_policy([t1])
 
-        decisions = mc._shadow_decisions
+        decisions = mc._pruning_decisions
         reason_codes = {d["reason_code"] for d in decisions}
         # Should contain duplicate and out_of_scope
         assert "duplicate" in reason_codes

@@ -189,3 +189,55 @@ def test_verify_report_session_consistency_resolves_docker_workspace_source_sess
     assert verdict["status"] == "consistent"
     assert verdict["session"]["selection"] == "source_session_header"
     assert verdict["session"]["path"] == str(session_file.resolve())
+
+
+def test_verify_report_session_consistency_resolves_app_workspace_source_session(tmp_path: Path) -> None:
+    project_dir = tmp_path / "workspace" / "projects" / "127.0.0.1:8888"
+    sessions_dir = project_dir / "sessions"
+    reports_dir = project_dir / "reports"
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+    reports_dir.mkdir(parents=True, exist_ok=True)
+
+    session_file = sessions_dir / "session_20260412_135804.json"
+    missing = ["scn_01_idor_bola_object_access"]
+    _write_session(session_file, covered=11, required=12, missing=missing)
+
+    report_file = reports_dir / "haddix_report_20260412_135807.md"
+    _write_report(
+        report_file,
+        source_session="/app/workspace/projects/127.0.0.1:8888/sessions/session_20260412_135804.json",
+        coverage_line="Coverage: 11/12 (91.7%), Missing: scn_01_idor_bola_object_access",
+    )
+
+    verdict = verify_report_session_consistency(report_file)
+    assert verdict["status"] == "consistent"
+    assert verdict["session"]["selection"] == "source_session_header"
+    assert verdict["session"]["path"] == str(session_file.resolve())
+
+
+def test_verify_report_session_consistency_resolves_app_workspace_report_path(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    project_dir = tmp_path / "workspace" / "projects" / "127.0.0.1:8888"
+    sessions_dir = project_dir / "sessions"
+    reports_dir = project_dir / "reports"
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+    reports_dir.mkdir(parents=True, exist_ok=True)
+
+    session_file = sessions_dir / "session_20260412_135804.json"
+    missing = ["scn_01_idor_bola_object_access"]
+    _write_session(session_file, covered=11, required=12, missing=missing)
+
+    report_file = reports_dir / "haddix_report_20260412_135807.md"
+    _write_report(
+        report_file,
+        source_session="/app/workspace/projects/127.0.0.1:8888/sessions/session_20260412_135804.json",
+        coverage_line="Coverage: 11/12 (91.7%), Missing: scn_01_idor_bola_object_access",
+    )
+
+    verdict = verify_report_session_consistency(
+        Path("/app/workspace/projects/127.0.0.1:8888/reports/haddix_report_20260412_135807.md")
+    )
+
+    assert verdict["status"] == "consistent"
+    assert verdict["report"]["path"] == str(report_file.resolve())
+    assert verdict["session"]["path"] == str(session_file.resolve())

@@ -5,7 +5,7 @@ status: active
 parent_task_id: SGK-2026-0221
 related_docs:
 - docs/shigoku/subtasks/2026-06-03_sgk-2026-0261_recon-signal-mc-swarm_subtask_plan.md
-- docs/shigoku/subtasks/2026-06-03_sgk-2026-0259_recipe-auth-jwt-oauth_subtask_plan.md
+- docs/shigoku/subtasks/done/2026-06-03_sgk-2026-0259_recipe-auth-jwt-oauth_subtask_plan.md
 - docs/shigoku/roadmaps/2026-06-03_continuous-learning-architecture-reference.md
 - docs/shigoku/plans/2026-05-19_sgk-2026-0221_mock-optimizedreciperunner-discovery-graphql_plan.md
 - docs/shigoku/subtasks/2026-05-20_sgk-2026-0221-s01_groupa_execution-path_subtask_plan.md
@@ -13,7 +13,7 @@ related_docs:
 - docs/shigoku/roadmaps/future_functions1.md
 title: 'Recipe運用フロー改善: Recon起点の選抜・実行・Swarm連携'
 created_at: '2026-06-03'
-updated_at: '2026-07-02'
+updated_at: '2026-07-21'
 tags:
 - shigoku
 target: src/core/engine/master_conductor.py, src/core/engine/recipe_loader.py, src/core/engine/optimized_runner.py,
@@ -26,6 +26,11 @@ target: src/core/engine/master_conductor.py, src/core/engine/recipe_loader.py, s
 [2026-06-03_continuous-learning-architecture-reference.md](../roadmaps/2026-06-03_continuous-learning-architecture-reference.md)
 を必ず参照し、Recipe trigger は signal + KG を正本とし、RAG は trigger gate ではなく follow-up / checklist / caution の補助に限定すること。
 
+## 0. `SGK-2026-0259` との進め方
+- `SGK-2026-0260` は「どの Recipe をどう選ぶか」という共通メカニズムを先に固めるタスクとする。
+- `SGK-2026-0259` は、この計画で凍結した selector / runner / vocabulary 契約の上に auth/jwt/oauth の具体 Recipe を載せる後続タスクとする。
+- 両者は同一スプリントで連続実施してよいが、統合はせず、`0260 -> 0259` の順番を前提にする。
+
 ## 1. 達成したいゴール（ユーザー視点）
 - [ ] SHIGOKU が Recon / Discovery で得た signal をそのまま埋もれさせず、適切な Recipe を選抜して高期待値の検証へつなげられること。
 - [ ] Swarm/LLM の自由探索、Recipe の定型深掘り、KnowledgeGraph の永続記憶が役割分担された一貫フローとして動作すること。
@@ -34,13 +39,13 @@ target: src/core/engine/master_conductor.py, src/core/engine/recipe_loader.py, s
 
 ## 2. 全体像とアーキテクチャ
 - **対象コンポーネント/ファイル一覧:**
-  - `src/recon/` および関連 Discovery 実装: （修正候補）Recipe 選抜に使う signal を正規化して `context.target_info` / KG に渡す。
+  - `src/recon/` および関連 Discovery 実装: （前提参照）`SGK-2026-0261` が正規化して渡す signal handoff を受ける。
   - `src/core/engine/master_conductor.py`: （修正）direct swarm dispatch と recipe dispatch の責務分離、選択オーケストレーション。
   - `src/core/engine/recipe_loader.py`: （修正）Recipe candidate selection の中核。trigger / score / reason を返す。
   - `src/core/engine/optimized_runner.py`: （修正）Recipe 実行後の evidence / verdict / follow-up signal を構造化する。
   - `src/core/infra/knowledge_graph.py`: （修正候補）Recipe 選抜と重複抑制に使う graph-backed context を提供する。
   - `src/core/engine/recipe_contracts.py`: （修正）action / signal / verdict 契約の明文化。
-  - `recipes/`: （修正）workflow-ready schema と分類方針へ段階移行。
+  - `recipes/`: （修正候補）selector が consume する metadata 項目を最小追加する。
   - `tests/core/engine/` と `tests/unit/engine/`: （修正）選抜経路・重複抑制・follow-up routing のテスト追加。
 - **データの流れ / 依存関係:**
   - Recon / Discovery / auth observation / endpoint classification -> normalized signals -> `context.target_info` と KnowledgeGraph に保存。
@@ -76,8 +81,8 @@ target: src/core/engine/master_conductor.py, src/core/engine/recipe_loader.py, s
 - **隣接する計画書との境界**:
   - [2026-06-03_sgk-2026-0261_recon-signal-mc-swarm_subtask_plan.md](2026-06-03_sgk-2026-0261_recon-signal-mc-swarm_subtask_plan.md)
     - recipe selector に渡す `AttackSurfaceSignal` と KG 正本スキーマを supply する
-  - [2026-06-03_sgk-2026-0259_recipe-auth-jwt-oauth_subtask_plan.md](2026-06-03_sgk-2026-0259_recipe-auth-jwt-oauth_subtask_plan.md)
-    - auth/jwt/oauth の個別 recipe trigger と recipe 内容を扱う
+  - [2026-06-03_sgk-2026-0259_recipe-auth-jwt-oauth_subtask_plan.md](done/2026-06-03_sgk-2026-0259_recipe-auth-jwt-oauth_subtask_plan.md)
+    - auth/jwt/oauth の個別 recipe 内容と trigger 値の具体化を扱う。`0260` で共通 selector / runner 契約を凍結した後に着手する
 
 ### 2.3.1 責務固定表（最終版）
 
@@ -107,6 +112,7 @@ target: src/core/engine/master_conductor.py, src/core/engine/recipe_loader.py, s
 - `MasterConductor` の recipe/direct swarm/follow-up 判定ロジックはこの計画書の責務として固定する。
 - `SuppressionDecision` の生成主体は Recon 側と Recipe 側で分かれる。low-value suppression は Recon 側、recipe re-run suppression は Recipe 側。
 - KG の asset/signal graph は Recon 側が正本更新、execution/result graph は Recipe 側が正本更新とする。
+- `SGK-2026-0259` が新しい shared contract を必要とした場合は、この計画書へ差し戻して共通層で扱い、0259 側に個別分岐を増やさない。
 
 ### 2.4 KnowledgeGraph 理想形の概念図（Recipe 選抜視点）
 ```text
@@ -196,7 +202,7 @@ target: src/core/engine/master_conductor.py, src/core/engine/recipe_loader.py, s
   - Recipe 実行結果は KnowledgeGraph または同等の永続コンテキストへ反映可能であること。
   - direct swarm dispatch を残す場合でも、なぜ Recipe ではなく swarm なのか判定理由を残す。
   - Recipe YAML が選ばれても step action が実行不能では意味がないため、 selector と runner の allowlist / specialist binding を同じ契約で管理する。
-  - 実装は `SGK-2026-0259` の個別 Recipe 高度化と整合する vocabulary を使う。
+  - この計画の完了条件には、後続の `SGK-2026-0259` が追加 Recipe だけで乗れる shared vocabulary / selector 契約の凍結を含める。
 
 ### 3.1 目標フロー
 1. Recon / Discovery が raw signal を収集する。
@@ -235,14 +241,14 @@ target: src/core/engine/master_conductor.py, src/core/engine/recipe_loader.py, s
 - Recon 計画側で schema が増えても、Recipe 計画側では `required_signals`, `supporting_context`, `reasons` 契約に吸収できる構成を目指す。
 
 ## 4. 実装ステップ（AIに指示する手順）
-- [ ] ステップ1: Recon / Discovery から Recipe 選抜へ渡す signal vocabulary を定義し、raw signal との対応表を設計する。
+- [ ] ステップ1: `SGK-2026-0261` が supply する `AttackSurfaceSignal` から selector が受け取る `required_signals` / `supporting_context` / `reasons` vocabulary を固定し、raw signal 正規化そのものは 0261 に委譲する。
 - [ ] ステップ2: `master_conductor.py` の direct swarm dispatch 経路と `run_recipe` 経路を棚卸しし、責務境界と切替条件を明文化する。
 - [ ] ステップ3: `RecipeLoader` が `RecipeCandidate` を返す新しい selection 契約を設計し、Recipe ごとの attack surface tags / vulnerability tags / supported actions を照合可能にする。
 - [ ] ステップ4: KnowledgeGraph から selection に必要な supporting context を取得する I/O を設計する。
 - [ ] ステップ5: Recipe 候補集合のライフサイクルを見直し、過去ロード済み YAML を無条件で全再利用しない selection / cache / invalidation 方針を設計する。
 - [ ] ステップ6: Recipe 実行後の evidence / follow-up routing 契約を `optimized_runner.py` / conductor 側へ導入し、allowlist にない action を事前に検出して graceful に落とす。
 - [ ] ステップ7: 重複抑制、suppression key、decision trace を追加し、同一 signal からの task explosion を防ぐ。
-- [ ] ステップ8: Recipe selector の主体を `MasterConductor` 中心に残すか、Swarm に寄せるか、または Swarm-assisted selection にするかを設計判断として明文化する。
+- [ ] ステップ8: 後続の `SGK-2026-0259` が共通層を再設計せずに済むよう、selector / runner / vocabulary の shared contract と変更要求の返し先を凍結する。
 - [ ] ステップ9: docs とテストで `direct swarm` / `run_recipe` / `recipe -> swarm feedback` の3経路を固定化する。
 
 ### 4.2 Recon 計画書との分担
@@ -271,7 +277,7 @@ target: src/core/engine/master_conductor.py, src/core/engine/recipe_loader.py, s
 - [ ] [重要度:高] direct swarm と Recipe の二重系統がしばらく共存し、暫定互換期間に複雑さが増す - migration phase を設け、旧経路に deprecation trace を入れる。
 - [ ] [重要度:中] KnowledgeGraph の更新粒度が荒いと selection に stale context を使う可能性 - freshness / last_seen を scoring に含める。
 - [ ] [重要度:中] follow-up routing を増やしすぎると task explosion が再発する - suppression key と top-N policy を必須化する。
-- [ ] [重要度:中] Recipe の selector 主体を MC に固定しすぎると、曖昧局面で Swarm の仮説列挙力を活かせない - MC final gate + Swarm-assisted suggestion など中間案も比較する。
+- [ ] [重要度:中] `SGK-2026-0260` と `SGK-2026-0259` の境界が曖昧なまま進むと、共通 selector 修正と auth 個別 Recipe 追加が再び混ざる - shared contract は 0260、auth contents は 0259 に固定する。
 - [ ] [重要度:中] attack surface tags / vulnerability tags が Recipe 側で未整備だと selector が機能せず、YAML 数だけが増える - schema 拡張と migration を先に定義する。
 - [ ] [重要度:中] load 済み Recipe のキャッシュ方針を誤ると、関係ない YAML が累積的に再実行候補へ混入する - per-run candidate set と cache invalidation を分離する。
 - [ ] [重要度:中] LLM 探索に戻す条件が曖昧だと deterministic flow が崩れる - `recipe_to_swarm_reason` を固定語彙化する。

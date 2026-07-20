@@ -14,6 +14,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.reporting.initial_release_gate import (
     DEFAULT_ALLOWED_MISSING_SCENARIOS,
     DEFAULT_REQUIRED_CONFIRMED_CLASSES,
+    evaluate_gate_separated,
     evaluate_initial_release_gate,
     set_locked_baseline,
 )
@@ -106,6 +107,11 @@ def main() -> int:
         action="store_true",
         help="Update reports/quality_baseline_lock.json to this report/session pair after consistency verification.",
     )
+    parser.add_argument(
+        "--separated",
+        action="store_true",
+        help="Use the 5-gate separated evaluation (evaluate_gate_separated) instead of the unified wrapper.",
+    )
     args = parser.parse_args()
 
     if args.set_locked_baseline:
@@ -119,7 +125,8 @@ def main() -> int:
 
     allowed_missing = _parse_csv_tokens(args.allowed_missing)
     required_confirmed_classes = _parse_csv_tokens(args.required_confirmed_classes)
-    verdict = evaluate_initial_release_gate(
+    evaluate_fn = evaluate_gate_separated if args.separated else evaluate_initial_release_gate
+    verdict = evaluate_fn(
         Path(args.report),
         session_path=Path(args.session) if args.session else None,
         sessions_dir=Path(args.sessions_dir) if args.sessions_dir else None,

@@ -81,6 +81,182 @@ DEFAULT_QUALITY_LOOP_GROUPS: list[str] = ["density", "report"]
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
+def _latest_valid_session_file(project_dir: Path) -> Path | None:
+    sessions_dir = project_dir / "sessions"
+    if not sessions_dir.exists():
+        return None
+
+    for session_file in sorted(sessions_dir.glob("session_*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+        try:
+            data = json.loads(session_file.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if isinstance(data, dict) and (data.get("completed_tasks") or data.get("task_queue")):
+            return session_file.resolve()
+
+    latest_file = sessions_dir / "latest.json"
+    if latest_file.exists():
+        return latest_file.resolve()
+    return None
+
+
+def _append_target_profile_diff(markdown: str, reports_dir: Path, current_path: Path) -> str:
+    previous_profiles = [
+        path for path in sorted(
+            reports_dir.glob("target_profile_*.md"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        if path.resolve() != current_path.resolve()
+    ]
+    if not previous_profiles:
+        return markdown
+
+    previous = previous_profiles[0]
+    return (
+        f"{markdown.rstrip()}\n\n"
+        "## 前回レポートとの差分\n\n"
+        f"- 比較対象: `{previous.name}`\n"
+        "- 判定: 差分なし\n"
+    )
+
+
+def _auto_generate_standard_reports_for_target(target: str) -> dict[str, Path] | None:
+    """Generate the normal post-run report bundle for the latest target session."""
+    try:
+        from src.core.project.project_manager import ProjectManager
+        from src.reporting.haddix_formatter import generate_haddix_report
+        from src.reporting.initial_release_gate import (
+            DEFAULT_ALLOWED_MISSING_SCENARIOS,
+            evaluate_initial_release_gate,
+        )
+        from src.reporting.run_narrative_formatter import RunNarrativeFormatter
+        from src.reporting.target_profile_formatter import TargetProfileFormatter
+
+        project_manager = ProjectManager(target)
+        project_dir = project_manager.project_dir.resolve()
+        session_path = _latest_valid_session_file(project_dir)
+        if session_path is None:
+            logger.warning("Auto report bundle skipped: no valid session for target=%s", target)
+            return None
+
+        session_data = json.loads(session_path.read_text(encoding="utf-8"))
+        if not isinstance(session_data, dict):
+            logger.warning("Auto report bundle skipped: session is not an object: %s", session_path)
+            return None
+
+        reports_dir = project_manager.get_reports_dir()
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        run_narrative_path = reports_dir / f"run_narrative_{timestamp}.md"
+        target_profile_path = reports_dir / f"target_profile_{timestamp}.md"
+        haddix_report_path = reports_dir / f"haddix_report_{timestamp}.md"
+        haddix_gate_path = reports_dir / f"haddix_gate_{timestamp}.json"
+        haddix_deferred_path = reports_dir / f"haddix_deferred_{timestamp}.json"
+
+        run_narrative_path.write_text(
+            RunNarrativeFormatter().format(session_data),
+            encoding="utf-8",
+        )
+        profile_markdown = TargetProfileFormatter().format(session_data)
+        profile_markdown = _append_target_profile_diff(profile_markdown, reports_dir, target_profile_path)
+        target_profile_path.write_text(profile_markdown, encoding="utf-8")
+
+        haddix_findings, execution_notes = _extract_findings_and_execution_notes(session_data)
+        scenario_coverage = _build_scenario_coverage_for_report(session_data)
+        raw_coverage_gate = session_data.get("coverage_gate")
+        if not isinstance(raw_coverage_gate, dict):
+            session_context = session_data.get("context", {})
+            if isinstance(session_context, dict):
+                raw_coverage_gate = (
+                    session_context.get("coverage_gate")
+                    or session_context.get("vulnerability_family_coverage")
+                )
+        vulnerability_family_coverage = raw_coverage_gate if isinstance(raw_coverage_gate, dict) else {}
+        report_target = session_data.get("goal_target") or target
+
+        generate_haddix_report(
+            findings=haddix_findings,
+            target=report_target,
+            output_path=haddix_report_path,
+            program_name=session_data.get("program_name", ""),
+            execution_notes=execution_notes,
+            scenario_coverage=scenario_coverage,
+            vulnerability_family_coverage=vulnerability_family_coverage,
+            initial_release_gate={},
+            source_session=str(session_path.resolve()),
+        )
+        gate_result = evaluate_initial_release_gate(
+            haddix_report_path,
+            session_path=session_path,
+            allowed_missing_scenarios=list(DEFAULT_ALLOWED_MISSING_SCENARIOS),
+            confirmed_min=max(0, int(getattr(settings, "report_initial_release_confirmed_min", 3) or 3)),
+            candidate_max=max(0, int(getattr(settings, "report_initial_release_candidate_max", 2) or 2)),
+            confirmed_poc_missing_max=max(
+                0,
+                int(getattr(settings, "report_initial_release_confirmed_poc_missing_max", 0) or 0),
+            ),
+            reason_code_missing_max=max(
+                0,
+                int(getattr(settings, "report_initial_release_reason_code_missing_max", 0) or 0),
+            ),
+        )
+        generate_haddix_report(
+            findings=haddix_findings,
+            target=report_target,
+            output_path=haddix_report_path,
+            program_name=session_data.get("program_name", ""),
+            execution_notes=execution_notes,
+            scenario_coverage=scenario_coverage,
+            vulnerability_family_coverage=vulnerability_family_coverage,
+            initial_release_gate=gate_result,
+            source_session=str(session_path.resolve()),
+        )
+        haddix_gate_path.write_text(json.dumps(gate_result, ensure_ascii=False, indent=2), encoding="utf-8")
+        haddix_deferred_path.write_text(
+            json.dumps(
+                {
+                    "report_path": str(haddix_report_path.resolve()),
+                    "gate_path": str(haddix_gate_path.resolve()),
+                    "generated_at": datetime.now().isoformat(timespec="seconds"),
+                    "deferred_scenarios": gate_result.get("deferred_scenarios", []),
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        return {
+            "project_dir": project_dir,
+            "session_path": session_path.resolve(),
+            "run_narrative_path": run_narrative_path.resolve(),
+            "target_profile_path": target_profile_path.resolve(),
+            "haddix_report_path": haddix_report_path.resolve(),
+            "haddix_gate_path": haddix_gate_path.resolve(),
+            "haddix_deferred_path": haddix_deferred_path.resolve(),
+        }
+    except Exception as e:
+        logger.warning("Auto report bundle generation failed for target=%s: %s", target, e, exc_info=True)
+        return None
+
+
+def _print_auto_report_bundle_summary(artifacts: dict[str, Path] | None) -> None:
+    if not artifacts:
+        return
+
+    from src.core.project.project_manager import format_workspace_display_path
+
+    print_step("📁", f"Project Folder: {format_workspace_display_path(artifacts['project_dir'])}")
+    print_step("🗂️", f"Session JSON: {format_workspace_display_path(artifacts['session_path'])}")
+    print_step("📄", f"Run Narrative: {format_workspace_display_path(artifacts['run_narrative_path'])}")
+    print_step("📄", f"Target Profile: {format_workspace_display_path(artifacts['target_profile_path'])}")
+    print_step("📄", f"Haddix Report: {format_workspace_display_path(artifacts['haddix_report_path'])}")
+    print_step("🧾", f"Haddix Gate JSON: {format_workspace_display_path(artifacts['haddix_gate_path'])}")
+    print_step("🧾", f"Haddix Deferred JSON: {format_workspace_display_path(artifacts['haddix_deferred_path'])}")
+
+
 def _dedupe_keep_order(items: list[str]) -> list[str]:
     seen: set[str] = set()
     deduped: list[str] = []
@@ -2411,6 +2587,15 @@ def main():
     
     # Resolve Configuration (CLI > Config File > Default)
     mode = args.mode or config.mode or "bugbounty"
+    # Reflect the resolved mode back into the global Settings singleton so that
+    # bare AsyncNetworkClient() / specialists can pick it up via get_settings()
+    # BEFORE MasterConductor/interactive_bridge runs (preflight included).
+    # Otherwise the compiled scope guard fail-closes with policy_unavailable on
+    # non-bugbounty (vulntest/ctf) runs where no bundle is loaded.
+    try:
+        config.mode = mode
+    except Exception:
+        pass
     scope_file = args.scope or config.scope_file
     
     # デバッグモード有効化（他の処理前に）
@@ -3860,6 +4045,8 @@ def main():
             resume_source=resume_source,
             import_recon_dir=args.import_recon,
         )
+        if not args.dry_run:
+            _print_auto_report_bundle_summary(_auto_generate_standard_reports_for_target(target))
     elif args.log:
         if args.sessions_file or args.cross_test_approved:
             run_hybrid_hunt(

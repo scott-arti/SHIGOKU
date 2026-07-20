@@ -5,7 +5,7 @@ status: active
 parent_task_id: null
 related_docs: []
 created_at: '2026-05-19'
-updated_at: '2026-07-02'
+updated_at: '2026-07-21'
 ---
 
 # Future Functions & Improvements
@@ -94,7 +94,7 @@ MasterConductor レベルでの Resume（タスク単位）は実装されたが
   - 「予算（時間・リクエスト数）超過時に Attack フェーズをスキップして Report へ」
 
 **追跡計画:**
-- [2026-06-21_sgk-2026-0284_phasegate-fine-grained_subtask_plan.md](../subtasks/2026-06-21_sgk-2026-0284_phasegate-fine-grained_subtask_plan.md)
+- [2026-06-21_sgk-2026-0282_bug-bounty-scope-control_subtask_plan.md](../subtasks/2026-06-21_sgk-2026-0282_bug-bounty-scope-control_subtask_plan.md) （2026-07-17 に `SGK-2026-0284` を統合）
 
 ### 7. CLI 機能拡張
 

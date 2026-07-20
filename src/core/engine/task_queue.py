@@ -22,6 +22,7 @@ from dataclasses import dataclass, field, asdict
 from typing import List, Dict, Any, Optional, Callable, Iterator, Set, Tuple
 
 from src.core.engine.snapshot_validity import check_snapshot_validity
+from src.core.engine import task_pruning_policy as task_pruning_policy_shared
 
 logger = logging.getLogger(__name__)
 
@@ -722,38 +723,7 @@ class DynamicTaskQueue:
         戦略最適化の間引き対象から除外すべきタスクか判定。
         シナリオカバレッジ維持に必要なタスクは削除しない。
         """
-        params = task.params if hasattr(task, "params") and isinstance(task.params, dict) else {}
-        source_category = str(params.get("source_category", "") or "").strip().lower()
-        category = str(params.get("category", "") or "").strip().lower()
-
-        protected_sources = {
-            "scenario_probe_planner",
-            "scenario_probe_guard",
-            "coverage_backfill",
-            "coverage_backfill_guard",
-        }
-        if source_category in protected_sources:
-            return True
-
-        if category == "csrf_candidate":
-            return True
-
-        if params.get("scenario_probe"):
-            return True
-
-        if bool(params.get("_coverage_guard_forced", False)):
-            return True
-
-        tags = getattr(task, "tags", []) or []
-        tags_lower = {str(tag).strip().lower() for tag in tags}
-        if "manual_verify" in tags_lower or "coverage_guard_forced" in tags_lower:
-            return True
-
-        task_name = str(getattr(task, "name", "") or "").upper()
-        if task_name.startswith("SCN"):
-            return True
-
-        return False
+        return task_pruning_policy_shared.is_coverage_critical_task(task)
 
     def boost_priority_for_assets(self, asset_ids: List[str], boost_value: int) -> int:
         """
@@ -907,6 +877,101 @@ class DynamicTaskQueue:
     def __iter__(self) -> Iterator[Any]:
         """優先度順にイテレーション"""
         return iter(self.get_all())
+
+    # ────────────────────────────────────────────────────────────────────────
+    # Shared deletion executor (SGK-2026-0287 Step 7)
+    # ────────────────────────────────────────────────────────────────────────
+
+    def prune_by_decisions(
+        self,
+        decisions: List[Dict[str, Any]],
+        mode: str = "shadow",
+    ) -> Dict[str, Any]:
+        """Shared deletion executor for task pruning.
+
+        **This is the single entry point for all pruning deletions.**
+        Callers MUST NOT invoke ``remove_by_ids()`` / ``remove_matching()`` /
+        ``remove_tasks_for_assets()`` directly for pruning purposes.
+
+        Handles:
+          - Candidate normalisation
+          - Protection check (via ``decision['protected']`` flag)
+          - In-memory / disk-spill / persistent cleanup
+          - Audit result return
+
+        Args:
+            decisions: List of prune decision dicts, each with at minimum
+                       ``task_id``, ``reason_code``, ``protected``.
+            mode: ``"shadow"`` = record only (no deletion);
+                  ``"active"`` = apply deletions for non-protected tasks.
+
+        Returns:
+            Dict with keys:
+            ``requested_ids``, ``applied_ids``, ``skipped_ids``,
+            ``missing_ids``, ``before_count``, ``after_count``,
+            ``mode``, ``reason_codes`` (task_id -> reason_code).
+            Missing targets are NOT raised as exceptions; they are
+            recorded in ``missing_ids`` for audit.
+        """
+        assert threading.current_thread() is threading.main_thread(), (
+            "PCR-P1: task_queue mutation must be on main thread"
+        )
+
+        before_count = len(self._task_index)
+        requested_ids: List[str] = []
+        applied_ids: List[str] = []
+        skipped_ids: List[str] = []
+        missing_ids: List[str] = []
+        reason_codes: Dict[str, str] = {}
+
+        for d in decisions:
+            task_id = str(d.get("task_id", ""))
+            if not task_id:
+                continue
+            requested_ids.append(task_id)
+            reason_codes[task_id] = str(d.get("reason_code", "unknown"))
+
+        # Normalise: deduplicate requested IDs
+        requested_ids = list(dict.fromkeys(requested_ids))
+
+        for task_id in requested_ids:
+            task = self._task_index.get(task_id)
+            if task is None:
+                # Task not found in index — record as missing
+                missing_ids.append(task_id)
+                continue
+
+            # Find the corresponding decision to check protection
+            decision = next(
+                (d for d in decisions if str(d.get("task_id", "")) == task_id),
+                None,
+            )
+            protected = bool(decision.get("protected", True)) if decision else True
+
+            if mode != "active" or protected:
+                # Shadow mode or protected: skip deletion, record observation
+                skipped_ids.append(task_id)
+                continue
+
+            # Active mode + not protected: apply deletion
+            if self.remove_by_id(task_id):
+                applied_ids.append(task_id)
+            else:
+                # Deletion failed (should be rare — task was in index)
+                skipped_ids.append(task_id)
+
+        after_count = len(self._task_index)
+
+        return {
+            "requested_ids": requested_ids,
+            "applied_ids": applied_ids,
+            "skipped_ids": skipped_ids,
+            "missing_ids": missing_ids,
+            "before_count": before_count,
+            "after_count": after_count,
+            "mode": mode,
+            "reason_codes": reason_codes,
+        }
     
     def to_list(self) -> List[Any]:
         """get_all のエイリアス (互換性用)"""

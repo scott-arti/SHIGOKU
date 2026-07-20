@@ -3,6 +3,7 @@ import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 from types import SimpleNamespace
 from src.core.agents.swarm.injection.manager import InjectionManagerAgent
+from src.core.agents.swarm.base_manager import BaseManagerAgent
 from src.core.agents.swarm.base import Task
 from src.core.agents.swarm.injection.manager_internal.target_classifier import classify_target_url
 from src.core.agents.swarm.injection.manager_internal.target_selection import prioritize_targets
@@ -105,7 +106,9 @@ async def test_process_single_url_unknown_classification_only_does_not_bruteforc
     assert result["tested_params"] == []
     assert result["reflection_observed"] is False
     assert result["xss_evidence"] == ""
-    assert result["blind_correlation"] == {}
+    # normalize_blind_correlation({}) always returns full normalized dict
+    assert result["blind_correlation"]["correlated"] is False
+    assert result["blind_correlation"]["verdict"] == "none"
 
 
 @pytest.mark.asyncio
@@ -138,7 +141,11 @@ async def test_process_single_url_unknown_executes_hypothesis_scan_when_opted_in
     assert result["tested_params"] == ["q"]
     assert result["reflection_observed"] is True
     assert result["xss_evidence"] == "reflected"
-    assert result["blind_correlation"] == {"time_based": {"confirmed": True}}
+    # normalize_blind_correlation expands {"time_based": {"confirmed": True}}
+    # into the full normalized form
+    assert result["blind_correlation"]["time_based"] == {"confirmed": True}
+    assert result["blind_correlation"]["correlated"] is False
+    assert result["blind_correlation"]["verdict"] == "tentative"
     assert result["unknown_profile"] == {"hypotheses": ["xss"]}
 
 
@@ -824,22 +831,30 @@ async def test_dispatch_records_priority_score_in_url_results_and_execution_log(
         },
     )
 
-    with patch("src.core.agents.swarm.injection.manager.resolve_risk_force_allowlist", return_value=set()):
+    with patch("src.core.agents.swarm.injection.manager.resolve_risk_force_allowlist", return_value=set()), \
+         patch.object(BaseManagerAgent, "dispatch",
+               new=AsyncMock(return_value=MagicMock(status="success", findings=[], execution_log=[]))):
+        mock_llm_d = MagicMock()
+        mock_llm_d.agenerate = AsyncMock(return_value=MagicMock(choices=[MagicMock(
+            message=MagicMock(content="Thought: Done.\nFinal Answer: Completed")
+        )]))
+        manager.set_llm_client(mock_llm_d)
         result = await manager.dispatch(task)
 
     assert result.status == "success"
-    assert manager.current_context["url_results"]
-    first_entry = manager.current_context["url_results"][0]
+    phase1_summary = next(
+        (item for item in result.execution_log if isinstance(item, dict) and item.get("phase") == "phase1_summary"),
+        {},
+    )
+    url_results = phase1_summary.get("url_results", [])
+    assert url_results
+    first_entry = url_results[0]
     assert first_entry["url"] == high_url
     assert isinstance(first_entry.get("priority_score"), int)
     assert first_entry.get("priority_score", 0) > 0
     assert isinstance(first_entry.get("priority_signals"), list)
     assert "method:PATCH" in first_entry.get("priority_signals", [])
 
-    phase1_summary = next(
-        (item for item in result.execution_log if isinstance(item, dict) and item.get("phase") == "phase1_summary"),
-        {},
-    )
     prioritized_targets = phase1_summary.get("prioritized_targets", [])
     assert prioritized_targets
     assert prioritized_targets[0].get("url") == high_url
@@ -882,9 +897,21 @@ async def test_dispatch_timeout_retry_guard_suppresses_same_cause_retries_for_lo
                 "phase2_on_empty_phase1": False,
             },
         )
+        mock_finish2 = MagicMock()
+        mock_finish2.choices = [MagicMock()]
+        mock_finish2.choices[0].message.content = "Thought: Done.\nFinal Answer: Completed"
+        manager.llm = MagicMock()
+        manager.llm.agenerate = AsyncMock(return_value=mock_finish2)
 
         with patch("src.core.agents.swarm.injection.manager.resolve_risk_force_allowlist", return_value=set()):
-            result = await manager.dispatch(task)
+            mock_llm = MagicMock()
+            mock_llm.agenerate = AsyncMock(return_value=MagicMock(choices=[MagicMock(
+                message=MagicMock(content="Thought: Done.\nFinal Answer: Completed")
+            )]))
+            manager.set_llm_client(mock_llm)
+            with patch.object(manager.__class__.__bases__[0], "dispatch", new_callable=AsyncMock) as mock_super:
+                mock_super.return_value = MagicMock(status="success", findings=[], execution_log=[])
+                result = await manager.dispatch(task)
     finally:
         settings.phase1_timeout_retry_same_cause_guard = old_guard
         settings.phase1_timeout_retry_guard_min_priority = old_min_priority
@@ -901,6 +928,149 @@ async def test_dispatch_timeout_retry_guard_suppresses_same_cause_retries_for_lo
     assert len(timeout_rows) == 2
     assert int(timeout_rows[0].get("retry_count", -1)) == 2
     assert int(timeout_rows[1].get("retry_count", -1)) == 0
+
+
+@pytest.mark.asyncio
+async def test_dispatch_records_selection_origin_and_attempt_trace_metadata() -> None:
+    manager = InjectionManagerAgent(config={"model": "test-model"})
+    manager._process_single_url = AsyncMock(
+        return_value={
+            "findings_count": 0,
+            "vuln_type": "api",
+            "findings": [],
+            "tested_params": ["role"],
+            "reflection_observed": False,
+            "xss_evidence": "",
+            "blind_correlation": {},
+            "unknown_profile": {},
+            "probe_sent": True,
+            "probe_skipped_reason": "",
+            "comparison_checks": [],
+            "auth_context_matrix": {},
+            "object_ab_comparison": {},
+            "schema_candidate_params": [],
+            "single_request_validation": True,
+            "detection_mode": "phase1",
+        }
+    )
+
+    target_url = "http://example.com/api/account/update?id=1&role=user"
+    task = Task(
+        id="inj-selection-trace-1",
+        name="Selection origin propagation",
+        target=target_url,
+        params={
+            "targets": [target_url],
+            "category": "api_candidate",
+            "selection_origin": "recon.tagged_api_candidate",
+            "manager_timeout_seconds": 30,
+            "per_url_timeout_seconds": 5,
+            "phase1_force_full_coverage": True,
+            "phase1_stop_on_first_hit": False,
+            "phase2_on_empty_phase1": False,
+            "_context": {
+                "forms_by_url": {
+                    target_url: [{"fields": [{"name": "role"}]}],
+                },
+                "url_evidence_by_url": {
+                    target_url: {
+                        "method": "PATCH",
+                        "source": "caido",
+                        "response_status": 200,
+                        "response_headers": {"Content-Type": "application/json"},
+                        "has_form_tag": True,
+                        "score_breakdown": {},
+                    }
+                },
+                "scan_profile": "bbpt",
+            },
+        },
+    )
+
+    with patch("src.core.agents.swarm.injection.manager.resolve_risk_force_allowlist", return_value=set()), \
+         patch.object(BaseManagerAgent, "dispatch",
+               new=AsyncMock(return_value=MagicMock(status="success", findings=[], execution_log=[]))):
+        mock_llm_d = MagicMock()
+        mock_llm_d.agenerate = AsyncMock(return_value=MagicMock(choices=[MagicMock(
+            message=MagicMock(content="Thought: Done.\nFinal Answer: Completed")
+        )]))
+        manager.set_llm_client(mock_llm_d)
+        result = await manager.dispatch(task)
+
+    assert result.status == "success"
+    phase1_summary = next(
+        (item for item in result.execution_log if isinstance(item, dict) and item.get("phase") == "phase1_summary"),
+        {},
+    )
+    url_results = phase1_summary.get("url_results", [])
+    row = url_results[0]
+    assert row["selection_origin"] == "recon.tagged_api_candidate"
+    assert row["task_category"] == "api_candidate"
+    assert row["selection_evidence"]["query_keys"] == ["id", "role"]
+    assert row["selection_evidence"]["response_header_keys"] == ["content-type"]
+    assert row["attempt_traces"]
+    assert row["attempt_traces"][0]["history"][0]["stage"] == "await_process_single_url"
+    assert row["attempt_traces"][0]["history"][-1]["stage"] == "completed"
+
+    assert phase1_summary["prioritized_targets"][0]["selection_origin"] == "recon.tagged_api_candidate"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_timeout_records_last_stage_before_timeout() -> None:
+    manager = InjectionManagerAgent(config={"model": "test-model"})
+    manager._summarize_phase1_signals = MagicMock(
+        return_value={"tool_error": False, "weak_signal": False, "high_risk_endpoint": False}
+    )
+
+    async def _trace_then_timeout(*_args, trace_context=None, **_kwargs):
+        manager._mark_attempt_trace(trace_context, "mock_probe_stage")
+        raise asyncio.TimeoutError()
+
+    manager._process_single_url = AsyncMock(side_effect=_trace_then_timeout)
+
+    task = Task(
+        id="inj-timeout-trace-1",
+        name="Timeout trace capture",
+        target="http://example.com/vulnerabilities/sqli/?id=1",
+        params={
+            "targets": ["http://example.com/vulnerabilities/sqli/?id=1"],
+            "category": "id_param",
+            "selection_origin": "recon.tagged_id_param",
+            "manager_timeout_seconds": 30,
+            "per_url_timeout_seconds": 1,
+            "phase1_timeout_retries": 0,
+            "phase1_force_full_coverage": True,
+            "phase1_stop_on_first_hit": False,
+            "phase2_on_empty_phase1": False,
+        },
+    )
+
+    with patch("src.core.agents.swarm.injection.manager.resolve_risk_force_allowlist", return_value=set()), \
+         patch.object(BaseManagerAgent, "dispatch",
+               new=AsyncMock(return_value=MagicMock(status="success", findings=[], execution_log=[]))):
+        mock_llm_d = MagicMock()
+        mock_llm_d.agenerate = AsyncMock(return_value=MagicMock(choices=[MagicMock(
+            message=MagicMock(content="Thought: Done.\nFinal Answer: Completed")
+        )]))
+        manager.set_llm_client(mock_llm_d)
+        result = await manager.dispatch(task)
+
+    assert result.status == "success"
+    phase1_summary = next(
+        (item for item in result.execution_log if isinstance(item, dict) and item.get("phase") == "phase1_summary"),
+        {},
+    )
+    url_results = phase1_summary.get("url_results", [])
+    timeout_rows = [
+        row for row in url_results
+        if isinstance(row, dict) and row.get("status") == "timeout"
+    ]
+    assert len(timeout_rows) == 1
+    timeout_row = timeout_rows[0]
+    assert timeout_row["selection_origin"] == "recon.tagged_id_param"
+    assert timeout_row["timeout_diagnostics"]["last_stage_before_timeout"] == "mock_probe_stage"
+    assert timeout_row["attempt_traces"][0]["history"][-2]["stage"] == "mock_probe_stage"
+    assert timeout_row["attempt_traces"][0]["history"][-1]["stage"] == "timeout"
 
 
 # ---------------------------------------------------------------------------
@@ -989,6 +1159,345 @@ def test_specialist_map_ssti_maps_to_ssti():
         available_specialists=set(manager.specialists.keys()),
     )
     assert "ssti" in profile.get("selected_specialists", [])
+
+
+# ---------------------------------------------------------------------------
+# SGK-2026-0367: Phase2 no-signal suppression regression tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_phase2_safe_skip_quiet_xss():
+    """Quiet xss_candidate (GET, no forms, no hints, no findings) → safe_skip."""
+    manager = InjectionManagerAgent(config={"model": "test-model"})
+    manager._process_single_url = AsyncMock(return_value={
+        "findings_count": 0, "vuln_type": "xss", "findings": [],
+        "tested_params": [], "reflection_observed": False, "xss_evidence": "",
+        "blind_correlation": {}, "unknown_profile": {},
+        "probe_sent": False, "probe_skipped_reason": "no_candidate_param",
+        "comparison_checks": [], "auth_context_matrix": {},
+        "object_ab_comparison": {}, "schema_candidate_params": [],
+        "single_request_validation": True, "detection_mode": "phase1",
+    })
+
+    url = "http://example.com/quiet"
+    task = Task(id="t-quiet-xss", name="Quiet XSS", target=url,
+                agent_type="InjectionSwarm",
+                params={
+                    "targets": [url], "category": "xss_candidate",
+                    "phase2_on_empty_phase1": False,
+                    "phase1_force_full_coverage": True,
+                    "phase1_stop_on_first_hit": False,
+                    "selection_origin": "recon_tagged",
+                    "_context": {"url_evidence_by_url": {url: {"method": "GET", "has_form_tag": False}}},
+                })
+
+    with patch("src.core.agents.swarm.injection.manager.resolve_risk_force_allowlist", return_value=set()), \
+         patch.object(BaseManagerAgent, "dispatch",
+                      new=AsyncMock(return_value=MagicMock(status="success", findings=[], execution_log=[]))):
+        result = await manager.dispatch(task)
+
+    assert result.status == "success"
+    assert any("phase1_safe_skip_no_signal" == log.get("reason")
+               for log in result.execution_log if isinstance(log, dict))
+
+
+@pytest.mark.asyncio
+async def test_phase2_proceed_xss_with_post():
+    """xss_candidate with POST method → Phase 2 proceeds (no safe_skip)."""
+    manager = InjectionManagerAgent(config={"model": "test-model"})
+    manager._process_single_url = AsyncMock(return_value={
+        "findings_count": 0, "vuln_type": "xss", "findings": [],
+        "tested_params": ["msg"], "reflection_observed": False, "xss_evidence": "",
+        "blind_correlation": {}, "unknown_profile": {},
+        "probe_sent": True, "probe_skipped_reason": "",
+        "comparison_checks": [], "auth_context_matrix": {},
+        "object_ab_comparison": {}, "schema_candidate_params": [],
+        "single_request_validation": True, "detection_mode": "phase1",
+    })
+
+    url = "http://example.com/comment"
+    task = Task(id="t-post-xss", name="POST XSS", target=url,
+                agent_type="InjectionSwarm",
+                params={
+                    "targets": [url], "category": "xss_candidate",
+                    "phase2_on_empty_phase1": False,
+                    "phase1_force_full_coverage": True,
+                    "phase1_stop_on_first_hit": False,
+                    "selection_origin": "recon_tagged",
+                    "_context": {
+                        "url_evidence_by_url": {url: {"method": "POST", "has_form_tag": True}},
+                        "forms_by_url": {url: [{"method": "POST", "inputs": [{"name": "msg"}]}]},
+                    },
+                })
+
+    with patch("src.core.agents.swarm.injection.manager.resolve_risk_force_allowlist", return_value=set()), \
+         patch.object(BaseManagerAgent, "dispatch",
+               new=AsyncMock(return_value=MagicMock(status="success", findings=[], execution_log=[]))):
+        result = await manager.dispatch(task)
+
+    assert result.status == "success"
+    # Should NOT have safe_skip — Phase 2 proceeds due to POST method
+    assert not any("phase1_safe_skip_no_signal" == log.get("reason")
+                   for log in result.execution_log if isinstance(log, dict))
+
+
+@pytest.mark.asyncio
+async def test_phase2_proceed_api_candidate():
+    """api_candidate (non-xss) → Phase 2 proceeds regardless of signals."""
+    manager = InjectionManagerAgent(config={"model": "test-model"})
+    manager._process_single_url = AsyncMock(return_value={
+        "findings_count": 0, "vuln_type": "api", "findings": [],
+        "tested_params": [], "reflection_observed": False, "xss_evidence": "",
+        "blind_correlation": {}, "unknown_profile": {},
+        "probe_sent": False, "probe_skipped_reason": "no_method",
+        "comparison_checks": [], "auth_context_matrix": {},
+        "object_ab_comparison": {}, "schema_candidate_params": [],
+        "single_request_validation": True, "detection_mode": "phase1",
+    })
+
+    url = "http://example.com/api/data"
+    task = Task(id="t-api-cand", name="API Candidate", target=url,
+                agent_type="InjectionSwarm",
+                params={
+                    "targets": [url], "category": "api_candidate",
+                    "phase2_on_empty_phase1": True,
+                    "phase1_force_full_coverage": True,
+                    "phase1_stop_on_first_hit": False,
+                    "selection_origin": "recon_tagged",
+                    "_context": {"url_evidence_by_url": {url: {"method": "GET", "has_form_tag": False}}},
+                })
+
+    with patch("src.core.agents.swarm.injection.manager.resolve_risk_force_allowlist", return_value=set()), \
+         patch.object(BaseManagerAgent, "dispatch",
+               new=AsyncMock(return_value=MagicMock(status="success", findings=[], execution_log=[]))):
+        result = await manager.dispatch(task)
+
+    assert result.status == "success"
+    assert not any("phase1_safe_skip_no_signal" == log.get("reason")
+                   for log in result.execution_log if isinstance(log, dict))
+
+
+@pytest.mark.asyncio
+async def test_phase2_shadow_only_proceeds():
+    """Shadow mode: should NOT skip Phase 2 even for quiet xss_candidate."""
+    manager = InjectionManagerAgent(config={"model": "test-model"})
+    manager._process_single_url = AsyncMock(return_value={
+        "findings_count": 0, "vuln_type": "xss", "findings": [],
+        "tested_params": [], "reflection_observed": False, "xss_evidence": "",
+        "blind_correlation": {}, "unknown_profile": {},
+        "probe_sent": False, "probe_skipped_reason": "no_candidate_param",
+        "comparison_checks": [], "auth_context_matrix": {},
+        "object_ab_comparison": {}, "schema_candidate_params": [],
+        "single_request_validation": True, "detection_mode": "phase1",
+    })
+
+    url = "http://example.com/quiet-shadow"
+    task = Task(id="t-shadow", name="Shadow XSS", target=url,
+                agent_type="InjectionSwarm",
+                params={
+                    "targets": [url], "category": "xss_candidate",
+                    "phase2_on_empty_phase1": False,
+                    "phase1_force_full_coverage": True,
+                    "phase1_stop_on_first_hit": False,
+                    "selection_origin": "recon_tagged",
+                    "_context": {"url_evidence_by_url": {url: {"method": "GET", "has_form_tag": False}}},
+                })
+
+    old_shadow = bool(getattr(settings, "xss_no_signal_phase2_shadow_only", False))
+    settings.xss_no_signal_phase2_shadow_only = True
+    try:
+        with patch("src.core.agents.swarm.injection.manager.resolve_risk_force_allowlist", return_value=set()), \
+             patch.object(BaseManagerAgent, "dispatch",
+                   new=AsyncMock(return_value=MagicMock(status="success", findings=[], execution_log=[]))):
+            result = await manager.dispatch(task)
+    finally:
+        settings.xss_no_signal_phase2_shadow_only = old_shadow
+
+    assert result.status == "success"
+    # Shadow mode: should NOT have safe_skip — Phase 2 still runs
+    assert not any("phase1_safe_skip_no_signal" == log.get("reason")
+                   for log in result.execution_log if isinstance(log, dict))
+
+
+# ---------------------------------------------------------------------------
+# SGK-2026-0367: _should_force_phase2_for_exception_target 専用テスト
+# ---------------------------------------------------------------------------
+
+def _make_task_for_force_test(
+    category: str = "xss_candidate",
+    target: str = "http://example.com/page",
+    **extra,
+) -> Task:
+    """Build a minimal Task for _should_force_phase2_for_exception_target tests."""
+    params: dict = {
+        "category": category,
+        "target": target,
+        "targets": [target],
+        "phase2_on_empty_phase1": False,
+        "selection_origin": "recon_tagged",
+        "_context": extra.pop("_context", {}),
+        **extra,
+    }
+    return Task(
+        id="test-force",
+        name="Test Force Phase2",
+        agent_type="InjectionSwarm",
+        target=target,
+        params=params,
+    )
+
+
+def test_force_phase2_client_route_dom():
+    """client_route_dom category always forces Phase 2."""
+    task = _make_task_for_force_test(category="client_route_dom")
+    assert InjectionManagerAgent._should_force_phase2_for_exception_target(task) is True
+
+
+def test_force_phase2_non_xss_category_returns_false():
+    """Non-xss_candidate category (not client_route_dom) returns False."""
+    task = _make_task_for_force_test(category="api_candidate")
+    assert InjectionManagerAgent._should_force_phase2_for_exception_target(task) is False
+
+
+def test_force_phase2_javascript_path():
+    """javascript/ path URL forces Phase 2."""
+    task = _make_task_for_force_test(
+        target="http://example.com/vulnerabilities/javascript/?name=test",
+    )
+    assert InjectionManagerAgent._should_force_phase2_for_exception_target(task) is True
+
+
+def test_force_phase2_hash_route_with_query():
+    """Hash-route URL (#/) with query params forces Phase 2."""
+    task = _make_task_for_force_test(
+        target="http://example.com/app/#/dashboard?tab=profile",
+    )
+    assert InjectionManagerAgent._should_force_phase2_for_exception_target(task) is True
+
+
+def test_force_phase2_hash_route_no_query_no_force():
+    """Hash-route without query params does NOT force Phase 2."""
+    task = _make_task_for_force_test(
+        target="http://example.com/app/#/dashboard",
+    )
+    assert InjectionManagerAgent._should_force_phase2_for_exception_target(task) is False
+
+
+def test_force_phase2_post_method():
+    """POST method forces Phase 2 via per-URL evidence."""
+    task = _make_task_for_force_test(
+        target="http://example.com/comment",
+        _context={
+            "url_evidence_by_url": {
+                "http://example.com/comment": {"method": "POST", "has_form_tag": True},
+            },
+        },
+    )
+    assert InjectionManagerAgent._should_force_phase2_for_exception_target(task) is True
+
+
+def test_force_phase2_get_method_no_force():
+    """GET method with no other exceptions does NOT force Phase 2."""
+    task = _make_task_for_force_test(
+        target="http://example.com/quiet",
+        _context={
+            "url_evidence_by_url": {
+                "http://example.com/quiet": {"method": "GET", "has_form_tag": False},
+            },
+        },
+    )
+    assert InjectionManagerAgent._should_force_phase2_for_exception_target(task) is False
+
+
+def test_force_phase2_json_content_type():
+    """Content-Type: application/json forces Phase 2."""
+    task = _make_task_for_force_test(
+        target="http://example.com/api/data",
+        _context={
+            "url_evidence_by_url": {
+                "http://example.com/api/data": {
+                    "method": "GET",
+                    "has_form_tag": False,
+                    "response_headers": {"Content-Type": "application/json"},
+                },
+            },
+        },
+    )
+    assert InjectionManagerAgent._should_force_phase2_for_exception_target(task) is True
+
+
+def test_force_phase2_has_form_tag():
+    """has_form_tag=True forces Phase 2."""
+    task = _make_task_for_force_test(
+        target="http://example.com/search",
+        _context={
+            "url_evidence_by_url": {
+                "http://example.com/search": {
+                    "method": "GET",
+                    "has_form_tag": True,
+                },
+            },
+        },
+    )
+    assert InjectionManagerAgent._should_force_phase2_for_exception_target(task) is True
+
+
+def test_force_phase2_discovered_params_hint():
+    """discovered_params presence forces Phase 2."""
+    task = _make_task_for_force_test(
+        target="http://example.com/search",
+        _context={
+            "discovered_params": ["q"],
+            "url_evidence_by_url": {
+                "http://example.com/search": {"method": "GET", "has_form_tag": False},
+            },
+        },
+    )
+    assert InjectionManagerAgent._should_force_phase2_for_exception_target(task) is True
+
+
+def test_force_phase2_candidate_params_hint():
+    """candidate_params presence forces Phase 2."""
+    task = _make_task_for_force_test(
+        target="http://example.com/search",
+        _context={
+            "candidate_params": ["search"],
+            "url_evidence_by_url": {
+                "http://example.com/search": {"method": "GET", "has_form_tag": False},
+            },
+        },
+    )
+    assert InjectionManagerAgent._should_force_phase2_for_exception_target(task) is True
+
+
+def test_force_phase2_params_list_hint():
+    """params_list presence forces Phase 2."""
+    task = _make_task_for_force_test(
+        target="http://example.com/search",
+        _context={
+            "params_list": ["q", "search"],
+            "url_evidence_by_url": {
+                "http://example.com/search": {"method": "GET", "has_form_tag": False},
+            },
+        },
+    )
+    assert InjectionManagerAgent._should_force_phase2_for_exception_target(task) is True
+
+
+def test_force_phase2_empty_param_hints_no_force():
+    """Empty param hint lists do NOT force Phase 2."""
+    task = _make_task_for_force_test(
+        target="http://example.com/search",
+        _context={
+            "discovered_params": [],
+            "candidate_params": [],
+            "params_list": [],
+            "url_evidence_by_url": {
+                "http://example.com/search": {"method": "GET", "has_form_tag": False},
+            },
+        },
+    )
+    assert InjectionManagerAgent._should_force_phase2_for_exception_target(task) is False
 
 
 # ---------------------------------------------------------------------------

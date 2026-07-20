@@ -53,10 +53,13 @@ services:
       # Platform API tokens (set via .env)
       - HACKERONE_TOKEN=${HACKERONE_TOKEN:-}
       - BUGCROWD_TOKEN=${BUGCROWD_TOKEN:-}
+      - SHIGOKU_WORKSPACE_ROOT=/workspace
+      - SHIGOKU_HOST_WORKSPACE_ROOT=${PWD}/workspace
     volumes:
       - ./src:/app/src
       - ./config:/app/config
       - ./workspace:/app/workspace
+      - ./workspace:/workspace
       - ./logs:/app/logs
     depends_on:
       redis:
@@ -92,9 +95,12 @@ services:
     environment:
       - REDIS_URL=redis://redis:6379
       - PYTHONPATH=/app
+      - SHIGOKU_WORKSPACE_ROOT=/workspace
+      - SHIGOKU_HOST_WORKSPACE_ROOT=${PWD}/workspace
     volumes:
       - ./src:/app/src
       - ./tests:/app/tests
+      - ./workspace:/workspace
     depends_on:
       redis:
         condition: service_healthy

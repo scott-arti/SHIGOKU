@@ -140,7 +140,6 @@ INPUT: [Input]
         Specialist.__init__(self, config)
         ThoughtLoop.__init__(self, max_turns=8)
 
-        mode = "bugbounty"  # Bug Bounty fail-closed default
         model = os.getenv("SHIGOKU_MODEL") or "deepseek/deepseek-chat"
         try:
             from src.core.config.settings import get_settings
@@ -151,10 +150,15 @@ INPUT: [Input]
             rejudge_model = "openai/gpt-4o-mini"
             final_model = "openai/gpt-4o"
         if config and isinstance(config, dict):
-            mode = config.get("mode", mode)
             model = config.get("model", model) if isinstance(config, dict) else getattr(config, "model", model)
             rejudge_model = config.get("llm_xss_rejudge_model", config.get("xss_rejudge_model", rejudge_model))
             final_model = config.get("llm_xss_final_model", config.get("xss_final_model", final_model))
+        # Resolve run mode: config["mode"] (truthy) > global settings.mode >
+        # "bugbounty". Prevents Guard fail-close on vulntest/ctf runs.
+        from src.core.config.settings import resolve_run_mode
+        mode = resolve_run_mode(
+            config.get("mode") if (config and isinstance(config, dict)) else None
+        )
 
         self.primary_model = model
         self.rejudge_model = rejudge_model
@@ -557,6 +561,10 @@ INPUT: [Input]
             "param", "parameter", "payload",
             "discovered_params", "candidate_params", "params_list",
             "reflection_url",
+            # SGK-2026-0367: per-URL evidence fields (should not become payload params)
+            "url_evidence", "selection_origin", "source_category",
+            "phase2_on_empty_phase1", "phase1_force_full_coverage",
+            "phase1_stop_on_first_hit", "phase1_early_return_on_findings",
         }
         payload_params = {k: v for k, v in params.items() if k not in META_KEYS}
         # POSTボディ指定時は body 内キーを注入候補に展開する
@@ -1127,7 +1135,7 @@ Decide next step for XSS testing. Focus on reflection context and escaping mecha
         """
         polyglot_payloads = [
             # 基本Polyglot（最も多くのコンテキストで動作）
-            "jaVasCript:/*-/*`/*\`/*'/*\"/**/(/* */oNcliCk=alert() )//%0D%0A%0d%0a//</stYle/</titLe/</teXtarEa/</scRipt/--!>\x3csVg/<sVg/oNloAd=alert()//>\x3e",
+            "jaVasCript:/*-/*`/*\\`/*'/*\"/**/(/* */oNcliCk=alert() )//%0D%0A%0d%0a//</stYle/</titLe/</teXtarEa/</scRipt/--!>\x3csVg/<sVg/oNloAd=alert()//>\x3e",
 
             # PNGヘッダー偽装Polyglot
             "GIF89a<script>alert(1)</script>",

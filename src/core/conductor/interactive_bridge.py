@@ -7,6 +7,8 @@ CLIからの入力を受け取り、MasterConductorを初期化・実行する�
 
 import logging
 import asyncio
+from typing import Any, Awaitable, Callable
+from src.config import settings as runtime_settings
 from src.core.engine.master_conductor import MasterConductor, Task, TaskState
 from src.core.config_manager import get_config_manager
 from src.core.config.settings import get_settings
@@ -15,6 +17,8 @@ from src.core.preflight import EntryGateFacade, PreflightContext, GatePolicy
 from src.commands import print_banner, print_step, print_result
 
 logger = logging.getLogger(__name__)
+
+_INTERVENTION_GATE_MODES = {"observe", "enforce_human_preferred", "enforce_hitl"}
 
 class InteractiveBridge:
     """CLIとのインタラクティブなセッションを管理する架け橋"""
@@ -84,6 +88,45 @@ def _parse_cookies(cookies):
                 result[k.strip()] = v.strip()
         return result
     return {}
+
+
+def _normalize_intervention_gate_mode(mode: str) -> str:
+    normalized = str(mode or "observe").strip().lower()
+    if normalized not in _INTERVENTION_GATE_MODES:
+        return "observe"
+    return normalized
+
+
+def _current_intervention_gate_mode() -> str:
+    return _normalize_intervention_gate_mode(
+        getattr(runtime_settings, "intervention_gate_mode", "observe")
+    )
+
+
+def _build_execution_safeguard_hitl_callback(
+    intervention_gate_mode: str,
+) -> Callable[[dict[str, Any]], Awaitable[bool]]:
+    """Build the endpoint HITL callback according to the intervention gate mode."""
+    gate_mode = _normalize_intervention_gate_mode(intervention_gate_mode)
+
+    if gate_mode == "observe":
+        async def observe_callback(task_info: dict[str, Any]) -> bool:
+            logger.info(
+                "ExecutionSafeguard HITL auto-approved in observe mode: method=%s url=%s agent=%s",
+                task_info.get("method", ""),
+                task_info.get("url", ""),
+                task_info.get("agent", ""),
+            )
+            return True
+
+        return observe_callback
+
+    async def prompt_callback(task_info: dict[str, Any]) -> bool:
+        """Ask the operator for ExecutionSafeguard endpoint approval."""
+        prompt = task_info.get("prompt", "承認が必要なリクエストがあります。許可しますか？")
+        return await asyncio.to_thread(InteractiveBridge.ask_for_approval, prompt, default=True)
+
+    return prompt_callback
 
 
 def start_interactive_session(
@@ -189,15 +232,14 @@ def start_interactive_session(
     try:
         from src.core.security.execution_safeguard import get_execution_safeguard
 
-        async def hitl_callback(task_info: dict) -> bool:
-            """ExecutionSafeguardからの認可リクエストをユーザーに尋ねる"""
-            prompt = task_info.get("prompt", "承認が必要なリクエストがあります。許可しますか？")
-            # 同期メソッド InteractiveBridge.ask_for_approval を非同期スレッドで実行
-            return await asyncio.to_thread(InteractiveBridge.ask_for_approval, prompt, default=True)
-
         mode_val = str(cm.config.mode).lower() if cm.config.mode else "bugbounty"
+        intervention_gate_mode = _current_intervention_gate_mode()
+        hitl_callback = _build_execution_safeguard_hitl_callback(intervention_gate_mode)
         get_execution_safeguard(mode=mode_val, hitl_callback=hitl_callback)
-        print_step("🛡️", f"ExecutionSafeguard initialized (Mode: {mode_val}) with HITL callback")
+        print_step(
+            "🛡️",
+            f"ExecutionSafeguard initialized (Mode: {mode_val}, Gate: {intervention_gate_mode}) with HITL callback",
+        )
     except Exception as e:
         logger.warning(f"Failed to initialize ExecutionSafeguard: {e}")
     
@@ -225,6 +267,12 @@ def start_interactive_session(
         mc.context.target_info["target"] = auto_target
     mc.context.target_info["scan_profile"] = normalized_profile
     mc.context.target_info["profile"] = normalized_profile
+    # SGK-2026-0339: persist the resolved mode into target_info so every
+    # dispatch/preflight site (scope fast-path, _dispatch, phase filter) reads
+    # the same authoritative value instead of falling back to the bugbounty
+    # default. Without this, a vulntest/ctf run degrades to bugbounty and the
+    # SGK-2026-0335 bundle preflight fail-closes on bundle-less local targets.
+    mc.context.target_info["mode"] = str(mode or "").strip().lower() or "bugbounty"
 
     if recon_start_step is not None:
         mc.context.target_info["recon_start_step"] = int(recon_start_step)

@@ -122,7 +122,8 @@ class AuthManagerAgent(BaseManagerAgent):
         client = self.network_client
         if client is None:
             from src.core.infra.network_client import AsyncNetworkClient
-            client = AsyncNetworkClient(mode="bugbounty")
+            from src.core.config.settings import resolve_run_mode
+            client = AsyncNetworkClient(mode=resolve_run_mode())
             created_client = True
 
         headers = self._build_auth_headers(params)
@@ -446,8 +447,9 @@ class AuthManagerAgent(BaseManagerAgent):
             return {"vulnerable": False, "message": "Auth bypass fallback not applicable"}
 
         from src.core.infra.network_client import AsyncNetworkClient
+        from src.core.config.settings import resolve_run_mode
 
-        client = AsyncNetworkClient(mode="bugbounty")
+        client = AsyncNetworkClient(mode=resolve_run_mode())
         try:
             origin = f"{parsed.scheme}://{parsed.netloc}"
             login_url = urljoin(f"{origin}/", "login.php")

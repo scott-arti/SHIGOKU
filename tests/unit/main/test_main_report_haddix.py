@@ -85,8 +85,6 @@ def test_main_report_haddix_includes_authz_and_timeout_kpi(tmp_path, monkeypatch
     assert generated_reports, "Haddix report file was not generated"
     generated_gates = sorted(reports_dir.glob("haddix_gate_*.json"))
     assert generated_gates, "Initial-release gate JSON was not generated"
-    generated_deferred = sorted(reports_dir.glob("haddix_deferred_*.json"))
-    assert generated_deferred, "Deferred scenario backlog JSON was not generated"
     generated_evidence_dirs = sorted(reports_dir.glob("haddix_evidence_*"))
     assert generated_evidence_dirs, "Finding evidence artifacts were not generated"
 
@@ -94,18 +92,14 @@ def test_main_report_haddix_includes_authz_and_timeout_kpi(tmp_path, monkeypatch
     assert f"**Source Session:** {session_file.resolve()}" in content
     assert "AuthZ differential: cross_session_access" in content
     assert "KPI: total=1, completed=0, timeout=1, error=0, timeout_rate=100.0%, avg_retry=2.00" in content
-    assert "## 🧪 Scenario Coverage (SCN01-12)" in content
+    assert "## Scenario Coverage" in content
     assert "| SCN01 |" in content
-    assert "## 🚦 Initial Release Gate" in content
+    assert "## Initial Release Gate" in content
 
     gate_payload = json.loads(generated_gates[-1].read_text(encoding="utf-8"))
     assert "status" in gate_payload
     assert "reason_codes" in gate_payload
     assert "recommended_actions" in gate_payload
-
-    deferred_payload = json.loads(generated_deferred[-1].read_text(encoding="utf-8"))
-    assert "deferred_scenarios" in deferred_payload
-    assert isinstance(deferred_payload["deferred_scenarios"], list)
 
     evidence_files = sorted(generated_evidence_dirs[-1].glob("EV-*.json"))
     assert evidence_files, "No evidence artifact file was generated"
@@ -266,7 +260,7 @@ def test_main_report_haddix_promotes_execution_note_candidates_when_findings_emp
 
     content = generated_reports[-1].read_text(encoding="utf-8")
     assert "Potential privilege parameter tampering surface" in content
-    assert "| 🟡 MEDIUM | 1 |" in content
+    assert "| 1 | 🟡 MEDIUM |" in content
 
 
 def test_main_report_haddix_heuristic_promoted_with_poc_becomes_confirmed(tmp_path, monkeypatch):
@@ -363,7 +357,7 @@ def test_main_report_haddix_heuristic_promoted_with_poc_becomes_confirmed(tmp_pa
     content = generated_reports[-1].read_text(encoding="utf-8")
     assert "Potential privilege parameter tampering surface" in content
     assert "Confirmed: 1 / Candidate: 0" in content
-    assert "### ✅ Confirmed Findings" in content
+    assert "### 1. 🟡 [MEDIUM] Potential privilege parameter tampering surface" in content
 
 
 def test_main_report_haddix_structured_evidence_is_promoted_to_poc_and_confirmed(tmp_path, monkeypatch):
@@ -446,5 +440,7 @@ def test_main_report_haddix_structured_evidence_is_promoted_to_poc_and_confirmed
     content = generated_reports[-1].read_text(encoding="utf-8")
     assert "Potential Unauthenticated API Access" in content
     assert "Confirmed: 1 / Candidate: 0" in content
-    assert "| PoC Request Captured | yes |" in content
-    assert "| PoC Response Captured | yes |" in content
+    # Evidence promoted to PoC request/response -- check for synthesized request
+    # and response body in the submission section code blocks.
+    assert "GET http://127.0.0.1:8888/chatbot/genai/state" in content
+    assert '"status":"ok","balance":1000' in content

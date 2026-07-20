@@ -152,3 +152,86 @@ async def test_playwright_validator_cookies_and_console(monkeypatch):
         
     # TODO: 実際のヘッドレスブラウザを動かすインテグレーションテストを別で書くべきだが
     # ここではインターフェースの確認に留める
+
+
+# ------------------------------------------------------------------
+# SGK-2026-0367: per-URL evidence regression test
+# ------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_run_as_tool_uses_forms_from_params():
+    """run_as_tool が params['forms'] からパラメータを抽出し、POST method を適用すること"""
+    hunter = SmartXSSHunter(config={"model": "test-model"})
+    # Prevent LLM initialization from making real API calls
+    hunter.llm = MagicMock()
+    hunter.llm.agenerate = AsyncMock(return_value=MagicMock(
+        choices=[MagicMock(message=MagicMock(content="THOUGHT: Test.\nACTION: finish\nINPUT: ok"))]
+    ))
+
+    async def _mock_request(_method, target_url, **_kwargs):
+        return {"status": 200, "body": "<html>ok</html>", "headers": {}, "waf_suspected": False}
+
+    hunter.smart_client = AsyncMock(side_effect=_mock_request)
+
+    with patch(
+        "src.core.agents.swarm.injection.smart_xss._fetch_and_parse_form",
+        new=AsyncMock(return_value=[]),
+    ):
+        result = await hunter.run_as_tool(
+            "http://example.com/search",
+            params={
+                "method": "GET",
+                "forms": [
+                    {"method": "POST", "inputs": [{"name": "query"}, {"name": "category"}]}
+                ],
+                "url_evidence": {
+                    "method": "GET",
+                    "response_status": 200,
+                    "has_form_tag": True,
+                    "response_headers": {"Content-Type": "text/html"},
+                    "response_body_snippet": "<form action='search'><input name='query'></form>",
+                },
+            },
+        )
+
+    # forms 内の input 名が tested_params に含まれていること
+    assert "query" in result["tested_params"], (
+        "params['forms'] should be used for parameter extraction"
+    )
+    assert "category" in result["tested_params"], (
+        "All form inputs should be extracted"
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_as_tool_forms_triggers_post_method():
+    """POST form が params['forms'] で提供された場合、method が POST に変更されること"""
+    hunter = SmartXSSHunter(config={"model": "test-model"})
+    hunter.llm = MagicMock()
+    hunter.llm.agenerate = AsyncMock(return_value=MagicMock(
+        choices=[MagicMock(message=MagicMock(content="THOUGHT: Test.\nACTION: finish\nINPUT: ok"))]
+    ))
+
+    async def _mock_request(method, target_url, **_kwargs):
+        return {
+            "status": 200, "body": f"<html>{method} request</html>",
+            "headers": {}, "waf_suspected": False,
+        }
+
+    hunter.smart_client = AsyncMock(side_effect=_mock_request)
+
+    with patch(
+        "src.core.agents.swarm.injection.smart_xss._fetch_and_parse_form",
+        new=AsyncMock(return_value=[]),
+    ):
+        result = await hunter.run_as_tool(
+            "http://example.com/comment",
+            params={
+                "method": "GET",
+                "forms": [
+                    {"method": "POST", "inputs": [{"name": "msg"}]}
+                ],
+            },
+        )
+
+    assert "msg" in result["tested_params"], "Form input should be in tested params"

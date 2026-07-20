@@ -204,9 +204,17 @@ class LLMSettings(BaseModel):
                 )
 
     def _check_default_role_exists(self):
-        if self.roles and self.default_role not in self.roles:
+        if not self.roles:
             raise ValueError(
-                f"Default role '{self.default_role}' is not defined in roles"
+                f"LLM roles configuration is empty but default_role is set to "
+                f"'{self.default_role}'. Ensure config/shigoku.yaml is being "
+                f"loaded correctly and that the 'llm.roles' section contains at "
+                f"least one role definition (including the default role)."
+            )
+        if self.default_role not in self.roles:
+            raise ValueError(
+                f"Default role '{self.default_role}' is not defined in roles. "
+                f"Available roles: {sorted(self.roles.keys())}"
             )
 
     def _check_prompt_templates(self):
@@ -407,6 +415,10 @@ class Settings(BaseSettings):
     any_llm_base_url: str = "http://localhost:8000/v1"
     any_llm_api_key: str = ""
     phase2_on_empty_force_disable: bool = False
+    # SGK-2026-0367: safety switches for injection ownership and Phase2 suppression
+    injection_ownership_dedup_enabled: bool = True
+    xss_no_signal_phase2_suppress_enabled: bool = True
+    xss_no_signal_phase2_shadow_only: bool = False
     risk_predictor_delay_disable: bool = False
     risk_predictor_delay_high_only: bool = False
     risk_predictor_delay_min_score: float = 0.7
@@ -474,21 +486,52 @@ class Settings(BaseSettings):
     ) -> tuple[PydanticBaseSettingsSource, ...]:
         """
         設定ソースの優先順位を定義。
-        1. CLI (init_settings)
-        2. 環境変数 (env_settings)
-        3. YAML ファイル (YamlConfigSettingsSource)
+        1. SHIGOKU_CONFIG 環境変数（明示パス指定）
+        2. CLI (init_settings)
+        3. 環境変数 (env_settings)
+        4. YAML ファイル (YamlConfigSettingsSource) — パッケージ相対パス → CWD相対パス の順に探索
+
+        Package-relative path discovery により、Docker/WORKDIR 不一致などの
+        CWD の場所に依存した設定読込失敗を防止する。
         """
         # yaml_path は動的に変更したい場合があるが、まずはデフォルト。
         # ConfigManager が明示的に path を渡す場合は init_settings に含まれる。
         # ここでは標準の config/shigoku.yaml を対象にする。
-        yaml_path = Path("config/shigoku.yaml")
-        if not yaml_path.exists():
-            yaml_path = Path("shigoku.yaml")
+
+        # 0. 明示的な環境変数指定 (SHIGOKU_CONFIG) が最優先
+        explicit_config = os.environ.get("SHIGOKU_CONFIG")
+        if explicit_config:
+            yaml_file = Path(explicit_config).expanduser().resolve()
+            if not yaml_file.exists():
+                raise FileNotFoundError(
+                    f"SHIGOKU_CONFIG specifies non-existent file: {yaml_file}"
+                )
+            return (
+                init_settings,
+                env_settings,
+                YamlConfigSettingsSource(settings_cls, yaml_file=yaml_file),
+            )
+
+        # 1. パッケージ相対パス: CWDに依存せず確実に発見（Docker WORKDIR対策）
+        _settings_file = Path(__file__).resolve()
+        _package_root = _settings_file.parent.parent.parent.parent  # src/core/config/settings.py → root
+        pkg_yaml = _package_root / "config" / "shigoku.yaml"
+        if pkg_yaml.exists():
+            return (
+                init_settings,
+                env_settings,
+                YamlConfigSettingsSource(settings_cls, yaml_file=pkg_yaml),
+            )
+
+        # 2. 後方互換: CWD相対パス
+        cwd_yaml = Path("config/shigoku.yaml")
+        if not cwd_yaml.exists():
+            cwd_yaml = Path("shigoku.yaml")
 
         return (
             init_settings,
             env_settings,
-            YamlConfigSettingsSource(settings_cls, yaml_file=yaml_path if yaml_path.exists() else None),
+            YamlConfigSettingsSource(settings_cls, yaml_file=cwd_yaml if cwd_yaml.exists() else None),
         )
 
 # シングルトン
@@ -501,3 +544,26 @@ def get_settings(reinit: bool = False, **kwargs) -> Settings:
         # kwargs がある場合は再初期化
         _settings = Settings(**kwargs)
     return _settings
+
+
+def resolve_run_mode(explicit: Optional[str] = None) -> str:
+    """操作モードを解決する（SGK-2026-0335 補完）。
+
+    優先順位:
+      1. *explicit* に truthy な値が渡された場合 → それをそのまま返す
+      2. グローバル :func:`get_settings` の ``mode``
+      3. 設定取得エラー時や未設定時 → ``"bugbounty"`` （fail-closed 既定値）
+
+    これにより ``--mode vulntest`` / ``ctf`` 実行時に、各 ``AsyncNetworkClient``
+    がバンドル未ロードのままコンパイルガードを fail-close してしまう問題
+    （プリフライトの CAIDO_HTTP_UNREACHABLE 等）を防ぐ。
+    ``bugbounty`` 実行では設定由来で ``"bugbounty"`` が復元されるため、
+    ガードの fail-closed 挙動は維持される。
+    """
+    if explicit:
+        return explicit
+    try:
+        mode = get_settings().mode
+        return mode or "bugbounty"
+    except Exception:
+        return "bugbounty"

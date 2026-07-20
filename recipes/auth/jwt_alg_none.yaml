@@ -1,12 +1,41 @@
 name: jwt_alg_none
-description: "JWT Algorithm None Attack"
-tags: ["auth", "jwt"]
-severity: "critical"
-target_condition: "tech_stack.auth == 'jwt'"
+description: "Golden Recipe: JWT Algorithm None / Key Confusion Attack"
+agent: swarm
+trigger:
+  type: signal
+  required_signals:
+    - auth_endpoint
+    - bearer_token
+    - jwt
+  success_condition: "alg_none_accepted_or_key_confusion_accepted"
+  stop_condition: "no_jwt_token_or_probe_blocked_or_evidence_insufficient"
+tags:
+  - auth
+  - jwt
+  - algorithm
+severity: critical
 steps:
-  - tool: "jwt_inspector"
-    action: "alg_none"
-  - tool: "jwt_inspector"
-    action: "rs256_hs256"
-references:
-  - "https://portswigger.net/web-security/jwt"
+  - id: step_0
+    name: "Probe algorithm weaknesses"
+    action: "auth_attack"
+    params:
+      probe_type: "jwt_algorithm"
+      techniques:
+        - alg_none
+        - key_confusion_rs256_hs256
+    dependencies: []
+  - id: step_1
+    name: "Check algorithm acceptance"
+    action: "analyze"
+    params:
+      check: "jwt_algorithm_validation"
+    dependencies:
+      - step_0
+  - id: step_2
+    name: "Collect algorithm attack evidence"
+    action: "report"
+    params:
+      evidence_type: "jwt_alg_none"
+    dependencies:
+      - step_0
+      - step_1

@@ -1,0 +1,44 @@
+name: jwt_claim_enforcement
+description: "Golden Recipe: Detect JWT claim verification gaps (aud, iss, nbf, typ, kid)"
+agent: swarm
+trigger:
+  type: signal
+  required_signals:
+    - auth_endpoint
+    - bearer_token
+    - jwt
+  success_condition: "claim_verification_gap_detected_or_unexpected_acceptance"
+  stop_condition: "no_jwt_token_or_probe_blocked_or_evidence_insufficient"
+tags:
+  - auth
+  - jwt
+  - claim
+severity: critical
+steps:
+  - id: step_0
+    name: "Probe JWT claim enforcement"
+    action: "auth_attack"
+    params:
+      probe_type: "jwt_claim"
+      techniques:
+        - aud_spoof
+        - iss_spoof
+        - nbf_future
+        - typ_confusion
+        - kid_injection
+    dependencies: []
+  - id: step_1
+    name: "Confirm claim verification gaps"
+    action: "analyze"
+    params:
+      check: "jwt_claim_validation"
+    dependencies:
+      - step_0
+  - id: step_2
+    name: "Collect claim enforcement evidence"
+    action: "report"
+    params:
+      evidence_type: "jwt_claim_enforcement"
+    dependencies:
+      - step_0
+      - step_1

@@ -38,10 +38,8 @@ async def test_run_tool_integration(orchestrator):
         mock_factory = MagicMock()
         mock_worker = MagicMock()
         
-        # AsyncMock または返り値が awaitable な Mock にする
-        async def mock_execute(params):
-            return {"status": "success"}
-        mock_worker.execute = mock_execute
+        # ProceduralWorker.execute は sync のため、通常の戻り値でモックする
+        mock_worker.execute.return_value = MagicMock(data={"status": "success"})
         
         mock_factory.create_worker.return_value = mock_worker
         mock_get_factory.return_value = mock_factory

@@ -2,6 +2,7 @@
 TaskExpander: 粗粒度タスクをエンドポイント単位のサブタスクに展開する
 """
 
+import copy
 import json
 import logging
 import uuid
@@ -100,7 +101,39 @@ class TaskExpander:
         sub_params.pop("targets", None)      # 一括リストも不要
         sub_params.pop("resolved_targets", None)
         sub_params["target"] = normalized_target
+        sub_params["targets"] = [normalized_target]  # SGK-2026-0367: single-target
+        sub_params["count"] = 1  # SGK-2026-0367: subtask count is 1
         sub_params["alternative_sessions"] = alt_sessions
+
+        # SGK-2026-0367: normalize evidence to per-URL scope
+        _context = sub_params.get("_context")
+        if isinstance(_context, dict):
+            # Shallow-copy _context so each subtask gets its own
+            _context = dict(_context)
+            sub_params["_context"] = _context
+            # SGK-2026-0367: deep-copy list-type param hints per subtask
+            for hint_key in ("discovered_params", "candidate_params", "params_list"):
+                hints = _context.get(hint_key)
+                if isinstance(hints, list):
+                    _context[hint_key] = list(hints)
+            # Filter forms_by_url to only this target
+            forms_by_url = _context.get("forms_by_url")
+            if isinstance(forms_by_url, dict):
+                per_url_forms = forms_by_url.get(normalized_target)
+                _context["forms_by_url"] = (
+                    {normalized_target: copy.deepcopy(per_url_forms)}
+                    if per_url_forms is not None
+                    else {}
+                )
+            # Filter url_evidence_by_url to only this target
+            url_evidence_by_url = _context.get("url_evidence_by_url")
+            if isinstance(url_evidence_by_url, dict):
+                per_url_evidence = url_evidence_by_url.get(normalized_target)
+                _context["url_evidence_by_url"] = (
+                    {normalized_target: copy.deepcopy(per_url_evidence)}
+                    if per_url_evidence is not None
+                    else {}
+                )
         
         # 優先度の計算
         priority = parent.priority

@@ -182,6 +182,10 @@ class Settings(BaseSettings):
     api_injection_target_budget: int = 3  # coverage backfill で生成する API/Injection seed ターゲット上限
     csrf_backfill_min_score: int = 20  # CSRF seed 候補として採用する最小スコア
     phase2_on_empty_force_disable: bool = False  # true なら Phase1空振り時の Phase2 強制実行を全停止
+    # SGK-2026-0367: safety switches for injection ownership and Phase2 suppression
+    injection_ownership_dedup_enabled: bool = True
+    xss_no_signal_phase2_suppress_enabled: bool = True
+    xss_no_signal_phase2_shadow_only: bool = False
     risk_predictor_delay_disable: bool = False  # true なら RiskPredictor 推奨 delay を全停止
     risk_predictor_delay_high_only: bool = False  # true なら HIGH/CRITICAL 時のみ delay を適用
     risk_predictor_delay_min_score: float = 0.7  # high_only 時の最小リスクスコア
@@ -221,6 +225,14 @@ class Settings(BaseSettings):
     chain_llm_max_candidates: int = 3  # AIチェイン候補生成の最大候補数
     chain_llm_budget_per_session: int = 5  # セッションあたりの AIチェイン候補生成予算
     chain_llm_shadow_mode: bool = True  # true なら pre_action_gate shadow 比較を有効化
+    # ---- Task Queue Pruning (SGK-2026-0287) ----
+    # shadow: record candidates only, no actual deletion.
+    # active: apply actual deletions for approved task types (requires gate).
+    # Any unrecognised value is treated as shadow (fail-closed).
+    pruning_mode: str = "shadow"
+    # Instant killswitch. When true, pruning behaves as shadow regardless of
+    # pruning_mode. Candidate traces are recorded, deletion count is always 0.
+    pruning_killswitch_enabled: bool = False
     active_probe_strategy_allowlist: str = "light_probe,scenario_probe"  # Active Probing 許可戦術
     active_probe_strategy_denylist: str = "burst_probe"  # Active Probing 禁止戦術
     active_probe_per_asset_qps_cap: int = 5  # Active Probing の資産別QPS上限

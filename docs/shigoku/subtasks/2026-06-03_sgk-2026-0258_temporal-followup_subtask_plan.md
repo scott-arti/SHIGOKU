@@ -8,7 +8,7 @@ related_docs:
 - docs/shigoku/reports/2026-06-03_sgk-2026-0254_temporal-state_work_report.md
 title: SGK-2026-0258 継続監視（temporal metadata / benchmark / reason code 安定化）
 created_at: '2026-06-03'
-updated_at: '2026-07-02'
+updated_at: '2026-07-21'
 tags:
 - shigoku
 target: chain-temporal-followup
@@ -45,4 +45,3 @@ target: chain-temporal-followup
 - [ ] [重要度:中] metadata 欠損率が入力ソース依存で変動する場合、`draft` 比率だけでは品質解釈が難しい。
 - [ ] [重要度:中] representative session にしか出ない temporal 差分は通常 benchmark では捉えにくい。
 - [ ] [重要度:中] reason code が増えると集計軸が粗いままでは説明可能性が下がる。
-

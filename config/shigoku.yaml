@@ -4,6 +4,16 @@
 # モード設定
 mode: bugbounty # bugbounty | vulntest | ctf
 
+# ---- Task Queue Pruning (SGK-2026-0287) ----
+# shadow: record candidates only, no actual deletion.
+# active: apply actual deletions for approved task types (requires gate).
+# Any unrecognised value is treated as shadow (fail-closed).
+pruning_mode: shadow
+
+# Instant killswitch. When true, pruning behaves as shadow regardless of
+# pruning_mode. Candidate traces are recorded, deletion count is always 0.
+pruning_killswitch_enabled: false
+
 # プロジェクト設定
 project_name: "Shigoku"
 project_path: "/home/bbb/Documents/App/Shigoku"

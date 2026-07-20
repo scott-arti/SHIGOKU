@@ -1,0 +1,154 @@
+  🔍 初回偵察を開始しています（高速フェーズ）...
+  ✅ 初回偵察が完了しました。Master Conductorを起動します。
+
+╔═══════════════════════════════════════════════════════════════╗
+║                                                               ║
+║         至   極    -    S  H  I  G  O  K  U                   ║
+║                                                               ║
+║            Autonomous Bug Bounty Hunter v1.0                  ║
+║                                                               ║
+╚═══════════════════════════════════════════════════════════════╝
+    
+  🚀 Starting session (Mode: vulntest)
+  🔐 Authentication credentials detected
+  📂 Project Context: 127.0.0.1:4280
+  🛡️ ExecutionSafeguard initialized (Mode: vulntest) with HITL callback
+  🍪 Cookies loaded into context
+  ⚙️ Recon step override enabled: 1-8
+  🎯 Planning for target: http://127.0.0.1:4280
+  ⏳ Executing tasks...
+ℹ️ [情報] SHIGOKU 実行エンジンを起動しています...
+Executing Batch (Total executed: 0)
+└── Task: Deep Reconnaissance (Parallel)
+    ├── agent
+    │   └── recon_master
+    └── priority
+        └── 90
+Executing Batch (Total executed: 1)
+└── Task: Scope Verification
+    ├── agent
+    │   └── scope_parser
+    └── priority
+        └── 100
+Executing Batch (Total executed: 2)
+└── Task: OOB Scenario Coverage Guard Check (global)
+    ├── agent
+    │   └── InjectionSwarm
+    └── priority
+        └── 1248
+Executing Batch (Total executed: 3)
+└── Task: CSRF Coverage Guard Check (global)
+    ├── agent
+    │   └── InjectionSwarm
+    └── priority
+        └── 1250
+Executing Batch (Total executed: 4)
+└── Task: Open Redirect/SSRF Scan (5 targets)
+    ├── agent
+    │   └── InjectionManagerAgent
+    └── priority
+        └── 75
+Executing Batch (Total executed: 5)
+└── Task: BizLogic AuthZ Differential Check (2)
+    ├── agent
+    │   └── bizlogic
+    └── priority
+        └── 110
+Executing Batch (Total executed: 6)
+└── Task: Injection Scan (SQLi/XSS) on Parameters (9 targets)
+    ├── agent
+    │   └── InjectionManagerAgent
+    └── priority
+        └── 80
+Executing Batch (Total executed: 7)
+└── Task: XSS Coverage Guard Check (global)
+    ├── agent
+    │   └── InjectionSwarm
+    └── priority
+        └── 1249
+Executing Batch (Total executed: 8)
+├── Task: API Minimal Security Check (1 targets)
+│   ├── agent
+│   │   └── InjectionManagerAgent
+│   └── priority
+│       └── 108
+├── Task: BizLogic AuthZ Differential Check (1)
+│   ├── agent
+│   │   └── bizlogic
+│   └── priority
+│       └── 110
+├── Task: Command Injection Focused Scan (1 targets)
+│   ├── agent
+│   │   └── InjectionManagerAgent
+│   └── priority
+│       └── 88
+├── Task: Session Weak-ID Analysis
+│   ├── agent
+│   │   └── sessionhijacker
+│   └── priority
+│       └── 86
+├── Task: CORS Misconfiguration Scan (1 targets)
+│   ├── agent
+│   │   └── InjectionManagerAgent
+│   └── priority
+│       └── 80
+├── Task: Authentication Analysis (8 targets)
+│   ├── agent
+│   │   └── AuthNinja
+│   └── priority
+│       └── 70
+├── Task: Path Injection Scan (LFI/Traversal) (8 targets)
+│   ├── agent
+│   │   └── InjectionManagerAgent
+│   └── priority
+│       └── 85
+├── Task: CSRF Minimal Security Check (1 targets)
+│   ├── agent
+│   │   └── InjectionManagerAgent
+│   └── priority
+│       └── 84
+├── Task: GraphQL Introspection Scan (1 targets)
+│   ├── agent
+│   │   └── InjectionManagerAgent
+│   └── priority
+│       └── 72
+├── Task: CRLF Injection Scan (9 targets)
+│   ├── agent
+│   │   └── InjectionManagerAgent
+│   └── priority
+│       └── 65
+├── Task: Feedback/Review Input Security Scan (1 targets)
+│   ├── agent
+│   │   └── InjectionManagerAgent
+│   └── priority
+│       └── 81
+└── Task: Scan 127.0.0.1
+    ├── agent
+    │   └── web_scanner
+    └── priority
+        └── 60
+✅ [完了] ミッションが正常に完了しました。
+                                            Final Execution Summary                                             
+╭───────────────────┬──────────────────────────────────────────────────────────────────────────────────────────╮
+│ Metric            │ Value                                                                                    │
+├───────────────────┼──────────────────────────────────────────────────────────────────────────────────────────┤
+│ Total Tasks       │ 23                                                                                       │
+│ Success           │ 21                                                                                       │
+│ Failed            │ 0                                                                                        │
+│ Replanned         │ 0                                                                                        │
+│ Success Rate      │ 91.3%                                                                                    │
+│ Discovered Assets │ 1                                                                                        │
+│ Total Duration    │ 666.42s                                                                                  │
+│ Estimated Cost    │ $0.0000                                                                                  │
+│ Coverage Gate     │ FAIL                                                                                     │
+│ Coverage          │ 6/7                                                                                      │
+│ Coverage Missing  │ business_logic                                                                           │
+│ Scenario Coverage │ 4/12                                                                                     │
+│ Scenario Missing  │ scn_02_mass_assignment_object_update, scn_04_endpoint_enumeration_bfla,                  │
+│                   │ scn_05_rate_limit_resilience, scn_06_data_exposure_diff,                                 │
+│                   │ scn_08_oob_external_channel_flow, scn_10_semantic_business_logic,                        │
+│                   │ scn_11_multi_vector_chain, scn_12_advanced_ssrf_internal_topology                        │
+│ Pending HITL      │ 0                                                                                        │
+│ Failed Reasons    │ -                                                                                        │
+╰───────────────────┴──────────────────────────────────────────────────────────────────────────────────────────╯
+  🛑 MasterConductor shutdown complete.

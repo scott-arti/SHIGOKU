@@ -260,12 +260,17 @@ class TestLLMRoleSettings:
 
 class TestLLMSettings:
     def test_llm_settings_defaults(self):
-        llm = LLMSettings()
-        assert llm.schema_version == 1
-        assert llm.default_role == "specialist_light"
-        assert llm.providers == {}
-        assert llm.profiles == {}
-        assert llm.roles == {}
+        """Test that LLMSettings field defaults match expected values.
+        
+        Verifies defaults via model_fields to avoid the empty-roles validation
+        guard that rejects LLMSettings() with no role definitions.
+        """
+        assert LLMSettings.model_fields["schema_version"].default == 1
+        assert LLMSettings.model_fields["default_role"].default == "specialist_light"
+        # providers, profiles, roles use default_factory=dict
+        assert LLMSettings.model_fields["providers"].default_factory is not None
+        assert LLMSettings.model_fields["profiles"].default_factory is not None
+        assert LLMSettings.model_fields["roles"].default_factory is not None
 
     def test_llm_settings_from_dict(self, full_llm_yaml):
         llm = LLMSettings(**full_llm_yaml["llm"])
@@ -278,8 +283,7 @@ class TestLLMSettings:
 
     def test_schema_version_required(self):
         """schema_version must be present (default is 1)."""
-        llm = LLMSettings()
-        assert llm.schema_version == 1
+        assert LLMSettings.model_fields["schema_version"].default == 1
 
 
 # ============================================================

@@ -101,6 +101,31 @@ def test_remove_tasks_for_assets():
     assert remaining.id == "t2"
     assert q.pop() is None
 
+def test_remove_tasks_for_assets_keeps_scn06_meta_observability():
+    """SCN06 meta-observability tasks are protected from asset pruning."""
+    q = DynamicTaskQueue()
+    protected = MockTask(
+        id="scn06",
+        priority=10,
+        params={
+            "target": "http://asset1/config/config.inc.php.dist",
+            "category": "meta_observability",
+            "scenario_id": "scn_06_data_exposure_diff",
+        },
+    )
+    ordinary = MockTask(
+        id="ordinary",
+        priority=5,
+        params={"target": "http://asset1/logo.png"},
+    )
+
+    q.add(protected)
+    q.add(ordinary)
+
+    assert q.remove_tasks_for_assets(["asset1"]) == 1
+    assert q.pop().id == "scn06"
+    assert q.pop() is None
+
 def test_inject_context_priority_boost():
     """InjectContextによる優先度変更"""
     

@@ -31,8 +31,8 @@ def _new_mc_for_marshaling() -> MasterConductor:
     mc = MasterConductor.__new__(MasterConductor)
     mc._state_lock = threading.RLock()
     mc.task_queue = DynamicTaskQueue()
-    mc._shadow_decisions = []
-    mc._pruning_policy = TaskPruningPolicy(shadow_only=True)
+    mc._pruning_decisions = []
+    mc._pruning_policy = TaskPruningPolicy(mode="shadow")
     mc._pending_event_follow_ups = []
     mc._derived_task_count = 0
     return mc

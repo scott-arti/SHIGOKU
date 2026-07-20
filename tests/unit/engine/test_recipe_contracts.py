@@ -106,3 +106,93 @@ def test_validate_recipe_schema_validates_check_takeover_action():
     )
     result = validate_recipe_schema(recipe)
     assert result["ok"] is True, f"check_takeover recipe should pass; got {result['error']}"
+
+
+# ── SGK-2026-0259: auth recipe schema validation ─────────────────────
+
+def test_validate_auth_recipe_schema_passes_for_valid_step_actions():
+    """Auth recipe with allowed actions (auth_attack, scan, analyze, report) passes."""
+    recipe = Recipe(
+        name="session_invariant",
+        description="Auth recipe",
+        agent="swarm",
+        steps=[
+            RecipeStep(id="s1", name="Probe Auth", action="auth_attack"),
+            RecipeStep(id="s2", name="Scan Surface", action="scan"),
+            RecipeStep(id="s3", name="Analyze Results", action="analyze"),
+            RecipeStep(id="s4", name="Report Finding", action="report"),
+        ],
+    )
+    result = validate_recipe_schema(recipe)
+    assert result["ok"] is True, f"Auth recipe validation failed: {result['error']}"
+
+
+def test_validate_auth_recipe_schema_rejects_unsupported_actions():
+    """Auth recipe with step action alg_none fails validation."""
+    recipe = Recipe(
+        name="jwt_alg_none",
+        description="Auth recipe with unsupported action",
+        agent="swarm",
+        steps=[
+            RecipeStep(id="s1", name="Alg None Check", action="alg_none"),
+        ],
+    )
+    result = validate_recipe_schema(recipe)
+    assert result["ok"] is False
+    assert "unsupported_action" in result["error"]
+    assert "alg_none" in result["error"]
+
+
+def test_validate_auth_recipe_schema_rejects_redirect_bypass_action():
+    """Auth recipe with step action redirect_bypass fails validation."""
+    recipe = Recipe(
+        name="oauth_redirect_bypass",
+        description="Auth recipe with redirect_bypass action",
+        agent="swarm",
+        steps=[
+            RecipeStep(id="s1", name="Redirect Bypass", action="redirect_bypass"),
+        ],
+    )
+    result = validate_recipe_schema(recipe)
+    assert result["ok"] is False
+    assert "unsupported_action" in result["error"]
+    assert "redirect_bypass" in result["error"]
+
+
+def test_validate_auth_recipe_rejects_zero_steps():
+    """Auth recipe with empty steps list fails schema validation."""
+    recipe = Recipe(
+        name="oauth_binding_drift",
+        description="Auth recipe with no steps",
+        agent="swarm",
+        steps=[],
+    )
+    result = validate_recipe_schema(recipe)
+    assert result["ok"] is False
+    assert "zero_steps" in result["error"]
+
+
+def test_validate_all_auth_recipe_names_schema_pass():
+    """All 7 auth recipe names pass schema validation with valid steps."""
+    auth_recipe_names = [
+        "oauth_binding_drift",
+        "session_invariant",
+        "jwt_claim_enforcement",
+        "refresh_rotation",
+        "jwt_alg_none",
+        "oauth_token_leak",
+        "oauth_redirect_bypass",
+    ]
+    for name in auth_recipe_names:
+        recipe = Recipe(
+            name=name,
+            description=f"Auth recipe: {name}",
+            agent="swarm",
+            steps=[
+                RecipeStep(id="probe", name="Probe", action="auth_attack"),
+                RecipeStep(id="confirm", name="Confirm", action="scan", dependencies=["probe"]),
+                RecipeStep(id="report", name="Report", action="report", dependencies=["confirm"]),
+            ],
+        )
+        result = validate_recipe_schema(recipe)
+        assert result["ok"] is True, f"Auth recipe {name} failed validation: {result['error']}"

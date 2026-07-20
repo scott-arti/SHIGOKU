@@ -93,3 +93,5 @@ review_id
 _
 c
 fields
+cookie
+phrase
