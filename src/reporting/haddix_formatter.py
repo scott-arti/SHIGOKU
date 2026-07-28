@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, List, Optional
 from pathlib import Path
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 try:
     from zoneinfo import ZoneInfo
 except Exception:  # pragma: no cover - fallback only
@@ -353,9 +353,10 @@ class HaddixFormatter:
 
     def _normalize_unconfirmed_reason_code(self, value: Any) -> str:
         token = str(value or "").strip().lower()
-        if token in _STANDARD_UNCONFIRMED_REASON_CODES:
-            return token
-        return ""
+        # Reason-code fields are structured evidence, not free-form display
+        # text.  Preserve an unfamiliar domain-specific code so a preceding
+        # candidate merge cannot silently erase its hold-back rationale.
+        return token
 
     def _extract_unconfirmed_reason_codes(self, additional_info: Dict[str, Any]) -> List[str]:
         if not isinstance(additional_info, dict):
@@ -526,6 +527,61 @@ class HaddixFormatter:
             "business_logic": "no_completed_business_logic_task_or_finding",
         }
         return reason_map.get(str(family or "").strip().lower(), "no_category_or_finding_evidence")
+
+    def _poc_request_from_evidence(self, data: Dict[str, Any]) -> str:
+        """Build a minimal raw HTTP request from Finding.evidence.
+
+        Detector findings often store structured request/response evidence
+        instead of pre-rendered Haddix PoC strings. Keep this conversion at the
+        reporting boundary so evidence-quality checks can evaluate the real
+        payload delivery without leaking sensitive headers such as cookies.
+        """
+        evidence = data.get("evidence") if isinstance(data.get("evidence"), dict) else {}
+        if not evidence:
+            return ""
+
+        method = str(evidence.get("request_method") or "GET").strip().upper() or "GET"
+        raw_url = str(
+            evidence.get("request_url")
+            or data.get("target_url")
+            or data.get("url")
+            or data.get("target")
+            or ""
+        ).strip()
+        request_body = str(evidence.get("request_body") or "").strip()
+        if not raw_url and not request_body:
+            return ""
+
+        parsed = urlsplit(raw_url)
+        path = urlunsplit(("", "", parsed.path or "/", parsed.query, ""))
+        lines = [f"{method} {path} HTTP/1.1"]
+        if parsed.netloc:
+            lines.append(f"Host: {parsed.netloc}")
+        if request_body:
+            lines.extend(["", request_body])
+        return "\n".join(lines)
+
+    def _poc_response_from_evidence(self, data: Dict[str, Any]) -> str:
+        """Build a minimal raw HTTP response from Finding.evidence."""
+        evidence = data.get("evidence") if isinstance(data.get("evidence"), dict) else {}
+        if not evidence:
+            return ""
+
+        raw_status = evidence.get("response_status")
+        try:
+            status = int(raw_status)
+        except (TypeError, ValueError):
+            status = 0
+
+        response_body = str(evidence.get("response_body") or "").strip()
+        if status <= 0:
+            return response_body
+
+        reason = "OK" if 200 <= status < 300 else ""
+        status_line = f"HTTP/1.1 {status} {reason}".rstrip()
+        if response_body:
+            return f"{status_line}\n\n{response_body}"
+        return status_line
     
     def add_finding_from_dict(self, data: Dict[str, Any]) -> None:
         """辞書からファインディングを追加"""
@@ -563,11 +619,13 @@ class HaddixFormatter:
                 data.get("poc_request")
                 or additional_info.get("poc_request")
                 or data.get("request", "")
+                or self._poc_request_from_evidence(data)
             ),
             poc_response=(
                 data.get("poc_response")
                 or additional_info.get("poc_response")
                 or data.get("response", "")
+                or self._poc_response_from_evidence(data)
             ),
             payloads_used=payloads_used,
             references=data.get("references", []),
@@ -1869,17 +1927,233 @@ class HaddixFormatter:
             return True
         return False
 
+    def _candidate_has_missing_poc(self, finding: HaddixFinding) -> bool:
+        has_request = bool(str(finding.poc_request or "").strip())
+        has_response = bool(str(finding.poc_response or "").strip())
+        return not (has_request and has_response)
+
+    def _candidate_dedup_key(self, finding: HaddixFinding) -> tuple[Any, ...] | None:
+        info = finding.additional_info if isinstance(finding.additional_info, dict) else {}
+        vtype = self._normalize_vulnerability_class(finding.vuln_type)
+        title = str(finding.title or "").strip().lower()
+        target = self._canonical_candidate_target(finding.target_url)
+
+        authz = info.get("authz_differential", {}) if isinstance(info.get("authz_differential"), dict) else {}
+        detection_class = self._resolve_detection_class(finding)
+        authz_classes = {
+            "access_control",
+            "endpoint_bfla",
+            "idor_bola",
+            "broken_access_control",
+            "authorization_bypass",
+            "unauthenticated_api_access",
+        }
+        if authz or vtype in authz_classes or detection_class in authz_classes:
+            scenario = str(
+                authz.get("scenario")
+                or info.get("scenario")
+                or detection_class
+                or vtype
+                or "access_control"
+            ).strip().lower().replace("-", "_")
+            if "unauthenticated" in scenario and "api" in scenario:
+                scenario = "unauthenticated_api_access"
+            return ("authz", target, detection_class or "access_control", scenario)
+
+        if vtype in {"cors", "cors_misconfiguration"} or "cors" in title:
+            cors_class = str(
+                info.get("misconfiguration")
+                or info.get("cors_classification")
+                or info.get("classification")
+                or ""
+            ).strip().lower()
+            return ("cors", target, cors_class)
+
+        if vtype == "csrf" or "csrf" in title or "/csrf/" in target:
+            return ("csrf", target)
+
+        return None
+
+    def _canonical_candidate_target(self, value: str) -> str:
+        normalized = self._normalize_url_string(value)
+        split = urlsplit(normalized)
+        if not split.scheme or not split.netloc:
+            return normalized.strip().lower()
+
+        netloc = split.netloc.lower()
+        if netloc.startswith("127.0.0.1:"):
+            netloc = netloc.replace("127.0.0.1:", "localhost:", 1)
+        elif netloc == "127.0.0.1":
+            netloc = "localhost"
+
+        query = urlencode(sorted(parse_qsl(split.query, keep_blank_values=True)), doseq=True)
+        return urlunsplit((split.scheme.lower(), netloc, split.path or "/", query, "")).lower()
+
+    def _candidate_strength(self, finding: HaddixFinding) -> tuple[int, int, float, int]:
+        severity_rank = {
+            "critical": 5,
+            "high": 4,
+            "medium": 3,
+            "low": 2,
+            "info": 1,
+        }
+        try:
+            confidence = float(finding.confidence or 0.0)
+        except Exception:
+            confidence = 0.0
+        has_poc = 0 if self._candidate_has_missing_poc(finding) else 1
+        return (
+            severity_rank.get(str(finding.severity or "").strip().lower(), 0),
+            has_poc,
+            confidence,
+            len(str(finding.summary or "")),
+        )
+
+    def _merge_candidate_duplicate_metadata(
+        self,
+        primary: HaddixFinding,
+        duplicate: HaddixFinding,
+    ) -> HaddixFinding:
+        primary_info = primary.additional_info if isinstance(primary.additional_info, dict) else {}
+        duplicate_info = duplicate.additional_info if isinstance(duplicate.additional_info, dict) else {}
+        primary.additional_info = primary_info
+
+        primary_codes = self._ensure_unconfirmed_reason_codes(
+            primary,
+            demoted_for_missing_poc=self._candidate_has_missing_poc(primary),
+        )
+        duplicate_codes = self._ensure_unconfirmed_reason_codes(
+            duplicate,
+            demoted_for_missing_poc=self._candidate_has_missing_poc(duplicate),
+        )
+        merged_codes = self._merge_unique_tokens(primary_codes, duplicate_codes)
+        primary_info["reason_codes"] = merged_codes
+        primary_info["reason_code"] = merged_codes[0] if merged_codes else ""
+        primary_info["evidence_quality_reason_codes"] = self._merge_unique_tokens(
+            primary_info.get("evidence_quality_reason_codes", []),
+            self._merge_unique_tokens(
+                duplicate_info.get("evidence_quality_reason_codes", []),
+                duplicate_codes,
+            ),
+        )
+
+        primary_count = int(primary_info.get("merged_duplicate_count") or 1)
+        duplicate_count = int(duplicate_info.get("merged_duplicate_count") or 1)
+        primary_info["merged_duplicate_count"] = primary_count + duplicate_count
+        primary_info["merged_duplicate_titles"] = self._merge_unique_tokens(
+            primary_info.get("merged_duplicate_titles", []),
+            self._merge_unique_tokens(
+                [primary.title, duplicate.title],
+                duplicate_info.get("merged_duplicate_titles", []),
+            ),
+        )
+
+        primary.payloads_used = self._merge_unique_tokens(primary.payloads_used, duplicate.payloads_used)
+        primary.tags = self._merge_unique_tokens(primary.tags, duplicate.tags)
+        if not str(primary.summary or "").strip() and str(duplicate.summary or "").strip():
+            primary.summary = duplicate.summary
+        if not str(primary.impact or "").strip() and str(duplicate.impact or "").strip():
+            primary.impact = duplicate.impact
+        return primary
+
+    def _merge_candidate_duplicate(
+        self,
+        existing: HaddixFinding,
+        incoming: HaddixFinding,
+    ) -> HaddixFinding:
+        if self._candidate_strength(incoming) > self._candidate_strength(existing):
+            return self._merge_candidate_duplicate_metadata(incoming, existing)
+        return self._merge_candidate_duplicate_metadata(existing, incoming)
+
+    def _deduplicate_candidate_findings(
+        self,
+        candidates: List[HaddixFinding],
+    ) -> List[HaddixFinding]:
+        deduped: List[HaddixFinding] = []
+        index_by_key: Dict[tuple[Any, ...], int] = {}
+        for finding in candidates:
+            key = self._candidate_dedup_key(finding)
+            if key is None:
+                deduped.append(finding)
+                continue
+            if key not in index_by_key:
+                index_by_key[key] = len(deduped)
+                deduped.append(finding)
+                continue
+            index = index_by_key[key]
+            deduped[index] = self._merge_candidate_duplicate(deduped[index], finding)
+        return deduped
+
+    def _confirmed_dedup_key(self, finding: HaddixFinding) -> tuple[str, str, str, str]:
+        """Build a root-cause signature for confirmed report findings.
+
+        A report should collapse repeat observations of the same vulnerability,
+        while preserving separate parameters and HTTP methods as separate attack
+        surfaces.
+        """
+        info = finding.additional_info if isinstance(finding.additional_info, dict) else {}
+        parameter = str(info.get("parameter", "") or "").strip().lower()
+        if not parameter:
+            match = re.search(r"parameter\s+['\"]?([^'\"\s]+)", str(finding.title or ""), re.IGNORECASE)
+            parameter = match.group(1).strip().lower() if match else ""
+
+        method = ""
+        request_line = str(finding.poc_request or "").splitlines()
+        if request_line:
+            method = request_line[0].split(" ", 1)[0].strip().upper()
+        if not method:
+            delivery = info.get("payload_delivery", {}) if isinstance(info.get("payload_delivery"), dict) else {}
+            method = str(delivery.get("request_method", "") or "").strip().upper()
+
+        target = self._normalize_url_string(finding.target_url)
+        split = urlsplit(target)
+        endpoint = urlunsplit((split.scheme.lower(), split.netloc.lower(), split.path.rstrip("/") or "/", "", ""))
+        return (self._normalize_vulnerability_class(finding.vuln_type), endpoint, method, parameter)
+
+    def _merge_confirmed_duplicate(
+        self,
+        primary: HaddixFinding,
+        duplicate: HaddixFinding,
+    ) -> HaddixFinding:
+        primary_info = primary.additional_info if isinstance(primary.additional_info, dict) else {}
+        duplicate_info = duplicate.additional_info if isinstance(duplicate.additional_info, dict) else {}
+        primary.additional_info = primary_info
+        primary_info["merged_duplicate_count"] = int(primary_info.get("merged_duplicate_count") or 1) + int(
+            duplicate_info.get("merged_duplicate_count") or 1
+        )
+        primary_info["merged_duplicate_titles"] = self._merge_unique_tokens(
+            primary_info.get("merged_duplicate_titles", []),
+            self._merge_unique_tokens([primary.title, duplicate.title], duplicate_info.get("merged_duplicate_titles", [])),
+        )
+        primary.payloads_used = self._merge_unique_tokens(primary.payloads_used, duplicate.payloads_used)
+        primary.tags = self._merge_unique_tokens(primary.tags, duplicate.tags)
+        primary.steps_to_reproduce = self._merge_unique_tokens(primary.steps_to_reproduce, duplicate.steps_to_reproduce)
+        return primary
+
+    def _deduplicate_confirmed_findings(self, findings: List[HaddixFinding]) -> List[HaddixFinding]:
+        deduped: List[HaddixFinding] = []
+        index_by_key: Dict[tuple[str, str, str, str], int] = {}
+        for finding in findings:
+            key = self._confirmed_dedup_key(finding)
+            if key not in index_by_key:
+                index_by_key[key] = len(deduped)
+                deduped.append(finding)
+                continue
+
+            index = index_by_key[key]
+            existing = deduped[index]
+            if self._candidate_strength(finding) > self._candidate_strength(existing):
+                deduped[index] = self._merge_confirmed_duplicate(finding, existing)
+            else:
+                deduped[index] = self._merge_confirmed_duplicate(existing, finding)
+        return deduped
+
     def _split_findings_by_confirmation(
         self,
         findings: List[HaddixFinding],
     ) -> tuple[List[HaddixFinding], List[HaddixFinding]]:
         confirmed: List[HaddixFinding] = []
         candidates: List[HaddixFinding] = []
-
-        def _has_full_poc_evidence(item: HaddixFinding) -> bool:
-            has_request = bool(str(item.poc_request or "").strip())
-            has_response = bool(str(item.poc_response or "").strip())
-            return has_request and has_response
 
         for finding in findings:
             if self._is_candidate_finding(finding):
@@ -1888,12 +2162,12 @@ class HaddixFormatter:
                 continue
 
             # Step2 (Quality-First): Confirmed は request/response 両PoCが必須
-            if not _has_full_poc_evidence(finding):
+            if self._candidate_has_missing_poc(finding):
                 self._ensure_unconfirmed_reason_codes(finding, demoted_for_missing_poc=True)
                 candidates.append(finding)
             else:
                 confirmed.append(finding)
-        return confirmed, candidates
+        return self._deduplicate_confirmed_findings(confirmed), self._deduplicate_candidate_findings(candidates)
 
     def _normalize_vulnerability_class(self, value: Any) -> str:
         token = str(value or "").strip().lower().replace(" ", "_")

@@ -19,9 +19,10 @@ def _write_session(
     family_gate_passed: bool = True,
     coverage_items: list[dict[str, object]] | None = None,
     completed_tasks: list[dict[str, object]] | None = None,
+    security_level: str = "",
 ) -> None:
     payload = {
-        "completed_tasks": completed_tasks or [],
+        "completed_tasks": completed_tasks or ([{"params": {"cookies": f"security={security_level}"}}] if security_level else []),
         "task_queue": [],
         "scenario_coverage": {
             "covered_count": covered,
@@ -1706,3 +1707,25 @@ class TestBackwardCompatibility:
         assert unified["status"] == separated["status"]
         assert unified["gate_passed"] == separated["gate_passed"]
         assert unified["reason_codes"] == separated["reason_codes"]
+
+
+def test_locked_baseline_is_not_reused_across_security_levels(tmp_path: Path) -> None:
+    reports_dir = tmp_path / "reports"
+    sessions_dir = tmp_path / "sessions"
+    reports_dir.mkdir()
+    sessions_dir.mkdir()
+    missing = ["scn_08_oob_external_channel_flow", "scn_10_semantic_business_logic", "scn_12_advanced_ssrf_internal_topology"]
+    low_session = sessions_dir / "session_low.json"
+    high_session = sessions_dir / "session_high.json"
+    _write_session(low_session, covered=9, required=12, missing=missing, security_level="low")
+    _write_session(high_session, covered=9, required=12, missing=missing, security_level="high")
+    low_report = reports_dir / "haddix_report_low.md"
+    high_report = reports_dir / "haddix_report_high.md"
+    for report, session, confirmed in ((low_report, low_session, 10), (high_report, high_session, 4)):
+        _write_report(report, source_session=str(session), coverage_line="Coverage: 9/12 (75.0%), Missing: scn_08_oob_external_channel_flow, scn_10_semantic_business_logic, scn_12_advanced_ssrf_internal_topology", family_gate_line="Gate: PASS, Coverage: 7/7 (100.0%), Missing: -", findings_line=f"Confirmed: {confirmed} / Candidate: 3")
+    (reports_dir / "quality_baseline_lock.json").write_text(json.dumps({"baseline_report_path": str(low_report), "baseline_session_path": str(low_session)}), encoding="utf-8")
+
+    result = evaluate_initial_release_gate(high_report, session_path=high_session)
+
+    assert result["evaluation_context"]["comparison_mode"] == "baseline_initialized"
+    assert "regression_confirmed_drop" not in result["reason_codes"]

@@ -418,6 +418,17 @@ class AuthManagerAgent(BaseManagerAgent):
                     "detection_mode": "phase1",
                     "requests": sample_requests,
                     "original_vuln_type": original_vuln_type,
+                    "requires_second_account": True,
+                    "precondition_status": "second_account_not_available",
+                    "reason": "second_account_not_available",
+                    "authz_differential": {
+                        "scenario": "weak_session_predictability",
+                        "requires_second_account": True,
+                        "precondition_status": "second_account_not_available",
+                        "reason": "second_account_not_available",
+                        "signals": ["predictable_session_id"],
+                        "cookie_name": session_cookie_name,
+                    },
                     "weak_session_id": {
                         "detected": True,
                         "cookie_name": session_cookie_name,

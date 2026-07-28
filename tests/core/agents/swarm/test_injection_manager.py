@@ -1202,6 +1202,46 @@ async def test_phase2_safe_skip_quiet_xss():
 
 
 @pytest.mark.asyncio
+async def test_phase2_safe_skip_quiet_cors_on_api_endpoint():
+    """Quiet cors_candidate on API path → safe_skip instead of risk-forced Phase 2."""
+    manager = InjectionManagerAgent(config={"model": "test-model"})
+    manager._process_single_url = AsyncMock(return_value={
+        "findings_count": 0, "vuln_type": "cors", "findings": [],
+        "tested_params": [], "reflection_observed": False, "xss_evidence": "",
+        "blind_correlation": {}, "unknown_profile": {},
+        "probe_sent": True, "probe_skipped_reason": "",
+        "comparison_checks": [], "auth_context_matrix": {},
+        "object_ab_comparison": {}, "schema_candidate_params": [],
+        "single_request_validation": True, "detection_mode": "phase1",
+    })
+
+    url = "http://example.com/api/data"
+    task = Task(id="t-quiet-cors", name="Quiet CORS", target=url,
+                agent_type="InjectionSwarm",
+                params={
+                    "targets": [url], "category": "cors_candidate",
+                    "phase2_on_empty_phase1": False,
+                    "phase1_force_full_coverage": True,
+                    "phase1_stop_on_first_hit": False,
+                    "selection_origin": "recon_tagged",
+                    "_context": {"url_evidence_by_url": {url: {"method": "GET", "has_form_tag": False}}},
+                })
+
+    phase2_dispatch = AsyncMock(return_value=MagicMock(status="success", findings=[], execution_log=[]))
+    with patch.object(BaseManagerAgent, "dispatch", new=phase2_dispatch):
+        result = await manager.dispatch(task)
+
+    assert result.status == "success"
+    safe_skip_logs = [
+        log for log in result.execution_log
+        if isinstance(log, dict) and log.get("reason") == "phase1_safe_skip_no_signal"
+    ]
+    assert safe_skip_logs
+    assert "cors_no_signal" in safe_skip_logs[0].get("phase2_block_reason", [])
+    phase2_dispatch.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_phase2_proceed_xss_with_post():
     """xss_candidate with POST method → Phase 2 proceeds (no safe_skip)."""
     manager = InjectionManagerAgent(config={"model": "test-model"})

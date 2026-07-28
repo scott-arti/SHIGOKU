@@ -42,6 +42,12 @@ def _crlf_result(**kwargs) -> CRLFResult:
         severity="medium",
     )
     base.update(kwargs)
+    base.setdefault(
+        "request_url",
+        f"http://target.test/redirect?{base['parameter']}={base['payload'].replace(' ', '%20')}",
+    )
+    base.setdefault("response_status", 302)
+    base.setdefault("response_headers", {base["injected_header"]: "shigoku"})
     return CRLFResult(**base)
 
 
@@ -139,6 +145,25 @@ class TestSmartCRLFHunterRunAsTool:
         info = findings[0].additional_info
         assert "poc_request" in info
         assert "poc_response" in info
+
+    def test_synthetic_result_without_observed_request_and_response_is_not_a_finding(self):
+        """合成値だけではCRLFを確定しない。"""
+        hunter = SmartCRLFHunter()
+
+        findings = hunter._convert_to_findings(
+            {
+                "tested_params": ["url"],
+                "results": [{
+                    "parameter": "url",
+                    "payload": "%0d%0aX-Injected:%20shigoku",
+                    "injected_header": "X-Injected",
+                    "severity": "medium",
+                }],
+            },
+            "http://target.test/redirect?url=safe",
+        )
+
+        assert findings == []
 
     @pytest.mark.asyncio
     async def test_tested_params_excludes_control_params(self):

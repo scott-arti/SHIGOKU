@@ -100,13 +100,35 @@ def evaluate_guard(
                 host=host, target=target, phase=phase, attack_class=attack_class,
             )
 
-    # ---- 2. attack_class deny ----------------------------------------------
+    # ---- 2. attack_class evaluation (deny / requires_hitl / degrade_to_report) -
     if attack_class:
         ac_rules = raw.get("rules", {}).get("attack_classes", {})
         ac_rule = ac_rules.get(attack_class, {})
-        if ac_rule.get("decision") == "deny":
+        ac_decision = ac_rule.get("decision", "")
+
+        if ac_decision == "deny":
             return GuardDecision.block(
                 reason_code=REASON_DENY_ATTACK_CLASS,
+                matched_rule_origin_ids=_collect_origin_ids(raw, attack_class),
+                source_refs=list(ac_rule.get("source_refs", [])),
+                policy_id=policy.policy_id,
+                bundle_id=policy.bundle_id,
+                enforcement_layer=enforcement_layer,
+                host=host, target=target, phase=phase, attack_class=attack_class,
+            )
+        if ac_decision == "requires_hitl":
+            return GuardDecision.requires_hitl(
+                reason_code=f"attack_class_{attack_class}_requires_hitl",
+                matched_rule_origin_ids=_collect_origin_ids(raw, attack_class),
+                source_refs=list(ac_rule.get("source_refs", [])),
+                policy_id=policy.policy_id,
+                bundle_id=policy.bundle_id,
+                enforcement_layer=enforcement_layer,
+                host=host, target=target, phase=phase, attack_class=attack_class,
+            )
+        if ac_decision == "degrade_to_report":
+            return GuardDecision.degrade_to_report(
+                reason_code=f"attack_class_{attack_class}_degrade_to_report",
                 matched_rule_origin_ids=_collect_origin_ids(raw, attack_class),
                 source_refs=list(ac_rule.get("source_refs", [])),
                 policy_id=policy.policy_id,

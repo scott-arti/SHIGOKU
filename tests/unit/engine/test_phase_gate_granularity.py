@@ -176,3 +176,90 @@ class TestPhaseGateGranularity:
         allowed, reason = gate.can_create_attack_task(category)
         assert allowed is True, f"Category '{category}' rejected: {reason}"
         assert reason == "OK"
+
+
+# ============================================================================
+# SGK-2026-0370: PhaseGate + compiled-guard bridge integration tests
+# ============================================================================
+
+
+class TestPhaseGateGuardBridge:
+    """Verify that bridge_guard_and_phase_gate works correctly with PhaseGate
+    verdicts from can_create_attack_task()."""
+
+    @pytest.fixture
+    def gate(self) -> PhaseGate:
+        return PhaseGate()
+
+    # ------------------------------------------------------------------
+    # 1. Guard allows + PhaseGate allows => bridge returns allow
+    # ------------------------------------------------------------------
+    def test_bridge_guard_allow_phase_gate_allow(self, gate: PhaseGate) -> None:
+        from src.core.security.guard_enforcement import bridge_guard_and_phase_gate
+        from src.core.security.compiled_guard_models import GuardDecision
+
+        gate.unlock(Phase.ATTACK)
+        pg_allowed, pg_reason = gate.can_create_attack_task("id_param")
+        assert pg_allowed is True
+
+        gd = GuardDecision.allow(reason_code="in_scope_exact_host")
+        bv = bridge_guard_and_phase_gate(gd, pg_allowed, pg_reason)
+        assert bv.verdict == "allow"
+        assert bv.reason_origin == "combined"
+
+    # ------------------------------------------------------------------
+    # 2. Guard blocks => bridge returns lock_phase, PhaseGate ignored
+    # ------------------------------------------------------------------
+    def test_bridge_guard_block_overrides_phase_gate(self, gate: PhaseGate) -> None:
+        from src.core.security.guard_enforcement import bridge_guard_and_phase_gate
+        from src.core.security.compiled_guard_models import GuardDecision
+
+        gate.unlock(Phase.ATTACK)
+        pg_allowed, pg_reason = gate.can_create_attack_task("id_param")
+        assert pg_allowed is True  # PhaseGate says OK
+
+        gd = GuardDecision(decision="block", reason_code="out_of_scope_host")
+        bv = bridge_guard_and_phase_gate(gd, pg_allowed, pg_reason)
+        assert bv.verdict == "lock_phase"
+        assert bv.reason_origin == "compiled_guard"
+
+    # ------------------------------------------------------------------
+    # 3. Guard allows + PhaseGate auth required => deers
+    # ------------------------------------------------------------------
+    def test_bridge_guard_allow_phase_gate_rejects_auth(self, gate: PhaseGate) -> None:
+        from src.core.security.guard_enforcement import bridge_guard_and_phase_gate
+        from src.core.security.compiled_guard_models import GuardDecision
+
+        gate.unlock(Phase.ATTACK)
+        data = gate._phases[Phase.ATTACK]
+        data.auth_required_endpoints.append("auth")
+        pg_allowed, pg_reason = gate.can_create_attack_task(
+            "auth", {"auth_required": True, "has_auth_credentials": False}
+        )
+        assert pg_allowed is False  # PhaseGate says no
+
+        gd = GuardDecision.allow(reason_code="in_scope_exact_host")
+        bv = bridge_guard_and_phase_gate(gd, pg_allowed, pg_reason)
+        assert bv.verdict == "defer"
+        assert bv.reason_origin == "phase_gate"
+
+    # ------------------------------------------------------------------
+    # 4. Gate summary written for session/report persistence
+    # ------------------------------------------------------------------
+    def test_bridge_gate_summary_persistence_ready(self, gate: PhaseGate) -> None:
+        from src.core.security.guard_enforcement import bridge_guard_and_phase_gate
+        from src.core.security.compiled_guard_models import GuardDecision
+
+        gate.unlock(Phase.ATTACK)
+        pg_allowed, pg_reason = gate.can_create_attack_task("id_param")
+
+        gd = GuardDecision(decision="block", reason_code="out_of_scope_url_prefix")
+        bv = bridge_guard_and_phase_gate(gd, pg_allowed, pg_reason)
+        gs = bv.gate_summary
+
+        assert "reason_origin" in gs
+        assert "reason_codes" in gs
+        assert "source_refs" in gs
+        assert "compiled_guard_decision" in gs
+        assert "phase_gate_allowed" in gs
+        assert gs["compiled_guard_decision"] == "block"

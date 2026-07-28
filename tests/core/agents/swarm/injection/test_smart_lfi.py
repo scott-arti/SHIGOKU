@@ -60,6 +60,41 @@ async def test_smart_lfi_hunter_execute_with_vuln():
 
 
 @pytest.mark.asyncio
+async def test_smart_lfi_hunter_execute_preserves_confirmed_marker_and_poc():
+    hunter = SmartLFIHunter(config={"model": "test-model"})
+    hunter.run_as_tool = AsyncMock(return_value={
+        "vulnerable": True,
+        "param": "file",
+        "evidence": "Deterministic LFI signal",
+        "description": "LFI detected.",
+        "payloads_used": ["../../../../etc/passwd"],
+        "file_marker_excerpt": "root:x:0:0:",
+        "target_file": "/etc/passwd",
+        "delivery_evidence": {
+            "request_method": "GET",
+            "request_url": "http://example.com/view.php?file=..%2F..%2F..%2F..%2Fetc%2Fpasswd",
+            "response_status": 200,
+            "response_body": "root:x:0:0:root:/root:/bin/bash",
+            "poc_request": "GET /view.php?file=..%2F..%2F..%2F..%2Fetc%2Fpasswd HTTP/1.1\nHost: example.com",
+            "poc_response": "HTTP/1.1 200\n\nroot:x:0:0:root:/root:/bin/bash",
+            "body_length": 31,
+            "delivered": True,
+        },
+    })
+    task = Task(id="lfi-vuln", name="lfi", target="http://example.com/view.php?file=test.txt", params={"file": "test.txt"})
+
+    findings = await hunter.execute(task)
+
+    assert len(findings) == 1
+    info = findings[0].additional_info
+    assert info["file_marker_excerpt"] == "root:x:0:0:"
+    assert info["target_file"] == "/etc/passwd"
+    assert "../../../../etc/passwd" in info["poc_request"] or "..%2F..%2F" in info["poc_request"]
+    assert info["poc_response"].startswith("HTTP/1.1 200")
+    assert findings[0].evidence.request_url.endswith("file=..%2F..%2F..%2F..%2Fetc%2Fpasswd")
+
+
+@pytest.mark.asyncio
 async def test_run_as_tool_uses_url_query_params_not_manager_metadata():
     hunter = SmartLFIHunter(config={"model": "test-model"})
     hunter._run_lfi_deterministic_precheck = AsyncMock(return_value={"confirmed": False})
@@ -106,6 +141,9 @@ async def test_send_request_detects_lfi_indicator_beyond_snippet_window():
     obs = await hunter._send_request("../../../../etc/passwd")
 
     assert obs["diff"] == "lfi_found"
+    assert obs["file_marker_excerpt"].startswith("root:x:0:0:")
+    assert obs["poc_request"].startswith("GET /vulnerabilities/fi/")
+    assert obs["poc_response"].startswith("HTTP/1.1 200")
 
 
 # ------------------------------------------------------------------

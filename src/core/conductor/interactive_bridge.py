@@ -7,12 +7,16 @@ CLIからの入力を受け取り、MasterConductorを初期化・実行する�
 
 import logging
 import asyncio
+import os
+import sys
 from typing import Any, Awaitable, Callable
 from src.config import settings as runtime_settings
 from src.core.engine.master_conductor import MasterConductor, Task, TaskState
+from src.core.engine.phase_gate import Phase
 from src.core.config_manager import get_config_manager
 from src.core.config.settings import get_settings
 from src.core.project.project_manager import ProjectManager
+from src.core.models.ops_artifacts import AttackTargetBundle, load_attack_target_bundle
 from src.core.preflight import EntryGateFacade, PreflightContext, GatePolicy
 from src.commands import print_banner, print_step, print_result
 
@@ -129,6 +133,69 @@ def _build_execution_safeguard_hitl_callback(
     return prompt_callback
 
 
+def _non_tty_attack_targets_preapproved() -> bool:
+    if sys.stdin.isatty():
+        return True
+    token = str(os.getenv("SHIGOKU_ATTACK_TARGETS_APPROVED", "") or "").strip().lower()
+    return token in {"1", "true", "yes", "approved"}
+
+
+def _validate_attack_target_bundle_scope(
+    bundle: AttackTargetBundle,
+    *,
+    scope_file: str | None = None,
+) -> tuple[bool, list[str]]:
+    violations = bundle.validate_allowed_hosts()
+    if scope_file:
+        from src.core.security.scope_parser import get_scope_parser
+
+        parser = get_scope_parser()
+        for target in bundle.targets:
+            allowed, _reason = parser.validate_target(target.url)
+            if not allowed:
+                violations.append(target.url)
+    normalized = sorted({str(item or "").strip() for item in violations if str(item or "").strip()})
+    return len(normalized) == 0, normalized
+
+
+def _queue_attack_target_bundle(
+    mc: MasterConductor,
+    bundle: AttackTargetBundle,
+    *,
+    attack_targets_file: str,
+    wordlist_path: str | None = None,
+) -> int:
+    signals = [target.to_signal() for target in bundle.targets]
+    if not signals:
+        return 0
+
+    mc.phase_gate.unlock(Phase.ATTACK)
+    mc.context.target_info["attack_targets_file"] = str(attack_targets_file)
+    mc.context.target_info["attack_targets_manifest_hash"] = bundle.manifest.manifest_hash
+    mc.context.target_info["attack_targets_correlation_id"] = bundle.manifest.correlation_id
+    mc.context.target_info["attack_targets_allowed_hosts"] = list(bundle.manifest.allowed_hosts)
+    mc.context.target_info["attack_targets_reason_codes"] = list(bundle.manifest.reason_codes)
+
+    recon_results = {
+        "_signal_bundle": {
+            "_run_id": bundle.manifest.correlation_id,
+            "_endpoint_signals": signals,
+            "_host_surface_summary": {
+                "allowed_hosts": list(bundle.manifest.allowed_hosts),
+                "target_count": len(signals),
+            },
+        }
+    }
+    tasks = mc._create_attack_tasks_from_recon(recon_results)
+    if wordlist_path:
+        for task in tasks:
+            if isinstance(getattr(task, "params", None), dict):
+                task.params["wordlist"] = wordlist_path
+    if tasks:
+        mc.task_queue.add_batch(tasks, source="interactive_bridge_attack_targets")
+    return len(tasks)
+
+
 def start_interactive_session(
     mode="bugbounty",
     scope_file=None,
@@ -146,6 +213,8 @@ def start_interactive_session(
     resume_state_path=None,
     resume_source=None,
     import_recon_dir=None,
+    attack_targets_file=None,
+    wordlist_path=None,
 ):
     """
     インタラクティブセッションを開始
@@ -162,9 +231,11 @@ def start_interactive_session(
         recipe_file: 実行するRecipeファイルパス
         recon_start_step: recon_master の開始ステップ上書き (1-8)
         recon_end_step: recon_master の終了ステップ上書き (1-8)
+        attack_targets_file: structured target bundle JSON
+        wordlist_path: attack tasks へ渡すカスタムワードリスト
     """
     print_banner()
-    print_step("🚀", f"Starting session (Mode: {mode})")
+    print_step("🚀", f"セッションを開始します (Mode: {mode})")
 
     # --- Entry Gate Preflight Check ---
     settings = get_settings()
@@ -191,7 +262,7 @@ def start_interactive_session(
 
     auth_required = bool(cookies or bearer_token)
     if auth_required:
-        print_step("🔐", "Authentication credentials detected")
+        print_step("🔐", "認証情報を検出")
 
     # 1. Config初期化 & スコープ読み込み
     cm = get_config_manager()
@@ -216,7 +287,7 @@ def start_interactive_session(
     if auto_target:
         try:
             pm = ProjectManager(auto_target)
-            print_step("📂", f"Project Context: {pm.project_name}")
+            print_step("📂", f"プロジェクト文脈: {pm.project_name}")
         except Exception as e:
             logger.warning(f"Failed to initialize ProjectManager: {e}")
 
@@ -238,7 +309,7 @@ def start_interactive_session(
         get_execution_safeguard(mode=mode_val, hitl_callback=hitl_callback)
         print_step(
             "🛡️",
-            f"ExecutionSafeguard initialized (Mode: {mode_val}, Gate: {intervention_gate_mode}) with HITL callback",
+            f"ExecutionSafeguard を初期化 (Mode: {mode_val}, Gate: {intervention_gate_mode})",
         )
     except Exception as e:
         logger.warning(f"Failed to initialize ExecutionSafeguard: {e}")
@@ -246,7 +317,7 @@ def start_interactive_session(
     # 4. コンテキスト設定
     if cookies:
         mc.context.target_info["cookies"] = cookies
-        print_step("🍪", "Cookies loaded into context")
+        print_step("🍪", "Cookie をコンテキストに読み込み")
 
     if bearer_token:
         token = str(bearer_token).strip()
@@ -261,7 +332,7 @@ def start_interactive_session(
                 auth_headers["Cookie"] = cookies
             mc.context.target_info["auth_headers"] = auth_headers
             mc.context.target_info["bearer_token"] = token
-            print_step("🔐", "Bearer token loaded into context")
+            print_step("🔐", "Bearer token をコンテキストに読み込み")
 
     if auto_target:
         mc.context.target_info["target"] = auto_target
@@ -285,7 +356,26 @@ def start_interactive_session(
     if recon_start_step is not None or recon_end_step is not None:
         start = int(mc.context.target_info.get("recon_start_step", 1))
         end = int(mc.context.target_info.get("recon_end_step", 8))
-        print_step("⚙️", f"Recon step override enabled: {start}-{end}")
+        print_step("⚙️", f"Recon step 上書きを有効化: {start}-{end}")
+
+    attack_target_bundle = None
+    if attack_targets_file:
+        if not _non_tty_attack_targets_preapproved():
+            print_result(False, "Structured attack targets require explicit approval in non-interactive mode.")
+            return
+        try:
+            attack_target_bundle = load_attack_target_bundle(attack_targets_file)
+            scope_ok, violations = _validate_attack_target_bundle_scope(
+                attack_target_bundle,
+                scope_file=scope_file,
+            )
+            if not scope_ok:
+                preview = ", ".join(violations[:3])
+                print_result(False, f"Attack targets rejected by scope validation: {preview}")
+                return
+        except Exception as exc:
+            print_result(False, f"Failed to load attack targets: {exc}")
+            return
     
     # 5. Recipeロード
     if recipe_file:
@@ -304,10 +394,21 @@ def start_interactive_session(
             print_result(False, f"Failed to load recipe {recipe_file}: {e}")
             return
 
-    if auto_target:
+    if attack_target_bundle is not None:
+        queued = _queue_attack_target_bundle(
+            mc,
+            attack_target_bundle,
+            attack_targets_file=str(attack_targets_file),
+            wordlist_path=wordlist_path,
+        )
+        if queued <= 0:
+            print_result(False, "No attack tasks were generated from structured targets.")
+            return
+        print_step("🎯", f"structured target bundle から {queued} 件の Attack タスクを読み込み")
+    elif auto_target:
         # 既にタスクがある（Recipe由来など）場合は追加しない、なければデフォルトを追加
         if mc.task_queue.is_empty():
-            print_step("🎯", f"Planning for target: {auto_target}")
+            print_step("🎯", f"対象を計画中: {auto_target}")
             tasks = mc.plan(auto_goal, auto_target)
             if tasks:
                 mc.task_queue.add_batch(tasks, source="interactive_bridge_plan")
@@ -331,7 +432,7 @@ def start_interactive_session(
             # Dashboard setup
             pass
             
-        print_step("⏳", "Executing tasks...")
+        print_step("⏳", "タスクを実行中...")
         mc.execute_with_replan()
         
     except KeyboardInterrupt:

@@ -30,6 +30,7 @@ def _new_mc(
         discovered_assets=discovered_assets if discovered_assets is not None else ["https://app.example.com/profile?view=full"],
         target_info={
             "target": "https://app.example.com",
+            "mode": "ctf",
             "auth_tokens": {},
             "tech_stack": [],
             "required_vuln_families": required_vuln_families if required_vuln_families is not None else ["api"],
@@ -39,6 +40,7 @@ def _new_mc(
     mc.workspace = SimpleNamespace(user_sessions={})
     mc.intervention_policy = InterventionPolicy(settings.get_intervention_scenarios())
     mc.run_ledger_recorder = SimpleNamespace(record=lambda **_kwargs: None)
+    mc.mode = "ctf"
     return mc
 
 
@@ -158,6 +160,318 @@ def test_create_attack_tasks_adds_missing_probe_tasks_for_core_and_high_friction
         for task in tasks
     )
     assert all(task.params.get("target") for task in probe_tasks)
+
+
+def test_create_missing_core_scenario_probe_tasks_does_not_treat_inferred_planned_signals_as_covered(monkeypatch):
+    mc = _new_mc(required_vuln_families=["api", "business_logic"])
+    seed_target = "https://app.example.com/api/v1/orders/9"
+    seed_evidence = {
+        seed_target: {
+            "score": 10,
+            "reasons": ["seed"],
+            "category": "api_candidate",
+            "method": "GET",
+            "has_form_tag": False,
+        }
+    }
+    monkeypatch.setattr(
+        mc,
+        "_collect_scenario_probe_seed_targets",
+        lambda *args, **kwargs: ([seed_target], seed_evidence),
+    )
+
+    rate_limit_like_task = Task(
+        id="generic-rate-limit",
+        name="API Candidate Security Scan (1 targets)",
+        agent_type="InjectionSwarm",
+        action="scan",
+        phase="attack",
+        params={
+            "category": "api_candidate",
+            "source_category": "tagged_api_candidate",
+            "scenario": "rate limit throttle burst request brute force request frequency",
+            "attack_type": "rate limit",
+            "description": "Traffic-pattern probe for throttling and brute-force resilience.",
+            "target": seed_target,
+            "targets": [seed_target],
+        },
+        target=seed_target,
+        priority=80,
+    )
+    business_logic_like_task = Task(
+        id="generic-business-logic",
+        name="File Upload Vulnerability Scan (1 targets)",
+        agent_type="LogicSwarm",
+        action="scan",
+        phase="attack",
+        params={
+            "category": "upload",
+            "source_category": "tagged_upload",
+            "scenario": "business logic semantic abuse approval flow policy bypass intent abuse pricing workflow checkout refund",
+            "attack_type": "workflow value tampering",
+            "description": "Low-impact workflow transition/value tampering probe for business-logic abuse candidates.",
+            "target": "https://app.example.com/upload",
+            "targets": ["https://app.example.com/upload"],
+        },
+        target="https://app.example.com/upload",
+        priority=79,
+    )
+
+    probe_tasks = mc._create_missing_core_scenario_probe_tasks(
+        existing_tasks=[rate_limit_like_task, business_logic_like_task],
+        recon_results={},
+    )
+    probe_ids = {str(task.params.get("scenario_probe", "") or "") for task in probe_tasks}
+
+    assert "scn_05_rate_limit_resilience" in probe_ids
+    assert "scn_10_semantic_business_logic" in probe_ids
+
+
+def test_create_missing_core_scenario_probe_tasks_respects_explicit_scn06_coverage(monkeypatch):
+    mc = _new_mc(required_vuln_families=["api"])
+    seed_target = "https://app.example.com/config/config.inc.php.dist"
+    seed_evidence = {
+        seed_target: {
+            "score": 8,
+            "reasons": ["meta_seed"],
+            "category": "meta_observability",
+            "method": "GET",
+            "has_form_tag": False,
+        }
+    }
+    monkeypatch.setattr(
+        mc,
+        "_collect_scenario_probe_seed_targets",
+        lambda *args, **kwargs: ([seed_target], seed_evidence),
+    )
+
+    explicit_meta_task = Task(
+        id="meta-observability",
+        name="Meta/Observability Exposure Scan (1 targets)",
+        agent_type="DiscoverySwarm",
+        action="scan",
+        phase="attack",
+        params={
+            "category": "meta_observability",
+            "source_category": "tagged_meta_observability",
+            "scenario_id": "scn_06_data_exposure_diff",
+            "target": seed_target,
+            "targets": [seed_target],
+        },
+        target=seed_target,
+        priority=81,
+    )
+
+    probe_tasks = mc._create_missing_core_scenario_probe_tasks(
+        existing_tasks=[explicit_meta_task],
+        recon_results={},
+    )
+    probe_ids = {str(task.params.get("scenario_probe", "") or "") for task in probe_tasks}
+
+    assert "scn_06_data_exposure_diff" not in probe_ids
+
+
+def test_file_upload_probe_is_not_deferred_by_scn09_manual_policy(monkeypatch):
+    mc = _new_mc(required_vuln_families=["api"])
+    monkeypatch.setattr(settings, "defer_scn07_12_hitl_v1", True)
+    monkeypatch.setattr(mc, "_get_intervention_decision", lambda _task: {
+        "route": "shigoku_hitl",
+        "scenario_id": "scn_09_multi_step_state_machine",
+        "confidence": 1.0,
+        "reasons": ["Matched scenario 'scn_09_multi_step_state_machine'"],
+        "matched_signals": ["chain"],
+    })
+    monkeypatch.setattr(mc, "_notify_scn07_12_intervention", lambda *_args, **_kwargs: None)
+
+    task = Task(
+        id="upload-task",
+        name="File Upload Vulnerability Scan (1 signals)",
+        agent_type="LogicSwarm",
+        action="run",
+        phase="attack",
+        params={
+            "target": "http://localhost:4280/vulnerabilities/upload/",
+            "tags": ["php", "rce_candidate", "file_upload"],
+            "category": "upload",
+            "safe_only": True,
+        },
+        target="http://localhost:4280/vulnerabilities/upload/",
+        priority=80,
+    )
+
+    assert mc._run_intervention_precheck(task) is None
+    assert task.state.value != "skipped"
+
+
+def test_create_attack_tasks_marks_generated_upload_tasks_safe_only(tmp_path: Path):
+    tagged_file = tmp_path / "tagged_upload.jsonl"
+    _write_jsonl(
+        tagged_file,
+        [
+            {
+                "url": "http://localhost:4280/vulnerabilities/upload/",
+                "method": "GET",
+                "forms": [],
+            },
+        ],
+    )
+    recon_results = {
+        "tagged_upload": {
+            "file": str(tagged_file),
+            "count": 1,
+            "description": "Tagged URLs (upload)",
+            "tags": ["file_upload", "php", "rce_candidate"],
+        },
+    }
+
+    mc = _new_mc(required_vuln_families=["business_logic"])
+    mc.mode = "ctf"
+    mc.context.target_info["mode"] = "ctf"
+    tasks = mc._create_attack_tasks_from_recon(recon_results)
+
+    upload_task = next(task for task in tasks if task.params.get("category") == "upload")
+    assert upload_task.params.get("safe_only") is True
+    assert upload_task.params.get("scenario_id") == "scn_09_multi_step_state_machine"
+
+
+def test_create_attack_tasks_marks_signal_upload_tasks_safe_only():
+    recon_results = {
+        "_signal_bundle": {
+            "_run_id": "run-safe-upload",
+            "_endpoint_signals": [
+                {
+                    "signal_id": "sig-upload-1",
+                    "url": "http://localhost:4280/vulnerabilities/upload/",
+                    "primary_label": "upload",
+                    "candidate_labels": ["file_upload", "php", "rce_candidate"],
+                    "seen_count": 1,
+                },
+            ],
+        }
+    }
+
+    mc = _new_mc(required_vuln_families=["business_logic"])
+    mc.mode = "ctf"
+    mc.context.target_info["mode"] = "ctf"
+
+    tasks = mc._create_attack_tasks_from_recon(recon_results)
+
+    upload_task = next(task for task in tasks if task.params.get("category") == "upload")
+    assert upload_task.params.get("safe_only") is True
+    assert upload_task.params.get("scenario_id") == "scn_09_multi_step_state_machine"
+
+
+def test_file_upload_probe_without_safe_only_stays_deferred_by_scn09_manual_policy(monkeypatch):
+    mc = _new_mc(required_vuln_families=["api"])
+    monkeypatch.setattr(settings, "defer_scn07_12_hitl_v1", True)
+    monkeypatch.setattr(mc, "_get_intervention_decision", lambda _task: {
+        "route": "shigoku_hitl",
+        "scenario_id": "scn_09_multi_step_state_machine",
+        "confidence": 1.0,
+        "reasons": ["Matched scenario 'scn_09_multi_step_state_machine'"],
+        "matched_signals": ["chain"],
+    })
+    monkeypatch.setattr(mc, "_notify_scn07_12_intervention", lambda *_args, **_kwargs: None)
+
+    task = Task(
+        id="upload-task",
+        name="File Upload Vulnerability Scan (1 signals)",
+        agent_type="LogicSwarm",
+        action="run",
+        phase="attack",
+        params={
+            "target": "http://localhost:4280/vulnerabilities/upload/",
+            "tags": ["php", "rce_candidate", "file_upload"],
+            "category": "upload",
+        },
+        target="http://localhost:4280/vulnerabilities/upload/",
+        priority=80,
+    )
+
+    intervention = mc._run_intervention_precheck(task)
+
+    assert intervention is not None
+    assert intervention.get("manual_deferred") is True
+    assert task.state.value == "skipped"
+
+
+def test_add_tasks_keeps_distinct_scenario_probe_tasks_on_same_target(monkeypatch):
+    mc = _new_mc(required_vuln_families=["api", "business_logic"])
+    mc.task_queue = _QueueSpy()
+    mc._injected_task_ids = set()
+    mc._owned_injection_targets = set()
+    mc._derived_task_count = 0
+    mc.context.target_info["aggressive_targets"] = []
+
+    seed_target = "https://app.example.com/api/v1/orders/9"
+    seed_evidence = {
+        seed_target: {
+            "score": 10,
+            "reasons": ["seed"],
+            "category": "api_candidate",
+            "method": "GET",
+            "has_form_tag": False,
+        }
+    }
+    monkeypatch.setattr(
+        mc,
+        "_collect_scenario_probe_seed_targets",
+        lambda *args, **kwargs: ([seed_target], seed_evidence),
+    )
+
+    seed_idor = Task(
+        id="seed-idor",
+        name="Seed IDOR",
+        agent_type="InjectionSwarm",
+        action="scan",
+        phase="attack",
+        params={
+            "category": "id_param",
+            "scenario_id": "scn_01_idor_bola_object_access",
+            "target": seed_target,
+            "targets": [seed_target],
+        },
+        target=seed_target,
+        priority=80,
+    )
+    seed_upload = Task(
+        id="seed-upload",
+        name="Seed Upload",
+        agent_type="LogicSwarm",
+        action="scan",
+        phase="attack",
+        params={
+            "category": "upload",
+            "target": "https://app.example.com/upload",
+            "targets": ["https://app.example.com/upload"],
+        },
+        target="https://app.example.com/upload",
+        priority=79,
+    )
+
+    probe_tasks = mc._create_missing_core_scenario_probe_tasks(
+        existing_tasks=[seed_idor, seed_upload],
+        recon_results={},
+    )
+    added = mc._add_tasks(probe_tasks, source="recon_result")
+    queued_probe_ids = [task.params.get("scenario_probe") for task in mc.task_queue.items]
+
+    assert added == len(probe_tasks)
+    assert set(queued_probe_ids) == {
+        "scn_02_mass_assignment_object_update",
+        "scn_03_injection_input_tampering",
+        "scn_04_endpoint_enumeration_bfla",
+        "scn_05_rate_limit_resilience",
+        "scn_06_data_exposure_diff",
+        "scn_08_oob_external_channel_flow",
+        "scn_10_semantic_business_logic",
+        "scn_11_multi_vector_chain",
+        "scn_12_advanced_ssrf_internal_topology",
+    }
+    assert all(
+        str(task.params.get("selection_origin", "")).startswith("scenario_probe_planner:scn_")
+        for task in mc.task_queue.items
+    )
 
 
 def test_create_attack_tasks_uses_step14_probe_planner_wrapper(tmp_path: Path, monkeypatch):

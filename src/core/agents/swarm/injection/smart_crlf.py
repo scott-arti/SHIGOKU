@@ -111,6 +111,9 @@ class SmartCRLFHunter(Specialist):
                     "payload": r.payload,
                     "injected_header": r.injected_header,
                     "severity": r.severity,
+                    "request_url": r.request_url,
+                    "response_status": r.response_status,
+                    "response_headers": r.response_headers or {},
                 }
                 for r in vuln
             ],
@@ -123,12 +126,27 @@ class SmartCRLFHunter(Specialist):
     def _convert_to_findings(self, result: Dict[str, Any], target_url: str) -> List[Finding]:
         findings = []
         for r in result.get("results", []):
+            request_url = str(r.get("request_url", "") or "")
+            payload = str(r.get("payload", "") or "")
+            response_headers = r.get("response_headers", {})
+            if not isinstance(response_headers, dict):
+                response_headers = {}
+            injected_header = str(r.get("injected_header", "") or "")
+            observed_value = next(
+                (str(value) for name, value in response_headers.items()
+                 if str(name).lower() == injected_header.lower()),
+                "",
+            )
+            delivered_payload = payload.replace(" ", "%20")
+            if not request_url or delivered_payload not in request_url or not injected_header or "shigoku" not in observed_value.lower():
+                logger.warning("[%s] Skipping CRLF finding without matching observed request/response evidence", self.name)
+                continue
             evidence = Evidence(
                 request_method="GET",
-                request_url=target_url,
+                request_url=request_url,
                 request_headers={},
-                response_status=302,
-                response_headers={r["injected_header"]: "injected-via-crlf"},
+                response_status=int(r.get("response_status", 0) or 0),
+                response_headers=response_headers,
             )
             findings.append(Finding(
                 target_url=target_url,
@@ -159,15 +177,11 @@ class SmartCRLFHunter(Specialist):
                     "payload": r["payload"],
                     "injected_header": r["injected_header"],
                     "tested_params": result.get("tested_params", []),
-                    "poc_request": (
-                        f"GET {target_url}?{r['parameter']}={r['payload']} HTTP/1.1\r\n"
-                        f"Host: <target>\r\n\r\n"
-                    ),
-                    "poc_response": (
-                        f"HTTP/1.1 302 Found\r\n"
-                        f"Location: /\r\n"
-                        f"{r['injected_header']}: injected-via-crlf\r\n\r\n"
-                    ),
+                    "poc_request": f"GET {request_url} HTTP/1.1\r\nHost: <target>\r\n\r\n",
+                    "poc_response": "\r\n".join(
+                        [f"HTTP/1.1 {int(r.get('response_status', 0) or 0)}"]
+                        + [f"{name}: {value}" for name, value in response_headers.items()]
+                    ) + "\r\n\r\n",
                     "poc_html": (
                         f"<!-- CRLF Injection PoC -->\n"
                         f"<!-- Parameter: {r['parameter']} -->\n"

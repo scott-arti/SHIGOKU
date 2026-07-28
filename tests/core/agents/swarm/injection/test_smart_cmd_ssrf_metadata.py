@@ -158,3 +158,24 @@ class TestSmartCmdSsrfMetadata:
         assert result["diff"] == "cmd_injection_found"
         assert result["race_attempts"] == 1
         assert sleep_mock.await_count == 0
+
+    @pytest.mark.asyncio
+    async def test_send_request_detects_command_output_beyond_initial_response_preview(self):
+        """本文の後方にあるコマンド出力も検出し、証拠抜粋に残す。"""
+        hunter = SmartCmdSSRFHunter(config={"model": "test-model"})
+        hunter.context = {
+            "target": "http://target.test/exec/",
+            "param": "ip",
+            "method": "POST",
+            "params": {"ip": "127.0.0.1", "Submit": "Submit"},
+            "auth_headers": {},
+            "execution_profile": {},
+        }
+        hunter.smart_client.request = AsyncMock(
+            return_value={"status": 200, "body": "A" * 600 + "uid=33(www-data)"}
+        )
+
+        result = await hunter._send_request("127.0.0.1|id")
+
+        assert result["diff"] == "cmd_injection_found"
+        assert "uid=33(www-data)" in result["body_snippet"]

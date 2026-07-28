@@ -4,14 +4,14 @@ doc_type: subtask_plan
 status: backlog
 parent_task_id: SGK-2026-0293
 related_docs:
-- docs/shigoku/subtasks/2026-06-23_sgk-2026-0293_vulnerability-management-review-trail_subtask_plan.md
+- docs/shigoku/subtasks/done/2026-06-23_sgk-2026-0293_vulnerability-management-review-trail_subtask_plan.md
 - docs/shigoku/subtasks/2026-06-21_sgk-2026-0287_task-queue-pruning-policy_subtask_plan.md
 - docs/shigoku/subtasks/2026-06-21_sgk-2026-0286_agentic-rag-hypothesis-advisor_subtask_plan.md
 - docs/shigoku/subtasks/2026-06-23_sgk-2026-0292_ollama-removal-llm-config-unification_subtask_plan.md
 - docs/shigoku/plans/2026-06-24_sgk-2026-0304_active_plan.md
 title: 3判断器再設計とAdvisor AI戦略レビュー化 議論計画
 created_at: '2026-06-23'
-updated_at: '2026-07-02'
+updated_at: '2026-07-28'
 tags:
 - shigoku
 target: src/core/engine/strategy_optimizer.py, src/core/intelligence/self_reflection.py,

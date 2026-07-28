@@ -4,14 +4,14 @@ doc_type: subtask_plan
 status: done
 parent_task_id: SGK-2026-0320
 related_docs:
-- docs/shigoku/plans/2026-06-29_sgk-2026-0320_recon-resume-visibility-conversational-ops_plan.md
-- docs/shigoku/subtasks/2026-06-29_sgk-2026-0321_recon-step-state-resume-diff_subtask_plan.md
-- docs/shigoku/subtasks/2026-07-01_p1b-shigoku-ops-decision-tree-cli_subtask_plan.md
+- docs/shigoku/plans/done/2026-06-29_sgk-2026-0320_recon-resume-visibility-conversational-ops_plan.md
+- docs/shigoku/subtasks/done/2026-06-29_sgk-2026-0321_recon-step-state-resume-diff_subtask_plan.md
+- docs/shigoku/subtasks/done/2026-07-01_sgk-2026-0334_p1b-shigoku-ops-decision-tree-cli_subtask_plan.md
 - docs/shigoku/plans/done/2026-06-24_sgk-2026-0298_internal-behavior-visibility-governance_plan.md
 - docs/shigoku/subtasks/done/2026-06-24_sgk-2026-0300_run-narrative-target-profile-markdown_subtask_plan.md
 title: 'P1a: ReconState完全化＋並行タスクcheckpoint/resume堅牢化'
 created_at: '2026-06-29'
-updated_at: '2026-07-02'
+updated_at: '2026-07-28'
 tags:
 - shigoku
 - recon

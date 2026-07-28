@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -26,11 +27,40 @@ from src.reporting.initial_release_gate import (  # noqa: E402
 from src.reporting.report_session_consistency import verify_report_session_consistency  # noqa: E402
 from src.reporting.report_loop_orchestrator import run_report_loop  # noqa: E402
 from src.reporting.session_finding_inspector import inspect_session_findings  # noqa: E402
+from src.reporting.expected_detection_matrix import (  # noqa: E402
+    compare_expected_detections,
+    compare_session_finding_sets,
+)
+from src.reporting.endpoint_extractor import (  # noqa: E402
+    build_attack_target_bundle_from_findings,
+    build_attack_target_bundle_from_session,
+    extract_attack_targets_from_session,
+    write_attack_target_artifacts,
+)
+from src.cli.intent_parser import (  # noqa: E402
+    build_execution_preview,
+    load_ops_intent_settings,
+    parse_operator_intent,
+)
+from src.core.learning.findings_repository import FindingsRepository  # noqa: E402
+from src.core.models.ops_artifacts import extract_host_from_url  # noqa: E402
 from src.reporting.runtime_control_release_gate import evaluate_gate_evidence_bundle  # noqa: E402
 from src.reporting.runtime_control_release_gate import evaluate_phase9_evidence_bundle  # noqa: E402
 from src.reporting.run_narrative_formatter import RunNarrativeFormatter  # noqa: E402
 from src.reporting.target_profile_formatter import TargetProfileFormatter  # noqa: E402
 from src.reporting.attack_path_formatter import AttackPathFormatter  # noqa: E402
+from src.reporting.attack_review_formatter import format_attack_review  # noqa: E402
+from src.core.knowledge.attack_path_ingestor import (  # noqa: E402
+    build_attack_path_cypher,
+    ingest_attack_path_payload,
+)
+from src.reporting.decision_tree_formatter import (  # noqa: E402
+    DecisionTreeFormatter,
+    DEFAULT_MAX_NODES,
+    DEFAULT_MAX_EDGES,
+    DEFAULT_MAX_DEPTH,
+    DEFAULT_MAX_CHILDREN_PER_NODE,
+)
 from src.core.observability.phase1_contracts import (  # noqa: E402
     REQUIRED_OBSERVABILITY_FIELDS,
     evaluate_minimum_sample_size,
@@ -53,6 +83,7 @@ VALIDATION_SUITES: dict[str, list[str]] = {
         "tests/unit/reporting/test_run_narrative_formatter.py",
         "tests/unit/reporting/test_target_profile_formatter.py",
         "tests/unit/reporting/test_attack_path_formatter.py",
+        "tests/unit/reporting/test_decision_tree_formatter.py",
         "tests/unit/main/test_main_report_haddix.py",
     ],
     "session": [
@@ -60,6 +91,13 @@ VALIDATION_SUITES: dict[str, list[str]] = {
     ],
     "ops_cli": [
         "tests/unit/scripts/test_shigoku_ops_cli.py",
+        "tests/unit/scripts/test_shigoku_ops_attack_paths_cli.py",
+        "tests/unit/scripts/test_shigoku_ops_attack_review_cli.py",
+        "tests/unit/scripts/test_shigoku_ops_export_targets_cli.py",
+        "tests/unit/scripts/test_shigoku_ops_findings_cli.py",
+        "tests/unit/scripts/test_shigoku_ops_expected_detection_cli.py",
+        "tests/unit/scripts/test_shigoku_ops_intent_cli.py",
+        "tests/unit/cli/test_intent_parser.py",
     ],
     "runtime_control": [
         "tests/unit/reporting/test_runtime_control_release_gate.py",
@@ -256,6 +294,34 @@ def _resolve_session_from_args(
     """
     import json as _json
 
+    # CRITICAL: When both --session and --report are provided, the
+    # consistency check MUST run.  The explicit --session overrides
+    # source-session resolution but the report/session pair is still
+    # verified for consistency.
+    if args.session and args.report:
+        consistency = verify_report_session_consistency(
+            Path(args.report),
+            session_path=Path(args.session),
+            sessions_dir=Path(args.sessions_dir) if args.sessions_dir else None,
+        )
+        status = consistency.get("status")
+        reason_codes = list(consistency.get("reason_codes", []))
+
+        session_info = consistency.get("session", {})
+        if isinstance(session_info, dict):
+            resolved_path = session_info.get("path")
+            if resolved_path:
+                try:
+                    return (
+                        _json.loads(Path(resolved_path).read_text(encoding="utf-8")),
+                        status,
+                        reason_codes,
+                    )
+                except Exception:
+                    return (None, status, reason_codes + ["session_parse_failed"])
+        # No session path resolved
+        return (None, status, reason_codes)
+
     if args.session:
         session_path = Path(args.session).expanduser().resolve()
         if not session_path.exists():
@@ -272,7 +338,7 @@ def _resolve_session_from_args(
     if args.report:
         consistency = verify_report_session_consistency(
             Path(args.report),
-            session_path=Path(args.session) if args.session else None,
+            session_path=None,
             sessions_dir=Path(args.sessions_dir) if args.sessions_dir else None,
         )
         status = consistency.get("status")
@@ -390,6 +456,53 @@ def _run_report_target_profile(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_report_attack_review(args: argparse.Namespace) -> int:
+    """Generate attack_review.md from session data (SGK-2026-0324 Step 5)."""
+    session_data, consistency_status, reason_codes = _resolve_session_from_args(args)
+
+    if session_data is None:
+        payload: dict[str, Any] = {
+            "status": "blocked",
+            "reason_codes": reason_codes
+            if reason_codes
+            else ["session_not_resolved"],
+            "hint": "Provide --session or a valid --report path.",
+        }
+        _emit_command_payload(args, payload)
+        return 2
+
+    # Block if consistency status is explicitly set and not "consistent"
+    if consistency_status is not None and consistency_status != "consistent":
+        payload = {
+            "status": "blocked",
+            "reason_codes": reason_codes,
+            "hint": (
+                "Report-session consistency check failed. "
+                "Use --session directly if you want to force generation, "
+                "or rerun the scan to produce a consistent report."
+            ),
+        }
+        _emit_command_payload(args, payload)
+        return 2
+
+    markdown = format_attack_review(session_data)
+
+    if args.output:
+        output_path = Path(args.output).expanduser().resolve()
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(markdown, encoding="utf-8")
+        payload = {"status": "ok", "output": str(output_path)}
+    else:
+        output_json = bool(getattr(args, "json", False))
+        if output_json:
+            payload = {"status": "ok", "output": "stdout", "markdown": markdown}
+        else:
+            print(markdown)
+            payload = {"status": "ok", "output": "stdout"}
+    _emit_command_payload(args, payload)
+    return 0
+
+
 def _run_report_attack_paths(args: argparse.Namespace) -> int:
     """Generate attack_paths.md Markdown + optional attack_paths.json from session data."""
     session_data, consistency_status, reason_codes = _resolve_session_from_args(args)
@@ -424,6 +537,13 @@ def _run_report_attack_paths(args: argparse.Namespace) -> int:
 
     formatter = AttackPathFormatter(config=config)
     markdown = formatter.format(session_data)
+    graph_payload: dict[str, Any] | None = None
+
+    def _ensure_graph_payload() -> dict[str, Any]:
+        nonlocal graph_payload
+        if graph_payload is None:
+            graph_payload = formatter.build_json_payload(session_data)
+        return graph_payload
 
     output_path = None
     payload: dict[str, Any]
@@ -451,8 +571,95 @@ def _run_report_attack_paths(args: argparse.Namespace) -> int:
 
     if output_path is not None and args.json_output:
         json_path = output_path.with_suffix(".json")
-        formatter.export_json(session_data, json_path)
+        json_path.write_text(
+            json.dumps(_ensure_graph_payload(), indent=2, ensure_ascii=False, default=str),
+            encoding="utf-8",
+        )
         payload["json_output"] = str(json_path)
+
+    if output_path is not None and getattr(args, "cypher_output", False):
+        cypher_path = output_path.with_suffix(".cypher")
+        cypher_path.write_text(
+            build_attack_path_cypher(_ensure_graph_payload()),
+            encoding="utf-8",
+        )
+        payload["cypher_output"] = str(cypher_path)
+
+    if getattr(args, "neo4j_ingest", False):
+        try:
+            payload["neo4j_ingest"] = ingest_attack_path_payload(
+                _ensure_graph_payload()
+            )
+        except Exception as exc:
+            payload["status"] = "blocked"
+            payload["reason_codes"] = ["neo4j_ingest_failed"]
+            payload["hint"] = (
+                "Cypher/JSON artifacts may still have been generated, "
+                "but Neo4j ingest did not complete."
+            )
+            payload["error"] = str(exc)
+            _emit_command_payload(args, payload)
+            return 2
+
+    _emit_command_payload(args, payload)
+    return 0
+
+
+def _run_report_decision_tree(args: argparse.Namespace) -> int:
+    """Handle 'report decision-tree' subcommand — SGK-2026-0334 (P1b)."""
+    session_data, consistency_status, reason_codes = _resolve_session_from_args(args)
+
+    if session_data is None:
+        payload: dict[str, Any] = {
+            "status": "blocked",
+            "reason_codes": reason_codes if reason_codes else ["session_not_resolved"],
+            "hint": "Provide --session or a valid --report path.",
+        }
+        _emit_command_payload(args, payload)
+        return 2
+
+    # Block if consistency status is explicitly set and not "consistent"
+    if consistency_status is not None and consistency_status != "consistent":
+        payload = {
+            "status": "blocked",
+            "reason_codes": reason_codes,
+            "hint": (
+                "Report-session consistency check failed. "
+                "Use --session directly if you want to force generation, "
+                "or rerun the scan to produce a consistent report."
+            ),
+        }
+        _emit_command_payload(args, payload)
+        return 2
+
+    formatter = DecisionTreeFormatter(
+        max_nodes=max(1, int(getattr(args, "max_nodes", DEFAULT_MAX_NODES))),
+        max_edges=max(1, int(getattr(args, "max_edges", DEFAULT_MAX_EDGES))),
+        max_depth=max(1, int(getattr(args, "max_depth", DEFAULT_MAX_DEPTH))),
+        max_children_per_node=max(1, int(getattr(args, "max_children_per_node", DEFAULT_MAX_CHILDREN_PER_NODE))),
+    )
+
+    phase = str(getattr(args, "phase", "") or "").strip()
+    actor = str(getattr(args, "actor", "") or "").strip()
+    only_failures = bool(getattr(args, "only_failures", False))
+    output_json = bool(getattr(args, "json", False))
+
+    markdown = formatter.format(
+        session_data, phase=phase, actor=actor, only_failures=only_failures,
+    )
+
+    if args.output:
+        output_path = Path(args.output).expanduser().resolve()
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(markdown, encoding="utf-8")
+        payload = {"status": "ok", "output": str(output_path)}
+    elif output_json:
+        payload = formatter.format_json(
+            session_data, phase=phase, actor=actor, only_failures=only_failures,
+        )
+    else:
+        print(markdown)
+        payload = {"status": "ok", "output": "stdout"}
 
     _emit_command_payload(args, payload)
     return 0
@@ -495,6 +702,166 @@ def _run_session_findings(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_report_findings(args: argparse.Namespace) -> int:
+    session_data, consistency_status, reason_codes = _resolve_session_from_args(args)
+    if session_data is None:
+        payload: dict[str, Any] = {
+            "status": "blocked",
+            "reason_codes": reason_codes if reason_codes else ["session_not_resolved"],
+            "hint": "Provide --report that resolves to a consistent session.",
+        }
+        _emit_command_payload(args, payload)
+        return 2
+    if consistency_status is not None and consistency_status != "consistent":
+        payload = {
+            "status": "blocked",
+            "reason_codes": ["report_consistency_inconsistent", *reason_codes],
+            "hint": "Report-session consistency check failed.",
+        }
+        _emit_command_payload(args, payload)
+        return 2
+
+    verdict = verify_report_session_consistency(
+        Path(args.report),
+        session_path=Path(args.session) if args.session else None,
+        sessions_dir=Path(args.sessions_dir) if args.sessions_dir else None,
+    )
+    session_info = verdict.get("session", {}) if isinstance(verdict.get("session"), dict) else {}
+    resolved_path = str(session_info.get("path", "") or "").strip()
+    if not resolved_path:
+        payload = {
+            "status": "blocked",
+            "reason_codes": ["session_not_resolved"],
+        }
+        _emit_command_payload(args, payload)
+        return 2
+
+    finding_fields = _resolve_finding_fields(
+        args.finding_fields,
+        getattr(args, "finding_preset", None),
+    )
+    summary = inspect_session_findings(
+        Path(resolved_path),
+        detection_class=args.detection_class,
+        max_findings=args.max_findings,
+        finding_fields=finding_fields,
+    )
+    _emit_command_payload(args, summary)
+    return 0
+
+
+def _run_report_expected_detections(args: argparse.Namespace) -> int:
+    session_data, source_meta = _load_consistent_report_session(
+        args.report,
+        session_path=args.session,
+        sessions_dir=args.sessions_dir,
+    )
+    if session_data is None:
+        payload: dict[str, Any] = {
+            "status": "blocked",
+            "reason_codes": source_meta.get("reason_codes", []) or ["session_not_resolved"],
+            "hint": "Provide --report that resolves to a consistent session.",
+            "source": source_meta,
+        }
+        _emit_command_payload(args, payload)
+        return 2
+
+    summary = compare_expected_detections(
+        session_data,
+        require_security_level=True,
+        profile=str(getattr(args, "profile", "generic") or "generic"),
+    )
+    if not bool(getattr(args, "include_matrix", False)):
+        summary.pop("matrix", None)
+    summary.setdefault("status", "ok")
+    summary["source"] = source_meta
+    _emit_command_payload(args, summary)
+    return 2 if summary.get("reason_codes") else 0
+
+
+def _load_consistent_report_session(
+    report_path: str,
+    *,
+    session_path: str | None = None,
+    sessions_dir: str | None = None,
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    verdict = verify_report_session_consistency(
+        Path(report_path),
+        session_path=Path(session_path) if session_path else None,
+        sessions_dir=Path(sessions_dir) if sessions_dir else None,
+    )
+    status = str(verdict.get("status", "") or "").strip().lower()
+    if status != "consistent":
+        return None, {
+            "status": "blocked",
+            "reason_codes": ["report_consistency_inconsistent", *list(verdict.get("reason_codes", []))],
+            "consistency_status": verdict.get("status"),
+        }
+
+    session_info = verdict.get("session", {}) if isinstance(verdict.get("session"), dict) else {}
+    resolved_path = str(session_info.get("path", "") or "").strip()
+    if not resolved_path:
+        return None, {
+            "status": "blocked",
+            "reason_codes": ["session_not_resolved"],
+            "consistency_status": verdict.get("status"),
+        }
+
+    try:
+        payload = json.loads(Path(resolved_path).read_text(encoding="utf-8"))
+    except Exception:
+        return None, {
+            "status": "blocked",
+            "reason_codes": ["session_parse_failed"],
+            "consistency_status": verdict.get("status"),
+            "session": resolved_path,
+        }
+
+    return payload, {
+        "status": "ok",
+        "reason_codes": [],
+        "report": str(Path(report_path).expanduser().resolve()),
+        "session": resolved_path,
+        "session_selection": session_info.get("selection"),
+    }
+
+
+def _run_report_compare_findings(args: argparse.Namespace) -> int:
+    baseline_session_data, baseline_meta = _load_consistent_report_session(
+        args.baseline_report,
+        session_path=args.baseline_session,
+        sessions_dir=args.baseline_sessions_dir or args.sessions_dir,
+    )
+    current_session_data, current_meta = _load_consistent_report_session(
+        args.report,
+        session_path=args.session,
+        sessions_dir=args.sessions_dir,
+    )
+
+    if baseline_session_data is None or current_session_data is None:
+        payload = {
+            "status": "blocked",
+            "baseline": baseline_meta,
+            "current": current_meta,
+            "reason_codes": list(
+                dict.fromkeys(
+                    list(baseline_meta.get("reason_codes", []))
+                    + list(current_meta.get("reason_codes", []))
+                )
+            )
+            or ["session_not_resolved"],
+        }
+        _emit_command_payload(args, payload)
+        return 2
+
+    diff = compare_session_finding_sets(baseline_session_data, current_session_data)
+    diff["status"] = "ok"
+    diff["baseline"] = baseline_meta
+    diff["current"] = current_meta
+    _emit_command_payload(args, diff)
+    return 0
+
+
 def _run_session_resolve_from_report(args: argparse.Namespace) -> int:
     verdict = verify_report_session_consistency(
         Path(args.report),
@@ -520,6 +887,456 @@ def _run_session_resolve_from_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def _default_export_dir_for_session(session_path: Path) -> Path:
+    session_file = session_path.expanduser().resolve()
+    return session_file.parent.parent / "exports" / session_file.stem
+
+
+def _default_export_dir_for_findings_db(db_path: Path) -> Path:
+    resolved_db = db_path.expanduser().resolve()
+    return resolved_db.parent / "exports" / resolved_db.stem
+
+
+def _serialize_findings(findings: list[Any]) -> list[dict[str, Any]]:
+    serialized: list[dict[str, Any]] = []
+    for finding in findings:
+        payload = finding.to_dict() if hasattr(finding, "to_dict") else finding
+        if isinstance(payload, dict):
+            serialized.append(payload)
+    return serialized
+
+
+def _normalize_host_list(values: list[str] | None) -> list[str]:
+    hosts: list[str] = []
+    seen: set[str] = set()
+    for raw in values or []:
+        host = extract_host_from_url(str(raw or "").strip())
+        if not host or host in seen:
+            continue
+        seen.add(host)
+        hosts.append(host)
+    return hosts
+
+
+def _load_findings_repository(args: argparse.Namespace) -> FindingsRepository:
+    db_path = getattr(args, "db_path", None)
+    return FindingsRepository(db_path=str(db_path) if db_path else None)
+
+
+def _build_findings_filters(args: argparse.Namespace) -> dict[str, Any]:
+    return {
+        "severity": getattr(args, "severity", None),
+        "vuln_type": getattr(args, "vuln_type", None),
+        "target": getattr(args, "target", None),
+        "source_agent": getattr(args, "source_agent", None),
+        "verified_only": bool(getattr(args, "verified_only", False)),
+    }
+
+
+def _search_findings_for_args(args: argparse.Namespace, *, limit: int) -> list[Any]:
+    repo = _load_findings_repository(args)
+    filters = _build_findings_filters(args)
+    return repo.search(
+        severity=filters["severity"],
+        vuln_type=filters["vuln_type"],
+        target=filters["target"],
+        source_agent=filters["source_agent"],
+        verified_only=filters["verified_only"],
+        limit=max(0, int(limit)),
+    )
+
+
+def _resolve_findings_allowed_hosts(args: argparse.Namespace, findings: list[Any]) -> tuple[list[str], list[str], list[str]]:
+    explicit_hosts = _normalize_host_list(getattr(args, "allowed_host", None))
+    if explicit_hosts:
+        return explicit_hosts, [], []
+
+    target_host = extract_host_from_url(str(getattr(args, "target", None) or "").strip())
+    if target_host:
+        return [target_host], [], []
+
+    discovered_hosts = sorted(
+        {
+            extract_host_from_url(str(getattr(finding, "target_url", "") or ""))
+            for finding in findings
+            if extract_host_from_url(str(getattr(finding, "target_url", "") or ""))
+        }
+    )
+    if len(discovered_hosts) > 1:
+        return [], ["cross_session_scope_required"], discovered_hosts
+    return discovered_hosts, [], discovered_hosts
+
+
+def _run_session_export_targets(args: argparse.Namespace) -> int:
+    session_path = Path(args.session).expanduser().resolve()
+    output_dir = (
+        Path(args.output_dir).expanduser().resolve()
+        if args.output_dir
+        else _default_export_dir_for_session(session_path)
+    )
+    try:
+        bundle = build_attack_target_bundle_from_session(
+            session_path,
+            ttl_days=max(0, int(args.ttl_days)),
+            max_records=max(0, int(args.max_records)),
+        )
+        artifacts = write_attack_target_artifacts(
+            bundle,
+            output_dir,
+            overwrite=bool(args.overwrite),
+        )
+    except ValueError as exc:
+        payload = {
+            "status": "blocked",
+            "reason_codes": ["empty_export"] if "empty export" in str(exc) else ["invalid_export"],
+            "error": str(exc),
+            "session": str(session_path),
+        }
+        _emit_command_payload(args, payload)
+        return 3
+    except FileExistsError as exc:
+        payload = {
+            "status": "blocked",
+            "reason_codes": ["export_overwrite_blocked"],
+            "error": str(exc),
+            "session": str(session_path),
+            "output_dir": str(output_dir),
+        }
+        _emit_command_payload(args, payload)
+        return 2
+
+    payload = {
+        "status": "ok",
+        "session": str(session_path),
+        "output_dir": str(output_dir),
+        "target_count": len(bundle.targets),
+        "manifest": bundle.manifest.to_dict(),
+        "artifacts": artifacts,
+        "reason_codes": list(bundle.manifest.reason_codes),
+    }
+    _emit_command_payload(args, payload)
+    return 0
+
+
+def _run_findings_list(args: argparse.Namespace) -> int:
+    repo = _load_findings_repository(args)
+    findings = repo.list_all(
+        limit=max(0, int(getattr(args, "limit", 100) or 100)),
+        offset=max(0, int(getattr(args, "offset", 0) or 0)),
+        order_by=str(getattr(args, "order_by", "created_at") or "created_at"),
+        desc=not bool(getattr(args, "asc", False)),
+    )
+    payload = {
+        "status": "ok",
+        "db_path": str(repo.db_path),
+        "finding_count": len(findings),
+        "findings": _serialize_findings(findings),
+    }
+    _emit_command_payload(args, payload)
+    return 0
+
+
+def _run_findings_search(args: argparse.Namespace) -> int:
+    repo = _load_findings_repository(args)
+    findings = _search_findings_for_args(
+        args,
+        limit=max(0, int(getattr(args, "limit", 100) or 100)),
+    )
+    payload = {
+        "status": "ok",
+        "db_path": str(repo.db_path),
+        "filters": _build_findings_filters(args),
+        "finding_count": len(findings),
+        "findings": _serialize_findings(findings),
+    }
+    _emit_command_payload(args, payload)
+    return 0
+
+
+def _run_findings_stats(args: argparse.Namespace) -> int:
+    repo = _load_findings_repository(args)
+    payload = {
+        "status": "ok",
+        "db_path": str(repo.db_path),
+        "stats": repo.get_statistics(),
+    }
+    _emit_command_payload(args, payload)
+    return 0
+
+
+def _run_findings_export_targets(args: argparse.Namespace) -> int:
+    repo = _load_findings_repository(args)
+    export_limit = max(1, int(getattr(args, "max_records", 500) or 500))
+    findings = _search_findings_for_args(args, limit=export_limit)
+    if not findings:
+        payload = {
+            "status": "blocked",
+            "db_path": str(repo.db_path),
+            "reason_codes": ["empty_export"],
+            "filters": _build_findings_filters(args),
+        }
+        _emit_command_payload(args, payload)
+        return 2
+
+    allowed_hosts, scope_reason_codes, discovered_hosts = _resolve_findings_allowed_hosts(args, findings)
+    if scope_reason_codes:
+        payload = {
+            "status": "blocked",
+            "db_path": str(repo.db_path),
+            "reason_codes": scope_reason_codes,
+            "filters": _build_findings_filters(args),
+            "discovered_hosts": discovered_hosts,
+            "hint": "Pass --allowed-host or --target to constrain cross-session export scope.",
+        }
+        _emit_command_payload(args, payload)
+        return 2
+
+    output_dir = (
+        Path(args.output_dir).expanduser().resolve()
+        if args.output_dir
+        else _default_export_dir_for_findings_db(repo.db_path)
+    )
+    try:
+        bundle = build_attack_target_bundle_from_findings(
+            findings,
+            db_path=repo.db_path,
+            ttl_days=max(0, int(getattr(args, "ttl_days", 7) or 7)),
+            max_records=export_limit,
+            allowed_hosts=allowed_hosts,
+            filters={
+                **_build_findings_filters(args),
+                "allowed_hosts": allowed_hosts,
+            },
+        )
+        violations = bundle.validate_allowed_hosts()
+        if violations:
+            payload = {
+                "status": "blocked",
+                "db_path": str(repo.db_path),
+                "reason_codes": ["allowed_hosts_mismatch"],
+                "filters": _build_findings_filters(args),
+                "allowed_hosts": allowed_hosts,
+                "violations": violations[:5],
+            }
+            _emit_command_payload(args, payload)
+            return 2
+        artifacts = write_attack_target_artifacts(
+            bundle,
+            output_dir,
+            overwrite=bool(args.overwrite),
+        )
+    except ValueError as exc:
+        payload = {
+            "status": "blocked",
+            "db_path": str(repo.db_path),
+            "reason_codes": ["empty_export"] if "empty export" in str(exc) else ["invalid_export"],
+            "error": str(exc),
+        }
+        _emit_command_payload(args, payload)
+        return 3
+    except FileExistsError as exc:
+        payload = {
+            "status": "blocked",
+            "db_path": str(repo.db_path),
+            "reason_codes": ["export_overwrite_blocked"],
+            "error": str(exc),
+            "output_dir": str(output_dir),
+        }
+        _emit_command_payload(args, payload)
+        return 2
+
+    payload = {
+        "status": "ok",
+        "db_path": str(repo.db_path),
+        "output_dir": str(output_dir),
+        "filters": _build_findings_filters(args),
+        "finding_count": len(findings),
+        "target_count": len(bundle.targets),
+        "manifest": bundle.manifest.to_dict(),
+        "artifacts": artifacts,
+        "reason_codes": list(bundle.manifest.reason_codes),
+    }
+    _emit_command_payload(args, payload)
+    return 0
+
+
+def _run_report_export_targets(args: argparse.Namespace) -> int:
+    verdict = verify_report_session_consistency(
+        Path(args.report),
+        session_path=Path(args.session) if args.session else None,
+        sessions_dir=Path(args.sessions_dir) if args.sessions_dir else None,
+    )
+    session_info = verdict.get("session", {}) if isinstance(verdict.get("session"), dict) else {}
+    resolved_path = str(session_info.get("path", "") or "").strip()
+    if str(verdict.get("status", "") or "").strip().lower() != "consistent" or not resolved_path:
+        payload = {
+            "status": "blocked",
+            "reason_codes": ["report_consistency_inconsistent", *list(verdict.get("reason_codes", []) or [])],
+            "report_path": str(Path(args.report).expanduser().resolve()),
+            "session_path": resolved_path or None,
+            "suggested_next_step": verdict.get("suggested_next_step"),
+        }
+        _emit_command_payload(args, payload)
+        return 3
+
+    session_path = Path(resolved_path).expanduser().resolve()
+    output_dir = (
+        Path(args.output_dir).expanduser().resolve()
+        if args.output_dir
+        else _default_export_dir_for_session(session_path)
+    )
+    try:
+        bundle = build_attack_target_bundle_from_session(
+            session_path,
+            report_path=Path(args.report).expanduser().resolve(),
+            ttl_days=max(0, int(args.ttl_days)),
+            max_records=max(0, int(args.max_records)),
+        )
+        artifacts = write_attack_target_artifacts(
+            bundle,
+            output_dir,
+            overwrite=bool(args.overwrite),
+        )
+    except ValueError as exc:
+        payload = {
+            "status": "blocked",
+            "reason_codes": ["empty_export"] if "empty export" in str(exc) else ["invalid_export"],
+            "error": str(exc),
+            "report_path": str(Path(args.report).expanduser().resolve()),
+            "session_path": str(session_path),
+        }
+        _emit_command_payload(args, payload)
+        return 3
+    except FileExistsError as exc:
+        payload = {
+            "status": "blocked",
+            "reason_codes": ["export_overwrite_blocked"],
+            "error": str(exc),
+            "report_path": str(Path(args.report).expanduser().resolve()),
+            "session_path": str(session_path),
+            "output_dir": str(output_dir),
+        }
+        _emit_command_payload(args, payload)
+        return 2
+
+    payload = {
+        "status": "ok",
+        "report_path": str(Path(args.report).expanduser().resolve()),
+        "session_path": str(session_path),
+        "output_dir": str(output_dir),
+        "target_count": len(bundle.targets),
+        "manifest": bundle.manifest.to_dict(),
+        "artifacts": artifacts,
+        "reason_codes": list(bundle.manifest.reason_codes),
+    }
+    _emit_command_payload(args, payload)
+    return 0
+
+
+def _build_endpoint_payload(
+    targets: list[Any],
+    *,
+    source_path: str,
+    filters: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "status": "ok",
+        "source_path": source_path,
+        "filters": filters,
+        "endpoint_count": len(targets),
+        "endpoints": [target.to_dict() for target in targets],
+    }
+
+
+def _filter_targets(
+    targets: list[Any],
+    *,
+    host: str | None = None,
+    category: str | None = None,
+    method: str | None = None,
+    limit: int | None = None,
+) -> list[Any]:
+    filtered = list(targets)
+    if host:
+        normalized_host = str(host).strip().lower()
+        filtered = [target for target in filtered if str(getattr(target, "host", "") or "").strip().lower() == normalized_host]
+    if category:
+        normalized_category = str(category).strip().lower()
+        filtered = [target for target in filtered if str(getattr(target, "category", "") or "").strip().lower() == normalized_category]
+    if method:
+        normalized_method = str(method).strip().upper()
+        filtered = [target for target in filtered if str(getattr(target, "method", "") or "").strip().upper() == normalized_method]
+    if limit is not None:
+        filtered = filtered[: max(0, int(limit))]
+    return filtered
+
+
+def _run_session_endpoints(args: argparse.Namespace) -> int:
+    session_path = Path(args.session).expanduser().resolve()
+    targets = extract_attack_targets_from_session(session_path)
+    filtered = _filter_targets(
+        targets,
+        host=getattr(args, "host", None),
+        category=getattr(args, "category", None),
+        method=getattr(args, "method", None),
+        limit=getattr(args, "limit", None),
+    )
+    payload = _build_endpoint_payload(
+        filtered,
+        source_path=str(session_path),
+        filters={
+            "host": getattr(args, "host", None),
+            "category": getattr(args, "category", None),
+            "method": getattr(args, "method", None),
+            "limit": getattr(args, "limit", None),
+        },
+    )
+    _emit_command_payload(args, payload)
+    return 0
+
+
+def _run_report_endpoints(args: argparse.Namespace) -> int:
+    verdict = verify_report_session_consistency(
+        Path(args.report),
+        session_path=Path(args.session) if args.session else None,
+        sessions_dir=Path(args.sessions_dir) if args.sessions_dir else None,
+    )
+    session_info = verdict.get("session", {}) if isinstance(verdict.get("session"), dict) else {}
+    resolved_path = str(session_info.get("path", "") or "").strip()
+    if str(verdict.get("status", "") or "").strip().lower() != "consistent" or not resolved_path:
+        payload = {
+            "status": "blocked",
+            "reason_codes": ["report_consistency_inconsistent", *list(verdict.get("reason_codes", []) or [])],
+            "report_path": str(Path(args.report).expanduser().resolve()),
+            "session_path": resolved_path or None,
+        }
+        _emit_command_payload(args, payload)
+        return 2
+
+    session_path = Path(resolved_path).expanduser().resolve()
+    targets = extract_attack_targets_from_session(session_path)
+    filtered = _filter_targets(
+        targets,
+        host=getattr(args, "host", None),
+        category=getattr(args, "category", None),
+        method=getattr(args, "method", None),
+        limit=getattr(args, "limit", None),
+    )
+    payload = _build_endpoint_payload(
+        filtered,
+        source_path=str(session_path),
+        filters={
+            "host": getattr(args, "host", None),
+            "category": getattr(args, "category", None),
+            "method": getattr(args, "method", None),
+            "limit": getattr(args, "limit", None),
+            "report_path": str(Path(args.report).expanduser().resolve()),
+        },
+    )
+    _emit_command_payload(args, payload)
+    return 0
+
+
 def _resolve_python_bin(preferred: str | None) -> str:
     if preferred:
         return preferred
@@ -528,6 +1345,118 @@ def _resolve_python_bin(preferred: str | None) -> str:
     if venv_python.exists():
         return str(venv_python)
     return "python3"
+
+
+def _run_ops_intent(args: argparse.Namespace) -> int:
+    settings = load_ops_intent_settings()
+    translated = parse_operator_intent(
+        str(args.intent or ""),
+        target=getattr(args, "target", None),
+        report_path=getattr(args, "report", None),
+        session_path=getattr(args, "session", None),
+        attack_targets_file=getattr(args, "attack_targets", None),
+        wordlist_path=getattr(args, "wordlist", None),
+        mode=getattr(args, "mode", None),
+        settings=settings,
+    )
+    preview = build_execution_preview(
+        translated,
+        settings=settings,
+        python_bin=_resolve_python_bin(getattr(args, "python", None)),
+        output_dir=getattr(args, "output_dir", None),
+        max_records=max(1, int(getattr(args, "max_records", 500) or 500)),
+        ttl_days=max(0, int(getattr(args, "ttl_days", 7) or 7)),
+        main_dry_run=bool(getattr(args, "main_dry_run", False)),
+    )
+    payload: dict[str, Any] = {
+        "settings": settings.to_dict(),
+        "translated": translated.to_dict(),
+        **preview.to_dict(),
+    }
+    payload["status"] = "preview" if preview.status == "ok" and not getattr(args, "execute", False) else preview.status
+    if preview.status != "ok":
+        _emit_command_payload(args, payload)
+        return 2
+
+    if not getattr(args, "execute", False):
+        _emit_command_payload(args, payload)
+        return 0
+
+    if settings.kill_switch:
+        payload.update({"status": "blocked", "reason_codes": [*payload.get("reason_codes", []), "ops_intent_kill_switch"]})
+        _emit_command_payload(args, payload)
+        return 2
+    if not settings.feature_flag:
+        payload.update({"status": "blocked", "reason_codes": [*payload.get("reason_codes", []), "ops_intent_disabled"]})
+        _emit_command_payload(args, payload)
+        return 2
+
+    requires_confirmation = any(bool(step.requires_confirmation) for step in preview.steps)
+    if requires_confirmation and not getattr(args, "approve", False):
+        if not sys.stdin.isatty():
+            payload.update({"status": "blocked", "reason_codes": [*payload.get("reason_codes", []), "approval_required_non_tty"]})
+            _emit_command_payload(args, payload)
+            return 2
+        confirm = input("Preview looks correct. Execute it? [y/N]: ").strip().lower()
+        if confirm not in {"y", "yes"}:
+            payload.update({"status": "blocked", "reason_codes": [*payload.get("reason_codes", []), "approval_denied"]})
+            _emit_command_payload(args, payload)
+            return 2
+
+    executed_steps: list[dict[str, Any]] = []
+    for step in preview.steps:
+        child_env = os.environ.copy()
+        if any(item.intent_command == "main.attack-targets" for item in preview.steps):
+            child_env["SHIGOKU_ATTACK_TARGETS_APPROVED"] = "1"
+        if bool(getattr(args, "main_dry_run", False)) and step.intent_command.startswith("main."):
+            child_env["SHIGOKU_SKIP_ENTRY_GATE"] = "1"
+        try:
+            result = subprocess.run(
+                step.command,
+                cwd=PROJECT_ROOT,
+                capture_output=True,
+                text=True,
+                env=child_env,
+                timeout=max(1, int(settings.command_timeout_sec)),
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            payload.update(
+                {
+                    "status": "blocked",
+                    "reason_codes": [*payload.get("reason_codes", []), "command_timeout"],
+                    "executed_steps": executed_steps,
+                }
+            )
+            _emit_command_payload(args, payload)
+            return 3
+        step_payload = {
+            "intent_command": step.intent_command,
+            "command": step.command,
+            "returncode": int(result.returncode),
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+        }
+        if result.stdout.strip().startswith("{"):
+            try:
+                step_payload["json"] = json.loads(result.stdout)
+            except json.JSONDecodeError:
+                pass
+        executed_steps.append(step_payload)
+        if result.returncode != 0:
+            payload.update(
+                {
+                    "status": "failed",
+                    "reason_codes": [*payload.get("reason_codes", []), "step_failed"],
+                    "executed_steps": executed_steps,
+                }
+            )
+            _emit_command_payload(args, payload)
+            return int(result.returncode)
+
+    payload.update({"status": "ok", "executed_steps": executed_steps})
+    _emit_command_payload(args, payload)
+    return 0
 
 
 def _run_validate_pytest(args: argparse.Namespace) -> int:
@@ -976,6 +1905,82 @@ def build_parser() -> argparse.ArgumentParser:
     )
     report_loop.set_defaults(handler=_run_report_loop)
 
+    report_export_targets = report_sub.add_parser(
+        "export-targets",
+        help="Export a single-session structured target bundle from a report after consistency checks.",
+    )
+    report_export_targets.add_argument("--report", required=True, help="Path to haddix_report_*.md")
+    report_export_targets.add_argument("--session", help="Optional explicit session_*.json path")
+    report_export_targets.add_argument("--sessions-dir", help="Optional sessions directory path")
+    report_export_targets.add_argument("--output-dir", help="Optional artifact output directory")
+    report_export_targets.add_argument("--ttl-days", type=int, default=7, help="Manifest TTL days")
+    report_export_targets.add_argument("--max-records", type=int, default=500, help="Maximum exported targets")
+    report_export_targets.add_argument("--overwrite", action="store_true", help="Overwrite existing artifacts")
+    report_export_targets.set_defaults(handler=_run_report_export_targets)
+
+    report_findings = report_sub.add_parser(
+        "findings",
+        help="Inspect canonical findings from a report after resolving a consistent source session.",
+    )
+    report_findings.add_argument("--report", required=True, help="Path to haddix_report_*.md")
+    report_findings.add_argument("--session", help="Optional explicit session_*.json path")
+    report_findings.add_argument("--sessions-dir", help="Optional sessions directory path")
+    report_findings.add_argument("--detection-class", help="Optional detection class filter")
+    report_findings.add_argument("--max-findings", type=int, help="Optional findings cap.")
+    report_findings.add_argument("--finding-fields", help="Comma-separated finding fields projection.")
+    report_findings.add_argument(
+        "--finding-preset",
+        choices=sorted(FINDING_FIELD_PRESETS.keys()),
+        help=(
+            "Finding field preset. Ignored when --finding-fields is provided. "
+            "minimal=title,target_url; triage adds decision fields; full keeps all."
+        ),
+    )
+    report_findings.set_defaults(handler=_run_report_findings)
+
+    report_expected_detections = report_sub.add_parser(
+        "expected-detections",
+        help="Evaluate a consistent report/session against its Security-level expectation profile.",
+    )
+    report_expected_detections.add_argument("--report", required=True, help="Path to haddix_report_*.md")
+    report_expected_detections.add_argument("--session", help="Optional explicit session_*.json path")
+    report_expected_detections.add_argument("--sessions-dir", help="Optional sessions directory path")
+    report_expected_detections.add_argument(
+        "--profile", choices=("generic", "dvwa-low-regression"), default="generic",
+        help="generic assesses evidence discipline; dvwa-low-regression uses the DVWA Low fixture matrix.",
+    )
+    report_expected_detections.add_argument(
+        "--include-matrix",
+        action="store_true",
+        help="Include the full expected detection matrix in the output.",
+    )
+    report_expected_detections.set_defaults(handler=_run_report_expected_detections)
+
+    report_compare_findings = report_sub.add_parser(
+        "compare-findings",
+        help="Compare canonical finding keys between two consistent report/session pairs.",
+    )
+    report_compare_findings.add_argument("--baseline-report", required=True, help="Baseline haddix_report_*.md")
+    report_compare_findings.add_argument("--baseline-session", help="Optional explicit baseline session_*.json")
+    report_compare_findings.add_argument("--baseline-sessions-dir", help="Optional baseline sessions directory")
+    report_compare_findings.add_argument("--report", required=True, help="Current haddix_report_*.md")
+    report_compare_findings.add_argument("--session", help="Optional explicit current session_*.json")
+    report_compare_findings.add_argument("--sessions-dir", help="Optional current sessions directory")
+    report_compare_findings.set_defaults(handler=_run_report_compare_findings)
+
+    report_endpoints = report_sub.add_parser(
+        "endpoints",
+        help="List extracted single-session endpoints from a report after consistency checks.",
+    )
+    report_endpoints.add_argument("--report", required=True, help="Path to haddix_report_*.md")
+    report_endpoints.add_argument("--session", help="Optional explicit session_*.json path")
+    report_endpoints.add_argument("--sessions-dir", help="Optional sessions directory path")
+    report_endpoints.add_argument("--host", help="Optional host filter")
+    report_endpoints.add_argument("--category", help="Optional endpoint category filter")
+    report_endpoints.add_argument("--method", help="Optional HTTP method filter")
+    report_endpoints.add_argument("--limit", type=int, help="Optional endpoint cap")
+    report_endpoints.set_defaults(handler=_run_report_endpoints)
+
     report_narrative = report_sub.add_parser(
         "narrative",
         help="Generate a run_narrative.md Markdown report from a session.",
@@ -1006,7 +2011,36 @@ def build_parser() -> argparse.ArgumentParser:
     report_attack_paths.add_argument("--output", help="Optional output file path (default: stdout)")
     report_attack_paths.add_argument("--output-dir", help="Optional output directory (filename derived from session ID)")
     report_attack_paths.add_argument("--json-output", action="store_true", help="Also export attack_paths.json for Neo4j ingest")
+    report_attack_paths.add_argument("--cypher-output", action="store_true", help="Also export attack_paths.cypher for Neo4j ingest review")
+    report_attack_paths.add_argument("--neo4j-ingest", action="store_true", help="Write the generated attack path graph into Neo4j")
     report_attack_paths.set_defaults(handler=_run_report_attack_paths)
+
+    report_decision_tree = report_sub.add_parser(
+        "decision-tree",
+        help="Generate a decision_tree.md Mermaid + Markdown report from a session (SGK-2026-0334).",
+    )
+    report_decision_tree.add_argument("--session", help="Path to session_*.json")
+    report_decision_tree.add_argument("--report", help="Path to haddix_report_*.md (resolves source session)")
+    report_decision_tree.add_argument("--sessions-dir", help="Optional sessions directory for --report resolution")
+    report_decision_tree.add_argument("--output", help="Optional output file path (default: stdout)")
+    report_decision_tree.add_argument("--phase", help="Filter by phase (e.g. attack, recon)")
+    report_decision_tree.add_argument("--actor", help="Filter by actor type or name")
+    report_decision_tree.add_argument("--only-failures", action="store_true", help="Show only failed/error nodes")
+    report_decision_tree.add_argument("--max-nodes", type=int, default=DEFAULT_MAX_NODES, help=f"Max nodes (default: {DEFAULT_MAX_NODES})")
+    report_decision_tree.add_argument("--max-edges", type=int, default=DEFAULT_MAX_EDGES, help=f"Max edges (default: {DEFAULT_MAX_EDGES})")
+    report_decision_tree.add_argument("--max-depth", type=int, default=DEFAULT_MAX_DEPTH, help=f"Max depth (default: {DEFAULT_MAX_DEPTH})")
+    report_decision_tree.add_argument("--max-children-per-node", type=int, default=DEFAULT_MAX_CHILDREN_PER_NODE, help=f"Max children per node (default: {DEFAULT_MAX_CHILDREN_PER_NODE})")
+    report_decision_tree.set_defaults(handler=_run_report_decision_tree)
+
+    report_attack_review = report_sub.add_parser(
+        "attack-review",
+        help="Generate an attack_review.md Markdown report from a session (SGK-2026-0324).",
+    )
+    report_attack_review.add_argument("--session", help="Path to session_*.json")
+    report_attack_review.add_argument("--report", help="Path to haddix_report_*.md (resolves source session)")
+    report_attack_review.add_argument("--sessions-dir", help="Optional sessions directory for --report resolution")
+    report_attack_review.add_argument("--output", help="Optional output file path (default: stdout)")
+    report_attack_review.set_defaults(handler=_run_report_attack_review)
 
     session_parser = top.add_parser("session", help="Session-related operations")
     session_sub = session_parser.add_subparsers(dest="action", required=True)
@@ -1037,6 +2071,84 @@ def build_parser() -> argparse.ArgumentParser:
     session_resolve.add_argument("--session", help="Optional explicit session_*.json path")
     session_resolve.add_argument("--sessions-dir", help="Optional sessions directory path")
     session_resolve.set_defaults(handler=_run_session_resolve_from_report)
+
+    session_export_targets = session_sub.add_parser(
+        "export-targets",
+        help="Export a single-session structured target bundle and endpoint lists from a session.",
+    )
+    session_export_targets.add_argument("--session", required=True, help="Path to session_*.json")
+    session_export_targets.add_argument("--output-dir", help="Optional artifact output directory")
+    session_export_targets.add_argument("--ttl-days", type=int, default=7, help="Manifest TTL days")
+    session_export_targets.add_argument("--max-records", type=int, default=500, help="Maximum exported targets")
+    session_export_targets.add_argument("--overwrite", action="store_true", help="Overwrite existing artifacts")
+    session_export_targets.set_defaults(handler=_run_session_export_targets)
+
+    session_endpoints = session_sub.add_parser(
+        "endpoints",
+        help="List extracted single-session endpoints from a session.",
+    )
+    session_endpoints.add_argument("--session", required=True, help="Path to session_*.json")
+    session_endpoints.add_argument("--host", help="Optional host filter")
+    session_endpoints.add_argument("--category", help="Optional endpoint category filter")
+    session_endpoints.add_argument("--method", help="Optional HTTP method filter")
+    session_endpoints.add_argument("--limit", type=int, help="Optional endpoint cap")
+    session_endpoints.set_defaults(handler=_run_session_endpoints)
+
+    findings_parser = top.add_parser("findings", help="Cross-session findings repository operations")
+    findings_sub = findings_parser.add_subparsers(dest="action", required=True)
+
+    findings_list = findings_sub.add_parser(
+        "list",
+        help="List stored findings from FindingsRepository.",
+    )
+    findings_list.add_argument("--db-path", help="Optional FindingsRepository SQLite path")
+    findings_list.add_argument("--limit", type=int, default=100, help="Maximum findings to return")
+    findings_list.add_argument("--offset", type=int, default=0, help="Offset for paginated reads")
+    findings_list.add_argument(
+        "--order-by",
+        default="created_at",
+        choices=["created_at", "updated_at", "severity", "vuln_type", "target_url"],
+        help="Ordering column",
+    )
+    findings_list.add_argument("--asc", action="store_true", help="Sort ascending instead of descending")
+    findings_list.set_defaults(handler=_run_findings_list)
+
+    findings_search = findings_sub.add_parser(
+        "search",
+        help="Search FindingsRepository records with server-side filters.",
+    )
+    findings_search.add_argument("--db-path", help="Optional FindingsRepository SQLite path")
+    findings_search.add_argument("--severity", help="Optional severity filter")
+    findings_search.add_argument("--vuln-type", help="Optional vulnerability type filter")
+    findings_search.add_argument("--target", help="Optional target URL/host substring filter")
+    findings_search.add_argument("--source-agent", help="Optional source agent filter")
+    findings_search.add_argument("--verified-only", action="store_true", help="Return only verified findings")
+    findings_search.add_argument("--limit", type=int, default=100, help="Maximum findings to return")
+    findings_search.set_defaults(handler=_run_findings_search)
+
+    findings_stats = findings_sub.add_parser(
+        "stats",
+        help="Return aggregate counts from FindingsRepository.",
+    )
+    findings_stats.add_argument("--db-path", help="Optional FindingsRepository SQLite path")
+    findings_stats.set_defaults(handler=_run_findings_stats)
+
+    findings_export_targets = findings_sub.add_parser(
+        "export-targets",
+        help="Export a cross-session structured target bundle from FindingsRepository.",
+    )
+    findings_export_targets.add_argument("--db-path", help="Optional FindingsRepository SQLite path")
+    findings_export_targets.add_argument("--severity", help="Optional severity filter")
+    findings_export_targets.add_argument("--vuln-type", help="Optional vulnerability type filter")
+    findings_export_targets.add_argument("--target", help="Optional target URL/host substring filter")
+    findings_export_targets.add_argument("--source-agent", help="Optional source agent filter")
+    findings_export_targets.add_argument("--verified-only", action="store_true", help="Return only verified findings")
+    findings_export_targets.add_argument("--allowed-host", action="append", help="Explicit allowed host (repeatable)")
+    findings_export_targets.add_argument("--output-dir", help="Optional artifact output directory")
+    findings_export_targets.add_argument("--ttl-days", type=int, default=7, help="Manifest TTL days")
+    findings_export_targets.add_argument("--max-records", type=int, default=500, help="Maximum exported targets")
+    findings_export_targets.add_argument("--overwrite", action="store_true", help="Overwrite existing artifacts")
+    findings_export_targets.set_defaults(handler=_run_findings_export_targets)
 
     validate_parser = top.add_parser("validate", help="Validation helpers")
     validate_sub = validate_parser.add_subparsers(dest="action", required=True)
@@ -1158,6 +2270,27 @@ def build_parser() -> argparse.ArgumentParser:
 
     ops_parser = top.add_parser("ops", help="Operational hardening helpers")
     ops_sub = ops_parser.add_subparsers(dest="action", required=True)
+
+    ops_intent = ops_sub.add_parser(
+        "intent",
+        help="Translate natural-language operator intent into an allowlisted preview and optional execution flow.",
+    )
+    ops_intent.add_argument("--intent", required=True, help="Natural-language operator request")
+    ops_intent.add_argument("--target", help="Optional target URL for main.* commands")
+    ops_intent.add_argument("--report", help="Optional report path used as source context")
+    ops_intent.add_argument("--session", help="Optional session path used as source context")
+    ops_intent.add_argument("--sessions-dir", help="Optional sessions directory for --report resolution")
+    ops_intent.add_argument("--attack-targets", help="Optional structured target file path")
+    ops_intent.add_argument("--wordlist", help="Optional wordlist path for attack intents")
+    ops_intent.add_argument("--mode", default="bugbounty", help="Execution mode for main.* commands")
+    ops_intent.add_argument("--output-dir", help="Optional preview/export directory")
+    ops_intent.add_argument("--python", help="Python executable for main.* commands")
+    ops_intent.add_argument("--ttl-days", type=int, default=7, help="Manifest TTL days when export is needed")
+    ops_intent.add_argument("--max-records", type=int, default=500, help="Maximum export records when export is needed")
+    ops_intent.add_argument("--main-dry-run", action="store_true", help="Append --dry-run to main.* execution steps")
+    ops_intent.add_argument("--execute", action="store_true", help="Execute the translated flow after preview")
+    ops_intent.add_argument("--approve", action="store_true", help="Skip the interactive confirmation prompt")
+    ops_intent.set_defaults(handler=_run_ops_intent, domain="ops", action="intent")
 
     ops_secret_audit = ops_sub.add_parser(
         "secret-audit",

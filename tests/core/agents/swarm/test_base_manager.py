@@ -45,7 +45,8 @@ async def test_base_manager_think_loop():
     assert len(result.execution_log) >= 2
     
     # Toolが呼ばれたか
-    mock_tool.assert_called_once_with(param="value")
+    # url は task.target から current_context 経由で自動注入される (SGK fix)
+    mock_tool.assert_called_once_with(param="value", url="http://example.com")
     
     # ログ確認
     action_log = next(l for l in result.execution_log if l["type"] == "action")

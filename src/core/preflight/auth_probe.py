@@ -14,7 +14,7 @@ import logging
 import re
 import time
 from typing import Any, Dict, List, Optional
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import aiohttp
 from aiohttp import (
@@ -537,12 +537,9 @@ class AuthProbe:
                         "location": location,
                     })
                     if location:
-                        # Resolve relative URLs against the current base.
-                        current_url = str(response.url.join(
-                            response.url.origin().join(
-                                aiohttp.URL(location)
-                            )
-                        ) if location.startswith("/") else location)
+                        # Resolve absolute, root-relative, and relative redirect
+                        # targets against the current response URL.
+                        current_url = urljoin(str(response.url), location)
                         continue
                     else:
                         # Redirect without Location — treat as terminal.

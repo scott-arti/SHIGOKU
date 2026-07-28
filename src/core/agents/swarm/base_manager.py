@@ -490,10 +490,26 @@ class BaseManagerAgent(SwarmManager):
         func = self.available_tools[name]["func"]
         
         # run_file_upload_check への引数リマップ (params={} で呼ばれた場合のフォールバック)
-        if name == "run_file_upload_check" and "params" in args and "param_name" not in args:
+        if name == "run_file_upload_check" and "params" in args:
             legacy_params = args.pop("params", {})
-            args["param_name"] = legacy_params.get("param_name", "uploaded")
-            args["extra_params"] = legacy_params.get("extra_params", {})
+            if isinstance(legacy_params, dict):
+                if "url" not in args:
+                    legacy_url = legacy_params.get("url") or legacy_params.get("target")
+                    if legacy_url:
+                        args["url"] = legacy_url
+                if "param_name" not in args:
+                    args["param_name"] = legacy_params.get("param_name", "uploaded")
+                if "extra_params" not in args:
+                    if "extra_params" in legacy_params:
+                        args["extra_params"] = legacy_params.get("extra_params", {})
+                    else:
+                        args["extra_params"] = {
+                            key: value
+                            for key, value in legacy_params.items()
+                            if key not in {"url", "target", "param_name"}
+                        }
+            elif "extra_params" not in args:
+                args["extra_params"] = legacy_params
 
         # --- Context Propagation (Auth Headers & Cookies) ---
         
@@ -504,6 +520,12 @@ class BaseManagerAgent(SwarmManager):
         # Merge auth_headers into top-level args
         if "auth_headers" not in args and self.current_context.get("auth_headers"):
             args["auth_headers"] = self.current_context["auth_headers"]
+
+        # Merge url into top-level args (target is always known from context)
+        # SGK fix: LLM が Action 行で url を省略した場合でも、コンテキストの target を
+        # url として注入する。これにより "missing required argument 'url'" の大量失敗を防ぐ。
+        if "url" not in args and self.current_context.get("target"):
+            args["url"] = self.current_context["target"]
         # ----------------------------------------------------
 
         # --- Argument Filtering (Prevent TypeError: unexpected keyword argument) ---

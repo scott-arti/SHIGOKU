@@ -1317,6 +1317,9 @@ class BizLogicHunter(BaseAgent):
                         authz_diff = {
                             "scenario": "cookie_privilege_escalation",
                             "confidence": 0.81,
+                            "requires_second_account": True,
+                            "precondition_status": "second_account_not_available",
+                            "reason": "second_account_not_available",
                             "signals": [s for s in [
                                 "status_improved" if status_improved else "",
                                 "response_size_increase" if size_increased else "",

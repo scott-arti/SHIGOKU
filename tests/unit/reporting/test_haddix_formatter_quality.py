@@ -1,5 +1,6 @@
 import json
 
+from src.reporting.haddix_evidence_quality import HaddixEvidenceQualityValidator
 from src.reporting.haddix_formatter import HaddixFormatter
 
 
@@ -147,6 +148,65 @@ def test_formatter_cors_finding_poc_request_populated():
     finding = report["findings"][0]
     assert "Origin: https://evil.com" in (finding.get("poc_request") or ""), \
         f"poc_request should contain Origin header, got: {finding.get('poc_request')!r}"
+
+
+def test_formatter_builds_poc_from_structured_file_upload_evidence():
+    """Finding.evidence だけの File Upload でも品質ゲートが実証拠として扱えること"""
+    formatter = HaddixFormatter()
+    formatter.set_target("http://localhost:4280")
+
+    formatter.add_finding_from_dict(
+        {
+            "title": "Unrestricted File Upload: Safe Canary Upload Probe",
+            "severity": "high",
+            "vuln_type": "file_upload",
+            "target_url": "http://localhost:4280/vulnerabilities/upload/",
+            "description": "Successfully uploaded 'probe_fixed.jpg' using Safe Canary Upload Probe technique.",
+            "confidence": 0.9,
+            "source_agent": "FileUploadSpecialist",
+            "evidence": {
+                "request_method": "POST",
+                "request_url": "http://localhost:4280/vulnerabilities/upload/",
+                "request_body": (
+                    "multipart/form-data upload\n"
+                    "uploaded=@probe_fixed.jpg; filename=probe_fixed.jpg; content_type=image/jpeg\n"
+                    "MAX_FILE_SIZE=100000\n"
+                    "Upload=Upload"
+                ),
+                "response_status": 200,
+                "response_body": (
+                    "Status: 200\n"
+                    "Evidence: Server accepted 'probe_fixed.jpg' using Safe Canary Upload Probe; "
+                    "retrieved at http://localhost:4280/hackable/uploads/probe_fixed.jpg"
+                ),
+            },
+            "additional_info": {
+                "payload": "probe_fixed.jpg",
+                "file_upload_evidence": {
+                    "upload_allowed": True,
+                    "retrieved": True,
+                    "retrieval_url": "http://localhost:4280/hackable/uploads/probe_fixed.jpg",
+                    "retrieval_status": 200,
+                    "safe_canary": True,
+                },
+            },
+        }
+    )
+
+    finding = formatter._findings[0]
+    assert "POST /vulnerabilities/upload/ HTTP/1.1" in finding.poc_request
+    assert "probe_fixed.jpg" in finding.poc_request
+    assert finding.poc_response.startswith("HTTP/1.1 200 OK")
+    assert "retrieved at http://localhost:4280/hackable/uploads/probe_fixed.jpg" in finding.poc_response
+
+    verdict = HaddixEvidenceQualityValidator().evaluate_finding(
+        finding,
+        current_status="candidate",
+    )
+    assert verdict.shadow_status == "confirmed"
+    assert "payload_request_mismatch" not in verdict.reason_codes
+    assert "synthetic_response_evidence" not in verdict.reason_codes
+    assert "file_upload_impact_not_proven" not in verdict.reason_codes
 
 
 def test_formatter_cors_cia_and_remediation_not_generic():

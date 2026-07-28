@@ -671,7 +671,7 @@ class InjectionManagerAgent(BaseManagerAgent):
         param_str = str(sorted(key_params.items()))
         return f"{vuln_type}:{url}:{param_str}"
 
-    def _collect_recent_tested_params(self, vuln_type: str) -> List[str]:
+    def _collect_recent_tested_params(self, vuln_type: str, target_url: str = "") -> List[str]:
         """直近の Specialist 実行で試したパラメータ名を収集する。"""
         if vuln_type == "sqli":
             sqli_params = getattr(self.specialists.get("sqli"), "last_tested_params", []) or []
@@ -679,6 +679,25 @@ class InjectionManagerAgent(BaseManagerAgent):
             return sanitize_tested_params(sqli_params + xss_params, excluded_params=self.EXCLUDED_TESTED_PARAMS)
         if vuln_type == "xss":
             return sanitize_tested_params(getattr(self.specialists.get("xss"), "last_tested_params", []) or [])
+        if vuln_type == "cmd_ssrf":
+            specialist = self.specialists.get("cmd_ssrf")
+            target_params = getattr(specialist, "_target_specific_candidate_params", lambda _: [])
+            current_target_params = sanitize_tested_params(
+                target_params(target_url),
+                excluded_params=self.EXCLUDED_TESTED_PARAMS,
+            )
+            if current_target_params:
+                return current_target_params
+            recent = sanitize_tested_params(
+                getattr(specialist, "last_tested_params", []) or [],
+                excluded_params=self.EXCLUDED_TESTED_PARAMS,
+            )
+            if recent and getattr(specialist, "last_tested_target", "") == target_url:
+                return recent
+            return sanitize_tested_params(
+                list(parse_qs(urlparse(target_url).query).keys()),
+                excluded_params=self.EXCLUDED_TESTED_PARAMS,
+            )
         return []
 
     @staticmethod
@@ -2395,6 +2414,8 @@ class InjectionManagerAgent(BaseManagerAgent):
                             "retry_count": retry_count,
                             "findings_count": findings_count,
                             "tested_params": tested_params,
+                            "delivery_state": phase1_result.get("delivery_state", ""),
+                            "reason_code": phase1_result.get("reason_code", ""),
                             "attempt_traces": [self._snapshot_attempt_trace(attempt_trace)],
                             "probe_sent": phase1_result.get("probe_sent"),
                             "probe_skipped_reason": phase1_result.get("probe_skipped_reason", ""),
@@ -2441,7 +2462,7 @@ class InjectionManagerAgent(BaseManagerAgent):
                             per_url_timeout,
                         )
                         timeout_cause_failures[timeout_cause_key] = previous_timeout_failures + 1
-                        timeout_tested_params = self._collect_recent_tested_params(vuln_type)
+                        timeout_tested_params = self._collect_recent_tested_params(vuln_type, target_url)
                         last_stage_before_timeout = str(attempt_trace.get("current_stage", "") or "")
                         self._mark_attempt_trace(
                             attempt_trace,
@@ -2462,6 +2483,8 @@ class InjectionManagerAgent(BaseManagerAgent):
                             "retry_count": retry_count,
                             "findings_count": 0,
                             "tested_params": timeout_tested_params,
+                            "delivery_state": "timeout",
+                            "reason_code": "probe_timeout",
                             "attempt_traces": [self._snapshot_attempt_trace(attempt_trace)],
                             "unknown_profile": {},
                             "comparison_checks": [],
@@ -2486,7 +2509,7 @@ class InjectionManagerAgent(BaseManagerAgent):
                         break
                     except Exception as exc:
                         logger.error("[%s] Phase 1 error on %s: %s", self.name, target_url, exc)
-                        error_tested_params = self._collect_recent_tested_params(vuln_type)
+                        error_tested_params = self._collect_recent_tested_params(vuln_type, target_url)
                         last_stage_before_error = str(attempt_trace.get("current_stage", "") or "")
                         self._mark_attempt_trace(
                             attempt_trace,
@@ -2556,6 +2579,15 @@ class InjectionManagerAgent(BaseManagerAgent):
             and bool(phase1_vuln_types & risk_force_allowlist)
             and (lane2_score_eligible if task_category == CATEGORY_SSRF_CANDIDATE else True)
         )
+        cors_no_signal_safe_skip = (
+            bool(phase1_vuln_types)
+            and phase1_vuln_types.issubset({"cors"})
+            and not phase1_findings
+            and not phase1_signals["tool_error"]
+            and not phase1_signals["weak_signal"]
+        )
+        if cors_no_signal_safe_skip:
+            high_risk_requires_phase2 = False
         phase2_forced_by_risk = should_force_phase2_by_risk(
             phase1_findings=phase1_findings,
             phase1_signals=phase1_signals,
@@ -2626,6 +2658,8 @@ class InjectionManagerAgent(BaseManagerAgent):
             phase2_block_reason.append("risk_not_met")
         if not phase2_on_empty_phase1:
             phase2_block_reason.append("phase2_on_empty_disabled")
+        if cors_no_signal_safe_skip:
+            phase2_block_reason.append("cors_no_signal")
 
         # SGK-2026-0367: exception targets that should NOT skip Phase 2
         # even without signals (client_route_dom, javascript/, hash-route with query)
@@ -3598,6 +3632,8 @@ class InjectionManagerAgent(BaseManagerAgent):
         if not blind_correlation:
             blind_correlation = getattr(self.specialists["cmd_ssrf"], "last_blind_correlation", {}) or {}
         blind_correlation = normalize_blind_correlation(blind_correlation)
+        delivery_evidence = getattr(self.specialists["cmd_ssrf"], "last_delivery_evidence", {}) or {}
+        delivery_reason = str(getattr(self.specialists["cmd_ssrf"], "last_delivery_reason", "") or "")
         normalize_findings_additional_info(findings, tested_params, detection_mode, excluded_params=self.EXCLUDED_TESTED_PARAMS)
 
         # Layer 3: Hunter ツールの出力形式改善
@@ -3613,6 +3649,8 @@ class InjectionManagerAgent(BaseManagerAgent):
                 "severity": finding.severity.name if hasattr(finding, 'severity') else "CRITICAL",
                 "tested_params": sanitize_tested_params(tested_params, excluded_params=self.EXCLUDED_TESTED_PARAMS),
                 "blind_correlation": blind_correlation,
+                "delivery_state": "delivered" if delivery_evidence.get("delivered") else "",
+                "reason_code": delivery_reason,
                 "info": f"SSRF/Command Injection vulnerability confirmed"
             }
         else:
@@ -3622,6 +3660,8 @@ class InjectionManagerAgent(BaseManagerAgent):
                 "success": False,
                 "tested_params": fallback_tested_params,
                 "blind_correlation": {},
+                "delivery_state": "blocked" if delivery_reason else "",
+                "reason_code": delivery_reason,
                 "message": "No SSRF/Command Injection vulnerabilities found"
             }
 

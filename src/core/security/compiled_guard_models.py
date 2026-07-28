@@ -177,6 +177,80 @@ class GuardDecision:
             fail_closed=fail_closed,
         )
 
+    @classmethod
+    def requires_hitl(
+        cls,
+        reason_code: str,
+        matched_rule_ids: Optional[list[str]] = None,
+        matched_rule_origin_ids: Optional[list[str]] = None,
+        source_refs: Optional[list[str]] = None,
+        policy_id: str = "",
+        bundle_id: str = "",
+        enforcement_layer: str = "",
+        host: str = "",
+        target: str = "",
+        phase: str = "",
+        attack_class: str = "",
+    ) -> "GuardDecision":
+        """Create a ``requires_hitl`` decision (SGK-2026-0370).
+
+        Human-in-the-loop required before proceeding.  This is NOT a deny —
+        the bridge preserves it as a reason-annotated pending ticket.
+        """
+        return cls(
+            decision="requires_hitl",
+            reason_code=reason_code,
+            matched_rule_ids=list(matched_rule_ids or []),
+            matched_rule_origin_ids=list(matched_rule_origin_ids or []),
+            source_refs=list(source_refs or []),
+            policy_id=policy_id,
+            bundle_id=bundle_id,
+            enforcement_layer=enforcement_layer,
+            decision_trace_id=_generate_trace_id(
+                "requires_hitl", reason_code, policy_id, bundle_id,
+                host=host, target=target, phase=phase,
+                attack_class=attack_class, enforcement_layer=enforcement_layer,
+            ),
+            fail_closed=False,
+        )
+
+    @classmethod
+    def degrade_to_report(
+        cls,
+        reason_code: str,
+        matched_rule_ids: Optional[list[str]] = None,
+        matched_rule_origin_ids: Optional[list[str]] = None,
+        source_refs: Optional[list[str]] = None,
+        policy_id: str = "",
+        bundle_id: str = "",
+        enforcement_layer: str = "",
+        host: str = "",
+        target: str = "",
+        phase: str = "",
+        attack_class: str = "",
+    ) -> "GuardDecision":
+        """Create a ``degrade_to_report`` decision (SGK-2026-0370).
+
+        The action is downgraded: attack tasks should be routed to the
+        report path instead of active exploitation.
+        """
+        return cls(
+            decision="degrade_to_report",
+            reason_code=reason_code,
+            matched_rule_ids=list(matched_rule_ids or []),
+            matched_rule_origin_ids=list(matched_rule_origin_ids or []),
+            source_refs=list(source_refs or []),
+            policy_id=policy_id,
+            bundle_id=bundle_id,
+            enforcement_layer=enforcement_layer,
+            decision_trace_id=_generate_trace_id(
+                "degrade_to_report", reason_code, policy_id, bundle_id,
+                host=host, target=target, phase=phase,
+                attack_class=attack_class, enforcement_layer=enforcement_layer,
+            ),
+            fail_closed=False,
+        )
+
 
 # ---------------------------------------------------------------------------
 # GuardLoadError

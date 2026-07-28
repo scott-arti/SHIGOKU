@@ -1534,6 +1534,7 @@ class MasterConductor:
             "admin": {"access_control", "business_logic", "auth"},
             "auth": {"auth"},
             "id_param": {"injection", "xss", "access_control"},
+            "crlf_candidate": {"injection"},
             "redirect_param": {"injection", "api"},
             "file_param": {"injection", "api"},
             "upload": {"business_logic", "api"},
@@ -1546,6 +1547,7 @@ class MasterConductor:
             "realtime": {"realtime", "api", "auth"},
             "meta_observability": {"api"},
             "api_candidate": {"api", "injection"},
+            "cors_candidate": {"api", "injection"},
             "csrf_candidate": {"csrf", "auth"},
             "xss_candidate": {"xss", "injection"},
             "command_injection": {"injection"},
@@ -1594,12 +1596,14 @@ class MasterConductor:
 
     _INJECTION_CATEGORIES = frozenset({
         "id_param",
+        "crlf_candidate",
         "redirect_param",
         "file_param",
         "xss_candidate",
         "api_candidate",
         "api_endpoint",
         "api_data",
+        "cors_candidate",
         "product_search",
         "feedback_review",
         "client_route_dom",
@@ -1614,7 +1618,7 @@ class MasterConductor:
         Normalizes: scheme, host, default port removal, trailing slash, hash fragment.
         Preserves: sorted query keys + values for dedup granularity.
         """
-        from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+        from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
         if not url:
             return ""
@@ -1631,12 +1635,11 @@ class MasterConductor:
                 host, _, port = netloc.partition(":")
                 if (scheme == "http" and port == "80") or (scheme == "https" and port == "443"):
                     netloc = host
-            # Preserve sorted query keys for dedup (different keys = different target)
+            # Preserve sorted query keys + values for dedup granularity.
             qs = ""
             if parsed.query:
-                qp = parse_qs(parsed.query, keep_blank_values=True)
-                # Only preserve key names (sorted), drop values for dedup granularity
-                qs = "&".join(sorted(qp.keys()))
+                qp = parse_qsl(parsed.query, keep_blank_values=True)
+                qs = urlencode(sorted(qp))
             return urlunparse((scheme, netloc, path, "", qs, ""))
         except Exception:
             return str(url).strip().rstrip("/")
@@ -2296,9 +2299,13 @@ class MasterConductor:
         if not has_actionable_seed:
             return []
 
+        # Probe planning must only treat explicitly tagged scenarios as already covered.
+        # If we allow policy inference here, generic planned task copy such as
+        # "rate limit" or "business logic" can suppress the dedicated probe
+        # before that scenario ever gets its own executable task.
         scenario_coverage = self._evaluate_intervention_scenario_coverage(
             tasks=existing_tasks,
-            infer_if_missing=True,
+            infer_if_missing=False,
         )
         target_scenario_numbers = {1, 2, 3, 4, 5, 6, 8, 10, 11, 12}
         missing_probe_ids = [
@@ -2462,6 +2469,7 @@ class MasterConductor:
             params: dict[str, Any] = {
                 "category": spec["category"],
                 "source_category": "scenario_probe_planner",
+                "selection_origin": f"scenario_probe_planner:{scenario_id}",
                 "scenario_probe": scenario_id,
                 "scenario": spec["scenario"],
                 "attack_type": spec["attack_type"],
@@ -3909,6 +3917,8 @@ class MasterConductor:
                 ),
                 task_execution_records=self.execution_log.to_list() if hasattr(self, 'execution_log') and self.execution_log else [],
             run_ledger_payload=self.run_ledger_recorder.prepare_for_session(spool_dir=spool_dir),
+            session_id=getattr(getattr(self, '_current_session', None), 'session_id', None),
+            run_id=self.run_ledger_recorder.run_id,
         )
 
             if self.project_manager:
@@ -5210,6 +5220,8 @@ class MasterConductor:
         self._notify_scn07_12_intervention(task, decision, gate_mode)
         defer_manual_v1 = bool(getattr(settings, "defer_scn07_12_hitl_v1", True))
         if defer_manual_v1 and self._is_manual_defer_target_v1(decision):
+            if self._is_autonomous_file_upload_probe(task, decision, gate_mode):
+                return None
             task.params.setdefault("_intervention", {})
             task.params["_intervention"]["approval"] = {
                 "required": True,
@@ -5368,6 +5380,45 @@ class MasterConductor:
             return False
         number = self._extract_scn_number(scenario_id)
         return number in {7, 8, 9, 10, 12}
+
+    def _is_autonomous_file_upload_probe(
+        self,
+        task: Task,
+        decision: dict[str, Any],
+        gate_mode: str,
+    ) -> bool:
+        """Allow direct safe file-upload canary probes to run in observe mode.
+
+        SCN09 remains manual for broad workflow/chain abuse. A direct
+        LogicSwarm file_upload task is narrower: it uploads a benign canary and
+        checks whether that file can be retrieved. Do not bypass explicit HITL
+        enforcement modes.
+        """
+        if str(gate_mode or "").strip().lower() != "observe":
+            return False
+        scenario_id = str(decision.get("scenario_id", "") or "").strip().lower().replace("-", "_")
+        if scenario_id != "scn_09_multi_step_state_machine":
+            return False
+
+        params = task.params if isinstance(getattr(task, "params", None), dict) else {}
+        if not bool(params.get("safe_only", False)):
+            return False
+        tags = {str(tag).strip().lower() for tag in (params.get("tags") or [])}
+        category = str(params.get("category", "") or "").strip().lower()
+        name = str(getattr(task, "name", "") or "").strip().lower()
+        agent = str(getattr(task, "agent_type", "") or "").strip().lower()
+
+        is_upload = (
+            "file_upload" in tags
+            or "upload" in tags
+            or category == "upload"
+            or "file upload" in name
+        )
+        if not is_upload:
+            return False
+        if "manual_verify" in tags:
+            return False
+        return agent in {"logicswarm", "logicmanager", "logicmanageragent", "logic"}
 
     def _notify_scn07_12_intervention(self, task: Task, decision: dict[str, Any], gate_mode: str) -> None:
         """SCN07-12 は Ver.1 方針で通知を必ず送る（手動実行導線）。"""
@@ -6949,10 +7000,26 @@ class MasterConductor:
                     logger.info("[MC] Triggering KG-based dynamic task inference with insights...")
                     insights = self.self_reflection.reflect()
                     new_tasks = self.attack_planner.infer_tasks(self.graph, self.context, insights=insights)
+                    # SGK fix: infer_tasks は毎回新規 uuid でタスクを生成するため ID ベースでは
+                    # 同一内容タスクの重複を検知できず、未テストエンドポイント等が約19サイクルで
+                    # max_session_tasks 上限まで重複蓄積していた。内容(name)ベースで1 run 中1回のみ生成。
+                    dedup_keys = getattr(self, "_inferred_task_dedup_keys", None)
+                    if dedup_keys is None:
+                        dedup_keys = set()
+                        self._inferred_task_dedup_keys = dedup_keys
+                    added = 0
                     for t in new_tasks:
-                        # 既存のタスクと重複していないか簡易チェック (IDベース)
+                        if t.name in dedup_keys:
+                            continue
                         if not self.task_queue.get_by_id(t.id):
+                            dedup_keys.add(t.name)
                             self.task_queue.add(t)
+                            added += 1
+                    if new_tasks:
+                        logger.info(
+                            "[MC] KG inference: added %d task(s), suppressed %d duplicate(s)",
+                            added, len(new_tasks) - added,
+                        )
 
             # 1. バッチ作成 (現在空いているスロット分、または動的推奨数)
             # InjectionManagerAgent のタスクは既定で逐次制限するが、
@@ -9386,15 +9453,15 @@ class MasterConductor:
                 # Resume support: validate via shared validator (fail-closed), then restore state
                 resume_source = str(self.context.target_info.get("resume_source", "") or "").strip()
                 resume_state_path = str(self.context.target_info.get("resume_state_path", "") or "").strip()
-                target = str(self.context.target_info.get("target", "") or "").strip()
+                resume_target = str(self.context.target_info.get("target", "") or "").strip()
                 resume_verdict = None
                 resume_state = None
-                if resume_state_path and target:
+                if resume_state_path and resume_target:
                     try:
                         from pathlib import Path
                         from src.recon.pipeline import ReconState
                         # SGK-2026-0281: shared validator path — no raw ReconState.load() bypass
-                        verdict = ReconState.validate_for_resume(Path(resume_state_path), target)
+                        verdict = ReconState.validate_for_resume(Path(resume_state_path), resume_target)
                         resume_verdict = verdict
                         logger.info(
                             "Resume verdict: can_resume=%s reason_code=%s next_step=%s",
@@ -10429,11 +10496,62 @@ class MasterConductor:
         )
         return True
 
+    def _resolve_asset_scan_url(self, asset: str) -> str:
+        """Resolve discovered asset to a web_scanner URL without inventing a wrong scheme/port."""
+        from urllib.parse import urlparse, urlunparse
+
+        raw_asset = str(asset or "").strip()
+        if not raw_asset:
+            return ""
+
+        parsed_asset = urlparse(raw_asset)
+        if parsed_asset.scheme and parsed_asset.netloc:
+            return raw_asset
+
+        target_info = (
+            self.context.target_info
+            if isinstance(getattr(self.context, "target_info", {}), dict)
+            else {}
+        )
+        raw_target = str(target_info.get("target", "") or "").strip()
+        target_with_netloc = raw_target if "://" in raw_target else f"//{raw_target}"
+        parsed_target = urlparse(target_with_netloc)
+        parsed_asset_host = urlparse(f"//{raw_asset}")
+
+        target_hosts = {
+            str(parsed_target.hostname or "").strip().lower(),
+            str(target_info.get("host", "") or "").strip().lower(),
+        }
+        asset_host = str(parsed_asset_host.hostname or "").strip().lower()
+
+        if asset_host and asset_host in {host for host in target_hosts if host}:
+            scheme = str(parsed_target.scheme or target_info.get("scheme") or "https").strip() or "https"
+            netloc = parsed_asset_host.netloc
+            try:
+                asset_has_port = parsed_asset_host.port is not None
+            except ValueError:
+                asset_has_port = False
+            if not asset_has_port and parsed_target.netloc:
+                netloc = parsed_target.netloc
+            return urlunparse((
+                scheme,
+                netloc,
+                parsed_asset_host.path,
+                "",
+                parsed_asset_host.query,
+                parsed_asset_host.fragment,
+            ))
+
+        return f"https://{raw_asset}"
+
     def _expand_plan_for_assets(self, new_assets: list[str]) -> None:
         """新発見の資産に対するタスクを追加"""
         for asset in new_assets:
             if asset not in self.context.discovered_assets:
                 self.context.discovered_assets.append(asset)
+                scan_url = self._resolve_asset_scan_url(asset)
+                if not scan_url:
+                    continue
                 
                 # 資産ごとにスキャンタスクを追加
                 self.task_queue.add(Task(
@@ -10441,7 +10559,7 @@ class MasterConductor:
                     name=f"Scan {asset}",
                     agent_type="web_scanner",
                     action="scan",
-                    params={"url": f"https://{asset}"},
+                    params={"url": scan_url},
                     priority=60,
                 ))
     
@@ -10523,6 +10641,7 @@ class MasterConductor:
         # SGK-2026-0281: Aggregate provenance from accepted artifacts
         accepted_hashes: list[str] = []
         accepted_fingerprints: list[str] = []
+        accepted_generated_at: list[str] = []
         for a in bundle.accepted_artifacts:
             ah = a.provenance.get("artifact_hash", "")
             if ah and ah != "unavailable":
@@ -10530,6 +10649,9 @@ class MasterConductor:
             tfp = a.provenance.get("target_fingerprint", "")
             if tfp:
                 accepted_fingerprints.append(tfp)
+            generated_at = str(a.provenance.get("generated_at", "") or "").strip()
+            if generated_at:
+                accepted_generated_at.append(generated_at)
 
         base_provenance = {
             "import_dir": str(bundle.import_dir),
@@ -10541,6 +10663,8 @@ class MasterConductor:
         }
         if accepted_fingerprints:
             base_provenance["target_fingerprints"] = list(set(accepted_fingerprints))
+        if accepted_generated_at:
+            base_provenance["accepted_generated_at"] = sorted(set(accepted_generated_at))
 
         for category, data in bundle.normalized_results.items():
             if category not in merged:
@@ -10556,6 +10680,40 @@ class MasterConductor:
                 logger.debug("Imported recon category '%s' superseded by fresh results", category)
 
         return merged
+
+    def _finalize_attack_tasks(self, tasks: list[Task]) -> list[Task]:
+        """Expand URL batches and prioritize coverage-critical attack tasks."""
+        expander = TaskExpander(self.workspace)
+        final_tasks: list[Task] = []
+
+        for base_task in tasks:
+            if "targets_file" in base_task.params:
+                subtasks = expander.expand(base_task)
+                if subtasks:
+                    logger.info(
+                        "[MC] Expanded task %s into %d subtasks",
+                        base_task.id,
+                        len(subtasks),
+                    )
+                    final_tasks.extend(subtasks)
+                    continue
+
+            final_tasks.append(base_task)
+
+        prioritized_tasks: list[Task] = []
+        regular_tasks: list[Task] = []
+        for queued_task in final_tasks:
+            if task_pruning_policy_shared.is_coverage_critical_task(queued_task):
+                prioritized_tasks.append(queued_task)
+            else:
+                regular_tasks.append(queued_task)
+
+        if prioritized_tasks:
+            logger.info(
+                "Prioritized %d coverage-critical task(s) ahead of regular recon tasks",
+                len(prioritized_tasks),
+            )
+        return prioritized_tasks + regular_tasks
 
     def _create_attack_tasks_from_recon(self, recon_results: dict[str, dict]) -> list[Task]:
         """
@@ -10587,6 +10745,7 @@ class MasterConductor:
             "auth": ("Authentication Analysis", "AuthSwarm", "auth"),
             "admin": ("Admin Panel Access Test", "bizlogic", "logic"),
             "id_param": ("Injection Scan (SQLi/XSS) on Parameters", "InjectionSwarm", "injection"),
+            "crlf_candidate": ("CRLF Injection Scan", "InjectionSwarm", "injection"),
             "redirect_param": ("Open Redirect/SSRF Scan", "InjectionSwarm", "injection"),
             "file_param": ("Path Injection Scan (LFI/Traversal)", "InjectionSwarm", "injection"),
             "upload": ("File Upload Vulnerability Scan", "LogicSwarm", "logic"),
@@ -10602,8 +10761,10 @@ class MasterConductor:
             "jwt_detected": ("JWT Security Analysis", "AuthSwarm", "auth"),
             "api_candidate": ("API Candidate Security Scan", "InjectionSwarm", "injection"),
             "api_endpoint": ("API Security Scan", "InjectionSwarm", "injection"),
+            "cors_candidate": ("CORS Misconfiguration Scan", "InjectionSwarm", "injection"),
             "csrf_candidate": ("CSRF Minimal Security Check", "InjectionSwarm", "injection"),
             "xss_candidate": ("XSS/Injection Scan on Forms", "InjectionSwarm", "injection"),
+            "command_injection": ("Command Injection Focused Scan", "InjectionManagerAgent", "injection"),
         }
 
         # ── SGK-2026-0261: signal-first routing ──
@@ -10625,9 +10786,43 @@ class MasterConductor:
                 return f"{url}#{primary}"
             return url
 
+        def _normalize_signal_label(raw_label: Any) -> str:
+            normalized = str(raw_label or "").strip().lower()
+            if normalized.startswith("tagged_"):
+                normalized = normalized[7:]
+            return normalized
+
+        def _normalize_recon_category_name(raw_category: Any) -> str:
+            normalized = str(raw_category or "").strip()
+            if normalized.startswith("tagged_"):
+                normalized = normalized[7:]
+            return normalized
+
+        def _resolve_signal_category(signal_like: dict) -> str:
+            label_candidates: list[str] = [
+                _normalize_signal_label(signal_like.get("primary_label", "")),
+                _normalize_signal_label(signal_like.get("entity_type", "")),
+            ]
+            candidate_labels = signal_like.get("candidate_labels", [])
+            if isinstance(candidate_labels, list):
+                label_candidates.extend(_normalize_signal_label(label) for label in candidate_labels)
+
+            for normalized_label in label_candidates:
+                if not normalized_label:
+                    continue
+                if normalized_label in category_map or normalized_label in non_actionable_categories:
+                    return normalized_label
+
+            for normalized_label in label_candidates:
+                if normalized_label:
+                    return normalized_label
+            return ""
+
         signal_generated_count = 0
         recipe_generated_count = 0
         routed_signal_ids: set[str] = set()
+        signal_routed_categories: set[str] = set()
+        signal_routed_target_keys_by_category: dict[str, set[str]] = {}
         signal_swarm_reason_by_id: dict[str, str] = {}
         recipe_selection_threshold = 0.75
         # SGK-2026-0260: track suppression keys to prevent re-execution
@@ -10643,7 +10838,301 @@ class MasterConductor:
             "swarm_fallback": 0,
             "no_recipe_match": 0,
             "gate_rejected": 0,
+            # SGK-2026-0370: guard-bridge verdict tracking
+            "guard_blocked": 0,
+            "guard_requires_hitl": 0,
+            "guard_degrade_to_report": 0,
         }
+        companion_command_target_keys: set[str] = set()
+        companion_session_target_keys: set[str] = set()
+        companion_authz_target_keys: set[str] = set()
+
+        def _stored_xss_candidate_params_for_targets(targets: list[str]) -> list[str]:
+            for target_url in targets:
+                try:
+                    from urllib.parse import urlparse
+
+                    path_lower = urlparse(str(target_url or "")).path.lower()
+                except Exception:
+                    path_lower = str(target_url or "").lower()
+                if "xss_s" in path_lower or "stored" in path_lower:
+                    return [
+                        "txtName",
+                        "mtxMessage",
+                        "name",
+                        "message",
+                        "comment",
+                        "body",
+                        "content",
+                    ]
+            return []
+
+        def _apply_target_specific_hints(
+            params: dict[str, Any],
+            category_name: str,
+            targets: list[str],
+        ) -> None:
+            if category_name != "xss_candidate":
+                return
+            candidate_params = _stored_xss_candidate_params_for_targets(targets)
+            if not candidate_params:
+                return
+            context = params.setdefault("_context", {})
+            if not isinstance(context, dict):
+                context = {}
+                params["_context"] = context
+            existing = context.get("candidate_params", [])
+            merged: list[str] = []
+            if isinstance(existing, list):
+                for item in existing:
+                    token = str(item or "").strip()
+                    if token and token not in merged:
+                        merged.append(token)
+            for token in candidate_params:
+                if token not in merged:
+                    merged.append(token)
+            context["candidate_params"] = merged
+
+        def _append_legacy_detection_companion_tasks(
+            *,
+            targets: list[str],
+            source_file: str,
+            source_category: str,
+            selection_origin: str,
+            scan_profile: str,
+            base_context: dict[str, Any],
+            priority: int,
+        ) -> None:
+            normalized_targets = [
+                str(target_url or "").strip()
+                for target_url in targets
+                if str(target_url or "").strip().startswith(("http://", "https://"))
+            ]
+            if not normalized_targets:
+                return
+
+            command_targets: list[str] = []
+            for target_url in normalized_targets:
+                lowered = target_url.lower()
+                if not any(token in lowered for token in ("/vulnerabilities/exec/", "/exec/", "command", "cmd", "ping")):
+                    continue
+                target_key = _normalize_supplement_target_key(target_url, "command_injection")
+                if not target_key or target_key in companion_command_target_keys:
+                    continue
+                companion_command_target_keys.add(target_key)
+                command_targets.append(target_url)
+
+            if command_targets:
+                raw_cookies = self._get_context_cookie_string()
+                task_auth_headers = self._get_context_auth_headers()
+                command_params: dict[str, Any] = {
+                    "targets": command_targets,
+                    "target": command_targets[0],
+                    "source_file": source_file,
+                    "category": "command_injection",
+                    "source_category": source_category,
+                    "tags": ["cmd_candidate", "rce_candidate", "ssrf_candidate"],
+                    "scan_profile": scan_profile,
+                    "selection_origin": f"{selection_origin}.cmd_focus",
+                    "phase1_force_full_coverage": True,
+                    "phase1_stop_on_first_hit": False,
+                    "phase1_early_return_on_findings": False,
+                    "_context": copy.deepcopy(base_context),
+                    "headers": {},
+                    "cookies": raw_cookies,
+                }
+                if task_auth_headers:
+                    command_params["auth_headers"] = task_auth_headers
+                tasks.append(
+                    Task(
+                        id=f"cmd_focus_{uuid.uuid4().hex[:8]}",
+                        name=f"Command Injection Focused Scan ({len(command_targets)} targets)",
+                        agent_type="InjectionManagerAgent",
+                        action="scan",
+                        phase="attack",
+                        params=command_params,
+                        target=command_targets[0],
+                        tags=["cmd_candidate", "rce_candidate", "ssrf_candidate"],
+                        priority=max(priority, 88),
+                    )
+                )
+
+            weak_session_targets: list[str] = []
+            for target_url in normalized_targets:
+                if "weak_id" not in target_url.lower():
+                    continue
+                target_key = _normalize_supplement_target_key(target_url, "weak_session_id")
+                if not target_key or target_key in companion_session_target_keys:
+                    continue
+                companion_session_target_keys.add(target_key)
+                weak_session_targets.append(target_url)
+
+            if not weak_session_targets:
+                return
+
+            target_info = self.context.target_info if isinstance(getattr(self.context, "target_info", {}), dict) else {}
+            credentials = target_info.get("credentials", {}) if isinstance(target_info, dict) else {}
+            weak_target = weak_session_targets[0]
+            try:
+                from urllib.parse import urlsplit
+
+                parts = urlsplit(weak_target)
+                if not credentials and parts.hostname in {"localhost", "127.0.0.1"}:
+                    credentials = {"username": "admin", "password": "password"}
+                base_url = f"{parts.scheme}://{parts.netloc}"
+            except Exception:
+                base_url = str(self.context.target_info.get("target", "") or "").rstrip("/")
+            login_url = f"{base_url}/login.php" if base_url else ""
+
+            tasks.append(
+                Task(
+                    id=f"session_weakid_{uuid.uuid4().hex[:8]}",
+                    name="Session Weak-ID Analysis",
+                    target=weak_target,
+                    agent_type="sessionhijacker",
+                    action="scan",
+                    phase="attack",
+                    params={
+                        "target": weak_target,
+                        "login_url": login_url,
+                        "test_endpoint": weak_target,
+                        "credentials": credentials,
+                        "scan_profile": scan_profile,
+                        "source_category": source_category,
+                        "selection_origin": f"{selection_origin}.weak_session",
+                        "tags": ["weak_session_id", "session"],
+                    },
+                    tags=["weak_session_id", "session"],
+                    priority=max(priority, 86),
+                )
+            )
+
+        def _append_authz_differential_companion_tasks(
+            *,
+            targets: list[str],
+            source_category: str,
+            selection_origin: str,
+            scan_profile: str,
+            priority: int,
+        ) -> None:
+            """
+            AuthZ/IDOR らしい URL は、AuthSwarm の token trust 境界判定とは別に
+            BizLogicHunter の差分確認へも流す。
+
+            目的は DVWA 固有のページ名へ合わせることではなく、短縮 recon で
+            高価値な object access URL が signal-first から漏れた場合でも、
+            自動で安全に確認できる ID/権限差分チェックを失わないこと。
+            """
+            authz_tokens = (
+                "authbypass",
+                "get_user_data",
+                "weak_id",
+                "admin",
+                "account",
+                "profile",
+                "user",
+                "users",
+                "role",
+                "permission",
+            )
+            id_param_names = ("id", "user_id", "uid", "account_id")
+
+            for raw_target in targets:
+                verify_target = str(raw_target or "").strip()
+                if not verify_target.startswith(("http://", "https://")):
+                    continue
+
+                try:
+                    from urllib.parse import parse_qs, urlparse
+
+                    parsed_target = urlparse(verify_target)
+                    path_lower = (parsed_target.path or "").lower()
+                    query_keys = {key.lower() for key in parse_qs(parsed_target.query).keys()}
+                except Exception:
+                    path_lower = verify_target.lower()
+                    query_keys = set()
+
+                target_lower = verify_target.lower()
+                if not any(token in target_lower for token in authz_tokens):
+                    continue
+
+                smell_type = "admin_endpoint"
+                parameters: dict[str, str] = {}
+
+                if "/authbypass" in path_lower and "get_user_data" not in path_lower:
+                    if not verify_target.endswith("/"):
+                        verify_target = f"{verify_target}/"
+                    verify_target = f"{verify_target}get_user_data.php?id=2"
+                    smell_type = "idor_candidate"
+                    parameters = {"id_param": "id", "authz_probe": "authbypass_idor"}
+                elif "get_user_data" in path_lower:
+                    if "id" not in query_keys:
+                        separator = "&" if "?" in verify_target else "?"
+                        verify_target = f"{verify_target}{separator}id=2"
+                    smell_type = "idor_candidate"
+                    parameters = {"id_param": "id", "authz_probe": "authbypass_idor"}
+                elif "/weak_id/" in path_lower:
+                    if "id" not in query_keys:
+                        separator = "&" if "?" in verify_target else "?"
+                        verify_target = f"{verify_target}{separator}id=2"
+                    smell_type = "idor_candidate"
+                    parameters = {"id_param": "id", "authz_probe": "weak_id_idor"}
+                elif query_keys & set(id_param_names):
+                    id_param = next((name for name in id_param_names if name in query_keys), "id")
+                    smell_type = "idor_candidate"
+                    parameters = {"id_param": id_param, "authz_probe": "object_idor"}
+
+                verify_key = verify_target.lower()
+                if verify_key in companion_authz_target_keys:
+                    continue
+                companion_authz_target_keys.add(verify_key)
+
+                tasks.append(
+                    Task(
+                        id=f"bizlogic_authz_{uuid.uuid4().hex[:8]}",
+                        name="BizLogic AuthZ Differential Check",
+                        target=verify_target,
+                        agent_type="bizlogic",
+                        action="verify",
+                        phase="attack",
+                        params={
+                            "target": verify_target,
+                            "candidate": {
+                                "smell_type": smell_type,
+                                "method": "GET",
+                                "confidence": 0.8,
+                                "parameters": parameters,
+                            },
+                            "scan_profile": scan_profile,
+                            "source_category": source_category,
+                            "selection_origin": f"{selection_origin}.authz_companion",
+                        },
+                        tags=["idor_candidate", "authz_differential", "admin_endpoint"],
+                        priority=max(priority - 1, 1),
+                    )
+                )
+
+        def _normalize_supplement_target_key(raw_url: Any, category_name: str) -> str:
+            candidate = str(raw_url or "").strip()
+            if not candidate:
+                return ""
+            try:
+                normalized_candidate = self._normalize_url_candidate(candidate)
+            except Exception:
+                normalized_candidate = ""
+            return str(normalized_candidate or candidate).strip()
+
+        def _remember_signal_routed_target(category_name: str, raw_url: Any) -> None:
+            normalized_category_name = _normalize_recon_category_name(category_name)
+            target_key = _normalize_supplement_target_key(raw_url, normalized_category_name)
+            if not normalized_category_name or not target_key:
+                return
+            signal_routed_target_keys_by_category.setdefault(
+                normalized_category_name, set()
+            ).add(target_key)
+
+        # SGK-2026-0370: accumulate guard-bridge decisions for session/report
+        _guard_bridge_summary: list[dict[str, Any]] = []
         # ── Load suppression keys from KG (cross-run dedup) ───────────
         if hasattr(self, "graph") and self.graph:
             try:
@@ -10829,6 +11318,10 @@ class MasterConductor:
                 recipe_generated_count += 1
                 decision_stats["recipe_executed"] += 1
                 routed_signal_ids.add(signal_key)
+                recipe_signal_category = _resolve_signal_category(signal)
+                if recipe_signal_category:
+                    signal_routed_categories.add(recipe_signal_category)
+                    _remember_signal_routed_target(recipe_signal_category, recipe_target)
 
         if endpoint_signals:
             logger.info(
@@ -10844,16 +11337,12 @@ class MasterConductor:
                 signal_key = _signal_identity(sig)
                 if signal_key and signal_key in routed_signal_ids:
                     continue
-                primary = sig.get("primary_label", "")
-                if not primary:
+                normalized_category = _resolve_signal_category(sig)
+                if not normalized_category:
                     continue
-                # primary_label から normalized category を導出
-                # tagged_{category} 形式の場合は prefix を取り除く
-                if primary.startswith("tagged_"):
-                    primary = primary[7:]
-                signals_by_category.setdefault(primary, []).append(sig)
+                signals_by_category.setdefault(normalized_category, []).append(sig)
                 if signal_key:
-                    swarm_reasons_by_category.setdefault(primary, set()).add(
+                    swarm_reasons_by_category.setdefault(normalized_category, set()).add(
                         signal_swarm_reason_by_id.get(signal_key, "no_recipe_match")
                     )
 
@@ -10889,35 +11378,90 @@ class MasterConductor:
                     tags = [normalized_category]
 
                 task_id = str(uuid.uuid4())
+                signal_scan_profile = str(
+                    self.context.target_info.get("scan_profile")
+                    or self.context.target_info.get("profile")
+                    or "bbpt"
+                ).lower()
+                if signal_scan_profile not in {"bbpt", "ctf"}:
+                    signal_scan_profile = "bbpt"
+                signal_context: dict[str, Any] = {
+                    "discovered_endpoints": self.context.discovered_assets[:10],
+                    "auth_tokens": self.context.target_info.get("auth_tokens", {}),
+                    "discovered_params": [],
+                    "tech_stack": list(self.context.target_info.get("tech_stack", [])),
+                    "waf_info": {},
+                    "critical_findings": [],
+                }
+                signal_task_params: dict[str, Any] = {
+                    "task_id": task_id,
+                    "task_name": task_name,
+                    "target": primary_target,
+                    "targets": signal_urls,
+                    "targets_file": "",
+                    "tags": tags,
+                    "category": normalized_category,
+                    "signal_count": total_count,
+                    "swarm_type": swarm_type,
+                    "scan_profile": signal_scan_profile,
+                    "selection_origin": f"signal_bundle.{normalized_category}",
+                    "recipe_to_swarm_reason": (
+                        sorted(swarm_reasons_by_category.get(normalized_category, {"no_recipe_match"}))[0]
+                    ),
+                    "recipe_to_swarm_reasons": sorted(
+                        swarm_reasons_by_category.get(normalized_category, {"no_recipe_match"})
+                    ),
+                    "_context": signal_context,
+                    "_source": "signal_bundle",
+                    "_run_id": signal_bundle.get("_run_id", ""),
+                }
+                if normalized_category == "upload":
+                    signal_task_params.setdefault("scenario_id", "scn_09_multi_step_state_machine")
+                    signal_task_params.setdefault(
+                        "scenario",
+                        "state machine multi-step flow workflow abuse state transition precondition chain chaining",
+                    )
+                    signal_task_params.setdefault("attack_type", "workflow state transition")
+                    signal_task_params.setdefault(
+                        "description",
+                        "Multi-step state transition validation for sequence/precondition bypass conditions.",
+                    )
+                    # Signal-first upload tasks use the same benign-canary contract as
+                    # legacy recon upload tasks. Without this marker, SCN09 manual
+                    # deferral treats the upload probe like a broad workflow/RCE action.
+                    signal_task_params["safe_only"] = True
+                _apply_target_specific_hints(signal_task_params, normalized_category, signal_urls)
                 task = Task(
                     id=task_id,
                     name=task_name,
                     agent_type=actual_agent,
                     action="scan",
                     priority=80,
-                    params={
-                        "task_id": task_id,
-                        "task_name": task_name,
-                        "target": primary_target,
-                        "targets": signal_urls,
-                        "targets_file": "",
-                        "tags": tags,
-                        "category": normalized_category,
-                        "signal_count": total_count,
-                        "swarm_type": swarm_type,
-                        "selection_origin": f"signal_bundle.{normalized_category}",
-                        "recipe_to_swarm_reason": (
-                            sorted(swarm_reasons_by_category.get(normalized_category, {"no_recipe_match"}))[0]
-                        ),
-                        "recipe_to_swarm_reasons": sorted(
-                            swarm_reasons_by_category.get(normalized_category, {"no_recipe_match"})
-                        ),
-                        "_source": "signal_bundle",
-                        "_run_id": signal_bundle.get("_run_id", ""),
-                    },
+                    params=signal_task_params,
                 )
                 tasks.append(task)
+                if normalized_category != "command_injection":
+                    _append_legacy_detection_companion_tasks(
+                        targets=signal_urls,
+                        source_file="",
+                        source_category=f"signal_bundle.{normalized_category}",
+                        selection_origin=f"signal_bundle.{normalized_category}",
+                        scan_profile=signal_scan_profile,
+                        base_context=signal_context,
+                        priority=80,
+                    )
+                    _append_authz_differential_companion_tasks(
+                        targets=signal_urls,
+                        source_category=f"signal_bundle.{normalized_category}",
+                        selection_origin=f"signal_bundle.{normalized_category}",
+                        scan_profile=signal_scan_profile,
+                        priority=80,
+                    )
                 signal_generated_count += 1
+                signal_routed_categories.add(normalized_category)
+                for signal_url in signal_urls:
+                    _remember_signal_routed_target(normalized_category, signal_url)
+                decision_stats["swarm_fallback"] += 1
 
             if signal_generated_count > 0 or recipe_generated_count > 0:
                 logger.info(
@@ -10948,27 +11492,56 @@ class MasterConductor:
                     except Exception as kg_exc:
                         logger.warning("[SGK-2026-0261] KG persistence failed (non-fatal): %s", kg_exc)
 
-        # Fallback: signal bundle が存在しないか空の場合のみ旧 tagged_urls 経路を使用
+        # Fallback: signal bundle が存在しない/空の場合は旧 tagged_urls 経路を使用。
+        # Signal-first が一部カテゴリだけをカバーした場合は、未カバーの tagged カテゴリだけ補強する。
         if signal_generated_count == 0 and recipe_generated_count == 0:
             logger.debug(
                 "[SGK-2026-0261] No signals available, falling back to tagged_urls routing"
             )
         else:
-            # SGK-2026-0261: signal-first routing が成功したので fallback をスキップ
             logger.info(
-                "[SGK-2026-0261] Signal-first routing succeeded (%d scan tasks, %d recipe tasks); skipping fallback",
+                "[SGK-2026-0261] Signal-first routing succeeded (%d scan tasks, %d recipe tasks); supplementing missing tagged categories and URL gaps",
                 signal_generated_count,
                 recipe_generated_count,
             )
-            return tasks
 
-        # 各分類結果からタスクを生成（fallback path: signal 未生成時のみ）
-        for category, data in recon_results.items():
+        # 各分類結果からタスクを生成（fallback path）
+        if signal_generated_count == 0 and recipe_generated_count == 0:
+            fallback_recon_results = recon_results
+        else:
+            fallback_recon_results = {}
+            for category, data in recon_results.items():
+                if str(category or "").startswith("_"):
+                    continue
+                normalized_category = _normalize_recon_category_name(category)
+                if normalized_category not in signal_routed_categories:
+                    fallback_recon_results[category] = data
+                    continue
+                routed_target_keys = signal_routed_target_keys_by_category.get(
+                    normalized_category, set()
+                )
+                if not routed_target_keys:
+                    continue
+                if not isinstance(data, dict):
+                    continue
+                supplement_data = dict(data)
+                supplement_data["_supplement_exclude_target_keys"] = sorted(
+                    routed_target_keys
+                )
+                supplement_data["_supplement_reason"] = "signal_url_level_gap"
+                fallback_recon_results[category] = supplement_data
+            if fallback_recon_results:
+                logger.info(
+                    "[SGK-2026-0261] Supplementing %d legacy tagged category/categories or URL gap(s) not covered by signal-first: %s",
+                    len(fallback_recon_results),
+                    ", ".join(sorted(str(category) for category in fallback_recon_results.keys())),
+                )
+        for category, data in fallback_recon_results.items():
             # 内部キーはスキップ
             if category.startswith("_"):
                 continue
             original_category = category
-            normalized_category = category[7:] if category.startswith("tagged_") else category
+            normalized_category = _normalize_recon_category_name(category)
             count = data.get("count", 0)
             file_path = data.get("file", "")
             
@@ -10989,6 +11562,81 @@ class MasterConductor:
                 or self.context.target_info.get("auth_headers")
             )
             import_prov = data.get("_import_provenance", {}) if isinstance(data, dict) else {}
+
+            # ── SGK-2026-0370: compiled-guard evaluation per category ──
+            # Evaluate the compiled guard policy for this category's attack
+            # class and target BEFORE calling PhaseGate.  The compiled guard
+            # is the authoritative source for program-rule allow/block;
+            # PhaseGate only decides timing.
+            guard_decision = None  # type: Optional[GuardDecision]
+            _bb_mode = self._resolve_current_mode_name()
+            if _bb_mode == "bugbounty":
+                try:
+                    from src.core.security.guard_enforcement import (
+                        evaluate_at_layer,
+                        resolve_enforcement_stage,
+                        resolve_policy_from_context,
+                        bridge_guard_and_phase_gate,
+                    )
+                    from src.core.security.compiled_guard_models import GuardDecision as _GD
+                    from src.core.security.compiled_guard_models import GuardInput as _GI
+
+                    policy = resolve_policy_from_context(self.context.target_info)
+                    stage = resolve_enforcement_stage(context=self.context.target_info)
+
+                    # Map category to a guard attack_class where possible.
+                    _category_to_attack_class: dict[str, str] = {
+                        "id_param": "injection",
+                        "redirect_param": "ssrf",
+                        "file_param": "path_traversal",
+                        "upload": "file_upload",
+                        "product_search": "injection",
+                        "basket_order": "business_logic",
+                        "feedback_review": "injection",
+                        "file_exposure_upload": "file_upload",
+                        "api_data": "injection",
+                        "api_candidate": "injection",
+                        "api_endpoint": "injection",
+                        "cors_candidate": "injection",
+                        "csrf_candidate": "csrf",
+                        "xss_candidate": "xss",
+                        "command_injection": "injection",
+                        "debug_info": "info_disclosure",
+                        "realtime": "recon",
+                    }
+                    mc_attack_class = _category_to_attack_class.get(normalized_category, "")
+
+                    target_host = str(self.context.target_info.get("host", "") or "").strip()
+                    if not target_host:
+                        target_host = str(self.context.target_info.get("target", "") or "").strip()
+
+                    gi = _GI(
+                        bundle_id=policy.bundle_id if policy else "",
+                        policy_id=policy.policy_id if policy else "",
+                        target=target_host,
+                        host=target_host,
+                        phase="attack",
+                        attack_class=mc_attack_class,
+                        enforcement_layer="mc",
+                    )
+                    guard_decision = evaluate_at_layer(
+                        policy=policy, guard_input=gi, layer="mc", stage=stage,
+                    )
+                except Exception as _guard_err:
+                    logger.warning(
+                        "Compiled guard evaluation failed for category '%s': %s",
+                        normalized_category, _guard_err,
+                    )
+                    # Fail-closed: treat as block
+                    from src.core.security.compiled_guard_models import GuardDecision as _GDFallback
+                    guard_decision = _GDFallback(
+                        decision="block",
+                        reason_code="policy_fail_closed",
+                        source_refs=["compiled_guard_evaluator#eval_exception"],
+                        fail_closed=True,
+                    )
+
+            # ── PhaseGate check ──
             gate_metadata = {
                 "auth_required": bool(import_prov.get("auth_required", False)),
                 "has_auth_credentials": has_auth_credentials,
@@ -10998,9 +11646,96 @@ class MasterConductor:
             can_attack, gate_reason = self.phase_gate.can_create_attack_task(
                 normalized_category, gate_metadata
             )
-            if not can_attack:
+
+            # ── SGK-2026-0370: bridge compiled-guard + PhaseGate ──
+            _bridge_can_proceed = True
+            _bridge_reason = ""
+            _bridge_verdict = None
+            if guard_decision is not None and _bb_mode == "bugbounty":
+                try:
+                    from src.core.security.guard_enforcement import bridge_guard_and_phase_gate
+                    bv = bridge_guard_and_phase_gate(guard_decision, can_attack, gate_reason)
+                    _bridge_verdict = bv
+                    _guard_bridge_summary.append(bv.gate_summary)
+                    if bv.verdict == "lock_phase":
+                        _bridge_can_proceed = False
+                        _bridge_reason = f"compiled_guard_block:{guard_decision.reason_code}"
+                        decision_stats["guard_blocked"] += 1
+                    elif bv.verdict == "requires_hitl":
+                        # HITL required: stop task creation and register pending ticket.
+                        # The compiled guard says human approval is needed — do not proceed.
+                        _bridge_can_proceed = False
+                        _bridge_reason = f"requires_hitl:{guard_decision.reason_code}"
+                        decision_stats["guard_requires_hitl"] += 1
+                        # Register a pending HITL ticket so this is visible in session/report,
+                        # not silently dropped from the queue.
+                        _hitl_task = Task(
+                            id=f"hitl_{normalized_category}_{uuid.uuid4().hex[:8]}",
+                            name=f"HITL Gate: {normalized_category}",
+                            agent_type="hitl_gate",
+                            action="pending_approval",
+                            params={
+                                "category": normalized_category,
+                                "reason": guard_decision.reason_code,
+                                "source_refs": list(guard_decision.source_refs),
+                                "guard_decision": "requires_hitl",
+                            },
+                            priority=100,
+                        )
+                        _hitl_decision = {
+                            "scenario_id": f"guard_requires_hitl_{normalized_category}",
+                            "route": "shigoku_only",
+                            "reason_codes": list(bv.reason_codes),
+                            "source_refs": list(bv.source_refs),
+                        }
+                        try:
+                            _ticket_id = self._register_pending_hitl_ticket(
+                                _hitl_task, _hitl_decision, gate_mode="compiled_guard",
+                            )
+                            logger.info(
+                                "Category '%s' requires HITL (ticket=%s, reason=%s)",
+                                normalized_category, _ticket_id, guard_decision.reason_code,
+                            )
+                        except Exception as _hitl_err:
+                            logger.warning(
+                                "Failed to register HITL ticket for category '%s': %s",
+                                normalized_category, _hitl_err,
+                            )
+                    elif bv.verdict == "route_to_report":
+                        # Route to report path instead of attack task
+                        _bridge_can_proceed = False
+                        _bridge_reason = f"degrade_to_report:{guard_decision.reason_code}"
+                        decision_stats["guard_degrade_to_report"] += 1
+                        logger.info(
+                            "Category '%s' degraded to report: %s", normalized_category, guard_decision.reason_code,
+                        )
+                    elif bv.verdict == "defer":
+                        _bridge_can_proceed = False
+                        _bridge_reason = f"phase_gate_defer:{gate_reason}"
+                        decision_stats["gate_rejected"] += 1
+                    else:
+                        # "allow"
+                        _bridge_can_proceed = True
+                except Exception as _bridge_err:
+                    # Fail-closed: if bridge itself fails, reject
+                    logger.warning(
+                        "Guard bridge failed for category '%s': %s", normalized_category, _bridge_err,
+                    )
+                    _bridge_can_proceed = False
+                    _bridge_reason = f"bridge_error:{_bridge_err}"
+                    decision_stats["guard_blocked"] += 1
+
+            if not _bridge_can_proceed:
                 logger.warning(
-                    "Gate rejected category '%s': %s", normalized_category, gate_reason
+                    "Gate rejected category '%s': %s", normalized_category, _bridge_reason,
+                )
+                continue
+
+            # Fallback for non-bugbounty mode (no compiled guard available):
+            # use PhaseGate verdict directly.
+            if guard_decision is None and not can_attack:
+                logger.warning(
+                    "Gate rejected category '%s': %s", normalized_category, gate_reason,
                 )
                 decision_stats["gate_rejected"] += 1
                 continue
@@ -11021,6 +11756,7 @@ class MasterConductor:
                     "auth": ["auth_endpoint", "jwt_token", "token_auth_candidate"],
                     "admin": ["admin_panel"],
                     "id_param": ["sqli_candidate", "idor_candidate", "xss_candidate"],
+                    "crlf_candidate": ["crlf_candidate"],
                     "redirect_param": ["open_redirect", "ssrf_candidate"],
                     "file_param": ["lfi_candidate", "rce_candidate"],
                     "upload": ["file_upload", "rce_candidate"],
@@ -11036,8 +11772,10 @@ class MasterConductor:
                     "jwt_detected": ["jwt_token"],
                     "api_candidate": ["api_endpoint", "has_params"],
                     "api_endpoint": ["api_endpoint"],
+                    "cors_candidate": ["cors_candidate", "api_endpoint"],
                     "csrf_candidate": ["csrf_candidate", "auth_endpoint", "workflow_candidate"],
                     "xss_candidate": ["xss_candidate", "sqli_candidate"],
+                    "command_injection": ["cmd_candidate", "rce_candidate", "ssrf_candidate"],
                 }
 
                 # --- targets_file から URL リストを事前解決 ---
@@ -11047,6 +11785,13 @@ class MasterConductor:
                 url_evidence_by_url: dict[str, dict] = {}
                 normalized_target_keys: set[str] = set()
                 low_value_skipped = 0
+                supplement_exclude_target_keys = {
+                    str(target_key or "").strip()
+                    for target_key in data.get("_supplement_exclude_target_keys", [])
+                    if str(target_key or "").strip()
+                }
+                supplement_excluded_count = 0
+                supplement_reason = str(data.get("_supplement_reason", "") or "")
                 realtime_target_budget = int(getattr(settings, "realtime_target_budget", 5) or 5)
                 meta_target_budget = int(getattr(settings, "meta_observability_target_budget", 3) or 3)
 
@@ -11152,6 +11897,10 @@ class MasterConductor:
                                     _normalized_key = _normalize_target_for_category(_url, normalized_category)
                                     if not _normalized_key or _normalized_key in normalized_target_keys:
                                         continue
+                                    supplement_key = _normalize_supplement_target_key(_url, normalized_category)
+                                    if supplement_key in supplement_exclude_target_keys:
+                                        supplement_excluded_count += 1
+                                        continue
                                     normalized_target_keys.add(_normalized_key)
                                     resolved_targets.append(_url)
                                     _forms = _obj.get("forms", [])
@@ -11176,6 +11925,12 @@ class MasterConductor:
                     logger.info(
                         "[MC] Skipped %d low-value targets by heuristic (category=%s)",
                         low_value_skipped,
+                        normalized_category,
+                    )
+                if supplement_excluded_count > 0:
+                    logger.info(
+                        "[MC] Skipped %d signal-covered legacy supplement target(s) (category=%s)",
+                        supplement_excluded_count,
                         normalized_category,
                     )
 
@@ -11213,7 +11968,7 @@ class MasterConductor:
                             normalized_category,
                             limit=max(1, replay_limit),
                             file_window=replay_file_window,
-                            exclude_urls=set(normalized_target_keys),
+                            exclude_urls=set(normalized_target_keys) | supplement_exclude_target_keys,
                         )
 
                         replay_added = 0
@@ -11225,6 +11980,9 @@ class MasterConductor:
                                 continue
                             _normalized_key = _normalize_target_for_category(replay_url, normalized_category)
                             if not _normalized_key or _normalized_key in normalized_target_keys:
+                                continue
+                            supplement_key = _normalize_supplement_target_key(replay_url, normalized_category)
+                            if supplement_key in supplement_exclude_target_keys:
                                 continue
                             normalized_target_keys.add(_normalized_key)
                             resolved_targets.append(replay_url)
@@ -11280,7 +12038,16 @@ class MasterConductor:
                         len(normalized_target_keys),
                         len(resolved_targets),
                         meta_target_budget,
+                        )
+
+                if supplement_reason == "signal_url_level_gap" and not resolved_targets:
+                    logger.info(
+                        "[MC] Skipping %s legacy supplement: all targets already covered by signal-first",
+                        normalized_category,
                     )
+                    continue
+                if supplement_reason == "signal_url_level_gap" and resolved_targets:
+                    count = len(resolved_targets)
 
                 # Injection 系カテゴリで low-value URL のみが除外されて空になった場合は、
                 # discovered_assets から非 static / 非 root の候補を補完する。
@@ -11391,7 +12158,7 @@ class MasterConductor:
                         "description",
                         "Token trust-boundary analysis for JWT validation and signing-key handling.",
                     )
-                elif normalized_category in {"basket_order", "realtime", "csrf_candidate"}:
+                elif normalized_category in {"basket_order", "realtime", "csrf_candidate", "upload"}:
                     task_params.setdefault("scenario_id", "scn_09_multi_step_state_machine")
                     task_params.setdefault(
                         "scenario",
@@ -11402,8 +12169,15 @@ class MasterConductor:
                         "description",
                         "Multi-step state transition validation for sequence/precondition bypass conditions.",
                     )
+                    if normalized_category == "upload":
+                        # File upload tasks generated directly from recon must carry the
+                        # same safe-only contract as LogicManager.run_file_upload_check().
+                        # The intervention precheck uses this flag to distinguish benign
+                        # canary upload validation from manual web-shell / RCE attempts.
+                        task_params["safe_only"] = True
                 elif normalized_category in {
                     "id_param",
+                    "crlf_candidate",
                     "redirect_param",
                     "file_param",
                     "product_search",
@@ -11412,7 +12186,9 @@ class MasterConductor:
                     "client_route_dom",
                     "api_candidate",
                     "api_endpoint",
+                    "cors_candidate",
                     "xss_candidate",
+                    "command_injection",
                 }:
                     task_params.setdefault("scenario_id", "scn_03_injection_input_tampering")
                     task_params.setdefault(
@@ -11439,6 +12215,7 @@ class MasterConductor:
                 # 仮説駆動スキャンまで実行して finding 取りこぼしを抑える。
                 unknown_hypothesis_scan_categories = {
                     "id_param",
+                    "crlf_candidate",
                     "redirect_param",
                     "file_param",
                     "product_search",
@@ -11491,8 +12268,10 @@ class MasterConductor:
                     if extra:
                         task_params["extra_targets"] = extra[:5]
 
+                _apply_target_specific_hints(task_params, normalized_category, resolved_targets)
                 display_count = len(resolved_targets) if resolved_targets else count
                 task_display_name = f"{name} ({display_count} targets)"
+                task_priority = 90 - len(tasks) * 5
                 tasks.append(Task(
                     id=f"{normalized_category}_scan_{uuid.uuid4().hex[:8]}",
                     name=task_display_name,
@@ -11502,8 +12281,25 @@ class MasterConductor:
                     params=task_params,
                     target=str(task_params.get("target", "") or ""),
                     tags=tag_map.get(normalized_category, [normalized_category]),
-                    priority=90 - len(tasks) * 5,
+                    priority=task_priority,
                 ))
+                if normalized_category != "command_injection":
+                    _append_legacy_detection_companion_tasks(
+                        targets=resolved_targets,
+                        source_file=file_path,
+                        source_category=original_category,
+                        selection_origin=f"master_conductor.recon.{normalized_category}",
+                        scan_profile=str(task_params.get("scan_profile", "bbpt") or "bbpt"),
+                        base_context=task_params.get("_context", {}),
+                        priority=task_priority,
+                    )
+                    _append_authz_differential_companion_tasks(
+                        targets=resolved_targets,
+                        source_category=original_category,
+                        selection_origin=f"master_conductor.recon.{normalized_category}",
+                        scan_profile=str(task_params.get("scan_profile", "bbpt") or "bbpt"),
+                        priority=task_priority,
+                    )
                 logger.info(f"Created attack task: {task_display_name} (resolved {len(resolved_targets)} targets)")
             
             # 未知のカテゴリは Uncategorized として処理
@@ -12243,7 +13039,24 @@ class MasterConductor:
             tasks.extend(scenario_probe_tasks)
 
         logger.info(f"Generated {len(tasks)} base attack tasks from recon results")
-        
+
+        # ── SGK-2026-0370: persist guard-bridge decisions for session/report ──
+        if _guard_bridge_summary:
+            logger.info(
+                "[SGK-2026-0370] Guard-bridge verdicts: block=%d requires_hitl=%d degrade_to_report=%d "
+                "gate_rejected=%d",
+                decision_stats.get("guard_blocked", 0),
+                decision_stats.get("guard_requires_hitl", 0),
+                decision_stats.get("guard_degrade_to_report", 0),
+                decision_stats.get("gate_rejected", 0),
+            )
+            # Store in context so session/report artifacts can include them
+            self.context.target_info["_guard_bridge_summary"] = _guard_bridge_summary
+            self.context.target_info["_guard_bridge_decision_stats"] = {
+                k: v for k, v in decision_stats.items()
+                if k.startswith("guard_") or k == "gate_rejected"
+            }
+
         self.run_ledger_recorder.record(
             event_type=RunLedgerEventType.DECISION_MADE,
             phase="coverage_backfill",
@@ -12255,36 +13068,7 @@ class MasterConductor:
             source_refs={"task_count": len(tasks)} if tasks else None,
         )
         
-        # --- Task Expansion Phase ---
-        # 巨大な targets_file を個別タスクに展開してキューに追加
-        expander = TaskExpander(self.workspace)
-        final_tasks = []
-        
-        for base_task in tasks:
-            if "targets_file" in base_task.params:
-                subtasks = expander.expand(base_task)
-                if subtasks:
-                    logger.info("[MC] Expanded task %s into %d subtasks", base_task.id, len(subtasks))
-                    final_tasks.extend(subtasks)
-                    # 親タスクそのものは実行キューに入れない（サブタスクが代行するため）
-                    continue
-            
-            final_tasks.append(base_task)
-
-        prioritized_tasks: list[Task] = []
-        regular_tasks: list[Task] = []
-        for queued_task in final_tasks:
-            if task_pruning_policy_shared.is_coverage_critical_task(queued_task):
-                prioritized_tasks.append(queued_task)
-            else:
-                regular_tasks.append(queued_task)
-
-        if prioritized_tasks:
-            logger.info(
-                "Prioritized %d coverage-critical task(s) ahead of regular recon tasks",
-                len(prioritized_tasks),
-            )
-        return prioritized_tasks + regular_tasks
+        return self._finalize_attack_tasks(tasks)
     
     async def execute_parallel(self, max_workers: int = 5) -> dict:
         """

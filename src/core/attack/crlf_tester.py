@@ -24,6 +24,9 @@ class CRLFResult:
     vulnerable: bool = False
     injected_header: str = ""
     severity: str = "medium"
+    request_url: str = ""
+    response_status: int = 0
+    response_headers: Optional[Dict[str, str]] = None
 
 
 class CRLFTester:
@@ -144,6 +147,7 @@ class CRLFTester:
                 k: v[0] if len(v) == 1 else " ".join(v)
                 for k, v in multi.items()
             }
+            request_url = f"{parsed.scheme}://{parsed.netloc}{path}"
         except Exception:
             return None
         finally:
@@ -159,6 +163,9 @@ class CRLFTester:
                 vulnerable=True,
                 injected_header=injected_header,
                 severity="medium",
+                request_url=request_url,
+                response_status=resp.status,
+                response_headers=resp_headers,
             )
         return None
 

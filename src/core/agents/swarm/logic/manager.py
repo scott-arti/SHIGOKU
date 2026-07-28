@@ -8,6 +8,7 @@ from src.core.engine.agent_registry import AgentRegistry
 
 # Specialists are imported lazily inside _initialize_specialists or used as classes
 from src.core.agents.swarm.logic.file_upload import FileUploadSpecialist
+from src.core.attack.file_upload_tester import normalize_upload_extra_params
 
 logger = logging.getLogger(__name__)
 
@@ -134,18 +135,20 @@ class LogicManagerAgent(BaseManagerAgent):
         self, 
         url: str, 
         param_name: str = "uploaded", 
-        extra_params: Optional[Dict[str, str]] = None
+        extra_params: Optional[Any] = None
     ) -> Dict[str, Any]:
         """FileUploadSpecialist を実行"""
         logger.info(f"[{self.name}] Delegating File Upload check to specialist at {url}")
+        normalized_extra_params = normalize_upload_extra_params(extra_params)
         target_task = Task(
             id=f"logic_fu_{id(url)}",
             name="File Upload Check",
             target=url,
             params={
                 "param_name": param_name,
-                "extra_params": extra_params or {},
-                "headers": self.current_context.get("auth_headers", {})
+                "extra_params": normalized_extra_params,
+                "headers": self.current_context.get("auth_headers", {}),
+                "safe_only": True,
             },
             tags=["file_upload"]
         )

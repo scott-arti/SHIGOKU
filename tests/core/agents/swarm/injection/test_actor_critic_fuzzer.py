@@ -9,6 +9,7 @@ def mock_smart_request():
     mock_client = AsyncMock(spec=AsyncNetworkClient)
     req = SmartRequest(network_client=mock_client)
     req.request = AsyncMock()
+    req.target_url = "http://example.com"  # SGK fix: localhost フォールバック廃止に伴い明示設定
     return req
 
 @pytest.mark.asyncio

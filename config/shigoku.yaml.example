@@ -122,11 +122,25 @@ llm:
       profile: cheap_api
       fallback_profile: reasoning_api
       system_prompt_template: roles/specialist_light.md
+    ops_intent:
+      profile: cheap_api
+      fallback_profile: reasoning_api
+      system_prompt_template: roles/ops_intent.md
     vision_analysis:
       profile: vision_api
       fallback_profile: cheap_api
       system_prompt_template: roles/vision_analysis.md
       optional: true
+
+ops_intent:
+  feature_flag: true
+  kill_switch: false
+  llm_parse_timeout_sec: 15
+  command_timeout_sec: 900
+  retry_budget: 0
+  max_attack_targets_per_run: 25
+  non_tty_policy: fail_closed
+  daily_llm_budget: 25
 
 # 外部API設定
 api:

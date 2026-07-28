@@ -7,6 +7,7 @@ from pathlib import Path
 
 from src.core.domain.model.task import Task, _redact_secrets
 from src.core.utils.json_utils import safe_json_loads
+from src.reporting.attack_review_builder import build_all_review_fields
 
 
 def resolve_running_task_resume_policy(
@@ -82,6 +83,11 @@ def build_async_session_payload(
     decision_traces=None,
     task_execution_records=None,
     run_ledger_payload=None,
+    session_id: str | None = None,
+    run_id: str | None = None,
+    target_system_profile: dict | None = None,
+    attack_review_trail: dict | None = None,
+    scenario_candidates: list | None = None,
 ):
     payload = {
         "task_queue": [
@@ -161,6 +167,28 @@ def build_async_session_payload(
         if task.parent_id:
             adjacency_list.setdefault(task.parent_id, []).append(task.id)
     payload["adjacency_list"] = adjacency_list
+
+    # --- S2 (SGK-2026-0293): Auto-build additive review fields ---
+    auto_review = build_all_review_fields(payload, session_id=session_id, run_id=run_id)
+
+    payload["session_id"] = session_id
+    payload["run_id"] = run_id
+    payload["target_system_profile"] = (
+        target_system_profile
+        if target_system_profile is not None
+        else auto_review["target_system_profile"]
+    )
+    payload["attack_review_trail"] = (
+        attack_review_trail
+        if attack_review_trail is not None
+        else auto_review["attack_review_trail"]
+    )
+    payload["scenario_candidates"] = (
+        scenario_candidates
+        if scenario_candidates is not None
+        else auto_review["scenario_candidates"]
+    )
+
     return payload
 
 

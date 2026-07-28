@@ -174,6 +174,11 @@ async def test_verify_cookie_priv_esc_sets_authz_differential_metadata(biz_logic
     assert context.result == VerifyResult.SUCCESS
     assert context.finding is not None
     assert context.finding.additional_info["authz_differential"]["scenario"] == "cookie_privilege_escalation"
+    assert context.finding.additional_info["authz_differential"]["requires_second_account"] is True
+    assert (
+        context.finding.additional_info["authz_differential"]["precondition_status"]
+        == "second_account_not_available"
+    )
     assert "status_improved" in context.finding.additional_info["authz_differential"]["signals"]
     assert context.finding.additional_info["authz_differential"]["baseline_status"] == 403
     assert context.finding.additional_info["authz_differential"]["test_status"] == 200

@@ -10,13 +10,14 @@ from typing import List, Dict, Any, Optional
 
 from src.core.agents.swarm.base import Specialist, Task
 from src.core.models.finding import Finding, VulnType, Severity, Evidence
-from src.core.attack.file_upload_tester import FileUploadTester
+from src.core.attack.file_upload_tester import FileUploadTester, normalize_upload_extra_params
 from src.core.infra.network_client import AsyncNetworkClient
 
 # ProxyManager連携のため
 from src.core.infra.proxy_manager import get_proxy_manager
 
 logger = logging.getLogger(__name__)
+
 
 class FileUploadSpecialist(Specialist):
     """
@@ -100,7 +101,7 @@ class FileUploadSpecialist(Specialist):
         
         # パラメータの抽出
         param_name = task.params.get("param_name", "file")
-        extra_params = task.params.get("extra_params", {})
+        extra_params = normalize_upload_extra_params(task.params.get("extra_params", {}))
         
         # 実行 (Aggressive=True 必須)
         results = await tester.test_upload(
@@ -108,7 +109,8 @@ class FileUploadSpecialist(Specialist):
             param_name=param_name,
             extra_params=extra_params,
             auth_headers=task.params.get("headers"),
-            aggressive=self.is_aggressive
+            aggressive=self.is_aggressive,
+            safe_only=bool(task.params.get("safe_only", False)),
         )
         
         # 3. 結果の Finding 化
@@ -122,7 +124,24 @@ class FileUploadSpecialist(Specialist):
                     f"Successfully uploaded '{res.filename}' using {res.technique} technique.\n\n"
                     f"Predicted storage locations:\n{path_summary}"
                 )
-                
+                request_body = (
+                    "multipart/form-data upload\n"
+                    f"{param_name}=@{res.filename}; filename={res.filename}; content_type={res.mime_type}"
+                )
+                if extra_params:
+                    for key, value in extra_params.items():
+                        request_body += f"\n{key}={value}"
+                response_body = (
+                    f"Status: {res.status_code}\n"
+                    f"Evidence: {res.evidence}\n\n"
+                    f"Top Suggested Path: {res.suggested_paths[0].url if res.suggested_paths else 'Unknown'}"
+                )
+                response_headers = {}
+                content_type = res.delivery_telemetry.get("content_type") if isinstance(res.delivery_telemetry, dict) else None
+                if content_type:
+                    response_headers["Content-Type"] = content_type
+                confidence = 0.9 if res.retrieved else 0.7
+
                 findings.append(Finding(
                     vuln_type=VulnType.FILE_UPLOAD,
                     severity=Severity.HIGH,
@@ -131,10 +150,28 @@ class FileUploadSpecialist(Specialist):
                     evidence=Evidence(
                         request_method="POST",
                         request_url=task.target,
-                        response_body=f"Status: {res.status_code}\nEvidence: {res.evidence}\n\nTop Suggested Path: {res.suggested_paths[0].url if res.suggested_paths else 'Unknown'}"
+                        request_body=request_body,
+                        response_status=res.status_code,
+                        response_headers=response_headers,
+                        response_body=response_body,
                     ),
                     target_url=task.target,
-                    source_agent=self.name
+                    source_agent=self.name,
+                    confidence=confidence,
+                    additional_info={
+                        "payload": res.filename,
+                        "file_upload_evidence": {
+                            "upload_allowed": True,
+                            "retrieved": bool(res.retrieved),
+                            "retrieval_url": res.retrieval_url,
+                            "retrieval_status": res.retrieval_status,
+                            "execution_observed": False,
+                            "safe_canary": bool(task.params.get("safe_only", False)),
+                            "mime_type": res.mime_type,
+                            "technique": res.technique,
+                        },
+                        "payload_delivery": res.delivery_telemetry,
+                    },
                 ))
                 
         return findings

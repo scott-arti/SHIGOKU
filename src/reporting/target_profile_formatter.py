@@ -45,6 +45,17 @@ class TargetProfileFormatter:
 
     def __init__(self):
         self._session: Dict[str, Any] = {}
+        self._persisted_profile: Dict[str, Any] = {}
+
+    # ------------------------------------------------------------------
+    # SGK-2026-0293: persisted target_system_profile accessor
+    # ------------------------------------------------------------------
+
+    def _has_persisted_profile(self) -> bool:
+        """Check if a persisted target_system_profile exists in the session."""
+        profile = self._safe_dict(self._session.get("target_system_profile", {}))
+        self._persisted_profile = profile
+        return bool(profile.get("target_host") or profile.get("auth_methods") or profile.get("tech_stack"))
 
     # ------------------------------------------------------------------
     # ユーティリティ
@@ -144,17 +155,27 @@ class TargetProfileFormatter:
 
         has_data = False
 
-        url = self._safe_str(target_info.get("url", ""))
-        if url:
-            lines.append(f"- ターゲットURL: `{self._normalize_url(url)}`")
-            lines.append(f"  - source: context.target_info.url")
+        # SGK-2026-0293: Prefer persisted target_system_profile.target_host as primary URL
+        profile_host = self._safe_str(self._persisted_profile.get("target_host", ""))
+        if profile_host:
+            lines.append(f"- ターゲットURL: `{self._normalize_url(profile_host)}`")
+            lines.append(f"  - source: target_system_profile.target_host")
             has_data = True
+        else:
+            # Fallback to context.target_info.url
+            url = self._safe_str(target_info.get("url", ""))
+            if url:
+                lines.append(f"- ターゲットURL: `{self._normalize_url(url)}`")
+                lines.append(f"  - source: context.target_info.url (fallback)")
+                has_data = True
 
-        domain = self._safe_str(target_info.get("domain", ""))
-        if domain:
-            lines.append(f"- ドメイン: `{domain}`")
-            lines.append(f"  - source: context.target_info.domain")
-            has_data = True
+        # SGK-2026-0293: domain only as fallback when no persisted target_host
+        if not profile_host:
+            domain = self._safe_str(target_info.get("domain", ""))
+            if domain:
+                lines.append(f"- ドメイン: `{domain}`")
+                lines.append(f"  - source: context.target_info.domain (fallback)")
+                has_data = True
 
         # domains (list)
         domains = self._safe_list(target_info.get("domains", []))
@@ -200,6 +221,45 @@ class TargetProfileFormatter:
             except (ValueError, TypeError, OverflowError):
                 lines.append(f"- 検出日時(生データ): {start_time}")
                 has_data = True
+
+        # ── SGK-2026-0370: compiled-guard + PhaseGate bridge gate summary ──
+        _gate_summary = self._safe_list(target_info.get("_guard_bridge_summary", []))
+        _gate_stats = self._safe_dict(target_info.get("_guard_bridge_decision_stats", {}))
+        if _gate_summary or _gate_stats:
+            lines.append("")
+            lines.append("### ガード・ブリッジ判定サマリー (SGK-2026-0370)")
+            lines.append("")
+            if _gate_stats:
+                blocked = _gate_stats.get("guard_blocked", 0)
+                hitl = _gate_stats.get("guard_requires_hitl", 0)
+                degraded = _gate_stats.get("guard_degrade_to_report", 0)
+                pg_rejected = _gate_stats.get("gate_rejected", 0)
+                lines.append(f"- コンパイルガードによるブロック: {blocked} 件")
+                lines.append(f"- 要HITL (人の確認待ち): {hitl} 件")
+                lines.append(f"- レポート優先へ移行: {degraded} 件")
+                lines.append(f"- PhaseGate による延期/拒否: {pg_rejected} 件")
+                lines.append(f"  - source: context.target_info._guard_bridge_decision_stats")
+            if _gate_summary:
+                # Show up to 10 reason_code groups
+                reason_counts: dict[str, int] = {}
+                source_refs_seen: set[str] = set()
+                for entry in _gate_summary:
+                    for rc in entry.get("reason_codes", []):
+                        reason_counts[rc] = reason_counts.get(rc, 0) + 1
+                    for sr in entry.get("source_refs", []):
+                        if sr and isinstance(sr, str):
+                            source_refs_seen.add(sr)
+                if reason_counts:
+                    top_reasons = sorted(reason_counts.items(), key=lambda x: -x[1])[:10]
+                    lines.append("- 拒否理由の内訳:")
+                    for rc, count in top_reasons:
+                        lines.append(f"  - `{rc}`: {count} 件")
+                if source_refs_seen:
+                    lines.append("- 関連するポリシー参照:")
+                    for sr in sorted(source_refs_seen):
+                        lines.append(f"  - `{sr}`")
+                lines.append(f"  - source: context.target_info._guard_bridge_summary")
+            has_data = True
 
         if not has_data:
             lines.append(self._no_data_section("ターゲット情報"))
@@ -335,31 +395,47 @@ class TargetProfileFormatter:
         target_info = self._safe_dict(self._safe_get(self._session, "context", "target_info"))
         has_data = False
 
-        # tech_stack
-        tech_stack = self._safe_get(target_info, "tech_stack")
-        if tech_stack:
-            if isinstance(tech_stack, dict):
-                for k, v in tech_stack.items():
-                    lines.append(f"- {k}: `{v}`")
+        # SGK-2026-0293: Prefer persisted target_system_profile.tech_stack
+        profile_tech_stack = self._safe_dict(self._persisted_profile.get("tech_stack", {}))
+        if profile_tech_stack:
+            lines.append("### 技術スタック (persisted profile)")
+            lines.append("")
+            for k, v in profile_tech_stack.items():
+                lines.append(f"- {k}: `{v}`")
+            profile_refs = self._safe_list(self._persisted_profile.get("source_refs", []))
+            if profile_refs:
+                lines.append(f"  - source: target_system_profile.tech_stack ({', '.join(f'`{sr}`' for sr in profile_refs)})")
+            else:
+                lines.append(f"  - source: target_system_profile.tech_stack")
+            has_data = True
+            lines.append("")
+
+        # Fallback: context.target_info.tech_stack (only when profile has no tech_stack)
+        if not profile_tech_stack:
+            tech_stack = self._safe_get(target_info, "tech_stack")
+            if tech_stack:
+                if isinstance(tech_stack, dict):
+                    for k, v in tech_stack.items():
+                        lines.append(f"- {k}: `{v}`")
+                        has_data = True
+                elif isinstance(tech_stack, list):
+                    for item in tech_stack:
+                        if isinstance(item, dict):
+                            name = self._safe_str(item.get("name", item.get("technology", "")))
+                            version = self._safe_str(item.get("version", ""))
+                            line = f"- {name}"
+                            if version:
+                                line += f" (v{version})"
+                            lines.append(line)
+                        elif isinstance(item, str):
+                            lines.append(f"- {item}")
                     has_data = True
-            elif isinstance(tech_stack, list):
-                for item in tech_stack:
-                    if isinstance(item, dict):
-                        name = self._safe_str(item.get("name", item.get("technology", "")))
-                        version = self._safe_str(item.get("version", ""))
-                        line = f"- {name}"
-                        if version:
-                            line += f" (v{version})"
-                        lines.append(line)
-                    elif isinstance(item, str):
-                        lines.append(f"- {item}")
-                has_data = True
-            elif isinstance(tech_stack, str):
-                lines.append(f"- {tech_stack}")
-                has_data = True
-            if has_data:
-                lines.append(f"  - source: context.target_info.tech_stack")
-                lines.append("")
+                elif isinstance(tech_stack, str):
+                    lines.append(f"- {tech_stack}")
+                    has_data = True
+                if has_data:
+                    lines.append(f"  - source: context.target_info.tech_stack (fallback)")
+                    lines.append("")
 
         # fingerprint_metadata
         fp_meta = self._safe_get(target_info, "fingerprint_metadata")
@@ -419,26 +495,42 @@ class TargetProfileFormatter:
         target_info = self._safe_dict(self._safe_get(self._session, "context", "target_info"))
         has_data = False
 
-        # auth_mechanisms
-        auth_mechs = self._safe_get(target_info, "auth_mechanisms")
-        if auth_mechs:
-            if isinstance(auth_mechs, list):
-                for mech in auth_mechs:
-                    if isinstance(mech, dict):
-                        name = self._safe_str(mech.get("name", mech.get("type", "")))
-                        desc = self._safe_str(mech.get("description", mech.get("details", "")))
-                        line = f"- {name}"
-                        if desc:
-                            line += f": {desc}"
-                        lines.append(line)
-                    elif isinstance(mech, str):
-                        lines.append(f"- {mech}")
-                lines.append(f"  - source: context.target_info.auth_mechanisms")
-                has_data = True
-            elif isinstance(auth_mechs, str):
-                lines.append(f"- {auth_mechs}")
-                lines.append(f"  - source: context.target_info.auth_mechanisms")
-                has_data = True
+        # SGK-2026-0293: Prefer persisted target_system_profile.auth_methods
+        profile_auth_methods = self._safe_list(self._persisted_profile.get("auth_methods", []))
+        if profile_auth_methods:
+            lines.append("### 認証方式 (persisted profile)")
+            lines.append("")
+            for am in profile_auth_methods:
+                lines.append(f"- {am}")
+            profile_refs = self._safe_list(self._persisted_profile.get("source_refs", []))
+            if profile_refs:
+                lines.append(f"  - source: target_system_profile.auth_methods ({', '.join(f'`{sr}`' for sr in profile_refs)})")
+            else:
+                lines.append(f"  - source: target_system_profile.auth_methods")
+            has_data = True
+            lines.append("")
+
+        # Fallback: context.target_info.auth_mechanisms (only when profile has no auth_methods)
+        if not profile_auth_methods:
+            auth_mechs = self._safe_get(target_info, "auth_mechanisms")
+            if auth_mechs:
+                if isinstance(auth_mechs, list):
+                    for mech in auth_mechs:
+                        if isinstance(mech, dict):
+                            name = self._safe_str(mech.get("name", mech.get("type", "")))
+                            desc = self._safe_str(mech.get("description", mech.get("details", "")))
+                            line = f"- {name}"
+                            if desc:
+                                line += f": {desc}"
+                            lines.append(line)
+                        elif isinstance(mech, str):
+                            lines.append(f"- {mech}")
+                    lines.append(f"  - source: context.target_info.auth_mechanisms (fallback)")
+                    has_data = True
+                elif isinstance(auth_mechs, str):
+                    lines.append(f"- {auth_mechs}")
+                    lines.append(f"  - source: context.target_info.auth_mechanisms (fallback)")
+                    has_data = True
 
         # セッション管理 (target_info 内の関連フィールド)
         session_mgmt = self._safe_get(target_info, "session_management")
@@ -1026,6 +1118,7 @@ class TargetProfileFormatter:
             日本語Markdown形式の target_profile.md レポート文字列
         """
         self._session = session_data if isinstance(session_data, dict) else {}
+        _ = self._has_persisted_profile()  # populate _persisted_profile
 
         session_id = (
             self._safe_str(self._session.get("session_id", ""))

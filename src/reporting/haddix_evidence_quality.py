@@ -162,6 +162,10 @@ REASON_INSUFFICIENT_RESPONSE_DIFFERENCE = "insufficient_response_difference"
 REASON_COMMAND_EXECUTION_NOT_VERIFIED = "command_execution_not_verified"
 REASON_REDIRECT_TARGET_NOT_EXTERNAL = "redirect_target_not_external"
 REASON_WEAK_SESSION_NOT_STATISTICALLY_VERIFIED = "weak_session_not_statistically_verified"
+REASON_UNTESTED_NO_SECOND_ACCOUNT = "untested_no_second_account"
+REASON_FILE_UPLOAD_IMPACT_NOT_PROVEN = "file_upload_impact_not_proven"
+REASON_PUBLIC_DOCUMENTATION_NOT_AUTHZ_IMPACT = "public_documentation_not_authorization_impact"
+REASON_SESSION_TAKEOVER_NOT_VERIFIED = "session_takeover_not_verified"
 
 
 # ---------------------------------------------------------------------------
@@ -621,6 +625,8 @@ class HaddixEvidenceQualityValidator:
             "authorization_bypass",
         }:
             gaps.extend(self._authz_gaps(finding, info))
+        elif vuln_type in {"session_fixation"}:
+            gaps.extend(self._session_fixation_gaps(info))
         elif vuln_type in {"command_injection", "os_command_injection", "rce", "command_injection/ssrf"}:
             # command_injection/ssrf is split: both command_injection and ssrf
             # gaps are evaluated independently.
@@ -631,6 +637,8 @@ class HaddixEvidenceQualityValidator:
             gaps.extend(self._open_redirect_gaps(info))
         elif vuln_type in {"weak_session"}:
             gaps.extend(self._weak_session_gaps(info))
+        elif vuln_type in {"file_upload", "unrestricted_file_upload"}:
+            gaps.extend(self._file_upload_gaps(info))
         elif vuln_type in {"cors", "cors_misconfiguration", "misconfiguration"}:
             gaps.extend(self._cors_gaps(finding, info))
 
@@ -722,7 +730,34 @@ class HaddixEvidenceQualityValidator:
         return []
 
     def _authz_gaps(self, finding: HaddixFinding, info: Dict[str, Any]) -> List[str]:
+        if self._is_public_api_documentation(finding):
+            return [REASON_PUBLIC_DOCUMENTATION_NOT_AUTHZ_IMPACT]
         differential = self._safe_dict(info.get("authz_differential"))
+        precondition_status = str(differential.get("precondition_status", "") or "").lower()
+        reason = str(differential.get("reason", "") or "").lower()
+        if (
+            differential.get("requires_second_account")
+            or precondition_status == "second_account_not_available"
+            or reason == "second_account_not_available"
+        ):
+            return [REASON_UNTESTED_NO_SECOND_ACCOUNT]
+        scenario = str(differential.get("scenario", "") or "").lower()
+        cookie_name = str(differential.get("cookie_name", "") or "").lower()
+        second_account_verified = bool(
+            differential.get("second_account_verified")
+            or differential.get("victim_account_verified")
+            or differential.get("cross_account_verified")
+        )
+        session_cookie_names = {"phpsessid", "sessionid", "sid", "session"}
+        session_cookie_probe = bool(cookie_name in session_cookie_names or "session" in cookie_name)
+        if not second_account_verified and (
+            scenario in {"cookie_privilege_escalation", "session_privilege_escalation"}
+            or (session_cookie_probe and "privilege" in scenario)
+        ):
+            return [REASON_UNTESTED_NO_SECOND_ACCOUNT]
+        weak_session = self._safe_dict(info.get("weak_session_id"))
+        if weak_session and not second_account_verified and not differential:
+            return [REASON_UNTESTED_NO_SECOND_ACCOUNT]
         signals = self._safe_list(differential.get("signals"))
         sensitive_signal_tokens = {
             "email_exposed",
@@ -754,6 +789,25 @@ class HaddixEvidenceQualityValidator:
             # 200->200 alone is insufficient; need a sensitive-field root cause.
             return [REASON_AUTHZ_IMPACT_NOT_PROVEN]
         return []
+
+    @staticmethod
+    def _is_public_api_documentation(finding: HaddixFinding) -> bool:
+        """Recognise API-description documents without relying on endpoint names.
+
+        A public OpenAPI/Swagger/AsyncAPI document can contain contact email
+        addresses and API-like paths, but that alone does not prove an
+        authorization failure or exposure of a protected resource.
+        """
+        response = str(finding.poc_response or "")
+        _, _, body = response.partition("\n\n")
+        normalized = body.strip().lower()
+        if not normalized:
+            return False
+        return (
+            normalized.startswith("openapi:")
+            or normalized.startswith("swagger:")
+            or normalized.startswith("asyncapi:")
+        )
 
     def _command_injection_gaps(self, info: Dict[str, Any]) -> List[str]:
         evidence = self._safe_dict(info.get("command_execution_evidence"))
@@ -816,6 +870,26 @@ class HaddixEvidenceQualityValidator:
         evidence = self._safe_dict(info.get("weak_session_evidence"))
         if not evidence or not evidence.get("sample_set") or not evidence.get("predictability_evidence"):
             return [REASON_WEAK_SESSION_NOT_STATISTICALLY_VERIFIED]
+        return []
+
+    def _session_fixation_gaps(self, info: Dict[str, Any]) -> List[str]:
+        """Require a verified attacker reuse path, not only stable cookies."""
+        evidence = self._safe_dict(info.get("session_fixation_evidence"))
+        required = (
+            "attacker_controlled_session_id",
+            "victim_login_completed",
+            "attacker_authenticated_reuse_verified",
+        )
+        if not all(bool(evidence.get(key)) for key in required):
+            return [REASON_SESSION_TAKEOVER_NOT_VERIFIED]
+        return []
+
+    def _file_upload_gaps(self, info: Dict[str, Any]) -> List[str]:
+        evidence = self._safe_dict(info.get("file_upload_evidence"))
+        upload_allowed = bool(evidence.get("upload_allowed"))
+        impact_observed = bool(evidence.get("retrieved")) or bool(evidence.get("execution_observed"))
+        if not upload_allowed or not impact_observed:
+            return [REASON_FILE_UPLOAD_IMPACT_NOT_PROVEN]
         return []
 
     # ------------------------------------------------------------------

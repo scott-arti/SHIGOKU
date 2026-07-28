@@ -12,6 +12,7 @@ from src.core.engine.master_conductor_session_service import (
     restore_legacy_resume_session_state,
     serialize_legacy_session_task_queue,
     deserialize_legacy_session_task_queue,
+    build_async_session_payload,
 )
 from src.core.domain.model.task import Task, TaskState
 from src.core.session.session_manager import Session
@@ -162,6 +163,9 @@ def test_build_checkpoint_session_state_serializes_pending_completed_and_metadat
                 "error": None,
                 "tags": [],
                 "is_aggressive": False,
+                "depends_on_task_ids": [],
+                "supersedes_task_ids": [],
+                "invalidated_by_event": None,
                 "metadata": {},
             },
             ensure_ascii=False,
@@ -233,6 +237,9 @@ def test_serialize_legacy_session_task_queue_preserves_existing_schema() -> None
                 "error": None,
                 "tags": [],
                 "is_aggressive": False,
+                "depends_on_task_ids": [],
+                "supersedes_task_ids": [],
+                "invalidated_by_event": None,
                 "metadata": {},
             },
             ensure_ascii=False,
@@ -491,3 +498,243 @@ class TestLegacyCheckpointMetadata:
         assert "Bearer xyz" not in raw_json
         # Raw JSON must contain [REDACTED]
         assert "[REDACTED]" in raw_json
+
+
+# ===========================================================================
+# SGK-2026-0293: Additive review fields in build_async_session_payload
+# ===========================================================================
+
+def _build_context() -> SimpleNamespace:
+    ctx = SimpleNamespace()
+    ctx._total_attempts = 3
+    ctx._successful_attempts = 2
+    ctx.bypass_methods = ["jwt_bypass"]
+    ctx.discovered_assets = [{"url": "https://example.test", "type": "page"}]
+    ctx.target_info = {"url": "https://example.test", "domain": "example.test"}
+    ctx.success_rate = 0.67
+    ctx.total_attempts = 3
+    ctx.current_attack_chain = []
+    return ctx
+
+
+def test_build_async_session_payload_stores_session_id_and_run_id() -> None:
+    """session_id and run_id passed to builder must appear in the payload root."""
+    payload = build_async_session_payload(
+        task_queue=[],
+        completed_tasks=[],
+        context=_build_context(),
+        pending_hitl=[],
+        coverage_gate={},
+        scenario_coverage={},
+        timestamp=100.0,
+        default_start_time=100.0,
+        session_id="sess-abc-123",
+        run_id="run-xyz-456",
+    )
+
+    assert payload.get("session_id") == "sess-abc-123"
+    assert payload.get("run_id") == "run-xyz-456"
+
+
+def test_build_async_session_payload_preserves_existing_fields() -> None:
+    """New fields must not remove or rename any existing top-level keys."""
+    task = Task(
+        id="task-1", name="Test", agent_type="Recon", action="scan",
+        params={"target": "https://example.test"}, priority=10,
+        parent_id="parent-1",
+    )
+    task_comp = Task(
+        id="task-2", name="Done", agent_type="Auth", action="verify",
+        state=TaskState.SUCCESS, params={}, priority=5,
+    )
+    ctx = _build_context()
+
+    payload = build_async_session_payload(
+        task_queue=[task],
+        completed_tasks=[task_comp],
+        context=ctx,
+        pending_hitl=[],
+        coverage_gate={"missing_families": ["xss"]},
+        scenario_coverage={"missing_scenarios": ["scn_01"]},
+        timestamp=101.0,
+        default_start_time=100.0,
+        decision_traces=[{"decision_id": "d1", "action": "skip"}],
+        task_execution_records=[{"task_id": "task-1", "result": "success"}],
+        run_ledger_payload={
+            "run_ledger_schema_version": 1,
+            "run_ledger": [{"event_id": "e1"}],
+            "llm_usage_summary": {"total_tokens": 100},
+            "spool_path": "/tmp/spool",
+            "spool_sha256": "abc123",
+            "spool_event_count": 1,
+        },
+        session_id="sess-1",
+        run_id="run-1",
+    )
+
+    # Mandatory existing root keys
+    for key in ("task_queue", "completed_tasks", "context", "coverage_gate",
+                 "scenario_coverage", "pending_hitl", "start_time", "timestamp",
+                 "adjacency_list"):
+        assert key in payload, f"Missing required legacy key: {key}"
+
+    # S1 ledger fields
+    assert payload.get("decision_traces") == [{"decision_id": "d1", "action": "skip"}]
+    assert payload.get("task_execution_records") == [{"task_id": "task-1", "result": "success"}]
+    assert payload.get("run_ledger") == [{"event_id": "e1"}]
+    assert payload.get("llm_usage_summary") == {"total_tokens": 100}
+    assert payload.get("spool_sha256") == "abc123"
+    assert payload.get("spool_event_count") == 1
+
+
+def test_build_async_session_payload_includes_additive_review_fields() -> None:
+    """When target_system_profile/attack_review_trail/scenario_candidates are passed,
+    they must appear in the payload root."""
+    payload = build_async_session_payload(
+        task_queue=[],
+        completed_tasks=[],
+        context=_build_context(),
+        pending_hitl=[],
+        coverage_gate={},
+        scenario_coverage={},
+        timestamp=102.0,
+        default_start_time=100.0,
+        session_id="sess-2",
+        run_id="run-2",
+        target_system_profile={
+            "schema_version": 1,
+            "target_host": "example.test",
+            "auth_methods": ["JWT"],
+        },
+        attack_review_trail={
+            "schema_version": 1,
+            "entries": [{"trail_id": "t1", "phase": "recon", "observation": "page found"}],
+        },
+        scenario_candidates=[
+            {"candidate_id": "c1", "title": "Test scenario", "risk_level": "medium"},
+        ],
+    )
+
+    assert payload.get("target_system_profile") == {
+        "schema_version": 1, "target_host": "example.test", "auth_methods": ["JWT"],
+    }
+    assert payload.get("attack_review_trail") == {
+        "schema_version": 1,
+        "entries": [{"trail_id": "t1", "phase": "recon", "observation": "page found"}],
+    }
+    assert payload.get("scenario_candidates") == [
+        {"candidate_id": "c1", "title": "Test scenario", "risk_level": "medium"},
+    ]
+
+
+def test_build_async_session_payload_backward_compatible_without_new_args() -> None:
+    """Callers that omit session_id, run_id, and additive review fields must not crash."""
+    payload = build_async_session_payload(
+        task_queue=[],
+        completed_tasks=[],
+        context=_build_context(),
+        pending_hitl=[],
+        coverage_gate={},
+        scenario_coverage={},
+        timestamp=103.0,
+        default_start_time=100.0,
+    )
+
+    # Old callers still work
+    assert "task_queue" in payload
+    assert "completed_tasks" in payload
+    # New fields default when not provided
+    assert payload.get("session_id") is None
+    assert payload.get("run_id") is None
+    # target_system_profile is auto-generated from context (target_info present)
+    assert payload.get("target_system_profile") is not None
+    assert payload.get("target_system_profile")["schema_version"] == 1
+    # No execution data → trail/candidates remain None
+    assert payload.get("attack_review_trail") is None
+    assert payload.get("scenario_candidates") is None
+
+
+def test_build_async_session_payload_auto_builds_review_fields() -> None:
+    """When review fields are not explicitly passed, they are auto-built from session data."""
+    task = Task(
+        id="task-1", name="Test", agent_type="Recon", action="scan",
+        params={"target": "https://example.test"}, priority=10,
+        parent_id="parent-1",
+    )
+    task_comp = Task(
+        id="task-2", name="Done", agent_type="Auth", action="verify",
+        state=TaskState.SUCCESS, params={}, priority=5,
+    )
+    ctx = _build_context()
+
+    payload = build_async_session_payload(
+        task_queue=[task],
+        completed_tasks=[task_comp],
+        context=ctx,
+        pending_hitl=[],
+        coverage_gate={"missing_families": ["xss"]},
+        scenario_coverage={"missing_scenarios": ["scn_01"]},
+        timestamp=101.0,
+        default_start_time=100.0,
+        decision_traces=[{"decision_id": "d1", "action": "skip", "phase": "recon",
+                           "observation": "page found", "rationale": "worth skipping"}],
+        task_execution_records=[{"task_id": "task-1", "result": "success",
+                                  "phase": "execution", "summary": "task completed"}],
+        run_ledger_payload={
+            "run_ledger_schema_version": 1,
+            "run_ledger": [{"event_id": "e1", "action": "scan"}],
+            "llm_usage_summary": {"total_tokens": 100},
+            "spool_path": "/tmp/spool",
+            "spool_sha256": "abc123",
+            "spool_event_count": 1,
+        },
+        session_id="sess-1",
+        run_id="run-1",
+    )
+
+    # Auto-generated target_system_profile must not be None
+    target_profile = payload.get("target_system_profile")
+    assert target_profile is not None, "target_system_profile should be auto-generated"
+    assert target_profile.get("session_id") == "sess-1"
+    assert target_profile.get("run_id") == "run-1"
+
+    # Auto-generated attack_review_trail must not be None
+    review_trail = payload.get("attack_review_trail")
+    assert review_trail is not None, "attack_review_trail should be auto-generated"
+    assert review_trail.get("session_id") == "sess-1"
+    assert review_trail.get("run_id") == "run-1"
+    assert len(review_trail.get("entries", [])) > 0
+
+    # Auto-generated scenario_candidates must not be None
+    candidates = payload.get("scenario_candidates")
+    assert candidates is not None, "scenario_candidates should be auto-generated"
+    assert len(candidates) > 0
+    assert candidates[0].get("session_id") == "sess-1"
+    assert candidates[0].get("run_id") == "run-1"
+
+    # Explicit values take precedence over auto-generated ones
+    explicit_profile = {"schema_version": 1, "explicit": True}
+    explicit_trail = {"schema_version": 1, "entries": []}
+    explicit_candidates = [{"candidate_id": "explicit-1"}]
+
+    payload2 = build_async_session_payload(
+        task_queue=[task],
+        completed_tasks=[task_comp],
+        context=ctx,
+        pending_hitl=[],
+        coverage_gate={"missing_families": []},
+        scenario_coverage={"missing_scenarios": []},
+        timestamp=102.0,
+        default_start_time=100.0,
+        decision_traces=[],
+        task_execution_records=[],
+        session_id="sess-2",
+        run_id="run-2",
+        target_system_profile=explicit_profile,
+        attack_review_trail=explicit_trail,
+        scenario_candidates=explicit_candidates,
+    )
+
+    assert payload2["target_system_profile"] is explicit_profile
+    assert payload2["attack_review_trail"] is explicit_trail
+    assert payload2["scenario_candidates"] is explicit_candidates

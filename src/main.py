@@ -2013,6 +2013,10 @@ def _caido_token_from_settings() -> str:
         return ""
 
 
+def _skip_entry_gate_requested() -> bool:
+    return str(os.getenv("SHIGOKU_SKIP_ENTRY_GATE", "")).strip() == "1"
+
+
 # ===== Main Entry Point =====
 
 def main():
@@ -2470,6 +2474,18 @@ def main():
     )
 
     parser.add_argument(
+        "--attack-targets",
+        metavar="FILE",
+        help=msg("argparse.attack_targets.help"),
+    )
+
+    parser.add_argument(
+        "--wordlist",
+        metavar="FILE",
+        help=msg("argparse.wordlist.help"),
+    )
+
+    parser.add_argument(
         "--quality-loop",
         choices=["short"],
         help=msg("argparse.quality_loop.help")
@@ -2482,6 +2498,9 @@ def main():
     )
 
     args = parser.parse_args()
+
+    if args.attack_targets and (not args.target or args.interactive):
+        parser.error("--attack-targets は現時点では --target 経路でのみ利用できます")
 
     if args.fast_iterate:
         args.skip_initial_recon = True
@@ -3841,19 +3860,22 @@ def main():
         args.analyze,
         args.interactive,
     ]):
-        asyncio.run(
-            _run_entry_gate(
-                target=_normalize_target_for_preflight(
-                    str(args.target or args.recon or args.log or args.crawl or args.analyze or "")
+        if _skip_entry_gate_requested():
+            logger.warning("Skipping preflight entry gate because SHIGOKU_SKIP_ENTRY_GATE=1")
+        else:
+            asyncio.run(
+                _run_entry_gate(
+                    target=_normalize_target_for_preflight(
+                        str(args.target or args.recon or args.log or args.crawl or args.analyze or "")
+                    ),
+                    mode=str(mode),
+                    goal=_derive_goal_for_preflight(args),
+                    profile=str(args.profile or ""),
+                    cookies=str(args.cookie or ""),
+                    bearer_token=str(args.bearer_token or ""),
+                    debug=bool(args.debug),
                 ),
-                mode=str(mode),
-                goal=_derive_goal_for_preflight(args),
-                profile=str(args.profile or ""),
-                cookies=str(args.cookie or ""),
-                bearer_token=str(args.bearer_token or ""),
-                debug=bool(args.debug),
-            ),
-        )
+            )
 
     # モード判定と実行
     if args.demo:
@@ -3987,7 +4009,9 @@ def main():
                 orchestrator = ReconOrchestrator(kg, settings, network_client=network_client, llm_client=llm_client)
                 await orchestrator.run_pipeline(target_assets)
         
-        if args.skip_initial_recon:
+        if args.attack_targets:
+            print_step("⏭️", "Structured attack targets supplied. Skipping initial recon.")
+        elif args.skip_initial_recon:
             print_step("⏭️", msg("step.recon_skip"))
         else:
             print_step("🔍", msg("step.recon_start"))
@@ -4030,7 +4054,7 @@ def main():
         start_interactive_session(
             mode=mode,
             scope_file=scope_file,
-            auto_goal="Reconnaissance" if not args.mode == "vulntest" else "Attack", # vulntestならAttackから開始
+            auto_goal="Attack" if (args.mode == "vulntest" or args.attack_targets) else "Reconnaissance",
             auto_target=target,
             dry_run=args.dry_run,
             cookies=args.cookie,
@@ -4044,6 +4068,8 @@ def main():
             resume_state_path=resume_state_path,
             resume_source=resume_source,
             import_recon_dir=args.import_recon,
+            attack_targets_file=args.attack_targets,
+            wordlist_path=args.wordlist,
         )
         if not args.dry_run:
             _print_auto_report_bundle_summary(_auto_generate_standard_reports_for_target(target))

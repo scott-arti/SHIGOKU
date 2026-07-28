@@ -77,6 +77,59 @@ async def test_logic_manager_file_upload_delegation():
     assert called_task.target == task.target
     assert called_task.name == "File Upload Check"
 
+
+@pytest.mark.asyncio
+async def test_logic_manager_file_upload_normalizes_json_string_extra_params():
+    manager = LogicManagerAgent()
+    manager.current_context = {"auth_headers": {}, "findings": []}
+
+    mock_specialist = AsyncMock()
+    mock_specialist.execute_with_retry.return_value = []
+    manager.specialists["file_upload"] = mock_specialist
+
+    await manager.run_file_upload_check(
+        url="http://localhost:4280/vulnerabilities/upload/",
+        param_name="uploaded",
+        extra_params='{"MAX_FILE_SIZE": "100000", "Upload": "Upload"}',
+    )
+
+    mock_specialist.execute_with_retry.assert_called_once()
+    called_task = mock_specialist.execute_with_retry.call_args[0][0]
+    assert called_task.params["extra_params"] == {
+        "MAX_FILE_SIZE": "100000",
+        "Upload": "Upload",
+    }
+
+
+@pytest.mark.asyncio
+async def test_logic_manager_file_upload_legacy_params_become_extra_params():
+    manager = LogicManagerAgent()
+    manager.current_context = {"auth_headers": {}, "findings": []}
+
+    mock_specialist = AsyncMock()
+    mock_specialist.execute_with_retry.return_value = []
+    manager.specialists["file_upload"] = mock_specialist
+
+    await manager._execute_tool(
+        "run_file_upload_check",
+        {
+            "url": "http://localhost:4280/vulnerabilities/upload/",
+            "params": {
+                "MAX_FILE_SIZE": "100000",
+                "Upload": "Upload",
+            },
+        },
+    )
+
+    mock_specialist.execute_with_retry.assert_called_once()
+    called_task = mock_specialist.execute_with_retry.call_args[0][0]
+    assert called_task.params["param_name"] == "uploaded"
+    assert called_task.params["extra_params"] == {
+        "MAX_FILE_SIZE": "100000",
+        "Upload": "Upload",
+    }
+
+
 @pytest.mark.asyncio
 async def test_logic_manager_form_analysis_workflow():
     """

@@ -1388,3 +1388,286 @@ def test_ops_cli_narrative_extracts_deep_findings(tmp_path: Path) -> None:
     markdown = data["markdown"]
     assert "Deep Finding from result.findings" in markdown
     assert "Deeper Finding from data.findings" in markdown
+
+
+# ============================================================================
+# SGK-2026-0334: report decision-tree CLI tests
+# ============================================================================
+
+
+def _write_decision_tree_session(path: Path) -> None:
+    """Write a minimal session JSON with run_ledger events for decision-tree."""
+    events = [
+        {"event_id": "evt_0", "event_type": "decision_made", "phase": "recon",
+         "timestamp": "2026-07-01T00:00:00Z", "action": "dispatch_recon",
+         "actor_type": "MasterConductor", "actor_name": "MC"},
+        {"event_id": "evt_1", "event_type": "swarm_dispatched", "phase": "recon",
+         "timestamp": "2026-07-01T00:01:00Z", "parent_event_id": "evt_0",
+         "actor_type": "DiscoverySwarm", "actor_name": "DS"},
+        {"event_id": "evt_2", "event_type": "swarm_completed", "phase": "recon",
+         "timestamp": "2026-07-01T00:02:00Z", "parent_event_id": "evt_1",
+         "actor_type": "DiscoverySwarm", "actor_name": "DS"},
+        {"event_id": "evt_3", "event_type": "decision_made", "phase": "attack",
+         "timestamp": "2026-07-01T00:03:00Z", "parent_event_id": "evt_2",
+         "actor_type": "MasterConductor", "actor_name": "MC",
+         "decision_id": "dec_atk_1"},
+        {"event_id": "evt_4", "event_type": "error_occurred", "phase": "attack",
+         "timestamp": "2026-07-01T00:04:00Z", "parent_event_id": "evt_3",
+         "actor_type": "InjectionSwarm", "actor_name": "IS",
+         "error": "InjectionSwarm timeout"},
+    ]
+    payload = {
+        "run_ledger": events,
+        "task_queue": [],
+        "completed_tasks": [],
+        "start_time": 1719240000.0,
+        "context": {"target_info": {}},
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+
+def test_ops_cli_decision_tree_json_basic(tmp_path: Path) -> None:
+    """decision-tree --session with JSON output returns ok status with markdown."""
+    session_file = tmp_path / "session_test.json"
+    _write_decision_tree_session(session_file)
+
+    result = subprocess.run(
+        ["python3", "scripts/shigoku_ops_cli.py", "--json",
+         "report", "decision-tree", "--session", str(session_file)],
+        cwd=_repo_root(), capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["status"] == "ok"
+    assert "markdown" in data
+    assert "graph TD" in data["markdown"]
+    assert "evt_0" in data["markdown"]
+
+
+def test_ops_cli_decision_tree_output_file(tmp_path: Path) -> None:
+    """decision-tree --session --output writes to a file."""
+    session_file = tmp_path / "session_test.json"
+    out_file = tmp_path / "decision_tree.md"
+    _write_decision_tree_session(session_file)
+
+    result = subprocess.run(
+        ["python3", "scripts/shigoku_ops_cli.py",
+         "report", "decision-tree", "--session", str(session_file),
+         "--output", str(out_file)],
+        cwd=_repo_root(), capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert out_file.exists()
+    content = out_file.read_text(encoding="utf-8")
+    assert "graph TD" in content
+
+
+def test_ops_cli_decision_tree_only_failures(tmp_path: Path) -> None:
+    """--only-failures filters to error/failure nodes only."""
+    session_file = tmp_path / "session_test.json"
+    _write_decision_tree_session(session_file)
+
+    result = subprocess.run(
+        ["python3", "scripts/shigoku_ops_cli.py", "--json",
+         "report", "decision-tree", "--session", str(session_file),
+         "--only-failures"],
+        cwd=_repo_root(), capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    # Only evt_4 (error_occurred) should remain
+    # evt_0-3 are decision_made/swarm_dispatched/swarm_completed — not failures
+    markdown = data["markdown"]
+    assert "n_evt_4" in markdown
+    # Non-failure nodes should be absent
+    assert "n_evt_0" not in markdown
+    assert "n_evt_1" not in markdown
+
+
+def test_ops_cli_decision_tree_phase_filter(tmp_path: Path) -> None:
+    """--phase attack filters to attack-phase events."""
+    session_file = tmp_path / "session_test.json"
+    _write_decision_tree_session(session_file)
+
+    result = subprocess.run(
+        ["python3", "scripts/shigoku_ops_cli.py", "--json",
+         "report", "decision-tree", "--session", str(session_file),
+         "--phase", "attack"],
+        cwd=_repo_root(), capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    markdown = data["markdown"]
+    # Attack phase nodes: evt_3, evt_4
+    assert "n_evt_3" in markdown
+    assert "n_evt_4" in markdown
+    # Recon phase nodes should be absent
+    assert "n_evt_0" not in markdown
+    assert "n_evt_1" not in markdown
+
+
+def test_ops_cli_decision_tree_actor_filter(tmp_path: Path) -> None:
+    """--actor filter by actor type."""
+    session_file = tmp_path / "session_test.json"
+    _write_decision_tree_session(session_file)
+
+    result = subprocess.run(
+        ["python3", "scripts/shigoku_ops_cli.py", "--json",
+         "report", "decision-tree", "--session", str(session_file),
+         "--actor", "MasterConductor"],
+        cwd=_repo_root(), capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    markdown = data["markdown"]
+    assert "n_evt_0" in markdown
+    assert "n_evt_3" in markdown
+    # DiscoverySwarm / InjectionSwarm nodes absent
+    assert "n_evt_1" not in markdown
+    assert "n_evt_2" not in markdown
+    assert "n_evt_4" not in markdown
+
+
+def test_ops_cli_decision_tree_max_nodes(tmp_path: Path) -> None:
+    """--max-nodes limits output and marks degraded."""
+    session_file = tmp_path / "session_test.json"
+    _write_decision_tree_session(session_file)
+
+    result = subprocess.run(
+        ["python3", "scripts/shigoku_ops_cli.py", "--json",
+         "report", "decision-tree", "--session", str(session_file),
+         "--max-nodes", "2"],
+        cwd=_repo_root(), capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["status"] == "degraded"
+    assert "degraded_max_nodes" in data["reason_codes"]
+
+
+def test_ops_cli_decision_tree_json_envelope(tmp_path: Path) -> None:
+    """--json-envelope wraps output in stable envelope."""
+    session_file = tmp_path / "session_test.json"
+    _write_decision_tree_session(session_file)
+
+    result = subprocess.run(
+        ["python3", "scripts/shigoku_ops_cli.py", "--json", "--json-envelope",
+         "report", "decision-tree", "--session", str(session_file)],
+        cwd=_repo_root(), capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["schema_version"] == "shigoku.ops.v1"
+    assert "decision-tree" in data["command"]
+    assert "payload" in data
+    assert data["payload"]["status"] == "ok"
+
+
+def test_ops_cli_decision_tree_no_session_blocked(tmp_path: Path) -> None:
+    """No --session or --report returns blocked."""
+    result = subprocess.run(
+        ["python3", "scripts/shigoku_ops_cli.py", "--json",
+         "report", "decision-tree"],
+        cwd=_repo_root(), capture_output=True, text=True,
+    )
+    assert result.returncode == 2
+    data = json.loads(result.stdout)
+    assert data["status"] == "blocked"
+
+
+def test_ops_cli_decision_tree_legacy_session(tmp_path: Path) -> None:
+    """Legacy session with only decision_traces (no run_ledger) works."""
+    session_file = tmp_path / "session_legacy.json"
+    payload = {
+        "decision_traces": [
+            {"trace_id": "dt_1", "timestamp": "2026-07-01T00:00:00Z",
+             "phase": "recon", "action": "dispatch_recon"},
+            {"trace_id": "dt_2", "timestamp": "2026-07-01T00:01:00Z",
+             "phase": "attack", "action": "run_swarm"},
+        ],
+        "context": {"target_info": {}},
+    }
+    session_file.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    result = subprocess.run(
+        ["python3", "scripts/shigoku_ops_cli.py", "--json",
+         "report", "decision-tree", "--session", str(session_file)],
+        cwd=_repo_root(), capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    assert data["status"] == "ok"
+    assert "graph TD" in data["markdown"]
+
+
+def test_ops_cli_decision_tree_inconsistent_report_blocked(tmp_path: Path) -> None:
+    """--report with inconsistent session blocks output."""
+    session_file = tmp_path / "session_test.json"
+    report_file = tmp_path / "haddix_report_test.md"
+    _write_decision_tree_session(session_file)
+
+    # Write a report that points to a different session
+    report_file.write_text("\n".join([
+        "# Vulnerability Report",
+        "",
+        "**Target:** http://example.com/",
+        "**Generated:** 2026-07-01 12:00:00",
+        "**Source Session:** /nonexistent/session_nonexistent.json",
+        "**Tool:** SHIGOKU - Sovereign VAPT Engine",
+        "",
+        "Coverage: 5/12 (41%), Missing: scn_01,scn_02,scn_03,scn_04,scn_05,scn_06,scn_07",
+    ]), encoding="utf-8")
+
+    result = subprocess.run(
+        ["python3", "scripts/shigoku_ops_cli.py", "--json",
+         "report", "decision-tree", "--report", str(report_file),
+         "--sessions-dir", str(tmp_path)],
+        cwd=_repo_root(), capture_output=True, text=True,
+    )
+    # Should be blocked: inconsistent or session not found
+    data = json.loads(result.stdout)
+    assert data["status"] in ("blocked", "inconsistent")
+
+
+def test_ops_cli_decision_tree_json_output_writes_file(tmp_path: Path) -> None:
+    """--json --output writes the output file AND includes markdown in JSON payload."""
+    session_file = tmp_path / "session_test.json"
+    out_file = tmp_path / "decision_tree.md"
+    _write_decision_tree_session(session_file)
+
+    result = subprocess.run(
+        ["python3", "scripts/shigoku_ops_cli.py", "--json",
+         "report", "decision-tree", "--session", str(session_file),
+         "--output", str(out_file)],
+        cwd=_repo_root(), capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    # Output file must exist
+    assert out_file.exists(), f"Output file not created: {out_file}"
+    content = out_file.read_text(encoding="utf-8")
+    assert "graph TD" in content
+    # JSON payload should reference the output path
+    data = json.loads(result.stdout)
+    assert data["status"] == "ok"
+    assert data["output"] == str(out_file.resolve())
+
+
+def test_ops_cli_decision_tree_json_includes_degraded_nodes(tmp_path: Path) -> None:
+    """JSON summary must include degraded_nodes when nodes are degraded."""
+    session_file = tmp_path / "session_test.json"
+    _write_decision_tree_session(session_file)
+
+    result = subprocess.run(
+        ["python3", "scripts/shigoku_ops_cli.py", "--json",
+         "report", "decision-tree", "--session", str(session_file),
+         "--max-depth", "1"],
+        cwd=_repo_root(), capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    summary = data.get("summary", {})
+    # "degraded_nodes" must be a present key in the JSON summary
+    assert "degraded_nodes" in summary, (
+        f"JSON summary missing 'degraded_nodes' key. Got keys: {sorted(summary.keys())}"
+    )
+    assert isinstance(summary["degraded_nodes"], int)

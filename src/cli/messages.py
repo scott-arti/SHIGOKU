@@ -236,6 +236,12 @@ _MESSAGES_JA: Dict[str, str] = {
     "argparse.import_recon.help": (
         "過去偵察成果物ディレクトリを取り込み、freshness判定後にAttackタスク生成へ利用"
     ),
+    "argparse.attack_targets.help": (
+        "SGK-2026-0326 の structured target file を読み込み、single-session の Attack タスク生成へ橋渡しする"
+    ),
+    "argparse.wordlist.help": (
+        "Attack タスクへ引き渡すカスタムワードリストファイル"
+    ),
 
     # ----------------------------------------------------------
     # parser.error() messages

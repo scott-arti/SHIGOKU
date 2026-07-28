@@ -114,7 +114,7 @@ class PayloadManager:
             filename=f"probe_{self._random_id()}.jpg",
             content=b"SHIGOKU_PROBE_IMAGE_DATA",
             mime_type="image/jpeg",
-            technique="Path Discovery Probe"
+            technique="Safe Canary Upload Probe"
         )
 
     def _random_id(self, length: int = 6) -> str:

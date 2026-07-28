@@ -84,7 +84,9 @@ INPUT: [Input]
         }
         
         # SmartRequestからURLを取得する
-        url_target = getattr(self.target_request, "target_url", getattr(self.target_request, "url", "http://localhost"))
+        url_target = getattr(self.target_request, "target_url", None) or getattr(self.target_request, "url", None)
+        if not url_target:
+            raise ValueError("ActorCriticFuzzer: target_request に target_url/url が未設定です (http://localhost フォールバックは廃止)")
 
         if not self.ethics.check_scope(url_target):
             logger.warning(f"[Prober] Target out of scope: {url_target}")
@@ -250,7 +252,9 @@ INPUT: [Input]
                 
                 # 動的検証: 有望なペイロードをPlaywrightでテスト
                 validation_results = []
-                url_target = getattr(self.target_request, "target_url", getattr(self.target_request, "url", "http://localhost"))
+                url_target = getattr(self.target_request, "target_url", None) or getattr(self.target_request, "url", None)
+                if not url_target:
+                    raise ValueError("ActorCriticFuzzer: target_request に target_url/url が未設定です (http://localhost フォールバックは廃止)")
                 
                 if summary.get("promising"):
                     logger.info(f"[ActorCriticFuzzer] Verifying {len(summary['promising'])} promising payloads with Playwright...")

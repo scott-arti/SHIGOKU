@@ -49,6 +49,9 @@ FAIL_CLOSED_REASON_CODES = frozenset({
     "target_mismatch",
     "unknown_artifact",
     "stale_artifact",
+    # SGK-2026-0281: missing fingerprints/provenance cannot verify artifact identity
+    "missing_target_fingerprint",
+    "missing_provenance",
 })
 
 
@@ -198,6 +201,9 @@ def load_imported_recon_dir(
     # Normalise results from accepted artifacts
     if any(a.exists and a.data is not None and not a.informational_only for a in bundle.artifacts):
         bundle.normalized_results = _normalize_bundle(bundle)
+        if not bundle.normalized_results:
+            bundle.all_rejected = True
+            logger.warning("Imported recon produced no accepted normalized results for target=%s", target)
     else:
         bundle.all_rejected = True
         logger.warning("All imported artifacts were rejected for target=%s", target)
@@ -287,20 +293,41 @@ def _load_single_artifact(
     if kind == "recon_state" and target and isinstance(artifact.data, dict):
         state_target = artifact.data.get("target", "")
         state_fp = artifact.data.get("target_fingerprint", "")
+        state_saved_at = str(
+            artifact.data.get("saved_at", "")
+            or artifact.data.get("generated_at", "")
+            or ""
+        ).strip()
         if state_target and str(state_target).strip().lower() != target.strip().lower():
             artifact.reason_codes.append("target_mismatch")
             artifact.warnings.append(
                 f"Target mismatch: recon_state has '{state_target}', expected '{target}'"
             )
-        # SGK-2026-0281: carry fingerprint in provenance for verification
+        # SGK-2026-0281: fail-closed — missing fingerprint cannot verify artifact identity
+        if not state_fp:
+            artifact.reason_codes.append("missing_target_fingerprint")
+            artifact.warnings.append(
+                f"Missing target_fingerprint in recon_state for target check"
+            )
         if state_fp:
             artifact.provenance["target_fingerprint"] = state_fp
+        if not state_saved_at:
+            artifact.reason_codes.append("missing_provenance")
+            artifact.warnings.append(
+                "Missing saved_at/generated_at provenance in recon_state"
+            )
+        else:
+            artifact.provenance["generated_at"] = state_saved_at
         artifact.provenance["fingerprint_match"] = (
             "target_mismatch" not in artifact.reason_codes
+            and "missing_target_fingerprint" not in artifact.reason_codes
+            and "missing_provenance" not in artifact.reason_codes
         )
 
     # ---- Freshness scoring ----
     _apply_freshness(artifact, freshness_threshold)
+    if any(code in FAIL_CLOSED_REASON_CODES for code in artifact.reason_codes):
+        artifact.informational_only = True
 
     return artifact
 
@@ -317,18 +344,31 @@ def _apply_freshness(artifact: ImportedReconArtifact, threshold: float) -> None:
     ``first_seen_dead`` / ``last_seen_dead`` timestamps, we derive a surrogate
     from mtime when possible.
     """
-    if artifact.mtime is None:
+    reference_dt: Optional[datetime] = None
+    generated_at = str(artifact.provenance.get("generated_at", "") or "").strip()
+    if generated_at:
+        try:
+            parsed = datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
+            reference_dt = parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+        except ValueError:
+            artifact.reason_codes.append("missing_provenance")
+            artifact.warnings.append(f"Invalid generated_at provenance: {generated_at}")
+            artifact.informational_only = True
+            artifact.freshness_score = 0.0
+            return
+    elif artifact.mtime is not None:
+        reference_dt = datetime.fromtimestamp(artifact.mtime, tz=timezone.utc)
+
+    if reference_dt is None:
         artifact.freshness_score = 0.0
         artifact.reason_codes.append("stale_artifact")
         artifact.informational_only = True
         return
 
-    mtime_dt = datetime.fromtimestamp(artifact.mtime, tz=timezone.utc)
-
     # Reuse recipe_loader's compute_freshness_score with mtime as single signal
     score = compute_freshness_score(
-        first_seen_dead=mtime_dt,
-        last_seen_dead=mtime_dt,
+        first_seen_dead=reference_dt,
+        last_seen_dead=reference_dt,
         last_dns_probe=None,
         last_http_probe=None,
     )

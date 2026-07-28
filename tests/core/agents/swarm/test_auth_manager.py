@@ -1,4 +1,5 @@
 import pytest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, AsyncMock, patch
 from src.core.agents.swarm.auth.manager import AuthManagerAgent
 from src.core.agents.swarm.auth.auth_ninja import AuthNinja
@@ -99,3 +100,51 @@ async def test_run_session_bac_check_sets_idor_bola_detection_class():
     assert manager.current_context["findings"]
     finding = manager.current_context["findings"][0]
     assert finding.additional_info.get("detection_class") == "idor_bola"
+
+
+@pytest.mark.asyncio
+async def test_weak_session_predictability_marks_second_account_precondition(monkeypatch):
+    manager = AuthManagerAgent(config={"model": "test-model"})
+    manager.current_context = {"findings": []}
+
+    class _PredictableAnalyzer:
+        def analyze_randomness(self, _values):
+            return {
+                "is_predictable": True,
+                "pattern": "incremental",
+                "reason": "predictable sequence",
+            }
+
+        def infer_vuln_type(self, _analysis):
+            return "weak_session_id"
+
+    import src.core.attack.session_tester as session_tester_module
+
+    monkeypatch.setattr(session_tester_module, "SessionAnalyzer", _PredictableAnalyzer)
+
+    client = MagicMock()
+    client.request = AsyncMock(
+        side_effect=[
+            SimpleNamespace(cookies={"PHPSESSID": "1"}),
+            SimpleNamespace(cookies={"PHPSESSID": "2"}),
+            SimpleNamespace(cookies={"PHPSESSID": "3"}),
+            SimpleNamespace(cookies={"PHPSESSID": "4"}),
+            SimpleNamespace(cookies={"PHPSESSID": "5"}),
+        ]
+    )
+    client.get_cookies = MagicMock(return_value={})
+
+    result = await manager._check_weak_session_predictability(
+        "http://localhost:4280/vulnerabilities/weak_id/?id=1",
+        {},
+        client,
+        {"Cookie": "security=low"},
+    )
+
+    assert result["vulnerable"] is True
+    finding = manager.current_context["findings"][0]
+    info = finding.additional_info
+    assert info["requires_second_account"] is True
+    assert info["precondition_status"] == "second_account_not_available"
+    assert info["authz_differential"]["requires_second_account"] is True
+    assert info["authz_differential"]["precondition_status"] == "second_account_not_available"

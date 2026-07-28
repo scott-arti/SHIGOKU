@@ -35,7 +35,9 @@ def _write_recon_state(dir_path: Path, data: dict) -> Path:
     """Write a recon_state.json into *dir_path* and return the file path."""
     dir_path.mkdir(parents=True, exist_ok=True)
     file_path = dir_path / "recon_state.json"
-    file_path.write_text(json.dumps(data, indent=2))
+    payload = dict(data)
+    payload.setdefault("saved_at", datetime.now(timezone.utc).isoformat())
+    file_path.write_text(json.dumps(payload, indent=2))
     return file_path
 
 
@@ -68,7 +70,7 @@ def test_import_only_attack_tasks_generated():
         recon_dir = Path(td) / "recon_import"
         recon_file = _write_recon_state(
             recon_dir,
-            {"target": "example.com", "live_subs": ["sub.example.com"]},
+            {"target": "example.com", "target_fingerprint": "ab12cd34ef56gh78", "live_subs": ["sub.example.com"]},
         )
 
         mc = _new_mc(import_recon_dir=str(recon_dir), target="example.com")
@@ -97,10 +99,11 @@ def test_stale_all_excluded_no_attack_tasks():
         recon_dir = Path(td) / "recon_import"
         recon_file = _write_recon_state(
             recon_dir,
-            {"target": "example.com", "live_subs": ["sub.example.com"]},
+            {"target": "example.com", "target_fingerprint": "ab12cd34ef56gh78", "live_subs": ["sub.example.com"]},
         )
-        # Set mtime 100 days ago → freshness_score well below 0.2 threshold
-        _set_mtime_days_ago(recon_file, 100)
+        stale_payload = json.loads(recon_file.read_text(encoding="utf-8"))
+        stale_payload["saved_at"] = (datetime.now(timezone.utc) - timedelta(days=100)).isoformat()
+        recon_file.write_text(json.dumps(stale_payload, indent=2), encoding="utf-8")
 
         mc = _new_mc(import_recon_dir=str(recon_dir), target="example.com")
 
@@ -130,7 +133,7 @@ def test_fresh_recon_priority_merge():
         recon_dir = Path(td) / "recon_import"
         _write_recon_state(
             recon_dir,
-            {"target": "example.com", "live_subs": ["sub.example.com"]},
+            {"target": "example.com", "target_fingerprint": "ab12cd34ef56gh78", "live_subs": ["sub.example.com"]},
         )
 
         mc = _new_mc(import_recon_dir=str(recon_dir), target="example.com")
@@ -147,6 +150,7 @@ def test_fresh_recon_priority_merge():
         assert "recon_live_subs" in result
         assert result["recon_live_subs"]["_source"] == "imported"
         assert "_import_provenance" in result["recon_live_subs"]
+        assert result["recon_live_subs"]["_import_provenance"]["accepted_generated_at"]
         assert result["recon_live_subs"]["count"] >= 1
 
 
@@ -180,7 +184,7 @@ def test_load_import_recon_bundle_caches_result():
         recon_dir = Path(td) / "recon_import"
         _write_recon_state(
             recon_dir,
-            {"target": "example.com", "live_subs": ["sub.example.com"]},
+            {"target": "example.com", "target_fingerprint": "ab12cd34ef56gh78", "live_subs": ["sub.example.com"]},
         )
 
         mc = _new_mc(import_recon_dir=str(recon_dir), target="example.com")
@@ -190,3 +194,28 @@ def test_load_import_recon_bundle_caches_result():
 
         assert bundle1 is bundle2
         assert mc._import_recon_bundle is bundle1
+
+
+def test_import_recon_missing_saved_at_is_rejected() -> None:
+    with tempfile.TemporaryDirectory() as td:
+        recon_dir = Path(td) / "recon_import"
+        recon_dir.mkdir(parents=True, exist_ok=True)
+        (recon_dir / "recon_state.json").write_text(
+            json.dumps(
+                {
+                    "target": "example.com",
+                    "target_fingerprint": "ab12cd34ef56gh78",
+                    "live_subs": ["sub.example.com"],
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+
+        mc = _new_mc(import_recon_dir=str(recon_dir), target="example.com")
+        bundle = mc._load_import_recon_bundle()
+
+        assert bundle is not None
+        assert bundle.accepted is False
+        assert bundle.all_rejected is True
+        assert "missing_provenance" in bundle.rejected_artifacts[0].reason_codes

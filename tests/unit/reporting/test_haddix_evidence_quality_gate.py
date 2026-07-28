@@ -360,6 +360,108 @@ class TestVulnSpecificMatrix:
         assert verdict.shadow_status == "candidate"
         assert "authz_impact_not_proven" in verdict.reason_codes
 
+    def test_authz_without_second_account_is_untested_not_impact_gap(self):
+        finding = _make_finding(
+            vuln_type="broken_access_control",
+            poc_request="GET /users/2 HTTP/1.1\nHost: 127.0.0.1:4280\n",
+            poc_response="HTTP/1.1 200 OK\n\n{\"id\":2}",
+            payloads_used=["2"],
+            additional_info={
+                "authz_differential": {
+                    "precondition_status": "second_account_not_available",
+                    "requires_second_account": True,
+                },
+            },
+        )
+        validator = HaddixEvidenceQualityValidator()
+        verdict = validator.evaluate_finding(finding, current_status="confirmed")
+
+        assert verdict.shadow_status == "candidate"
+        assert "untested_no_second_account" in verdict.reason_codes
+        assert "authz_impact_not_proven" not in verdict.reason_codes
+
+    def test_authz_cookie_privilege_probe_without_second_account_is_untested(self):
+        finding = _make_finding(
+            vuln_type="broken_access_control",
+            poc_request="GET /vulnerabilities/authbypass/get_user_data.php?id=2 HTTP/1.1\nHost: 127.0.0.1:4280\n",
+            poc_response="HTTP/1.1 200 OK\n\nadmin",
+            payloads_used=["PHPSESSID=1"],
+            additional_info={
+                "authz_differential": {
+                    "scenario": "cookie_privilege_escalation",
+                    "baseline_status": 200,
+                    "test_status": 200,
+                    "signals": ["admin_keyword_exposed"],
+                    "cookie_name": "PHPSESSID",
+                },
+            },
+        )
+        validator = HaddixEvidenceQualityValidator()
+        verdict = validator.evaluate_finding(finding, current_status="confirmed")
+
+        assert verdict.shadow_status == "candidate"
+        assert "untested_no_second_account" in verdict.reason_codes
+        assert "authz_impact_not_proven" not in verdict.reason_codes
+
+    def test_weak_session_id_authz_probe_without_second_account_is_untested(self):
+        finding = _make_finding(
+            vuln_type="broken_access_control",
+            poc_request="GET /vulnerabilities/weak_id/?id=2 HTTP/1.1\nHost: 127.0.0.1:4280\n",
+            poc_response="HTTP/1.1 200 OK\n\nWeak session id observed",
+            payloads_used=["id=2"],
+            additional_info={
+                "weak_session_id": {
+                    "observed_sequence": ["1", "2", "3"],
+                    "predictable": True,
+                },
+            },
+        )
+        validator = HaddixEvidenceQualityValidator()
+        verdict = validator.evaluate_finding(finding, current_status="confirmed")
+
+        assert verdict.shadow_status == "candidate"
+        assert "untested_no_second_account" in verdict.reason_codes
+        assert "authz_impact_not_proven" not in verdict.reason_codes
+
+    def test_file_upload_requires_retrieval_or_execution_impact(self):
+        finding = _make_finding(
+            vuln_type="file_upload",
+            poc_request="POST /upload HTTP/1.1\nHost: 127.0.0.1:4280\n\nfilename=probe.jpg",
+            poc_response="HTTP/1.1 200 OK\n\nFile successfully uploaded",
+            payloads_used=["probe.jpg"],
+            additional_info={
+                "file_upload_evidence": {
+                    "upload_allowed": True,
+                    "retrieved": False,
+                    "execution_observed": False,
+                },
+            },
+        )
+        validator = HaddixEvidenceQualityValidator()
+        verdict = validator.evaluate_finding(finding, current_status="confirmed")
+
+        assert verdict.shadow_status == "candidate"
+        assert "file_upload_impact_not_proven" in verdict.reason_codes
+
+    def test_file_upload_with_retrieved_canary_is_confirmed(self):
+        finding = _make_finding(
+            vuln_type="file_upload",
+            poc_request="POST /upload HTTP/1.1\nHost: 127.0.0.1:4280\n\nfilename=probe.jpg",
+            poc_response="HTTP/1.1 200 OK\n\nFile successfully uploaded",
+            payloads_used=["probe.jpg"],
+            additional_info={
+                "file_upload_evidence": {
+                    "upload_allowed": True,
+                    "retrieved": True,
+                    "retrieval_url": "http://127.0.0.1:4280/uploads/probe.jpg",
+                },
+            },
+        )
+        validator = HaddixEvidenceQualityValidator()
+        verdict = validator.evaluate_finding(finding, current_status="candidate")
+
+        assert verdict.shadow_status == "confirmed"
+
     def test_api_authz_with_sensitive_fields_confirmed(self):
         finding = _make_finding(
             vuln_type="broken_access_control",
@@ -1862,11 +1964,79 @@ class TestUnauthenticatedAPIAccessP4:
                     "baseline_status": 401,
                     "test_status": 200,
                     "signals": ["email_exposed", "api_key_exposed"],
+                    "authorization_boundary_verified": True,
                 },
             },
         )
         validator = HaddixEvidenceQualityValidator()
         verdict = validator.evaluate_finding(finding, current_status="confirmed")
+        assert verdict.shadow_status == "confirmed"
+
+    def test_openapi_document_with_contact_email_is_not_authz_impact(self):
+        finding = _make_finding(
+            vuln_type="unauthenticated_api_access",
+            poc_request="GET /api/schema HTTP/1.1\nHost: example.test\n\n",
+            poc_response=(
+                "HTTP/1.1 200 OK\nContent-Type: application/yaml\n\n"
+                "openapi: 3.0.0\ninfo:\n  contact:\n    email: security@example.test\n"
+            ),
+            additional_info={
+                "authz_differential": {
+                    "baseline_status": 200,
+                    "test_status": 200,
+                    "signals": ["email_exposed"],
+                },
+            },
+        )
+
+        verdict = HaddixEvidenceQualityValidator().evaluate_finding(
+            finding,
+            current_status="confirmed",
+        )
+
+        assert verdict.shadow_status == "candidate"
+        assert "public_documentation_not_authorization_impact" in verdict.reason_codes
+
+
+class TestSessionFixationEvidence:
+    def test_session_id_stability_alone_is_not_session_fixation(self):
+        finding = _make_finding(
+            vuln_type="session_fixation",
+            poc_request="POST /login HTTP/1.1\nHost: example.test\n\n",
+            poc_response="HTTP/1.1 200 OK\n\n",
+            additional_info={
+                "session_id_before": "[redacted]",
+                "session_id_after": "[redacted]",
+            },
+        )
+
+        verdict = HaddixEvidenceQualityValidator().evaluate_finding(
+            finding,
+            current_status="confirmed",
+        )
+
+        assert verdict.shadow_status == "candidate"
+        assert "session_takeover_not_verified" in verdict.reason_codes
+
+    def test_session_fixation_requires_attacker_reuse_after_victim_login(self):
+        finding = _make_finding(
+            vuln_type="session_fixation",
+            poc_request="POST /login HTTP/1.1\nHost: example.test\n\n",
+            poc_response="HTTP/1.1 200 OK\n\naccount=viewer",
+            additional_info={
+                "session_fixation_evidence": {
+                    "attacker_controlled_session_id": True,
+                    "victim_login_completed": True,
+                    "attacker_authenticated_reuse_verified": True,
+                },
+            },
+        )
+
+        verdict = HaddixEvidenceQualityValidator().evaluate_finding(
+            finding,
+            current_status="confirmed",
+        )
+
         assert verdict.shadow_status == "confirmed"
 
     def test_duplicate_findings_merged(self):

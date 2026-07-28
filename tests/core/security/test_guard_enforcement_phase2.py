@@ -1045,3 +1045,231 @@ async def test_mc_trigger_post_exploit_shadow_does_not_block_and_proceeds(tiktok
     mc._add_tasks = lambda tasks, **kw: None
     # Should NOT raise — shadow mode allows, evaluator called for logging
     mc._trigger_post_exploit(finding)
+
+
+# ============================================================================
+# SGK-2026-0370: Bridge Verdict Tests
+# ============================================================================
+
+
+class TestBridgeGuardAndPhaseGate:
+    """Unit tests for bridge_guard_and_phase_gate (SGK-2026-0370)."""
+
+    def test_block_overrides_phase_gate_allow(self) -> None:
+        """Compiled guard block => lock_phase regardless of PhaseGate verdict."""
+        from src.core.security.guard_enforcement import bridge_guard_and_phase_gate
+        from src.core.security.compiled_guard_models import GuardDecision
+
+        gd = GuardDecision(
+            decision="block",
+            reason_code="out_of_scope_host",
+            source_refs=["scope_assets.csv#row=32"],
+        )
+        bv = bridge_guard_and_phase_gate(gd, True, "OK")
+        assert bv.verdict == "lock_phase"
+        assert bv.reason_origin == "compiled_guard"
+        assert "guard:out_of_scope_host" in bv.reason_codes
+        assert "scope_assets.csv#row=32" in bv.source_refs
+
+    def test_block_overrides_phase_gate_defer(self) -> None:
+        """Compiled guard block takes precedence even when PhaseGate defers."""
+        from src.core.security.guard_enforcement import bridge_guard_and_phase_gate
+        from src.core.security.compiled_guard_models import GuardDecision
+
+        gd = GuardDecision(decision="block", reason_code="attack_class_denied")
+        bv = bridge_guard_and_phase_gate(gd, False, "auth required")
+        assert bv.verdict == "lock_phase"
+        assert bv.reason_origin == "compiled_guard"
+        assert "guard:attack_class_denied" in bv.reason_codes
+        assert "phase_gate:auth required" in bv.reason_codes
+
+    def test_requires_hitl_preserved(self) -> None:
+        """requires_hitl is preserved, not silently dropped."""
+        from src.core.security.guard_enforcement import bridge_guard_and_phase_gate
+        from src.core.security.compiled_guard_models import GuardDecision
+
+        gd = GuardDecision(
+            decision="requires_hitl",
+            reason_code="sensitive_target",
+            source_refs=["policy.md#line=42"],
+        )
+        bv = bridge_guard_and_phase_gate(gd, True, "OK")
+        assert bv.verdict == "requires_hitl"
+        assert bv.reason_origin == "compiled_guard"
+        assert "guard:sensitive_target" in bv.reason_codes
+        assert "policy.md#line=42" in bv.source_refs
+
+    def test_degrade_to_report_preserved(self) -> None:
+        """degrade_to_report is preserved, routed to report path."""
+        from src.core.security.guard_enforcement import bridge_guard_and_phase_gate
+        from src.core.security.compiled_guard_models import GuardDecision
+
+        gd = GuardDecision(
+            decision="degrade_to_report",
+            reason_code="low_severity_only",
+        )
+        bv = bridge_guard_and_phase_gate(gd, True, "OK")
+        assert bv.verdict == "route_to_report"
+        assert bv.reason_origin == "compiled_guard"
+        assert "guard:low_severity_only" in bv.reason_codes
+
+    def test_allow_plus_phase_gate_ok(self) -> None:
+        """Both allow => verdict allow, origin combined."""
+        from src.core.security.guard_enforcement import bridge_guard_and_phase_gate
+        from src.core.security.compiled_guard_models import GuardDecision
+
+        gd = GuardDecision.allow(reason_code="in_scope_exact_host")
+        bv = bridge_guard_and_phase_gate(gd, True, "OK")
+        assert bv.verdict == "allow"
+        assert bv.reason_origin == "combined"
+        assert "guard:in_scope_exact_host" in bv.reason_codes
+        assert "phase_gate:OK" in bv.reason_codes
+
+    def test_allow_plus_phase_gate_defer(self) -> None:
+        """Guard allows but PhaseGate defers => defer verdict, origin phase_gate."""
+        from src.core.security.guard_enforcement import bridge_guard_and_phase_gate
+        from src.core.security.compiled_guard_models import GuardDecision
+
+        gd = GuardDecision.allow(reason_code="in_scope_wildcard_host")
+        bv = bridge_guard_and_phase_gate(gd, False, "budget exhausted")
+        assert bv.verdict == "defer"
+        assert bv.reason_origin == "phase_gate"
+        assert "guard:in_scope_wildcard_host" in bv.reason_codes
+        assert "phase_gate:budget exhausted" in bv.reason_codes
+
+    def test_gate_summary_fields_complete(self) -> None:
+        """gate_summary contains all audit fields for session/report."""
+        from src.core.security.guard_enforcement import bridge_guard_and_phase_gate
+        from src.core.security.compiled_guard_models import GuardDecision
+
+        gd = GuardDecision(
+            decision="block",
+            reason_code="out_of_scope_default_deny",
+            source_refs=["evaluator#default_deny"],
+        )
+        bv = bridge_guard_and_phase_gate(gd, False, "scope denied")
+        gs = bv.gate_summary
+        assert gs["reason_origin"] == "compiled_guard"
+        assert "guard:out_of_scope_default_deny" in gs["reason_codes"]
+        assert gs["compiled_guard_decision"] == "block"
+        assert gs["phase_gate_allowed"] is False
+        assert "evaluator#default_deny" in gs["source_refs"]
+
+    def test_bridge_verdict_fields_exist(self) -> None:
+        """BridgeVerdict dataclass has all required fields."""
+        from src.core.security.guard_enforcement import BridgeVerdict
+
+        bv = BridgeVerdict()
+        assert hasattr(bv, "verdict")
+        assert hasattr(bv, "reason_origin")
+        assert hasattr(bv, "reason_codes")
+        assert hasattr(bv, "source_refs")
+        assert hasattr(bv, "gate_summary")
+        assert bv.verdict == "allow"
+        assert bv.reason_origin == "combined"
+        assert bv.reason_codes == []
+        assert bv.source_refs == []
+        assert bv.gate_summary == {}
+
+
+# ============================================================================
+# SGK-2026-0370: Evaluator requires_hitl / degrade_to_report production paths
+# ============================================================================
+
+
+class TestCompiledGuardEvaluatorHitlDegrade:
+    """Verify the evaluator produces requires_hitl and degrade_to_report decisions
+    for attack_class rules with those decision values."""
+
+    @pytest.fixture
+    def base_policy(self, tiktok_policy) -> "LoadedGuardPolicy":
+        """Return a copy of the TikTok policy modified for HITL/degrade tests."""
+        import copy
+        p = copy.deepcopy(tiktok_policy)
+        # Add requires_hitl and degrade_to_report attack_class entries
+        ac = p.raw_policy.setdefault("rules", {}).setdefault("attack_classes", {})
+        ac["sensitive_auth"] = {
+            "decision": "requires_hitl",
+            "source_refs": ["policy.md#sensitive-auth-hctl"],
+        }
+        ac["brute_force"] = {
+            "decision": "degrade_to_report",
+            "source_refs": ["policy.md#brute-force-report-only"],
+        }
+        return p
+
+    def test_attack_class_requires_hitl_decision(self, base_policy) -> None:
+        from src.core.security.compiled_guard_evaluator import evaluate_guard
+        from src.core.security.compiled_guard_models import GuardInput
+
+        gi = GuardInput(
+            bundle_id=base_policy.bundle_id,
+            policy_id=base_policy.policy_id,
+            target="https://www.tiktok.com/",
+            host="www.tiktok.com",
+            attack_class="sensitive_auth",
+            enforcement_layer="mc",
+        )
+        decision = evaluate_guard(base_policy, gi, enforcement_layer="mc")
+        assert decision.decision == "requires_hitl"
+        assert "sensitive_auth" in decision.reason_code
+
+    def test_attack_class_degrade_to_report_decision(self, base_policy) -> None:
+        from src.core.security.compiled_guard_evaluator import evaluate_guard
+        from src.core.security.compiled_guard_models import GuardInput
+
+        gi = GuardInput(
+            bundle_id=base_policy.bundle_id,
+            policy_id=base_policy.policy_id,
+            target="https://www.tiktok.com/",
+            host="www.tiktok.com",
+            attack_class="brute_force",
+            enforcement_layer="mc",
+        )
+        decision = evaluate_guard(base_policy, gi, enforcement_layer="mc")
+        assert decision.decision == "degrade_to_report"
+        assert "brute_force" in decision.reason_code
+
+    def test_requires_hitl_factory_method(self) -> None:
+        from src.core.security.compiled_guard_models import GuardDecision
+
+        gd = GuardDecision.requires_hitl(
+            reason_code="attack_class_sensitive_requires_hitl",
+            source_refs=["policy.md#sensitive"],
+            policy_id="test:policy",
+            bundle_id="test:bundle",
+            enforcement_layer="mc",
+        )
+        assert gd.decision == "requires_hitl"
+        assert gd.reason_code == "attack_class_sensitive_requires_hitl"
+        assert gd.fail_closed is False
+        assert gd.decision_trace_id.startswith("gd-")
+
+    def test_degrade_to_report_factory_method(self) -> None:
+        from src.core.security.compiled_guard_models import GuardDecision
+
+        gd = GuardDecision.degrade_to_report(
+            reason_code="attack_class_brute_force_degrade",
+            source_refs=["policy.md#brute"],
+            policy_id="test:policy",
+            bundle_id="test:bundle",
+            enforcement_layer="mc",
+        )
+        assert gd.decision == "degrade_to_report"
+        assert gd.reason_code == "attack_class_brute_force_degrade"
+        assert gd.fail_closed is False
+        assert gd.decision_trace_id.startswith("gd-")
+
+    def test_requires_hitl_bridge_stops_task_creation(self) -> None:
+        """When the bridge gets a requires_hitl decision, it must NOT
+        set _bridge_can_proceed=True.  At the bridge level this means
+        the verdict is 'requires_hitl' (not 'allow' or 'defer')."""
+        from src.core.security.guard_enforcement import bridge_guard_and_phase_gate
+        from src.core.security.compiled_guard_models import GuardDecision
+
+        gd = GuardDecision.requires_hitl(reason_code="sensitive_target")
+        bv = bridge_guard_and_phase_gate(gd, True, "OK")
+        assert bv.verdict == "requires_hitl"
+        # In the MC, a 'requires_hitl' bridge verdict maps to _bridge_can_proceed=False
+        # (the fix applied in SGK-2026-0370 review round). We verify
+        # the bridge itself always returns 'requires_hitl' verdict here.

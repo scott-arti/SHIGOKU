@@ -34,6 +34,31 @@ def full_session():
                 "auth_mechanisms": ["JWT", "OAuth2"],
                 "session_management": "Cookie-based session with HttpOnly",
                 "authorization_model": "RBAC",
+                # SGK-2026-0370: guard-bridge data
+                "_guard_bridge_decision_stats": {
+                    "guard_blocked": 2,
+                    "guard_requires_hitl": 1,
+                    "guard_degrade_to_report": 1,
+                    "gate_rejected": 3,
+                },
+                "_guard_bridge_summary": [
+                    {
+                        "reason_origin": "compiled_guard",
+                        "reason_codes": ["guard:out_of_scope_host", "phase_gate:OK"],
+                        "source_refs": ["scope_assets.csv#row=32"],
+                        "compiled_guard_decision": "block",
+                        "phase_gate_allowed": True,
+                        "phase_gate_reason": "OK",
+                    },
+                    {
+                        "reason_origin": "compiled_guard",
+                        "reason_codes": ["guard:sensitive_target"],
+                        "source_refs": ["policy.md#line=42"],
+                        "compiled_guard_decision": "requires_hitl",
+                        "phase_gate_allowed": True,
+                        "phase_gate_reason": "OK",
+                    },
+                ],
             },
             "discovered_assets": [
                 {"url": "http://example.com/assets/script.js", "type": "page"},
@@ -608,3 +633,284 @@ class TestTargetProfileFormatterPhase1Metadata:
 
         assert isinstance(report, str)
         assert len(report) > 0
+
+    # ------------------------------------------------------------------
+    # SGK-2026-0370: Guard-bridge gate summary in report output
+    # ------------------------------------------------------------------
+
+    def test_guard_bridge_summary_in_report_output(self, full_session):
+        """The guard-bridge gate summary must appear in the generated report."""
+        formatter = TargetProfileFormatter()
+        report = formatter.format(full_session)
+
+        assert isinstance(report, str)
+        # Verify the guard-bridge section heading is present
+        assert "ガード・ブリッジ判定サマリー" in report
+        # Verify the decision stats
+        assert "コンパイルガードによるブロック: 2 件" in report
+        assert "要HITL (人の確認待ち): 1 件" in report
+        assert "レポート優先へ移行: 1 件" in report
+        assert "PhaseGate による延期/拒否: 3 件" in report
+        # Verify reason codes appear
+        assert "guard:out_of_scope_host" in report
+        assert "guard:sensitive_target" in report
+        # Verify source references
+        assert "scope_assets.csv#row=32" in report
+        assert "policy.md#line=42" in report
+        # Verify source attribution
+        assert "_guard_bridge_decision_stats" in report
+        assert "_guard_bridge_summary" in report
+
+
+# ===========================================================================
+# SGK-2026-0293: Persisted target_system_profile priority
+# ===========================================================================
+
+class TestTargetProfileFormatterPersistedProfile:
+
+    def test_persisted_profile_section_1_shows_profile_info(self):
+        """When target_system_profile exists, Section 1 must show profile host as primary URL."""
+        session = {
+            "session_id": "prof-test",
+            "target_system_profile": {
+                "schema_version": 1,
+                "target_host": "persisted.example.com",
+                "source_refs": ["context.target_info", "completed_tasks.3"],
+                "auth_methods": ["BearerToken"],
+                "tech_stack": {"framework": "Flask", "server": "gunicorn"},
+                "key_features": ["Recon"],
+            },
+            "context": {
+                "target_info": {
+                    "url": "http://fallback.example.com",
+                    "domain": "fallback.example.com",
+                    "auth_mechanisms": ["Cookie"],
+                    "tech_stack": {"framework": "Django", "server": "nginx"},
+                },
+            },
+        }
+        formatter = TargetProfileFormatter()
+        result = formatter.format(session)
+
+        # Section 1 must show the persisted profile host as primary URL
+        assert "target_system_profile.target_host" in result
+        assert "persisted.example.com" in result
+        # Old URL must NOT appear (profile host is used as primary)
+        assert "fallback.example.com" not in result
+        # Old addendum block must NOT appear
+        assert "persisted target_system_profile" not in result
+
+    def test_fallback_when_no_persisted_profile(self):
+        """Without target_system_profile, old extraction must still work."""
+        session = {
+            "session_id": "no-prof",
+            "context": {
+                "target_info": {
+                    "url": "http://old.example.com",
+                    "domain": "old.example.com",
+                    "tech_stack": {"framework": "Django"},
+                },
+            },
+        }
+        formatter = TargetProfileFormatter()
+        result = formatter.format(session)
+
+        # No persisted profile section
+        assert "persisted target_system_profile" not in result
+        # Old data still shows
+        assert "http://old.example.com/" in result
+        assert "Django" in result
+
+    def test_persisted_profile_section_3_prefers_profile_tech_stack(self):
+        """When persisted profile has tech_stack, Section 3 must show it."""
+        session = {
+            "session_id": "prof-tech",
+            "target_system_profile": {
+                "schema_version": 1,
+                "target_host": "example.com",
+                "source_refs": ["context.target_info"],
+                "tech_stack": {"framework": "Flask", "server": "gunicorn", "language": "Python 3.12"},
+            },
+            "context": {
+                "target_info": {
+                    "url": "http://example.com",
+                    "tech_stack": {"framework": "Django", "server": "nginx"},
+                },
+            },
+        }
+        formatter = TargetProfileFormatter()
+        result = formatter.format(session)
+
+        # Must show persisted profile label
+        assert "persisted profile" in result
+        # Must prefer profile values
+        assert "Flask" in result
+        assert "gunicorn" in result
+        assert "Python 3.12" in result
+        # Must cite the source
+        assert "target_system_profile.tech_stack" in result
+
+    def test_persisted_profile_section_4_prefers_profile_auth_methods(self):
+        """When persisted profile has auth_methods, Section 4 must show them."""
+        session = {
+            "session_id": "prof-auth",
+            "target_system_profile": {
+                "schema_version": 1,
+                "target_host": "example.com",
+                "source_refs": ["context.target_info"],
+                "auth_methods": ["JWT", "OAuth2", "API Key"],
+            },
+            "context": {
+                "target_info": {
+                    "url": "http://example.com",
+                    "auth_mechanisms": ["Cookie"],
+                },
+            },
+        }
+        formatter = TargetProfileFormatter()
+        result = formatter.format(session)
+
+        # Must show persisted profile label
+        assert "persisted profile" in result
+        # Must prefer profile values
+        assert "JWT" in result
+        assert "OAuth2" in result
+        assert "API Key" in result
+        # Must cite the source
+        assert "target_system_profile.auth_methods" in result
+
+    def test_empty_persisted_profile_falls_back(self):
+        """Empty or near-empty profile must still fall back to old data."""
+        session = {
+            "session_id": "empty-prof",
+            "target_system_profile": {},
+            "context": {
+                "target_info": {
+                    "url": "http://example.com",
+                    "domain": "example.com",
+                    "tech_stack": {"framework": "Django"},
+                    "auth_mechanisms": ["Cookie"],
+                },
+            },
+        }
+        formatter = TargetProfileFormatter()
+        result = formatter.format(session)
+
+        # Old data should still show
+        assert "Django" in result
+        assert "Cookie" in result
+
+    def test_persisted_profile_without_tech_stack_still_uses_fallback_tech_stack(self):
+        """Profile without tech_stack must not prevent fallback tech_stack display."""
+        session = {
+            "session_id": "prof-no-tech",
+            "target_system_profile": {
+                "schema_version": 1,
+                "target_host": "example.com",
+                "auth_methods": ["JWT"],
+            },
+            "context": {
+                "target_info": {
+                    "url": "http://example.com",
+                    "tech_stack": {"framework": "Django"},
+                },
+            },
+        }
+        formatter = TargetProfileFormatter()
+        result = formatter.format(session)
+
+        # Auth shows from profile
+        assert "JWT" in result
+        # Tech stack falls back to old data
+        assert "Django" in result
+
+    # ------------------------------------------------------------------
+    # SGK-2026-0293: Persisted profile override of context.target_info
+    # ------------------------------------------------------------------
+
+    def test_persisted_profile_overrides_old_url_in_section_1(self):
+        """When target_system_profile.target_host exists, it is the primary URL.
+        Old context.target_info.url must NOT appear (unless as fallback)."""
+        session = {
+            "session_id": "override-test",
+            "target_system_profile": {
+                "schema_version": 1,
+                "target_host": "new.example.com",
+                "auth_methods": ["JWT"],
+                "tech_stack": {"framework": "FastAPI", "server": "uvicorn"},
+            },
+            "context": {
+                "target_info": {
+                    "url": "http://old.example.com",
+                    "domain": "old.example.com",
+                },
+            },
+        }
+        formatter = TargetProfileFormatter()
+        result = formatter.format(session)
+
+        section_1_start = result.find("## 1. ターゲット概要")
+        section_2_start = result.find("## 2. 検出機能概要")
+        section_1 = result[section_1_start:section_2_start] if section_2_start != -1 else result[section_1_start:]
+
+        # New host appears prominently with profile source attribution
+        assert "new.example.com" in section_1
+        assert "target_system_profile.target_host" in section_1
+        # Old URL must NOT appear (no fallback shown when profile host present)
+        assert "old.example.com" not in section_1
+
+    def test_section_3_old_tech_stack_not_shown_when_profile_present(self):
+        """When profile has tech_stack, old context.target_info.tech_stack must NOT appear."""
+        session = {
+            "session_id": "sec3-override-test",
+            "target_system_profile": {
+                "schema_version": 1,
+                "target_host": "example.com",
+                "tech_stack": {"framework": "FastAPI", "server": "uvicorn", "language": "Python 3.12"},
+            },
+            "context": {
+                "target_info": {
+                    "url": "http://example.com",
+                    "tech_stack": {"framework": "Django", "server": "nginx", "language": "Python 3.8"},
+                },
+            },
+        }
+        formatter = TargetProfileFormatter()
+        result = formatter.format(session)
+
+        # Profile values must appear
+        assert "FastAPI" in result
+        assert "uvicorn" in result
+        assert "Python 3.12" in result
+        # Old values must NOT appear
+        assert "Django" not in result
+        assert "nginx" not in result
+        assert "Python 3.8" not in result
+
+    def test_section_4_old_auth_not_shown_when_profile_present(self):
+        """When profile has auth_methods, old context.target_info.auth_mechanisms must NOT appear."""
+        session = {
+            "session_id": "sec4-override-test",
+            "target_system_profile": {
+                "schema_version": 1,
+                "target_host": "example.com",
+                "auth_methods": ["JWT", "OAuth2", "API Key"],
+            },
+            "context": {
+                "target_info": {
+                    "url": "http://example.com",
+                    "auth_mechanisms": ["Cookie", "BasicAuth"],
+                },
+            },
+        }
+        formatter = TargetProfileFormatter()
+        result = formatter.format(session)
+
+        # Profile values must appear
+        assert "JWT" in result
+        assert "OAuth2" in result
+        assert "API Key" in result
+        # Old values must NOT appear
+        assert "Cookie" not in result
+        assert "BasicAuth" not in result
+

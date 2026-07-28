@@ -3,6 +3,7 @@ import json
 import os
 import tempfile
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -75,6 +76,8 @@ def test_fresh_artifact_accepted():
         filepath = Path(tmpdir) / "recon_state.json"
         data = {
             "target": "example.com",
+            "target_fingerprint": "ab12cd34ef56gh78",
+            "saved_at": datetime.now(timezone.utc).isoformat(),
             "live_subs": ["sub.example.com", "sub2.example.com"],
         }
         filepath.write_text(json.dumps(data))
@@ -99,11 +102,13 @@ def test_stale_artifact_rejected_from_attack_input():
     and informational_only."""
     with tempfile.TemporaryDirectory() as tmpdir:
         filepath = Path(tmpdir) / "recon_state.json"
-        data = {"target": "example.com", "live_subs": ["sub.example.com"]}
+        data = {
+            "target": "example.com",
+            "target_fingerprint": "ab12cd34ef56gh78",
+            "saved_at": (datetime.now(timezone.utc) - timedelta(days=100)).isoformat(),
+            "live_subs": ["sub.example.com"],
+        }
         filepath.write_text(json.dumps(data))
-        # mtime 100 days ago
-        stale_time = time.time() - (100 * 86400)
-        os.utime(filepath, (stale_time, stale_time))
 
         bundle = load_imported_recon_dir(Path(tmpdir), target="example.com")
         assert len(bundle.artifacts) == 1
@@ -143,7 +148,12 @@ def test_target_mismatch_fail_closed():
     should produce a target_mismatch reason code."""
     with tempfile.TemporaryDirectory() as tmpdir:
         filepath = Path(tmpdir) / "recon_state.json"
-        data = {"target": "wrong.com", "live_subs": ["sub.wrong.com"]}
+        data = {
+            "target": "wrong.com",
+            "target_fingerprint": "ab12cd34ef56gh78",
+            "saved_at": datetime.now(timezone.utc).isoformat(),
+            "live_subs": ["sub.wrong.com"],
+        }
         filepath.write_text(json.dumps(data))
 
         bundle = load_imported_recon_dir(Path(tmpdir), target="example.com")
@@ -165,7 +175,12 @@ def test_partial_reject_does_not_discard_bundle():
     with tempfile.TemporaryDirectory() as tmpdir:
         # Valid artifact
         valid_path = Path(tmpdir) / "recon_state.json"
-        valid_data = {"target": "example.com", "live_subs": ["sub.example.com"]}
+        valid_data = {
+            "target": "example.com",
+            "target_fingerprint": "ab12cd34ef56gh78",
+            "saved_at": datetime.now(timezone.utc).isoformat(),
+            "live_subs": ["sub.example.com"],
+        }
         valid_path.write_text(json.dumps(valid_data))
 
         # Empty artifact (0 bytes, will get empty_artifact reason code)
@@ -232,4 +247,26 @@ def test_unknown_artifact_kind_rejected():
         assert len(bundle.artifacts) == 1
         artifact = bundle.artifacts[0]
         assert "unknown_artifact" in artifact.reason_codes
+        assert len(bundle.rejected_artifacts) == 1
+
+
+def test_recon_state_missing_saved_at_rejected_as_missing_provenance():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        filepath = Path(tmpdir) / "recon_state.json"
+        filepath.write_text(
+            json.dumps(
+                {
+                    "target": "example.com",
+                    "target_fingerprint": "ab12cd34ef56gh78",
+                    "live_subs": ["sub.example.com"],
+                }
+            )
+        )
+
+        bundle = load_imported_recon_dir(Path(tmpdir), target="example.com")
+
+        assert len(bundle.artifacts) == 1
+        artifact = bundle.artifacts[0]
+        assert "missing_provenance" in artifact.reason_codes
+        assert artifact.informational_only is True
         assert len(bundle.rejected_artifacts) == 1

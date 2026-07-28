@@ -143,16 +143,20 @@ class AttackPathFormatter:
             session_data: Raw session dict.
             output_path: Path to write ``attack_paths.json``.
         """
-        graph = self._build_attack_path_graph(session_data)
-        payload = {
-            "nodes": [self._node_to_dict(n) for n in graph.nodes],
-            "edges": [self._edge_to_dict(e) for e in graph.edges],
-            "metadata": graph.metadata,
-        }
+        payload = self.build_json_payload(session_data)
         output_path.write_text(
             json.dumps(payload, indent=2, ensure_ascii=False, default=str),
             encoding="utf-8",
         )
+
+    def build_json_payload(self, session_data: Any) -> Dict[str, Any]:
+        """Build the machine-readable graph payload used for Neo4j export."""
+        graph = self._build_attack_path_graph(session_data)
+        return {
+            "nodes": [self._node_to_dict(n) for n in graph.nodes],
+            "edges": [self._edge_to_dict(e) for e in graph.edges],
+            "metadata": graph.metadata,
+        }
 
     # ------------------------------------------------------------------
     # Graph building (for JSON export and internal use)
@@ -199,6 +203,7 @@ class AttackPathFormatter:
             why_in_path="Root target of the assessment",
             source_refs=[session_id],
             observed_at=self._timestamp_from_epoch(sd.get("start_time")),
+            extra={"url": target_url, "domain": target_domain},
         )
         nodes.append(target_node)
 
@@ -227,6 +232,14 @@ class AttackPathFormatter:
                 ),
                 observed_at=self._safe_str(finding.get("discovered_at")),
                 inferred_after=self._now_iso(),
+                extra={
+                    "finding_id": finding_id,
+                    "severity": self._safe_str(finding.get("severity")),
+                    "confidence": finding.get("confidence", 0.0),
+                    "chain_rule_id": self._safe_str(
+                        decision_trace.get("selected_rule_id")
+                    ),
+                },
             )
             nodes.append(chain_node)
 
@@ -256,6 +269,7 @@ class AttackPathFormatter:
                     evidence_state=evidence_state,
                     why_in_path=f"Affected endpoint for chain {finding_id}",
                     source_refs=[finding_id],
+                    extra={"url": target_url_val},
                 )
                 nodes.append(endpoint_node)
 
@@ -282,6 +296,10 @@ class AttackPathFormatter:
                     evidence_state=evidence_state,
                     why_in_path=f"Component finding of chain {finding_id}",
                     source_refs=[finding_id],
+                    extra={
+                        "chain_finding_id": finding_id,
+                        "component_index": i,
+                    },
                 )
                 nodes.append(comp_node)
 
@@ -859,6 +877,7 @@ class AttackPathFormatter:
             "next_validation_hint": node.next_validation_hint,
             "observed_at": node.observed_at,
             "inferred_after": node.inferred_after,
+            "extra": node.extra,
         }
 
     @staticmethod
@@ -872,6 +891,7 @@ class AttackPathFormatter:
             "evidence_state": edge.evidence_state,
             "why_in_path": edge.why_in_path,
             "source_refs": edge.source_refs,
+            "extra": edge.extra,
         }
 
     # ------------------------------------------------------------------

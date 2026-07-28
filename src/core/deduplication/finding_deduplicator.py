@@ -5,7 +5,7 @@ Finding Deduplicator
 """
 
 import logging
-from typing import List, Tuple, Set
+from typing import Any, Dict, List, Tuple, Set
 from difflib import SequenceMatcher
 from collections import defaultdict
 from urllib.parse import urlsplit
@@ -17,6 +17,18 @@ logger = logging.getLogger(__name__)
 
 class FindingDeduplicator:
     """Finding重複排除クラス"""
+
+    _REASON_CODE_LIST_KEYS = (
+        "reason_codes",
+        "candidate_reason_codes",
+        "demotion_reason_codes",
+        "evidence_quality_reason_codes",
+    )
+    _REASON_CODE_SINGLE_KEYS = (
+        "reason_code",
+        "candidate_reason_code",
+        "demotion_reason_code",
+    )
     
     # 類似度閾値
     URL_SIMILARITY_THRESHOLD = 0.8
@@ -196,6 +208,55 @@ class FindingDeduplicator:
         SequenceMatcherを使用した編集距離ベースの類似度
         """
         return SequenceMatcher(None, text1, text2).ratio()
+
+    @staticmethod
+    def _reason_code_tokens(raw_value: Any) -> List[str]:
+        """Normalize a reason-code field without filtering domain-specific codes."""
+        if isinstance(raw_value, set):
+            values = sorted(raw_value, key=lambda value: str(value or ""))
+        elif isinstance(raw_value, (list, tuple)):
+            values = raw_value
+        else:
+            values = [raw_value]
+        tokens: List[str] = []
+        for value in values:
+            token = str(value or "").strip()
+            if token and token not in tokens:
+                tokens.append(token)
+        return tokens
+
+    def _merge_reason_code_metadata(
+        self,
+        base_info: Dict[str, Any],
+        findings: List[Finding],
+    ) -> None:
+        """Keep every hold-back reason when similar findings collapse to one.
+
+        ``reason_codes`` is the canonical downstream field.  The specialised
+        evidence-quality field is retained separately so report renderers can
+        continue to distinguish evidence-quality verdicts from other reasons.
+        """
+        merged_codes: List[str] = []
+        evidence_quality_codes: List[str] = []
+        for finding in findings:
+            info = finding.additional_info if isinstance(finding.additional_info, dict) else {}
+            for key in self._REASON_CODE_LIST_KEYS:
+                tokens = self._reason_code_tokens(info.get(key))
+                for token in tokens:
+                    if token not in merged_codes:
+                        merged_codes.append(token)
+                    if key == "evidence_quality_reason_codes" and token not in evidence_quality_codes:
+                        evidence_quality_codes.append(token)
+            for key in self._REASON_CODE_SINGLE_KEYS:
+                for token in self._reason_code_tokens(info.get(key)):
+                    if token not in merged_codes:
+                        merged_codes.append(token)
+
+        if merged_codes:
+            base_info["reason_codes"] = merged_codes
+            base_info["reason_code"] = merged_codes[0]
+        if evidence_quality_codes:
+            base_info["evidence_quality_reason_codes"] = evidence_quality_codes
     
     def _merge_findings(self, findings: List[Finding]) -> Finding:
         """
@@ -221,6 +282,8 @@ class FindingDeduplicator:
         # 追加情報に統合情報を記録
         if not base.additional_info:
             base.additional_info = {}
+
+        self._merge_reason_code_metadata(base.additional_info, findings)
 
         base.additional_info['merged_count'] = len(findings)
         base.additional_info['merged_ids'] = [f.id for f in findings if f != base]

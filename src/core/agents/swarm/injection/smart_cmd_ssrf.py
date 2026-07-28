@@ -33,12 +33,17 @@ BLOCKED_COMMANDS = frozenset([
 ])
 
 
-async def _fetch_and_parse_form(url: str, auth_headers: Dict[str, str]) -> List[Dict[str, Any]]:
+async def _fetch_and_parse_form(
+    url: str,
+    auth_headers: Dict[str, str],
+    network_client: Optional[AsyncNetworkClient] = None,
+) -> List[Dict[str, Any]]:
     """HTML を取得してフォーム情報を抽出する。"""
     from bs4 import BeautifulSoup
 
     forms: List[Dict[str, Any]] = []
-    client = AsyncNetworkClient()
+    client = network_client or AsyncNetworkClient()
+    owns_client = network_client is None
     try:
         resp = await client.request("GET", url, headers=auth_headers, use_cache=False, timeout=20)
         body = ""
@@ -65,7 +70,8 @@ async def _fetch_and_parse_form(url: str, auth_headers: Dict[str, str]) -> List[
     except Exception as exc:
         logger.debug("[%s] form parsing failed for %s: %s", SmartCmdSSRFHunter.name, url, exc)
     finally:
-        await client.close()
+        if owns_client:
+            await client.close()
     return forms
 
 class SmartCmdSSRFHunter(Specialist, ThoughtLoop):
@@ -77,7 +83,58 @@ class SmartCmdSSRFHunter(Specialist, ThoughtLoop):
     
     name = "SmartCmdSSRFHunter"
     description = "Critical specialist for OS Command Injection and SSRF with OOB and Exa integration."
-    EXCLUDED_META_PARAM_NAMES = {"scan_profile", "profile", "_auth", "method"}
+    EXCLUDED_META_PARAM_NAMES = {
+        "_auth",
+        "_context",
+        "api_precision_mode",
+        "auth_headers",
+        "alternative_sessions",
+        "balanced_mode",
+        "body",
+        "candidate_params",
+        "category",
+        "content_type",
+        "cookies",
+        "count",
+        "detection_mode",
+        "discovered_params",
+        "extra_targets",
+        "forms",
+        "headers",
+        "recipe_to_swarm_reason",
+        "recipe_to_swarm_reasons",
+        "manager_timeout_seconds",
+        "method",
+        "param",
+        "parameter",
+        "params_list",
+        "payload",
+        "per_url_timeout_seconds",
+        "phase1_early_return_on_findings",
+        "phase1_force_full_coverage",
+        "phase1_stop_on_first_hit",
+        "phase2_on_empty_phase1",
+        "profile",
+        "race_profile",
+        "safe_variations",
+        "scan_profile",
+        "selection_origin",
+        "source_category",
+        "source_file",
+        "_source",
+        "_run_id",
+        "_strategy",
+        "_intervention",
+        "signal_count",
+        "swarm_type",
+        "tags",
+        "target_hints",
+        "task_name",
+        "targets",
+        "targets_file",
+        "task_id",
+        "url_evidence",
+    }
     NON_ATTACK_PARAM_NAMES = {"submit", "change", "token", "csrf", "csrf_token", "user_token"}
     MAX_PARAMS_TO_TEST = 5
 
@@ -89,6 +146,48 @@ class SmartCmdSSRFHunter(Specialist, ThoughtLoop):
         if normalized in cls.EXCLUDED_META_PARAM_NAMES:
             return False
         return normalized not in cls.NON_ATTACK_PARAM_NAMES
+
+    @staticmethod
+    def _normalize_name_hints(raw: Any) -> List[str]:
+        names: List[str] = []
+
+        def _add(candidate: Any) -> None:
+            token = str(candidate or "").strip()
+            if token and token not in names:
+                names.append(token)
+
+        if isinstance(raw, str):
+            _add(raw)
+        elif isinstance(raw, dict):
+            if "name" in raw:
+                _add(raw.get("name"))
+            else:
+                for key in raw.keys():
+                    _add(key)
+        elif isinstance(raw, (list, tuple, set)):
+            for item in raw:
+                if isinstance(item, dict):
+                    if "name" in item:
+                        _add(item.get("name"))
+                    else:
+                        for key in item.keys():
+                            _add(key)
+                else:
+                    _add(item)
+        return names
+
+    @classmethod
+    def _target_specific_candidate_params(cls, target: str) -> List[str]:
+        """既知の検査画面では、グローバル推定より画面固有の入力欄を優先する。"""
+        parsed = urlparse(str(target or ""))
+        path = parsed.path.lower()
+        if "/vulnerabilities/exec" in path:
+            return ["ip", "host", "cmd", "command"]
+        if "command" in path:
+            return ["cmd", "command", "ip", "host"]
+        if "ping" in path:
+            return ["ip", "host", "target", "cmd", "command"]
+        return []
     
     SYSTEM_PROMPT = """You are a senior security engineer and expert penetration tester.
 You specialize in OS Command Injection and Server-Side Request Forgery (SSRF).
@@ -163,7 +262,11 @@ CRITICAL RULES:
         self.context: Dict[str, Any] = {}
         self.blind_correlation: Dict[str, Any] = {}
         self.last_tested_params: List[str] = []
+        self.last_tested_target: str = ""
         self.last_blind_correlation: Dict[str, Any] = {}
+        self.command_execution_evidence: Dict[str, Any] = {}
+        self.last_delivery_evidence: Dict[str, Any] = {}
+        self.last_delivery_reason: str = ""
 
     async def close(self):
         """リソース解放"""
@@ -185,7 +288,8 @@ CRITICAL RULES:
             self.max_turns = 8
 
         timeout = 300 if quick_mode else 600
-        self.last_tested_params = []
+        self.last_tested_target = task.target
+        self.last_tested_params = self._target_specific_candidate_params(task.target)
         self.last_blind_correlation = {}
         try:
             result = await asyncio.wait_for(
@@ -194,6 +298,13 @@ CRITICAL RULES:
             )
         except asyncio.TimeoutError:
             logger.warning(f"[{self.name}] Timeout after {timeout}s for {task.target}")
+            self.last_delivery_evidence = {
+                "delivery_state": "timeout",
+                "reason_code": "probe_timeout",
+                "target_url": task.target,
+                "tested_params": list(self.last_tested_params),
+            }
+            self.last_delivery_reason = "probe_timeout"
             return []
         finally:
             self.max_turns = original_max_turns
@@ -202,6 +313,7 @@ CRITICAL RULES:
         if result.get("vulnerable"):
             vuln_type = VulnType.OS_COMMAND_INJECTION if result.get("vuln_type") == "cmd" else VulnType.SSRF
             tested_param = result.get("param")
+            delivery = result.get("delivery_evidence", {}) if isinstance(result.get("delivery_evidence"), dict) else {}
             finding = Finding(
                 vuln_type=vuln_type,
                 severity=Severity.CRITICAL,
@@ -209,8 +321,10 @@ CRITICAL RULES:
                 description=result.get("description", "Detected by SmartCmdSSRFHunter."),
                 target_url=task.target,
                 evidence=Evidence(
-                    request_url=task.target,
-                    response_body=str(result.get("evidence", ""))
+                    request_method=str(delivery.get("request_method", "") or ""),
+                    request_url=str(delivery.get("request_url", "") or task.target),
+                    response_status=int(delivery.get("response_status", 0) or 0),
+                    response_body=str(delivery.get("response_body", "") or result.get("evidence", ""))
                 ),
                 source_agent=self.name,
                 confidence=0.9,
@@ -221,6 +335,16 @@ CRITICAL RULES:
                     "payload": result.get("payloads_used", [""])[-1] if result.get("payloads_used") else "",
                     "blind_correlation": result.get("blind_correlation", {}),
                     "execution_profile": dict(result.get("execution_profile", {}) or {}),
+                    "command_execution_evidence": result.get("command_execution_evidence", {}),
+                    "poc_request": str(delivery.get("poc_request", "") or ""),
+                    "poc_response": str(delivery.get("poc_response", "") or ""),
+                    "payload_delivery": {
+                        "status": int(delivery.get("response_status", 0) or 0),
+                        "delivered": bool(delivery.get("delivered", False)),
+                        "request_url": str(delivery.get("request_url", "") or ""),
+                        "content_type": str(delivery.get("content_type", "") or ""),
+                        "body_length": int(delivery.get("body_length", 0) or 0),
+                    },
                 }
             )
             findings.append(finding)
@@ -230,6 +354,7 @@ CRITICAL RULES:
     async def run_as_tool(self, url: str, params: Dict[str, Any] = None) -> Dict[str, Any]:
         """Manager から呼び出し可能な Tool メソッド。"""
         params = params or {}
+        self.last_tested_target = url
         _auth = params.get("_auth", {})
         auth_headers = self._build_auth_headers(
             dict(_auth.get("auth_headers", {}) or {}),
@@ -242,15 +367,35 @@ CRITICAL RULES:
         method = params.get("method", "GET").upper()
         target = url
         execution_profile = self._extract_execution_profile(params, auth_headers)
+        context_params = params.get("_context", {})
+        if not isinstance(context_params, dict):
+            context_params = {}
+        request_only_params: Dict[str, Any] = {}
 
-        META_KEYS = {
-            "_auth", "method", "content_type", "task_id",
-            "targets", "targets_file", "source_file", "cookies",
-            "tags", "category", "_context", "extra_targets",
-            "auth_headers", "headers", "count",
-            "race_profile", "safe_variations",
+        meta_keys = set(self.EXCLUDED_META_PARAM_NAMES)
+        payload_params = {
+            k: v for k, v in params.items()
+            if str(k).strip().lower() not in meta_keys and str(k).strip().lower() != "target"
         }
-        payload_params = {k: v for k, v in params.items() if k not in META_KEYS}
+
+        candidate_hints: List[str] = []
+        for source in (
+            self._target_specific_candidate_params(target),
+            params.get("candidate_params"),
+            context_params.get("candidate_params"),
+            params.get("discovered_params"),
+            context_params.get("discovered_params"),
+            params.get("params_list"),
+            context_params.get("params_list"),
+            params.get("param") or params.get("parameter"),
+            context_params.get("param") or context_params.get("parameter"),
+        ):
+            for param_name in self._normalize_name_hints(source):
+                if self._is_attack_param(param_name) and param_name not in candidate_hints:
+                    candidate_hints.append(param_name)
+
+        for param_name in candidate_hints:
+            payload_params.setdefault(param_name, "127.0.0.1")
 
         from urllib.parse import urlparse, parse_qs
         parsed = urlparse(target)
@@ -271,31 +416,51 @@ CRITICAL RULES:
                     param_name = str(input_field.get("name", "")).strip()
                     if not param_name:
                         continue
-                    if param_name.lower() in self.EXCLUDED_META_PARAM_NAMES:
-                        continue
-                    payload_params[param_name] = input_field.get("value", "127.0.0.1")
+                    input_value = input_field.get("value", "127.0.0.1")
+                    if self._is_attack_param(param_name):
+                        payload_params[param_name] = input_value
+                    else:
+                        request_only_params.setdefault(param_name, input_value)
 
-        forms_from_html = await _fetch_and_parse_form(target, auth_headers)
+        forms_from_html = await _fetch_and_parse_form(
+            target,
+            auth_headers,
+            network_client=self.network_client,
+        )
         if forms_from_html:
+            # A successfully observed form is the authoritative body contract.
+            # Task metadata may contain parameters learned from other pages; those
+            # must not become fields in this form's live request or PoC.
             for form in forms_from_html:
                 if not isinstance(form, dict):
                     continue
-                form_method = str(form.get("method", "GET")).upper()
-                if form_method == "POST":
-                    method = "POST"
-                for input_field in form.get("inputs", []):
-                    if not isinstance(input_field, dict):
-                        continue
-                    param_name = str(input_field.get("name", "")).strip()
-                    if not param_name or param_name.lower() in self.EXCLUDED_META_PARAM_NAMES:
-                        continue
-                    if param_name not in payload_params:
-                        payload_params[param_name] = input_field.get("value", "127.0.0.1")
+                inputs = [
+                    input_field for input_field in form.get("inputs", [])
+                    if isinstance(input_field, dict) and str(input_field.get("name", "")).strip()
+                ]
+                attack_inputs = [
+                    input_field for input_field in inputs
+                    if self._is_attack_param(str(input_field.get("name", "")).strip())
+                ]
+                if not attack_inputs:
+                    continue
+
+                method = str(form.get("method", "GET")).upper()
+                payload_params = {
+                    str(input_field.get("name", "")).strip(): input_field.get("value", "127.0.0.1")
+                    for input_field in attack_inputs
+                }
+                request_only_params = {
+                    str(input_field.get("name", "")).strip(): input_field.get("value", "")
+                    for input_field in inputs
+                    if not self._is_attack_param(str(input_field.get("name", "")).strip())
+                }
+                break
 
         if not payload_params and url_params_flat:
             payload_params = {
                 k: v for k, v in url_params_flat.items()
-                if str(k).lower() not in self.EXCLUDED_META_PARAM_NAMES
+                if self._is_attack_param(k)
             }
 
         if not payload_params:
@@ -304,7 +469,7 @@ CRITICAL RULES:
                 pw_forms = await PlaywrightValidator().extract_forms(
                     target,
                     timeout=10.0,
-                    cookies=[{"name": c.split("=")[0].strip(), "value": c.split("=")[1].strip(), "domain": urlparse(target).hostname}] if cookies_str else None
+                    cookies=[{"name": c.split("=")[0].strip(), "value": c.split("=")[1].strip(), "domain": urlparse(target).hostname, "path": "/"}] if cookies_str else None
                 )
                 if pw_forms:
                     for form in pw_forms:
@@ -312,9 +477,12 @@ CRITICAL RULES:
                             method = "POST"
                         for input_field in form.get("inputs", []):
                             param_name = str(input_field.get("name", "")).strip()
-                            if not param_name or param_name.lower() in self.EXCLUDED_META_PARAM_NAMES:
+                            if not param_name:
                                 continue
-                            payload_params[param_name] = "127.0.0.1"
+                            if self._is_attack_param(param_name):
+                                payload_params[param_name] = "127.0.0.1"
+                            else:
+                                request_only_params.setdefault(param_name, input_field.get("value", ""))
             except Exception as exc:
                 logger.debug("[%s] Playwright form extraction failed: %s", self.name, exc)
 
@@ -326,21 +494,28 @@ CRITICAL RULES:
                 deduped_params[key] = value
             payload_params = deduped_params
 
-        tested_param_names = [
+        ordered_param_names = list(candidate_hints)
+        ordered_param_names.extend(
             key for key in payload_params.keys()
-            if self._is_attack_param(key)
+            if key not in ordered_param_names
+        )
+        tested_param_names = [
+            key for key in ordered_param_names
+            if self._is_attack_param(key) and key in payload_params
         ][:self.MAX_PARAMS_TO_TEST]
         if not tested_param_names and payload_params:
             fallback_param = next(iter(payload_params.keys()))
             tested_param_names = [fallback_param]
         self.last_tested_params = list(tested_param_names)
+        request_params = dict(request_only_params)
+        request_params.update(payload_params)
 
         # ThoughtLoop コンテキスト設定
         self.context = {
             "target": target,
             "param": tested_param_names[0] if tested_param_names else None,
             "method": method,
-            "params": payload_params,
+            "params": request_params,
             "auth_headers": auth_headers,
             "cookies": cookies_str,
             "execution_profile": execution_profile,
@@ -350,6 +525,9 @@ CRITICAL RULES:
         self.vulnerable = False
         self.evidence = ""
         self.used_payloads = []
+        self.command_execution_evidence = {}
+        self.last_delivery_evidence = {}
+        self.last_delivery_reason = ""
         self.blind_correlation = {
             "time_based": {
                 "confirmed": False,
@@ -366,7 +544,14 @@ CRITICAL RULES:
         }
         loop_result: Dict[str, Any] = {"status": "not_run"}
         deterministic = await self._run_cmd_deterministic_precheck(tested_param_names)
-        if deterministic.get("confirmed"):
+        if deterministic.get("delivery_blocked"):
+            self.last_delivery_evidence = deterministic.get("delivery_evidence", {}) if isinstance(deterministic.get("delivery_evidence"), dict) else {}
+            self.last_delivery_reason = str(deterministic.get("reason_code", "delivery_blocked") or "delivery_blocked")
+            loop_result = {
+                "status": "delivery_blocked",
+                "reason_code": deterministic.get("reason_code", "delivery_blocked"),
+            }
+        elif deterministic.get("confirmed"):
             self.vulnerable = True
             self.evidence = str(deterministic.get("evidence", "Command injection signal confirmed"))
             payload = str(deterministic.get("payload", "") or "")
@@ -375,6 +560,8 @@ CRITICAL RULES:
             deterministic_blind = deterministic.get("blind_correlation", {})
             if isinstance(deterministic_blind, dict) and deterministic_blind:
                 self.blind_correlation = deterministic_blind
+            self.command_execution_evidence = deterministic.get("command_execution_evidence", {}) if isinstance(deterministic.get("command_execution_evidence"), dict) else {}
+            self.last_delivery_evidence = deterministic.get("delivery_evidence", {}) if isinstance(deterministic.get("delivery_evidence"), dict) else {}
             loop_result = {"status": "deterministic_precheck_confirmed", **deterministic}
         else:
             self.history_messages = []
@@ -406,6 +593,9 @@ Start your Command Injection / SSRF testing.
             "vuln_type": "cmd",  # デフォルト
             "blind_correlation": self.blind_correlation,
             "execution_profile": execution_profile,
+            "command_execution_evidence": self.command_execution_evidence,
+            "delivery_evidence": self.last_delivery_evidence,
+            "reason_code": loop_result.get("reason_code", "") if isinstance(loop_result, dict) else "",
         }
         self.last_blind_correlation = dict(result.get("blind_correlation", {}) or {})
         return result
@@ -539,19 +729,44 @@ Start your Command Injection / SSRF testing.
             self.context["param"] = param_name
             for payload in reflected_payloads:
                 obs = await self._send_request(payload)
+                if obs.get("diff") == "blocked":
+                    return {
+                        "confirmed": False,
+                        "delivery_blocked": True,
+                        "reason_code": self._delivery_block_reason(obs),
+                        "delivery_evidence": self._delivery_evidence_from_observation(obs),
+                    }
                 if obs.get("diff") == "cmd_injection_found":
+                    delivery = self._delivery_evidence_from_observation(obs)
                     return {
                         "confirmed": True,
                         "param": param_name,
                         "payload": payload,
                         "evidence": f"Deterministic command injection signal on '{param_name}'",
+                        "delivery_evidence": delivery,
+                        "command_execution_evidence": {
+                            "output_observed": True,
+                            "timing_confirmed": False,
+                            "payload": payload,
+                            "command_output": str(obs.get("body_snippet", "") or ""),
+                            "response_status": int(obs.get("status", 0) or 0),
+                        },
                     }
 
-            baseline_obs = await self._send_request("127.0.0.1")
-            baseline_latency = float(baseline_obs.get("elapsed_seconds") or 0.0)
-            baseline_status = int(baseline_obs.get("status", 0) or 0)
-            if baseline_status == 0:
+            baseline_observations = []
+            for _ in range(3):
+                baseline_obs = await self._send_request("127.0.0.1")
+                if int(baseline_obs.get("status", 0) or 0) == 0:
+                    baseline_observations = []
+                    break
+                baseline_observations.append(baseline_obs)
+            if len(baseline_observations) < 3:
                 continue
+            baseline_samples = [
+                float(item.get("elapsed_seconds", 0.0) or 0.0)
+                for item in baseline_observations
+            ]
+            baseline_latency = self._median_latency(baseline_samples)
 
             for payload, expected_delay in timing_payloads:
                 obs = await self._send_request(payload)
@@ -562,22 +777,60 @@ Start your Command Injection / SSRF testing.
 
                 # baseline との差分で time-based command injection を判定
                 if observed_latency >= max(expected_delay - 0.6, baseline_latency + 2.0):
+                    positive_observations = [obs]
+                    for _ in range(2):
+                        followup_obs = await self._send_request(payload)
+                        if int(followup_obs.get("status", 0) or 0) == 0:
+                            break
+                        positive_observations.append(followup_obs)
+                    if len(positive_observations) < 3:
+                        continue
+                    positive_samples = [
+                        float(item.get("elapsed_seconds", 0.0) or 0.0)
+                        for item in positive_observations
+                    ]
+                    inverse_obs = await self._send_request("127.0.0.1")
+                    inverse_samples = [float(inverse_obs.get("elapsed_seconds", 0.0) or 0.0)]
+                    positive_latency = self._median_latency(positive_samples)
+                    inverse_latency = self._median_latency(inverse_samples)
+                    if positive_latency < max(expected_delay - 0.6, baseline_latency + 2.0):
+                        continue
+                    if inverse_latency > baseline_latency + max(1.0, expected_delay * 0.5):
+                        continue
+                    timing_samples = {
+                        "baseline": [round(v, 3) for v in baseline_samples],
+                        "sleep": [round(v, 3) for v in positive_samples],
+                        "inverse_condition": [round(v, 3) for v in inverse_samples],
+                    }
+                    delivery = self._delivery_evidence_from_observation(obs)
                     return {
                         "confirmed": True,
                         "param": param_name,
                         "payload": payload,
                         "evidence": (
                             f"Deterministic time-based command injection signal on '{param_name}' "
-                            f"(baseline={baseline_latency:.3f}s, observed={observed_latency:.3f}s)."
+                            f"(baseline={baseline_latency:.3f}s, observed={positive_latency:.3f}s)."
                         ),
+                        "delivery_evidence": delivery,
+                        "command_execution_evidence": {
+                            "output_observed": False,
+                            "timing_confirmed": True,
+                            "payload": payload,
+                            "control_latency_seconds": round(baseline_latency, 3),
+                            "payload_latency_seconds": round(positive_latency, 3),
+                            "negative_control_latency_seconds": round(inverse_latency, 3),
+                            "timing_samples": dict(timing_samples),
+                        },
                         "blind_correlation": {
                             "time_based": {
                                 "confirmed": True,
                                 "payload": payload,
                                 "expected_delay_seconds": expected_delay,
-                                "observed_latency_seconds": round(observed_latency, 3),
+                                "observed_latency_seconds": round(positive_latency, 3),
                                 "baseline_latency_seconds": round(baseline_latency, 3),
+                                "timing_samples": dict(timing_samples),
                             },
+                            "timing_samples": dict(timing_samples),
                             "oob": {
                                 "confirmed": False,
                                 "hits": [],
@@ -592,12 +845,55 @@ Start your Command Injection / SSRF testing.
 
         return {"confirmed": False}
 
+    @staticmethod
+    def _delivery_block_reason(obs: Dict[str, Any]) -> str:
+        """通信が安全機構で止められた理由を、未判定結果へ残す。"""
+        detail = str(obs.get("body_snippet", "") or "").lower()
+        if "hitl_endpoint_denied" in detail:
+            return "hitl_endpoint_denied"
+        if "execution safeguard" in detail:
+            return "execution_safeguard_denied"
+        if "compiled guard" in detail:
+            return "compiled_guard_denied"
+        return "delivery_blocked"
+
+    @staticmethod
+    def _median_latency(values: List[float]) -> float:
+        if not values:
+            return 0.0
+        values_sorted = sorted(float(v) for v in values)
+        mid = len(values_sorted) // 2
+        if len(values_sorted) % 2:
+            return values_sorted[mid]
+        return (values_sorted[mid - 1] + values_sorted[mid]) / 2.0
+
+    @staticmethod
+    def _delivery_evidence_from_observation(obs: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "request_method": obs.get("request_method", ""),
+            "request_url": obs.get("request_url", ""),
+            "response_status": obs.get("status", 0),
+            "response_body": obs.get("body_snippet", ""),
+            "poc_request": obs.get("poc_request", ""),
+            "poc_response": obs.get("poc_response", ""),
+            "content_type": obs.get("content_type", ""),
+            "body_length": obs.get("body_length", 0),
+            "delivered": int(obs.get("status", 0) or 0) > 0,
+        }
+
     async def decide(self, turn: int) -> Tuple[str, str, Any]:
         """LLM decides the next move."""
-        history_text = "\n".join([
-            f"Turn {s.turn}: Act={s.action}({s.action_input}) -> {s.observation}"
-            for s in self.history
-        ])
+        history_lines = []
+        for s in self.history:
+            if hasattr(s, "turn"):
+                history_lines.append(
+                    f"Turn {s.turn}: Act={s.action}({s.action_input}) -> {s.observation}"
+                )
+            elif isinstance(s, dict):
+                history_lines.append(
+                    f"Turn {s.get('turn', '?')}: Act={s.get('action', '?')}({s.get('action_input', s.get('input', ''))}) -> {s.get('observation', '')}"
+                )
+        history_text = "\n".join(history_lines)
 
         prompt = f"""Target: {self.context['target']}
 Testing Parameter: {self.context['param']}
@@ -664,7 +960,7 @@ Decide next step for Command Injection / SSRF testing.
     async def act(self, action: str, action_input: Any) -> str:
         """Execute action."""
         if action == "finish":
-            if "vulnerable" in str(action_input).lower():
+            if self._finish_indicates_vulnerable(action_input):
                 self.vulnerable = True
                 self.evidence = str(action_input)
             return f"Finished: {action_input}"
@@ -676,9 +972,48 @@ Decide next step for Command Injection / SSRF testing.
             obs = await self._send_request(payload)
             self._record_blind_signal(payload, obs)
             self._record_dns_signal(payload, obs)
+            if obs.get("diff") == "cmd_injection_found":
+                self.command_execution_evidence = {
+                    "output_observed": True,
+                    "timing_confirmed": False,
+                    "payload": payload,
+                    "command_output": str(obs.get("body_snippet", "") or ""),
+                    "response_status": int(obs.get("status", 0) or 0),
+                }
+                self.last_delivery_evidence = self._delivery_evidence_from_observation(obs)
             return f"Observation: Status={obs['status']}, Diff={obs['diff']}, Body={obs['body_snippet']}"
 
         return f"Unknown action: {action}"
+
+    @staticmethod
+    def _finish_indicates_vulnerable(action_input: Any) -> bool:
+        """Return True only for explicit vulnerable finish verdicts."""
+        if isinstance(action_input, dict):
+            status = str(action_input.get("status", "")).strip().lower()
+            if status in {"vulnerable", "confirmed", "exploitable"}:
+                return True
+            if status in {"safe", "not vulnerable", "not_vulnerable", "clean"}:
+                return False
+            if isinstance(action_input.get("vulnerable"), bool):
+                return bool(action_input["vulnerable"])
+            action_input = json.dumps(action_input, ensure_ascii=False)
+
+        text = str(action_input).strip()
+        try:
+            parsed = json.loads(text)
+        except (TypeError, ValueError):
+            parsed = None
+        if isinstance(parsed, dict):
+            return SmartCmdSSRFHunter._finish_indicates_vulnerable(parsed)
+
+        lowered = text.lower()
+        if re.search(r"\b(safe|clean)\b", lowered):
+            return False
+        if re.search(r"\b(no|not|non)[\s_-]+vulnerab", lowered):
+            return False
+        if re.search(r"\bdoes\s+not\b.*\bvulnerab", lowered):
+            return False
+        return bool(re.search(r"\bvulnerable\b", lowered))
 
     async def should_stop(self, step: ThoughtStep) -> bool:
         """Check if we should stop."""
@@ -805,6 +1140,7 @@ Decide next step for Command Injection / SSRF testing.
                     parsed = urlparse(target)
                     ordered_query = urlencode(self._ordered_params_for_attempt(params, attempt.get("ordered_keys", [])))
                     new_url = urlunparse(parsed._replace(query=ordered_query))
+                    request_url = new_url
 
                     resp = await self.smart_client.request(
                         "GET",
@@ -814,11 +1150,23 @@ Decide next step for Command Injection / SSRF testing.
                     )
                 elapsed_seconds = time.perf_counter() - request_start
 
-                body = resp.get("body", "")[:500] if resp.get("body") else ""
+                full_body = str(resp.get("body", "") or "")
+                body = full_body[:500]
                 status = resp.get("status", 0)
                 error = resp.get("error")
-
+                headers = resp.get("headers", {}) if isinstance(resp.get("headers", {}), dict) else {}
+                if method == "POST":
+                    request_url = target
+                    request_body = urlencode(dict(self._ordered_params_for_attempt(params, attempt.get("ordered_keys", []))))
+                else:
+                    request_body = ""
+                poc_request = self._build_poc_request(
+                    method=method,
+                    request_url=request_url,
+                    body=request_body,
+                )
                 if error or status == 0:
+                    poc_response = self._build_poc_response(status=status, body=body, headers=headers)
                     logger.warning(f"[{self.name}] Request blocked or failed: {error}")
                     last_observation = {
                         "status": status,
@@ -826,6 +1174,12 @@ Decide next step for Command Injection / SSRF testing.
                         "body_snippet": f"Blocked: {error}",
                         "elapsed_seconds": elapsed_seconds,
                         "race_attempts": int(attempt.get("attempt", 1) or 1),
+                        "request_method": method,
+                        "request_url": request_url,
+                        "poc_request": poc_request,
+                        "poc_response": poc_response,
+                        "content_type": str(headers.get("Content-Type", headers.get("content-type", "")) or ""),
+                        "body_length": len(str(resp.get("body", "") or "")),
                     }
                     continue
 
@@ -842,17 +1196,36 @@ Decide next step for Command Injection / SSRF testing.
                 ssrf_indicators = ["aws", "metadata", "169.254", "localhost", "127.0.0.1"]
 
                 diff = "normal"
-                if any(ind.lower() in body.lower() for ind in cmd_indicators):
+                matched_indicator = next(
+                    (indicator for indicator in cmd_indicators if indicator.lower() in full_body.lower()),
+                    "",
+                )
+                if matched_indicator:
                     diff = "cmd_injection_found"
-                elif any(ind.lower() in body.lower() for ind in ssrf_indicators):
+                else:
+                    matched_indicator = next(
+                        (indicator for indicator in ssrf_indicators if indicator.lower() in full_body.lower()),
+                        "",
+                    )
+                if diff == "normal" and matched_indicator:
                     diff = "ssrf_found"
+
+                evidence_body = self._response_evidence_excerpt(full_body, matched_indicator)
+                body_snippet = self._response_evidence_excerpt(full_body, matched_indicator, limit=200)
+                poc_response = self._build_poc_response(status=status, body=evidence_body, headers=headers)
 
                 last_observation = {
                     "status": status,
                     "diff": diff,
-                    "body_snippet": body[:200],
+                    "body_snippet": body_snippet,
                     "elapsed_seconds": elapsed_seconds,
                     "race_attempts": int(attempt.get("attempt", 1) or 1),
+                    "request_method": method,
+                    "request_url": request_url,
+                    "poc_request": poc_request,
+                    "poc_response": poc_response,
+                    "content_type": str(headers.get("Content-Type", headers.get("content-type", "")) or ""),
+                    "body_length": len(str(resp.get("body", "") or "")),
                 }
                 if diff != "normal":
                     return last_observation
@@ -862,3 +1235,46 @@ Decide next step for Command Injection / SSRF testing.
         except Exception as e:
             logger.error(f"[{self.name}] Request failed: {e}")
             return {"status": 0, "diff": "error", "body_snippet": str(e), "elapsed_seconds": 0.0, "race_attempts": 0}
+
+    @staticmethod
+    def _build_poc_request(*, method: str, request_url: str, body: str = "") -> str:
+        parsed = urlparse(str(request_url or ""))
+        path = parsed.path or "/"
+        if parsed.query:
+            path = f"{path}?{parsed.query}"
+        host = parsed.netloc or parsed.hostname or "target"
+        lines = [f"{str(method or 'GET').upper()} {path} HTTP/1.1", f"Host: {host}"]
+        if body:
+            lines.append("Content-Type: application/x-www-form-urlencoded")
+            lines.append("")
+            lines.append(body)
+        return "\n".join(lines)
+
+    @staticmethod
+    def _response_evidence_excerpt(body: str, marker: str, limit: int = 500) -> str:
+        """Return a bounded response excerpt centred on a detected marker."""
+        if not body:
+            return ""
+        if not marker:
+            return body[:limit]
+
+        marker_index = body.lower().find(marker.lower())
+        if marker_index < 0:
+            return body[:limit]
+
+        start = max(0, marker_index - (limit // 2))
+        end = min(len(body), start + limit)
+        start = max(0, end - limit)
+        return body[start:end]
+
+    @staticmethod
+    def _build_poc_response(*, status: Any, body: str, headers: Dict[str, Any] | None = None) -> str:
+        status_int = int(status or 0)
+        header_lines = [f"HTTP/1.1 {status_int}"]
+        for key, value in (headers or {}).items():
+            if str(key).lower() in {"set-cookie", "cookie", "authorization"}:
+                continue
+            header_lines.append(f"{key}: {value}")
+        header_lines.append("")
+        header_lines.append(str(body or ""))
+        return "\n".join(header_lines)

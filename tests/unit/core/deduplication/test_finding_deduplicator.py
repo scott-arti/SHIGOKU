@@ -52,3 +52,36 @@ def test_mass_assignment_merges_same_path_when_descriptions_are_similar() -> Non
     assert len(deduped) == 1
     merged = deduped[0]
     assert merged.additional_info.get("merged_count") == 2
+
+
+def test_merging_candidates_preserves_all_reason_codes() -> None:
+    """A report-time merge must not erase a second candidate's hold-back reason."""
+    common = {
+        "vuln_type": VulnType.BROKEN_ACCESS_CONTROL,
+        "severity": Severity.HIGH,
+        "description": "Static session identifier may permit an unauthorized session pivot.",
+        "target_url": "http://localhost:4280/vulnerabilities/weak_id/?Submit=Generate",
+    }
+    first = Finding(
+        title="Predictable session identifier candidate",
+        confidence=0.8,
+        additional_info={"reason_codes": ["untested_no_second_account"]},
+        **common,
+    )
+    second = Finding(
+        title="Session fixation candidate",
+        confidence=0.7,
+        additional_info={"evidence_quality_reason_codes": ["session_takeover_not_verified"]},
+        **common,
+    )
+
+    deduped = deduplicate_findings([first, second])
+
+    assert len(deduped) == 1
+    assert deduped[0].additional_info["reason_codes"] == [
+        "untested_no_second_account",
+        "session_takeover_not_verified",
+    ]
+    assert deduped[0].additional_info["evidence_quality_reason_codes"] == [
+        "session_takeover_not_verified"
+    ]

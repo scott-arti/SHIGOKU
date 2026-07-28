@@ -537,6 +537,7 @@ class HaddixSubmissionInternalFormatter(HaddixFormatter):
                     if not info.get("reason_codes"):
                         info["reason_codes"] = list(verdict.reason_codes)
 
+        enforced_candidates = self._deduplicate_candidate_findings(enforced_candidates)
         return enforced_confirmed, enforced_candidates, verdicts
 
     # ------------------------------------------------------------------
@@ -1130,8 +1131,8 @@ class HaddixSubmissionInternalFormatter(HaddixFormatter):
                 )
                 if reason_codes:
                     with_reason += 1
-                    code = reason_codes[0]
-                    reason_breakdown[code] = reason_breakdown.get(code, 0) + 1
+                    for code in dict.fromkeys(reason_codes):
+                        reason_breakdown[code] = reason_breakdown.get(code, 0) + 1
             missing_reason = len(candidate_findings) - with_reason
             candidate_reason_missing = missing_reason
             reason_breakdown_text = (
@@ -1356,6 +1357,14 @@ class HaddixSubmissionInternalFormatter(HaddixFormatter):
             f"- Type: {finding.vuln_type}",
             f"- Endpoint: `{self._normalize_url_string(finding.target_url)}`",
         ]
+        info = finding.additional_info if isinstance(finding.additional_info, dict) else {}
+        merged_duplicate_count = info.get("merged_duplicate_count")
+        try:
+            merged_duplicate_count_int = int(merged_duplicate_count or 0)
+        except Exception:
+            merged_duplicate_count_int = 0
+        if merged_duplicate_count_int > 1:
+            lines.append(f"- Merged duplicate raw candidates: {merged_duplicate_count_int}")
         reason_codes = self._ensure_unconfirmed_reason_codes(
             finding,
             demoted_for_missing_poc=not (

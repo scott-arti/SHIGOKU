@@ -6,6 +6,7 @@ Neo4jを使用して、収集した資産情報（ドメイン、IP、エンド�
 これにより、Attack Surface の可視化と動的な攻撃推論を可能にする。
 """
 
+import json
 import logging
 from datetime import datetime
 from typing import List, Optional, Dict, Any
@@ -19,6 +20,20 @@ from src.core.domain.model.target import TargetAsset
 from src.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _kg_safe_prop(value: Any) -> Any:
+    """Neo4j ノードプロパティはプリミティブ/プリミティブ配列のみ許可される。
+
+    Map(dict)や Map を含む配列はプロパティに設定できず
+    Neo.ClientError.Statement.TypeError (gql_status 22G03) を引き起こすため、
+    JSON 文字列へ直列化する。読み戻しは KG 側に無い (store 専用) ため文字列化で安全。
+    """
+    if isinstance(value, dict):
+        return json.dumps(value, ensure_ascii=False, default=str)
+    if isinstance(value, list) and any(isinstance(v, (dict, list)) for v in value):
+        return json.dumps(value, ensure_ascii=False, default=str)
+    return value
 
 
 class KnowledgeGraph:
@@ -230,6 +245,33 @@ class KnowledgeGraph:
         )
         tx.run(query, name=tech.name, category=tech.category, url=url)
 
+    @staticmethod
+    def _get_tech_by_url(tx, target_url: str) -> List[Dict[str, Any]]:
+        """指定URL/ドメインに関連するTechnologyを取得 (Page RUNS_ON / Domain CONTAINS 経由)
+
+        SGK fix: get_tech_stack() から呼ばれていたが未実装だったため常に空を返していた。
+        """
+        query = (
+            "MATCH (p:Page)-[:RUNS_ON]->(t:Technology) "
+            "WHERE p.url = $url OR p.url STARTS WITH ($url + '/') "
+            "RETURN t.name AS name, t.category AS category, p.url AS url "
+            "UNION "
+            "MATCH (d:Domain {name: $url})-[:CONTAINS]->(p:Page)-[:RUNS_ON]->(t:Technology) "
+            "RETURN t.name AS name, t.category AS category, p.url AS url"
+        )
+        result = tx.run(query, url=target_url)
+        return [record.data() for record in result]
+
+    @staticmethod
+    def _get_all_tech(tx) -> List[Dict[str, Any]]:
+        """全Technologyを取得"""
+        query = (
+            "MATCH (t:Technology) "
+            "RETURN t.name AS name, t.category AS category, '' AS url"
+        )
+        result = tx.run(query)
+        return [record.data() for record in result]
+
     def store_recon_result(self, tool_name: str, target: str, result: Any) -> None:
         """
         Reconツールの実行結果を正規化して保存
@@ -362,10 +404,10 @@ class KnowledgeGraph:
                         why_suspicious=sig.get("why_suspicious", ""),
                         source_observations=sig.get("source_observations", []),
                         auth_required=sig.get("auth_required", False),
-                        auth_context=sig.get("auth_context", {}),
+                        auth_context=_kg_safe_prop(sig.get("auth_context", {})),
                         interaction_kind=sig.get("interaction_kind", "static"),
                         lineage=sig.get("lineage", ""),
-                        params=sig.get("params", []),
+                        params=_kg_safe_prop(sig.get("params", [])),
                         status=sig.get("status", "active"),
                         seen_count=sig.get("seen_count", 1),
                         run_id=run_id,

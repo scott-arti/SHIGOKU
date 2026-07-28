@@ -12,9 +12,9 @@ logger = logging.getLogger(__name__)
 
 class GraphSchema:
     @staticmethod
-    def apply_constraints():
+    def apply_constraints(driver=None):
         """Apply uniqueness constraints and indexes to the database."""
-        driver = get_db()
+        active_driver = driver or get_db()
         
         constraints = [
             # Asset Constraints
@@ -40,7 +40,7 @@ class GraphSchema:
             "CREATE CONSTRAINT toolrun_id_unique IF NOT EXISTS FOR (tr:ToolRun) REQUIRE tr.id IS UNIQUE",
         ]
         
-        with driver.session() as session:
+        with active_driver.session() as session:
             for constraint in constraints:
                 try:
                     session.run(constraint)

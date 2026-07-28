@@ -79,6 +79,20 @@ def test_resolve_risk_force_allowlist_defaults_cover_core_coverage():
     assert expected.issubset(allow)
 
 
+def test_cmd_ssrf_timeout_uses_current_target_params_not_stale_specialist_params():
+    """外側タイムアウトでは別URLの古い入力欄を未検証として記録しない。"""
+    agent = InjectionManagerAgent(config={"model": "test-model"})
+    agent.specialists["cmd_ssrf"].last_tested_params = ["page", "redirect", "id"]
+    agent.specialists["cmd_ssrf"].last_tested_target = "http://target.test/other"
+
+    params = agent._collect_recent_tested_params(
+        "cmd_ssrf",
+        "http://target.test/vulnerabilities/exec/",
+    )
+
+    assert params == ["ip", "host", "cmd", "command"]
+
+
 def test_resolve_risk_force_allowlist_empty_list_disables_risk_force():
     agent = InjectionManagerAgent(config={"model": "test-model"})
     task = SimpleNamespace(params={"phase2_risk_force_vuln_types": []})

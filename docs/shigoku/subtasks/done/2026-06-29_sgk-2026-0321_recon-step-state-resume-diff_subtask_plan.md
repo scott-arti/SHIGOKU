@@ -4,13 +4,13 @@ doc_type: subtask_plan
 status: done
 parent_task_id: SGK-2026-0320
 related_docs:
-- docs/shigoku/plans/2026-06-29_sgk-2026-0320_recon-resume-visibility-conversational-ops_plan.md
+- docs/shigoku/plans/done/2026-06-29_sgk-2026-0320_recon-resume-visibility-conversational-ops_plan.md
 - docs/shigoku/subtasks/2026-06-20_sgk-2026-0281_recon-resume-recipe-phasegate_subtask_plan.md
-- docs/shigoku/subtasks/2026-06-29_sgk-2026-0322_reconstate-completion-parallel-checkpoint-decision-tree_subtask_plan.md
-- docs/shigoku/subtasks/2026-06-29_sgk-2026-0326_flexible-report-generation-reinjection_subtask_plan.md
+- docs/shigoku/subtasks/done/2026-06-29_sgk-2026-0322_reconstate-completion-parallel-checkpoint-decision-tree_subtask_plan.md
+- docs/shigoku/subtasks/done/2026-06-29_sgk-2026-0326_flexible-report-generation-reinjection_subtask_plan.md
 title: 'P0: Recon step状態自動保存＋再開CLI＋前回差分可視化'
 created_at: '2026-06-29'
-updated_at: '2026-07-02'
+updated_at: '2026-07-28'
 tags:
 - shigoku
 - recon

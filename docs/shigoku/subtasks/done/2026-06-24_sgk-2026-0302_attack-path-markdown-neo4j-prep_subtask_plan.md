@@ -6,10 +6,10 @@ parent_task_id: SGK-2026-0298
 related_docs:
 - docs/shigoku/plans/2026-06-24_sgk-2026-0298_internal-behavior-visibility-governance_plan.md
 - docs/shigoku/roadmaps/IMPLEMENTATION_ROADMAP.md
-- docs/shigoku/subtasks/2026-06-23_sgk-2026-0293_vulnerability-management-review-trail_subtask_plan.md
+- docs/shigoku/subtasks/done/2026-06-23_sgk-2026-0293_vulnerability-management-review-trail_subtask_plan.md
 title: '内部挙動可視化 S4: 攻撃パスMarkdownグラフ・Neo4j連携準備'
 created_at: '2026-06-24'
-updated_at: '2026-07-02'
+updated_at: '2026-07-28'
 tags:
 - shigoku
 target: attack_paths.md, Mermaid, Neo4j export contract

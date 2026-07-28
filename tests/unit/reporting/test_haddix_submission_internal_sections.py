@@ -749,6 +749,161 @@ class TestCSRFNormalization:
         assert "CSRFトークン" in submission_scope or "SameSite" in submission_scope
 
 
+class TestCandidateHygiene:
+    """Candidate hygiene for report-time gate counts.
+
+    Duplicated AuthZ/BFLA candidates from the same endpoint should not inflate
+    the submission-readiness candidate count.
+    """
+
+    def _make_api_authz_candidate(
+        self,
+        *,
+        title: str,
+        severity: str = "medium",
+        scenario: str = "unauthenticated_api_access",
+    ) -> HaddixFinding:
+        return HaddixFinding(
+            title=title,
+            severity=severity,
+            vuln_type="broken_access_control",
+            target_url="http://127.0.0.1:4280/vulnerabilities/api/v2/user/",
+            summary="Unauthenticated and authenticated responses are both JSON-like and same-sized.",
+            impact="Sensitive impact is not proven yet.",
+            poc_request=(
+                "GET /vulnerabilities/api/v2/user/ HTTP/1.1\n"
+                "Host: 127.0.0.1:4280\n\n"
+            ),
+            poc_response='HTTP/1.1 200 OK\n\n{"id":1,"name":"admin"}',
+            additional_info={
+                "detection_class": "endpoint_bfla",
+                "authz_differential": {
+                    "scenario": scenario,
+                    "baseline_status": 200,
+                    "test_status": 200,
+                    "signals": [
+                        "auth_success",
+                        "unauth_success",
+                        "auth_json_like",
+                        "unauth_json_like",
+                        "body_length_close",
+                    ],
+                    "auth_body_length": 101,
+                    "test_body_length": 101,
+                    "body_length_delta": 0,
+                },
+            },
+        )
+
+    def test_duplicate_api_authz_candidates_are_counted_once(self):
+        fmt = HaddixSubmissionInternalFormatter()
+        fmt.set_target("http://127.0.0.1:4280")
+        fmt.set_source_session("/tmp/session.json")
+        fmt.add_finding(
+            self._make_api_authz_candidate(
+                title="Unauthenticated Access to Discovered API Endpoint",
+                severity="high",
+                scenario="unauthenticated_discovered_api_access",
+            )
+        )
+        fmt.add_finding(
+            self._make_api_authz_candidate(
+                title="Potential Unauthenticated API Access",
+                severity="medium",
+                scenario="unauthenticated_api_access",
+            )
+        )
+
+        confirmed, candidates, _ = fmt._get_enforced_split()
+        md = fmt.format_markdown()
+
+        assert confirmed == []
+        assert len(candidates) == 1
+        assert candidates[0].title == "Unauthenticated Access to Discovered API Endpoint"
+        assert candidates[0].additional_info["merged_duplicate_count"] == 2
+        assert "Confirmed: 0 / Candidate: 1" in md
+
+    def test_duplicate_candidates_preserve_each_reason_code(self):
+        fmt = HaddixSubmissionInternalFormatter()
+        first = self._make_api_authz_candidate(title="API candidate A")
+        second = self._make_api_authz_candidate(title="API candidate B")
+        first.additional_info["reason_codes"] = ["untested_no_second_account"]
+        second.additional_info["evidence_quality_reason_codes"] = [
+            "session_takeover_not_verified"
+        ]
+
+        merged = fmt._deduplicate_candidate_findings([first, second])
+
+        assert len(merged) == 1
+        assert merged[0].additional_info["reason_codes"] == [
+            "untested_no_second_account",
+            "session_takeover_not_verified",
+        ]
+        assert merged[0].additional_info["evidence_quality_reason_codes"] == [
+            "session_takeover_not_verified",
+        ]
+
+    def test_duplicate_confirmed_findings_are_counted_once_by_endpoint_method_and_parameter(self):
+        fmt = HaddixSubmissionInternalFormatter()
+        fmt.set_target("http://127.0.0.1:4280")
+        fmt.set_source_session("/tmp/session.json")
+        first = _make_confirmed_finding(
+            title="Command Injection in parameter 'ip'",
+            vuln_type="os_command_injection",
+            target_url="http://127.0.0.1:4280/vulnerabilities/exec/",
+            poc_request=(
+                "POST /vulnerabilities/exec/ HTTP/1.1\n"
+                "Host: 127.0.0.1:4280\n\n"
+                "ip=127.0.0.1%7Cid&Submit=Submit"
+            ),
+            payloads_used=["127.0.0.1|id"],
+            additional_info={"parameter": "ip", "command_execution_evidence": {"output_observed": True}},
+        )
+        second = _make_confirmed_finding(
+            title="Command Injection in parameter 'ip'",
+            vuln_type="os_command_injection",
+            target_url="http://127.0.0.1:4280/vulnerabilities/exec/",
+            poc_request=(
+                "POST /vulnerabilities/exec/ HTTP/1.1\n"
+                "Host: 127.0.0.1:4280\n\n"
+                "ip=127.0.0.1%7Cid&Submit=Submit"
+            ),
+            payloads_used=["127.0.0.1|id"],
+            additional_info={"parameter": "ip", "command_execution_evidence": {"output_observed": True}},
+        )
+        fmt.add_finding(first)
+        fmt.add_finding(second)
+
+        confirmed, candidates, _ = fmt._get_enforced_split()
+
+        assert candidates == []
+        assert len(confirmed) == 1
+        assert confirmed[0].additional_info["merged_duplicate_count"] == 2
+
+    def test_confirmed_findings_with_distinct_parameters_are_not_merged(self):
+        fmt = HaddixSubmissionInternalFormatter()
+        fmt.set_target("http://127.0.0.1:4280")
+        fmt.set_source_session("/tmp/session.json")
+        for parameter in ("ip", "host"):
+            fmt.add_finding(_make_confirmed_finding(
+                title=f"Command Injection in parameter '{parameter}'",
+                vuln_type="os_command_injection",
+                target_url="http://127.0.0.1:4280/vulnerabilities/exec/",
+                poc_request=(
+                    "POST /vulnerabilities/exec/ HTTP/1.1\n"
+                    "Host: 127.0.0.1:4280\n\n"
+                    f"{parameter}=127.0.0.1%7Cid&Submit=Submit"
+                ),
+                payloads_used=["127.0.0.1|id"],
+                additional_info={"parameter": parameter, "command_execution_evidence": {"output_observed": True}},
+            ))
+
+        confirmed, candidates, _ = fmt._get_enforced_split()
+
+        assert candidates == []
+        assert len(confirmed) == 2
+
+
 class TestSyntheticResponseExclusion:
     """HTTP/1.1 0 (and similar synthetic detector notes) must not appear as
     response evidence in the submission copy scope."""

@@ -249,8 +249,8 @@ SGK-2026-0244-S01,SGK-2026-0244 の未実装項目（Stored XSS保存フェー�
 SGK-2026-0244,X2/X3/X4 の実装済み項目を再評価し、計画書ステータス更新と未完了項目を明確化した状況報告,done,work_report,SGK-2026-0244,docs/shigoku/reports/2026-05-29_sgk-2026-0244_x2-x4-status_work_report.md
 SGK-2026-0219,Non-SCN評価 Step1-7 実施結果と再判定（Conditional継続）,done,work_report,,docs/shigoku/reports/2026-05-31_sgk-2026-0219_non-scn-eval_work_report.md
 SGK-2026-0219,Non-SCN評価 Step1-7 実行ログ（baseline固定・再現性・再判定）,done,work_log,,docs/shigoku/worklogs/2026-05-31_sgk-2026-0219_non-scn-eval_work_log.md
-SGK-2026-0249,SGK-2026-0219 継続監視（Non-SCN評価の経過観察）,active,subtask_plan,SGK-2026-0219,docs/shigoku/subtasks/2026-05-31_sgk-2026-0249_non-scn_subtask_plan.md
-SGK-2026-0250,SGK-2026-0221 継続監視（GraphQL運用SLO/観測）,active,subtask_plan,SGK-2026-0221,docs/shigoku/subtasks/2026-05-31_sgk-2026-0250_graphql-slo_subtask_plan.md
+SGK-2026-0249,SGK-2026-0219 継続監視（Non-SCN評価の経過観察）,active,subtask_plan,SGK-2026-0219,docs/shigoku/subtasks/Watchlist/2026-05-31_sgk-2026-0249_non-scn_subtask_plan.md
+SGK-2026-0250,SGK-2026-0221 継続監視（GraphQL運用SLO/観測）,active,subtask_plan,SGK-2026-0221,docs/shigoku/subtasks/Watchlist/2026-05-31_sgk-2026-0250_graphql-slo_subtask_plan.md
 SGK-2026-0221,SGK-2026-0221 親計画クローズと継続監視分離の完了報告,done,work_report,SGK-2026-0065,docs/shigoku/reports/2026-05-31_sgk-2026-0221_plan-closure_work_report.md
 SGK-2026-0221,SGK-2026-0221 親計画クローズ作業ログ,done,work_log,SGK-2026-0065,docs/shigoku/worklogs/2026-05-31_sgk-2026-0221_plan-closure_work_log.md
 SGK-2026-0251,脆弱性チェーン高精度化実装計画,active,plan,SGK-2026-0131,docs/shigoku/plans/2026-06-01_sgk-2026-0251_task_plan.md
@@ -262,15 +262,13 @@ SGK-2026-0253,precedence matrix、audit 観測項目、統合一致結果、切�
 SGK-2026-0253,SGK-2026-0253 の報告反映と台帳更新ログ,done,work_log,SGK-2026-0251,docs/shigoku/worklogs/2026-06-03_sgk-2026-0253_program-overrides_work_log.md
 SGK-2026-0254,脆弱性チェーン時間軸制約とセッション世代追跡,done,subtask_plan,SGK-2026-0251,docs/shigoku/subtasks/2026-06-02_sgk-2026-0254_task_subtask_plan.md
 SGK-2026-0255,脆弱性チェーン degrade 設計と運用Runbook 整備,done,subtask_plan,SGK-2026-0251,docs/shigoku/subtasks/2026-06-02_sgk-2026-0255_degrade-runbook_subtask_plan.md
-SGK-2026-0256,SGK-2026-0256 継続監視（program overrides 運用観測）,active,subtask_plan,SGK-2026-0253,docs/shigoku/subtasks/2026-06-03_sgk-2026-0256_program-overrides_subtask_plan.md
+SGK-2026-0256,SGK-2026-0256 継続監視（program overrides 運用観測）,active,subtask_plan,SGK-2026-0253,docs/shigoku/subtasks/Watchlist/2026-06-03_sgk-2026-0256_program-overrides_subtask_plan.md
 SGK-2026-0257,SGK-2026-0253 技術的負債追跡（sample rules / schema test）,active,subtask_plan,SGK-2026-0253,docs/shigoku/subtasks/2026-06-03_sgk-2026-0257_sample-rules-schema-test_subtask_plan.md
 SGK-2026-0254,temporal constraint、audit/shadow 指標、representative 回帰確認の完了報告,done,work_report,SGK-2026-0251,docs/shigoku/reports/2026-06-03_sgk-2026-0254_temporal-state_work_report.md
 SGK-2026-0254,SGK-2026-0254 の報告反映と継続監視分離ログ,done,work_log,SGK-2026-0251,docs/shigoku/worklogs/2026-06-03_sgk-2026-0254_temporal-state_work_log.md
 SGK-2026-0258,temporal metadata 欠損率、representative session 回帰、reason code 安定性の継続監視,active,subtask_plan,SGK-2026-0254,docs/shigoku/subtasks/2026-06-03_sgk-2026-0258_temporal-followup_subtask_plan.md
 SGK-2026-0259,Recipe高度化: 単一セッション高額Auth/JWT/OAuth検出強化,done,subtask_plan,SGK-2026-0221,docs/shigoku/subtasks/done/2026-06-03_sgk-2026-0259_recipe-auth-jwt-oauth_subtask_plan.md
 SGK-2026-0260,Recipe運用フロー改善: Recon起点の選抜・実行・Swarm連携,active,subtask_plan,SGK-2026-0221,docs/shigoku/subtasks/2026-06-03_sgk-2026-0260_recipe-recon-swarm_subtask_plan.md
-SGK-2026-0260,Recipe selector の Recon signal bridge 実施報告,active,work_report,SGK-2026-0221,docs/shigoku/reports/2026-07-18_sgk-2026-0260_signal-recipe-selector-bridge_work_report.md
-SGK-2026-0260,Recipe selector の Recon signal bridge 作業ログ,active,work_log,SGK-2026-0221,docs/shigoku/worklogs/2026-07-18_sgk-2026-0260_signal-recipe-selector-bridge_work_log.md
 SGK-2026-0261,Recon運用フロー改善: 攻撃面分類・Signal正規化・MC/Swarm受け渡し,active,subtask_plan,SGK-2026-0221,docs/shigoku/subtasks/2026-06-03_sgk-2026-0261_recon-signal-mc-swarm_subtask_plan.md
 SGK-2026-0262,継続学習運用改善: Obsidian/RAG・KG・Recipe連携の再設計,active,subtask_plan,SGK-2026-0221,docs/shigoku/subtasks/2026-06-03_sgk-2026-0262_obsidian-rag-kg-recipe_subtask_plan.md
 SGK-2026-0263,継続学習リファレンス: KG・RAG・MC・Recipe・Recon の理想アーキテクチャ,active,roadmap,,docs/shigoku/roadmaps/2026-06-03_continuous-learning-architecture-reference.md
@@ -291,7 +289,7 @@ SGK-2026-0277,InjectionManager API minimal check service 化による大規模�
 SGK-2026-0278,Ver.2 planning bundle: DEV_MODE整理・自律再認証強化・Recon再設計,active,plan,SGK-2026-0065,docs/shigoku/plans/2026-06-20_sgk-2026-0278_ver-2-planning-bundle-dev-mode-recon_plan.md
 SGK-2026-0279,DEV_MODEデモ経路分離とBurpIntegration削除計画,done,subtask_plan,SGK-2026-0278,docs/shigoku/subtasks/2026-06-20_sgk-2026-0279_dev-mode-burpintegration_subtask_plan.md
 SGK-2026-0280,自律再認証運用明確化計画,done,subtask_plan,SGK-2026-0278,docs/shigoku/subtasks/done/2026-06-20_sgk-2026-0280_reauth_subtask_plan.md
-SGK-2026-0281,Recon運用再設計: Resume・再利用・Recipe/PhaseGate連携計画,active,subtask_plan,SGK-2026-0278,docs/shigoku/subtasks/2026-06-20_sgk-2026-0281_recon-resume-recipe-phasegate_subtask_plan.md
+SGK-2026-0281,Recon運用再設計: Resume・再利用・Recipe/PhaseGate連携計画,done,subtask_plan,SGK-2026-0278,docs/shigoku/subtasks/done/2026-06-20_sgk-2026-0281_recon-resume-recipe-phasegate_subtask_plan.md
 SGK-2026-0282,Bug Bounty向けScope・PhaseGate実行制御統合計画,active,subtask_plan,SGK-2026-0278,docs/shigoku/subtasks/2026-06-21_sgk-2026-0282_bug-bounty-scope-control_subtask_plan.md
 SGK-2026-0283,Subdomain Takeover高度化計画,done,subtask_plan,SGK-2026-0278,docs/shigoku/subtasks/done/2026-06-21_sgk-2026-0283_subdomain-takeover-v2_subtask_plan.md
 SGK-2026-0284,PhaseGate細粒度化計画,backlog,subtask_plan,SGK-2026-0282,docs/shigoku/subtasks/done/2026-06-21_sgk-2026-0284_phasegate-fine-grained_subtask_plan.md
@@ -303,7 +301,7 @@ SGK-2026-0289,SHIGOKU共通化・技術的負債返済ロードマップ,active,
 SGK-2026-0290,CLI日本語化設計計画,done,subtask_plan,SGK-2026-0266,docs/shigoku/subtasks/2026-06-22_sgk-2026-0290_cli-japanese-localization_subtask_plan.md
 SGK-2026-0291,Swarm並列処理検討 設計議論計画,done,subtask_plan,SGK-2026-0289,docs/shigoku/subtasks/done/2026-06-23_sgk-2026-0291_swarm-parallelism-review_subtask_plan.md
 SGK-2026-0292,Ollama廃止とLLM設定統一 設計議論計画,done,subtask_plan,SGK-2026-0289,docs/shigoku/subtasks/2026-06-23_sgk-2026-0292_ollama-removal-llm-config-unification_subtask_plan.md
-SGK-2026-0293,脆弱性管理と実行後レビュー設計 議論計画,active,subtask_plan,SGK-2026-0289,docs/shigoku/subtasks/2026-06-23_sgk-2026-0293_vulnerability-management-review-trail_subtask_plan.md
+SGK-2026-0293,脆弱性管理と実行後レビュー設計 議論計画,done,subtask_plan,SGK-2026-0289,docs/shigoku/subtasks/done/2026-06-23_sgk-2026-0293_vulnerability-management-review-trail_subtask_plan.md
 SGK-2026-0294,3判断器再設計とAdvisor AI戦略レビュー化 議論計画,backlog,subtask_plan,SGK-2026-0293,docs/shigoku/subtasks/2026-06-23_sgk-2026-0294_3-advisor-ai_subtask_plan.md
 SGK-2026-0295,Strict Entry Gate: Caido Mandatory and Runtime Preflight Validation,done,work_report,SGK-2026-0065,docs/shigoku/reports/2026-06-23_SGK-2026-0295_work_report.md
 SGK-2026-0296,Strict Entry Gate Review Fixes Instruction,done,work_report,SGK-2026-0295,docs/shigoku/reports/2026-06-23_SGK-2026-0296_work_report.md
@@ -330,15 +328,23 @@ SGK-2026-0316,Swarm並列化 Phase 7: stateful mutating aggressive lanes 限定�
 SGK-2026-0317,Swarm並列化 Phase 8: SwarmDispatcher SwarmManager 内側並列化評価,done,subtask_plan,SGK-2026-0291,docs/shigoku/subtasks/done/2026-06-26_swarm-phase-8-swarmdispatcher-swarmmanager_subtask_plan.md
 SGK-2026-0318,Swarm並列化 Phase 9: release gate rollout policy promotion,done,subtask_plan,SGK-2026-0291,docs/shigoku/subtasks/done/2026-06-26_swarm-phase-9-release-gate-rollout-policy-promotion_subtask_plan.md
 SGK-2026-0319,learnings の恒久ルール昇格と agent rule 接続,done,subtask_plan,SGK-2026-0289,docs/shigoku/subtasks/done/2026-06-26_learnings-agent-rule_subtask_plan.md
-SGK-2026-0320,Recon途中再開・可視化・対話型オペレーション 統合ロードマップ,active,plan,,docs/shigoku/plans/2026-06-29_sgk-2026-0320_recon-resume-visibility-conversational-ops_plan.md
+SGK-2026-0320,Recon途中再開・可視化・対話型オペレーション 統合ロードマップ,done,plan,,docs/shigoku/plans/done/2026-06-29_sgk-2026-0320_recon-resume-visibility-conversational-ops_plan.md
 SGK-2026-0321,P0: Recon step状態自動保存＋再開CLI＋前回差分可視化,done,subtask_plan,SGK-2026-0320,docs/shigoku/subtasks/done/2026-06-29_sgk-2026-0321_recon-step-state-resume-diff_subtask_plan.md
 SGK-2026-0322,P1a: ReconState完全化＋並行タスクcheckpoint/resume堅牢化,done,subtask_plan,SGK-2026-0320,docs/shigoku/subtasks/done/2026-06-29_sgk-2026-0322_reconstate-completion-parallel-checkpoint-decision-tree_subtask_plan.md
 SGK-2026-0323,P2: PhaseGate細粒度化＋過去Recon成果物再利用(--import-recon),done,subtask_plan,SGK-2026-0320,docs/shigoku/subtasks/done/2026-06-29_sgk-2026-0323_phasegate-granularity-import-recon_subtask_plan.md
 SGK-2026-0323-WR,SGK-2026-0323 P2b 実装完了報告,done,work_report,SGK-2026-0323,docs/shigoku/reports/2026-07-01_sgk-2026-0323_phasegate-granularity-import-recon_work_report.md
 SGK-2026-0323-WL,SGK-2026-0323 P2b 作業ログ,done,work_log,SGK-2026-0323,docs/shigoku/worklogs/2026-07-01_sgk-2026-0323_phasegate-granularity-import-recon_work_log.md
-SGK-2026-0324,P3: 攻撃パスNeo4j UI＋脆弱性管理システム,active,subtask_plan,SGK-2026-0320,docs/shigoku/subtasks/2026-06-29_sgk-2026-0324_neo4j-attack-path-ui-vuln-management_subtask_plan.md
-SGK-2026-0325,A: 対話型オペレーション（チャットベース指揮 軽量版）,active,subtask_plan,SGK-2026-0320,docs/shigoku/subtasks/2026-06-29_sgk-2026-0325_conversational-ops-chat-direction_subtask_plan.md
-SGK-2026-0326,B: 自由形式レポート生成→SHIGOKU再投入,active,subtask_plan,SGK-2026-0320,docs/shigoku/subtasks/2026-06-29_sgk-2026-0326_flexible-report-generation-reinjection_subtask_plan.md
+SGK-2026-0324,P3: 攻撃パスNeo4j UI＋脆弱性管理システム,done,subtask_plan,SGK-2026-0320,docs/shigoku/subtasks/done/2026-06-29_sgk-2026-0324_neo4j-attack-path-ui-vuln-management_subtask_plan.md
+SGK-2026-0324-WR,0324 Step1 backend contract の実装報告,done,work_report,SGK-2026-0324,docs/shigoku/reports/2026-07-21_sgk-2026-0324_attack-path-cypher-neo4j-ingest_work_report.md
+SGK-2026-0324-WL,0324 Step1 backend contract の作業ログ,done,work_log,SGK-2026-0324,docs/shigoku/worklogs/2026-07-21_sgk-2026-0324_attack-path-cypher-neo4j-ingest_work_log.md
+SGK-2026-0325,A: 対話型オペレーション（チャットベース指揮 軽量版）,done,subtask_plan,SGK-2026-0320,docs/shigoku/subtasks/done/2026-06-29_sgk-2026-0325_conversational-ops-chat-direction_subtask_plan.md
+SGK-2026-0326,B: 自由形式レポート生成→SHIGOKU再投入,done,subtask_plan,SGK-2026-0320,docs/shigoku/subtasks/done/2026-06-29_sgk-2026-0326_flexible-report-generation-reinjection_subtask_plan.md
+SGK-2026-0320-WR,0325/0326 共通 schema 固定と single-session export / input bridge の最小実装,done,work_report,SGK-2026-0320,docs/shigoku/reports/2026-07-21_sgk-2026-0320_shared-schema-export-input-bridge_work_report.md
+SGK-2026-0320-WL,shared schema / export / input bridge 実装の作業ログ,done,work_log,SGK-2026-0320,docs/shigoku/worklogs/2026-07-21_sgk-2026-0320_shared-schema-export-input-bridge_work_log.md
+SGK-2026-0325-WR,0325 lightweight conversational ops input bridge の実装報告,done,work_report,SGK-2026-0325,docs/shigoku/reports/2026-07-21_sgk-2026-0325_conversational-ops-chat-direction_work_report.md
+SGK-2026-0325-WL,0325 lightweight conversational ops input bridge の作業ログ,done,work_log,SGK-2026-0325,docs/shigoku/worklogs/2026-07-21_sgk-2026-0325_conversational-ops-chat-direction_work_log.md
+SGK-2026-0326-WR,0326 export / reinjection 最小版の実装報告,done,work_report,SGK-2026-0326,docs/shigoku/reports/2026-07-21_sgk-2026-0326_flexible-report-generation-reinjection_work_report.md
+SGK-2026-0326-WL,0326 export / reinjection 最小版の作業ログ,done,work_log,SGK-2026-0326,docs/shigoku/worklogs/2026-07-21_sgk-2026-0326_flexible-report-generation-reinjection_work_log.md
 SGK-2026-0327,SCN介入通知日本語化（最小差分）計画,done,subtask_plan,SGK-2026-0278,docs/shigoku/subtasks/done/2026-06-30_sgk-2026-0327_scn-intervention-notification-ja_subtask_plan.md
 SGK-2026-0328,translate-logs削除とlog_translator廃止,done,subtask_plan,SGK-2026-0303,docs/shigoku/subtasks/done/2026-06-30_sgk-2026-0328_translate-logs-log-translator-removal_subtask_plan.md
 SGK-2026-0329,BugBountyデフォルト化とSQLi危険操作HITL強制化 実装計画,done,plan,SGK-2026-0066,docs/shigoku/plans/done/2026-06-30_sgk-2026-0329_bugbounty-sqli-hitl_plan.md
@@ -346,7 +352,7 @@ SGK-2026-0330,共有SafeGuardの残適用箇所横展開,done,subtask_plan,SGK-2
 SGK-2026-0331,CIパイプラインで SmartRequest( / get_request_guard( 直呼びを検出するアサーションスクリプト追加,active,plan,SGK-2026-0330,docs/shigoku/plans/2026-06-30_sgk-2026-0331_smartrequest-lint-check_plan.md
 SGK-2026-0332,"distributed_sqli.py, second_order_assistant.py 等の実送信pathを棚卸し、shared safeguard配下へ段階的に寄せる",active,plan,SGK-2026-0330,docs/shigoku/plans/2026-06-30_sgk-2026-0332_auxiliary-module-safeguard_plan.md
 SGK-2026-0333,time-based SQLi policyのデフォルト有効化とpolicy matrixの設計,active,plan,SGK-2026-0330,docs/shigoku/plans/2026-06-30_sgk-2026-0333_timebased-sqli-policy_plan.md
-SGK-2026-0334,P1b: 判断ツリー可視化＋shigoku-ops decision-tree CLI,active,subtask_plan,SGK-2026-0320,docs/shigoku/subtasks/2026-07-01_p1b-shigoku-ops-decision-tree-cli_subtask_plan.md
+SGK-2026-0334,P1b: 判断ツリー可視化＋shigoku-ops decision-tree CLI,done,subtask_plan,SGK-2026-0320,docs/shigoku/subtasks/done/2026-07-01_sgk-2026-0334_p1b-shigoku-ops-decision-tree-cli_subtask_plan.md
 SGK-2026-0335,Bug Bounty向けScope Bundle入力正規化とGuard Policy Compile計画,done,subtask_plan,SGK-2026-0282,docs/shigoku/subtasks/done/2026-07-01_bug-bounty-scope-bundle-guard-policy-compile_subtask_plan.md
 SGK-2026-0336,"SGK-2026-0335 の V1 deferred tasks を追跡し、stale bundle detection, concurrent update control, metrics export, auto-promotion, legacy --scope removal を管理する",active,subtask_plan,SGK-2026-0282,docs/shigoku/subtasks/2026-07-02_sgk-2026-0336_bugbounty-bundle-v1-followups_subtask_plan.md
 SGK-2026-0337,SHIGOKU 詳細コマンドリファレンス整備,done,plan,SGK-2026-0001,docs/shigoku/plans/done/2026-07-02_sgk-2026-0337_detailed-command-reference_plan.md
@@ -363,4 +369,36 @@ SGK-2026-0366,SKIPPED 理由の可視化と normal shutdown の CancelledError �
 SGK-2026-0367,Injection task ownership normalization and no-signal Phase2 suppression,done,plan,SGK-2026-0122,docs/shigoku/plans/done/2026-07-16_injection-task-ownership-normalization-and-no-signal-phase2-suppression_plan.md
 SGK-2026-0368,DOM XSS latent parameter inference hardening,active,plan,SGK-2026-0122,docs/shigoku/plans/2026-07-16_dom-xss-latent-parameter-inference-hardening_plan.md
 SGK-2026-0369,async_save_session skipped-reason regression test の fixture 不足を補い、session save path を検証可能にする,done,plan,SGK-2026-0366,docs/shigoku/plans/done/2026-07-16_sgk-2026-0369_master-conductor-session-save-test-fixture-fix_plan.md
-SGK-2026-0370,Bug Bounty compiled guard と PhaseGate capability 接続計画,active,subtask_plan,SGK-2026-0282,docs/shigoku/subtasks/2026-07-17_sgk-2026-0370_bugbounty-compiled-guard-phasegate-bridge_subtask_plan.md
+SGK-2026-0370,Bug Bounty compiled guard と PhaseGate capability 接続計画,done,subtask_plan,SGK-2026-0282,docs/shigoku/subtasks/done/2026-07-17_sgk-2026-0370_bugbounty-compiled-guard-phasegate-bridge_subtask_plan.md
+SGK-2026-0259,Auth/JWT/OAuth Recipe 群の実装完了報告書 (4新規+3移行),done,work_report,SGK-2026-0221,docs/shigoku/reports/2026-07-20_sgk-2026-0259_auth-jwt-oauth-recipe_work_report.md
+SGK-2026-0259,Auth/JWT/OAuth Recipe 固定契約化の作業ログ,done,work_log,SGK-2026-0221,docs/shigoku/worklogs/2026-07-20_sgk-2026-0259_auth-jwt-oauth-recipe_work_log.md
+SGK-2026-0371,AuthProbe relative redirect handling follow-up,done,subtask_plan,SGK-2026-0295,docs/shigoku/subtasks/done/2026-07-21_authprobe-relative-redirect-handling-follow-up_subtask_plan.md
+SGK-2026-0372,Signal-first attack task expansion regression fix,done,plan,,docs/shigoku/plans/done/2026-07-22_sgk-2026-0372_signal-first-attack-task-expansion-regression-fix_plan.md
+SGK-2026-0373,Signal-first attack generation gap integration,done,plan,SGK-2026-0372,docs/shigoku/plans/done/2026-07-22_sgk-2026-0373_signal-first-attack-generation-gap-integration_plan.md
+SGK-2026-0374,Scenario probe and data exposure coverage recovery,done,plan,SGK-2026-0373,docs/shigoku/plans/done/2026-07-22_sgk-2026-0374_scenario-probe-and-data-exposure-coverage-recovery_plan.md
+SGK-2026-0375,Scenario probe ownership dedup recovery,done,plan,SGK-2026-0374,docs/shigoku/plans/done/2026-07-22_sgk-2026-0375_scenario-probe-ownership-dedup-recovery_plan.md
+SGK-2026-0376,Signal-first tagged replay attack task restoration,done,plan,SGK-2026-0375,docs/shigoku/plans/done/2026-07-23_signal-first-tagged-replay-attack-task-restoration_plan.md
+SGK-2026-0377,Vulntest mode compiled guard fallback alignment,done,plan,SGK-2026-0376,docs/shigoku/plans/done/2026-07-23_vulntest-mode-compiled-guard-fallback-alignment_plan.md
+SGK-2026-0378,Signal legacy supplement URL-level merge fix,done,subtask_plan,SGK-2026-0377,docs/shigoku/subtasks/done/2026-07-23_signal-legacy-supplement-url-level-merge-fix_subtask_plan.md
+SGK-2026-0379,DVWA low finding regression recovery,done,plan,SGK-2026-0378,docs/shigoku/plans/done/2026-07-23_sgk-2026-0379_dvwa-low-finding-regression-recovery_plan.md
+SGK-2026-0380,DVWA low specialist parameter regression fix,done,plan,SGK-2026-0379,docs/shigoku/plans/done/2026-07-23_sgk-2026-0380_dvwa-low-specialist-parameter-regression-fix_plan.md
+SGK-2026-0381,DVWA low command injection parameter propagation fix,done,plan,SGK-2026-0380,docs/shigoku/plans/done/2026-07-23_sgk-2026-0381_dvwa-low-command-injection-parameter-propagation-fix_plan.md
+SGK-2026-0382,DVWA exec command injection POST submit preservation fix,done,plan,SGK-2026-0381,docs/shigoku/plans/done/2026-07-24_sgk-2026-0382_dvwa-exec-command-injection-post-submit-preservation-fix_plan.md
+SGK-2026-0383,SmartCmdSSRF finish safe verdict false positive fix,done,plan,SGK-2026-0382,docs/shigoku/plans/done/2026-07-24_sgk-2026-0383_smartcmdssrf-finish-safe-verdict-false-positive-fix_plan.md
+SGK-2026-0384,Runtime no-waste guards for localhost scanner and CORS Phase2,done,plan,SGK-2026-0383,docs/shigoku/plans/done/2026-07-24_sgk-2026-0384_runtime-no-waste-guards-for-localhost-scanner-and-cors-phase2_plan.md
+SGK-2026-0385,DVWA low detection sufficiency and evidence quality recovery,active,plan,SGK-2026-0379,docs/shigoku/plans/2026-07-25_dvwa-low-detection-sufficiency-and-evidence-quality-recovery_plan.md
+SGK-2026-0386,DVWA low expected detection matrix,done,subtask_plan,SGK-2026-0385,docs/shigoku/subtasks/done/2026-07-25_dvwa-low-expected-detection-matrix_subtask_plan.md
+SGK-2026-0387,DVWA low regression finding restoration,done,subtask_plan,SGK-2026-0385,docs/shigoku/subtasks/done/2026-07-25_dvwa-low-regression-finding-restoration_subtask_plan.md
+SGK-2026-0388,DVWA low SQLi and LFI evidence promotion,done,subtask_plan,SGK-2026-0385,docs/shigoku/subtasks/done/2026-07-25_dvwa-low-sqli-and-lfi-evidence-promotion_subtask_plan.md
+SGK-2026-0389,DVWA low command injection evidence promotion,done,subtask_plan,SGK-2026-0385,docs/shigoku/subtasks/done/2026-07-25_dvwa-low-command-injection-evidence-promotion_subtask_plan.md
+SGK-2026-0390,DVWA low browser backed XSS evidence promotion,done,subtask_plan,SGK-2026-0385,docs/shigoku/subtasks/done/2026-07-25_dvwa-low-browser-backed-xss-evidence-promotion_subtask_plan.md
+SGK-2026-0391,DVWA low File Upload and AuthSwarm skipped result recovery,done,subtask_plan,SGK-2026-0385,docs/shigoku/subtasks/done/2026-07-25_dvwa-low-file-upload-and-authswarm-skipped-result-recovery_subtask_plan.md
+SGK-2026-0392,DVWA low Brute Force CAPTCHA CSP dedicated detection,active,subtask_plan,SGK-2026-0385,docs/shigoku/subtasks/2026-07-25_dvwa-low-brute-force-captcha-csp-dedicated-detection_subtask_plan.md
+SGK-2026-0393,DVWA low candidate hygiene and expected detection strictness,done,subtask_plan,SGK-2026-0385,docs/shigoku/subtasks/done/2026-07-27_dvwa-low-candidate-hygiene-and-expected-detection-strictness_subtask_plan.md
+SGK-2026-0394,Candidate gate FAIL の正常状態を運用文書へ明記,done,subtask_plan,SGK-2026-0385,docs/shigoku/subtasks/done/2026-07-27_candidate-gate-fail_subtask_plan.md
+SGK-2026-0395,Active subtask implementation status audit and closeout,done,plan,,docs/shigoku/plans/done/2026-07-27_active-subtask-implementation-status-audit-and-closeout_plan.md
+SGK-2026-0396,DVWA Medium コマンド注入完走と CRLF 証拠真正性の回復,active,subtask_plan,SGK-2026-0385,docs/shigoku/subtasks/2026-07-27_dvwa-medium-crlf_subtask_plan.md
+SGK-2026-0397,High実行の誤昇格防止とSecurityレベル別期待値評価,done,subtask_plan,SGK-2026-0385,docs/shigoku/subtasks/done/2026-07-28_high-security_subtask_plan.md
+SGK-2026-0398,候補重複統合のreason code保持,done,subtask_plan,SGK-2026-0385,docs/shigoku/subtasks/done/2026-07-28_reason-code_subtask_plan.md
+SGK-2026-0399,全Securityレベルの汎用検出能力評価基準,done,subtask_plan,SGK-2026-0385,docs/shigoku/subtasks/done/2026-07-28_dvwa-high_subtask_plan.md
+SGK-2026-0400,Securityレベル別レポート基準線の分離,done,subtask_plan,SGK-2026-0385,docs/shigoku/subtasks/done/2026-07-28_security_subtask_plan.md

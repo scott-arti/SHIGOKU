@@ -2184,6 +2184,7 @@ class SessionHijacker(BaseAuthAgent):
         """
         予測可能なセッションIDの検出
         """
+        import asyncio
         from src.core.attack.session_tester import SessionAnalyzer
         analyzer = SessionAnalyzer()
         

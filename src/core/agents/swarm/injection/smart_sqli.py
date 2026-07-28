@@ -177,8 +177,14 @@ INPUT: [Input]
         self._max_observed_latency = 0.0
         self._time_signal_payload = ""
         self._time_signal_latency = 0.0
+        self._time_signal_timing_samples: Dict[str, Any] = {}
         self._consecutive_blocked_observations = 0
         self._no_signal_turns = 0
+        self._last_poc_request = ""
+        self._last_poc_response = ""
+        self._sql_error_observed = False
+        self._sql_error_evidence: Dict[str, Any] = {}
+        self._response_differential: Dict[str, Any] = {}
 
     def _compute_adaptive_turn_budget(
         self,
@@ -283,6 +289,11 @@ INPUT: [Input]
                     "tested_params": result.get("tested_params", []),
                     "blind_correlation": blind_correlation,
                     "blind_time_based_confirmed": blind_time_based_confirmed,
+                    "sql_error_observed": bool(result.get("sql_error_observed", False)),
+                    "sql_error_evidence": result.get("sql_error_evidence", {}),
+                    "response_differential": result.get("response_differential", {}),
+                    "poc_request": str(result.get("poc_request", "") or ""),
+                    "poc_response": str(result.get("poc_response", "") or ""),
                 }
             )
             findings.append(finding)
@@ -373,7 +384,7 @@ INPUT: [Input]
                 pw_forms = await PlaywrightValidator().extract_forms(
                     target,
                     timeout=10.0,
-                    cookies=[{"name": c.split("=")[0].strip(), "value": c.split("=")[1].strip(), "domain": urlparse(target).hostname}] if cookies_str else None
+                    cookies=[{"name": c.split("=")[0].strip(), "value": c.split("=")[1].strip(), "domain": urlparse(target).hostname, "path": "/"}] if cookies_str else None
                 )
                 if pw_forms:
                     for form in pw_forms:
@@ -403,8 +414,14 @@ INPUT: [Input]
         self._max_observed_latency = 0.0
         self._time_signal_payload = ""
         self._time_signal_latency = 0.0
+        self._time_signal_timing_samples = {}
         self._consecutive_blocked_observations = 0
         self._no_signal_turns = 0
+        self._last_poc_request = ""
+        self._last_poc_response = ""
+        self._sql_error_observed = False
+        self._sql_error_evidence = {}
+        self._response_differential = {}
         loop_result: Dict[str, Any] = {"status": "not_run", "reason": "no_parameters"}
 
         for param_name in candidate_params:
@@ -495,6 +512,11 @@ Start your SQL injection testing.
             "description": f"SQL Injection detected." if self.vulnerable else "No SQL Injection detected.",
             "loop_result": loop_result,
             "blind_correlation": blind_correlation,
+            "sql_error_observed": self._sql_error_observed,
+            "sql_error_evidence": self._sql_error_evidence,
+            "response_differential": self._response_differential,
+            "poc_request": self._last_poc_request,
+            "poc_response": self._last_poc_response,
         }
 
     async def decide(self, turn: int) -> Tuple[str, str, Any]:
@@ -503,10 +525,17 @@ Start your SQL injection testing.
         
         LLM の出力を検証し、不正な形式（Observation の自己生成など）を検出したらリトライ。
         """
-        history_text = "\n".join([
-            f"Turn {s.turn}: Act={s.action}({s.action_input}) -> {s.observation}"
-            for s in self.history
-        ])
+        history_lines = []
+        for s in self.history:
+            if hasattr(s, "turn"):
+                history_lines.append(
+                    f"Turn {s.turn}: Act={s.action}({s.action_input}) -> {s.observation}"
+                )
+            elif isinstance(s, dict):
+                history_lines.append(
+                    f"Turn {s.get('turn', '?')}: Act={s.get('action', '?')}({s.get('action_input', s.get('input', ''))}) -> {s.get('observation', '')}"
+                )
+        history_text = "\n".join(history_lines)
 
         prompt = f"""Target: {self.context['target']}
 Testing Parameter: {self.context['param']}
@@ -596,10 +625,46 @@ Decide next step for SQL injection testing.
             # リクエスト送信
             obs = await self._send_request(payload)
             diff_type = str(obs.get("diff", "")).lower()
+            if obs.get("poc_request"):
+                self._last_poc_request = str(obs.get("poc_request", "") or "")
+            if obs.get("poc_response"):
+                self._last_poc_response = str(obs.get("poc_response", "") or "")
             if diff_type in {"blocked", "error"}:
                 self._consecutive_blocked_observations += 1
             else:
                 self._consecutive_blocked_observations = 0
+
+            error_classification = obs.get("error_classification", {})
+            if not isinstance(error_classification, dict):
+                error_classification = {}
+            error_type = str(error_classification.get("type", "") or "").lower()
+            status_code = int(obs.get("status", 0) or 0)
+            if (not error_type or error_type == "none") and status_code > 0 and diff_type in {
+                "error",
+                "syntax",
+                "schema",
+                "data",
+                "auth",
+            }:
+                error_type = diff_type if diff_type != "error" else "sql_error"
+                error_classification = {
+                    "type": error_type,
+                    "details": "SQL error inferred from response differential",
+                }
+            if error_type and error_type != "none":
+                self._sql_error_observed = True
+                self._sql_error_evidence = {
+                    "error_type": error_type,
+                    "details": str(error_classification.get("details", "") or ""),
+                    "db_detection": obs.get("db_detection", {}),
+                    "body_snippet": str(obs.get("body_snippet", "") or ""),
+                    "payload": payload,
+                }
+                self._response_differential = {
+                    "attack_status": obs.get("status", 0),
+                    "attack_body_snippet": str(obs.get("body_snippet", "") or ""),
+                    "diff_type": diff_type,
+                }
 
             elapsed = float(obs.get("elapsed_seconds", 0.0) or 0.0)
             if elapsed > self._max_observed_latency:
@@ -708,6 +773,8 @@ Decide next step for SQL injection testing.
             "observed_latency_seconds": round(self._time_signal_latency, 3) if self._time_signal_latency else 0.0,
             "max_observed_latency_seconds": round(self._max_observed_latency, 3) if self._max_observed_latency else 0.0,
         }
+        if self._time_signal_timing_samples:
+            time_based["timing_samples"] = dict(self._time_signal_timing_samples)
 
         oob_tokens: List[str] = []
         for payload in payloads_used or []:
@@ -747,8 +814,26 @@ Decide next step for SQL injection testing.
         - WAF回避ペイロード対応（コメント挿入、エンコーディング）
         """
         baseline_payload = f"{param_name}={baseline_value}"
-        baseline_obs = await self._send_request(baseline_payload)
-        baseline_elapsed = float(baseline_obs.get("elapsed_seconds", 0.0) or 0.0)
+        baseline_observations: List[Dict[str, Any]] = []
+        for _ in range(3):
+            obs = await self._send_request(baseline_payload)
+            if int(obs.get("status", 0) or 0) == 0:
+                return {
+                    "confirmed": False,
+                    "payload": "",
+                    "baseline_latency_seconds": 0.0,
+                    "observed_latency_seconds": 0.0,
+                    "latency_delta_seconds": 0.0,
+                    "expected_delay_seconds": 0.0,
+                    "technique": None,
+                    "delivery_status": "baseline_not_delivered",
+                }
+            baseline_observations.append(obs)
+        baseline_samples = [
+            float(obs.get("elapsed_seconds", 0.0) or 0.0)
+            for obs in baseline_observations
+        ]
+        baseline_elapsed = self._median_latency(baseline_samples)
 
         # Day 2強化: DB別Time-basedペイロード
         db_specific_payloads = self._generate_time_based_payloads(param_name)
@@ -773,17 +858,46 @@ Decide next step for SQL injection testing.
             threshold = max(2.5, expected_delay * 0.8)  # 期待遅延の80%以上
 
             if elapsed >= threshold and latency_delta >= 2.0:
+                positive_observations = [obs]
+                for _ in range(2):
+                    followup_obs = await self._send_request(payload)
+                    if int(followup_obs.get("status", 0) or 0) == 0:
+                        break
+                    positive_observations.append(followup_obs)
+                positive_samples = [
+                    float(item.get("elapsed_seconds", 0.0) or 0.0)
+                    for item in positive_observations
+                ]
+                inverse_obs = await self._send_request(baseline_payload)
+                inverse_samples = [float(inverse_obs.get("elapsed_seconds", 0.0) or 0.0)]
+                if len(positive_samples) < 3:
+                    continue
+                positive_median = self._median_latency(positive_samples)
+                inverse_median = self._median_latency(inverse_samples)
+                if positive_median < max(threshold, baseline_elapsed + 2.0):
+                    continue
+                if inverse_median > baseline_elapsed + max(1.0, expected_delay * 0.5):
+                    continue
+
                 self._time_signal_payload = payload
-                self._time_signal_latency = elapsed
+                self._time_signal_latency = positive_median
+                self._time_signal_timing_samples = {
+                    "baseline": [round(v, 3) for v in baseline_samples],
+                    "sleep": [round(v, 3) for v in positive_samples],
+                    "inverse_condition": [round(v, 3) for v in inverse_samples],
+                }
+                self._last_poc_request = str(obs.get("poc_request", "") or "")
+                self._last_poc_response = str(obs.get("poc_response", "") or "")
                 if payload not in self.used_payloads:
                     self.used_payloads.append(payload)
                 return {
                     "confirmed": True,
                     "payload": payload,
                     "baseline_latency_seconds": round(baseline_elapsed, 3),
-                    "observed_latency_seconds": round(elapsed, 3),
-                    "latency_delta_seconds": round(latency_delta, 3),
+                    "observed_latency_seconds": round(positive_median, 3),
+                    "latency_delta_seconds": round(positive_median - baseline_elapsed, 3),
                     "expected_delay_seconds": expected_delay,
+                    "timing_samples": dict(self._time_signal_timing_samples),
                     "technique": self._detect_payload_technique(payload),
                 }
 
@@ -796,6 +910,16 @@ Decide next step for SQL injection testing.
             "expected_delay_seconds": 0.0,
             "technique": None,
         }
+
+    @staticmethod
+    def _median_latency(values: List[float]) -> float:
+        if not values:
+            return 0.0
+        values_sorted = sorted(float(v) for v in values)
+        mid = len(values_sorted) // 2
+        if len(values_sorted) % 2:
+            return values_sorted[mid]
+        return (values_sorted[mid - 1] + values_sorted[mid]) / 2.0
 
     # Day 2強化: DB別Time-basedペイロード生成
     def _generate_time_based_payloads(self, param_name: str) -> List[str]:
@@ -930,6 +1054,7 @@ Decide next step for SQL injection testing.
                 parsed = urlparse(target)
                 new_query = urlencode(params)
                 new_url = urlunparse(parsed._replace(query=new_query))
+                request_url = new_url
 
                 resp = await self.smart_client.request(
                     "GET",
@@ -944,6 +1069,18 @@ Decide next step for SQL injection testing.
             status = resp.get("status", 0)
             error = resp.get("error")
             elapsed = max(0.0, time.perf_counter() - start)
+            headers = resp.get("headers", {}) if isinstance(resp.get("headers", {}), dict) else {}
+            if method == "POST":
+                request_url = target
+                request_body = urlencode(params)
+            else:
+                request_body = ""
+            poc_request = self._build_poc_request(
+                method=method,
+                request_url=request_url,
+                body=request_body,
+            )
+            poc_response = self._build_poc_response(status=status, body=body, headers=headers)
 
             # RequestGuard などでブロックされた場合
             if error or status == 0:
@@ -953,6 +1090,8 @@ Decide next step for SQL injection testing.
                     "diff": "blocked",
                     "body_snippet": f"Blocked: {error}",
                     "elapsed_seconds": elapsed,
+                    "poc_request": poc_request,
+                    "poc_response": poc_response,
                 }
 
             # Day 1強化: DB別エラーパターンマッチング
@@ -978,6 +1117,8 @@ Decide next step for SQL injection testing.
                 "elapsed_seconds": elapsed,
                 "db_detection": db_detection,
                 "error_classification": error_classification,
+                "poc_request": poc_request,
+                "poc_response": poc_response,
             }
 
         except Exception as e:
@@ -988,6 +1129,32 @@ Decide next step for SQL injection testing.
                 "body_snippet": str(e),
                 "elapsed_seconds": 0.0,
             }
+
+    @staticmethod
+    def _build_poc_request(*, method: str, request_url: str, body: str = "") -> str:
+        parsed = urlparse(str(request_url or ""))
+        path = parsed.path or "/"
+        if parsed.query:
+            path = f"{path}?{parsed.query}"
+        host = parsed.netloc or parsed.hostname or "target"
+        lines = [f"{str(method or 'GET').upper()} {path} HTTP/1.1", f"Host: {host}"]
+        if body:
+            lines.append("Content-Type: application/x-www-form-urlencoded")
+            lines.append("")
+            lines.append(body)
+        return "\n".join(lines)
+
+    @staticmethod
+    def _build_poc_response(*, status: Any, body: str, headers: Dict[str, Any] | None = None) -> str:
+        status_int = int(status or 0)
+        header_lines = [f"HTTP/1.1 {status_int}"]
+        for key, value in (headers or {}).items():
+            if str(key).lower() in {"set-cookie", "cookie", "authorization"}:
+                continue
+            header_lines.append(f"{key}: {value}")
+        header_lines.append("")
+        header_lines.append(str(body or ""))
+        return "\n".join(header_lines)
 
     # Day 1強化: DB別エラー検出メソッド
     def _detect_database_type(self, body: str) -> Dict[str, Any]:
@@ -1101,6 +1268,10 @@ Decide next step for SQL injection testing.
         # シンタックスエラーパターン
         syntax_patterns = [
             r"syntax error",
+            r"sql syntax",
+            r"you have an error in your sql syntax",
+            r"mysqli_sql_exception",
+            r"mysql_sql_exception",
             r"unclosed quotation mark",
             r"unexpected token",
             r"unexpected end of statement",

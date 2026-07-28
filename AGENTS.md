@@ -53,6 +53,14 @@ You are a careful coding agent. Follow this workflow strictly:
 - `primary source of truth`: the report path explicitly provided by the user for the current turn, together with the session resolved from the consistency checker.
 - `backfill`: report-time or gate-time enrichment derived from scenario coverage or heuristics rather than directly from raw findings; do not present backfill as raw evidence unless clearly labeled.
 
+### Candidate Gate FAIL: Known Safe Hold (DVWA low baseline)
+
+- For the consistent DVWA low report/session baseline `haddix_report_20260727_095226.md` / `session_20260727_095226.json`, `candidate_above_maximum` with **5 candidates** is an expected safe hold, not by itself a detection regression or an implementation defect.
+- The five candidates are deliberately retained because their impact is not yet proven: weak ID / AuthBypass lack an independent second account, the discovered API lacks a public-vs-sensitive data proof, CORS only reads public data cross-origin, and CSRF lacks a verified state change.
+- Do **not** start a code fix, change task generation, lower evidence thresholds, promote candidates, suppress findings, add broader deduplication, or relax `candidate_max` merely to turn this known FAIL into PASS.
+- Treat this FAIL as actionable only when the consistent report shows a new reason code, a candidate count other than the documented five, missing required confirmed detections, or the user explicitly asks to prove one of the five candidates or to change gate policy.
+- When reporting this state, say that the gate is correctly fail-closed and list the candidate reason codes; do not describe the five candidates as confirmed vulnerabilities.
+
 ## 9) Python / Test Execution Convention
 - Prefer `.venv/bin/python` and `.venv/bin/pytest` for project code, imports, and tests.
 - Use host `python3` only for lightweight repository scripts that do not depend on project-only binary wheels or local venv state.

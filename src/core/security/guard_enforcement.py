@@ -10,13 +10,20 @@ Rollout stages (strictly additive in scope):
 - ``worker_external_hard``: MC + worker/network/external-tool hard block.
 
 Default: ``mc_only`` (preserves Phase 1 behaviour).
+
+SGK-2026-0370: Adds ``BridgeVerdict`` and ``bridge_guard_and_phase_gate()``
+so that compiled guard decisions and PhaseGate capability verdicts are
+safely combined at all three call-sites (task creation, dispatch,
+post-exploit), with ``reason_origin``, ``reason_codes``, and
+``source_refs`` preserved in session/report artifacts.
 """
 
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from src.core.security.compiled_guard_models import (
     GuardDecision,
@@ -288,6 +295,175 @@ def resolve_policy_from_context(
         )
         return None
     return result
+
+
+# ---------------------------------------------------------------------------
+# Bridge: guard decision + PhaseGate verdict → unified verdict (SGK-2026-0370)
+# ---------------------------------------------------------------------------
+
+# Allowed unified verdicts.
+BridgeVerdictValue = Literal[
+    "allow", "defer", "requires_hitl", "route_to_report", "lock_phase"
+]
+
+# Allowed reason origin values.
+BridgeReasonOrigin = Literal["compiled_guard", "phase_gate", "combined"]
+
+# Recognised compiled-guard decision values that carry special semantics.
+_GUARD_BLOCK = "block"
+_GUARD_REQUIRES_HITL = "requires_hitl"
+_GUARD_DEGRADE_TO_REPORT = "degrade_to_report"
+_GUARD_ALLOW = "allow"
+
+
+@dataclass
+class BridgeVerdict:
+    """Unified verdict combining compiled-guard and PhaseGate results.
+
+    This is a lightweight DTO that ensures the compiled guard's ``block``
+    is never overridden by PhaseGate, while ``requires_hitl`` and
+    ``degrade_to_report`` are preserved with their original reason so
+    they are not silently dropped from the queue.
+
+    Attributes:
+        verdict: ``allow``, ``defer``, ``requires_hitl``, ``route_to_report``,
+                 or ``lock_phase``.
+        reason_origin: Which system produced the decisive reason.
+        reason_codes: Machine-readable reason codes (merged from both sources).
+        source_refs: Human-readable source references for audit trace.
+        gate_summary: Dict suitable for session / report artifact fields
+                      (``reason_origin``, ``reason_codes``, ``source_refs``,
+                      ``compiled_guard_decision``).
+    """
+
+    verdict: BridgeVerdictValue = "allow"
+    reason_origin: BridgeReasonOrigin = "combined"
+    reason_codes: list[str] = field(default_factory=list)
+    source_refs: list[str] = field(default_factory=list)
+    gate_summary: dict[str, Any] = field(default_factory=dict)
+
+
+def bridge_guard_and_phase_gate(
+    guard_decision: "GuardDecision",
+    phase_gate_allowed: bool,
+    phase_gate_reason: str = "",
+) -> BridgeVerdict:
+    """Bridge compiled-guard decision with a PhaseGate capability verdict.
+
+    **Invariants (never violated):**
+
+    - If the compiled guard returns ``block``, the unified verdict is
+      ``lock_phase`` regardless of what PhaseGate says.
+    - ``requires_hitl`` and ``degrade_to_report`` are preserved with
+      their origin so they are not silently dropped from the queue.
+
+    Args:
+        guard_decision: The compiled guard's decision.
+        phase_gate_allowed: PhaseGate ``can_create_attack_task()`` result.
+        phase_gate_reason: PhaseGate rejection reason (empty string if allowed).
+
+    Returns:
+        ``BridgeVerdict`` with all audit fields populated.
+    """
+    gd = guard_decision.decision
+    reason_codes: list[str] = []
+    source_refs: list[str] = []
+
+    # Always collect guard reason codes and source refs for audit.
+    if guard_decision.reason_code:
+        reason_codes.append(f"guard:{guard_decision.reason_code}")
+    if guard_decision.source_refs:
+        source_refs.extend(guard_decision.source_refs)
+
+    # ---- 1. compiled guard is authoritative for hard-block ----------------
+    if gd == _GUARD_BLOCK:
+        if phase_gate_reason and phase_gate_reason != "OK":
+            reason_codes.append(f"phase_gate:{phase_gate_reason}")
+        return BridgeVerdict(
+            verdict="lock_phase",
+            reason_origin="compiled_guard",
+            reason_codes=reason_codes,
+            source_refs=source_refs,
+            gate_summary={
+                "reason_origin": "compiled_guard",
+                "reason_codes": list(reason_codes),
+                "source_refs": list(source_refs),
+                "compiled_guard_decision": "block",
+                "phase_gate_allowed": phase_gate_allowed,
+                "phase_gate_reason": phase_gate_reason,
+            },
+        )
+
+    # ---- 2. requires_hitl is preserved (not deny) -------------------------
+    if gd == _GUARD_REQUIRES_HITL:
+        return BridgeVerdict(
+            verdict="requires_hitl",
+            reason_origin="compiled_guard",
+            reason_codes=reason_codes,
+            source_refs=source_refs,
+            gate_summary={
+                "reason_origin": "compiled_guard",
+                "reason_codes": list(reason_codes),
+                "source_refs": list(source_refs),
+                "compiled_guard_decision": "requires_hitl",
+                "phase_gate_allowed": phase_gate_allowed,
+                "phase_gate_reason": phase_gate_reason,
+            },
+        )
+
+    # ---- 3. degrade_to_report is preserved (not deny) ---------------------
+    if gd == _GUARD_DEGRADE_TO_REPORT:
+        return BridgeVerdict(
+            verdict="route_to_report",
+            reason_origin="compiled_guard",
+            reason_codes=reason_codes,
+            source_refs=source_refs,
+            gate_summary={
+                "reason_origin": "compiled_guard",
+                "reason_codes": list(reason_codes),
+                "source_refs": list(source_refs),
+                "compiled_guard_decision": "degrade_to_report",
+                "phase_gate_allowed": phase_gate_allowed,
+                "phase_gate_reason": phase_gate_reason,
+            },
+        )
+
+    # ---- 4. guard allows → PhaseGate decides -----------------------------
+    # guard says allow, but PhaseGate may defer
+    if not phase_gate_allowed:
+        if phase_gate_reason and phase_gate_reason != "OK":
+            reason_codes.append(f"phase_gate:{phase_gate_reason}")
+        return BridgeVerdict(
+            verdict="defer",
+            reason_origin="phase_gate",
+            reason_codes=reason_codes,
+            source_refs=source_refs,
+            gate_summary={
+                "reason_origin": "phase_gate",
+                "reason_codes": list(reason_codes),
+                "source_refs": list(source_refs),
+                "compiled_guard_decision": "allow",
+                "phase_gate_allowed": False,
+                "phase_gate_reason": phase_gate_reason,
+            },
+        )
+
+    # Both allow → go ahead
+    reason_codes.append("phase_gate:OK")
+    return BridgeVerdict(
+        verdict="allow",
+        reason_origin="combined",
+        reason_codes=reason_codes,
+        source_refs=source_refs,
+        gate_summary={
+            "reason_origin": "combined",
+            "reason_codes": list(reason_codes),
+            "source_refs": list(source_refs),
+            "compiled_guard_decision": "allow",
+            "phase_gate_allowed": True,
+            "phase_gate_reason": "OK",
+        },
+    )
 
 
 # ---------------------------------------------------------------------------

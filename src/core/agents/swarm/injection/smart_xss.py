@@ -4,7 +4,7 @@ import asyncio
 import os
 import re
 from typing import Dict, Any, Tuple, Optional, List
-from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+from urllib.parse import urlparse, parse_qs, urlencode, urlunparse, unquote_plus
 from http.cookies import SimpleCookie
 from pathlib import Path
 
@@ -84,13 +84,13 @@ class SmartXSSHunter(Specialist, ThoughtLoop):
     MAX_PARAMS_TO_TEST = 5
     PROFILE_PRIORITY_PARAMS: Dict[str, Dict[str, List[str]]] = {
         "bbpt": {
-            "stored": ["name", "message", "comment", "body", "text", "content"],
+            "stored": ["txtName", "mtxMessage", "name", "message", "comment", "body", "text", "content"],
             "reflected": ["name", "q", "query", "search", "keyword", "term", "s"],
             "dom": ["default", "lang", "locale", "hash", "fragment"],
             "generic": ["name", "message", "q", "query", "search"],
         },
         "ctf": {
-            "stored": ["name", "message", "msg", "comment", "body", "text"],
+            "stored": ["txtName", "mtxMessage", "name", "message", "msg", "comment", "body", "text"],
             "reflected": ["name", "q", "query", "id", "search", "s"],
             "dom": ["default", "lang", "hash", "next", "redirect"],
             "generic": ["name", "q", "id", "message", "search"],
@@ -193,6 +193,10 @@ INPUT: [Input]
         self._used_final_model = False
         self._dom_xss_verifier = None
         self._waf_suite = XSSWAFEvasionSuite()
+        self._browser_execution_evidence: Dict[str, Any] = {}
+        self._stored_xss_revisit_evidence: Dict[str, Any] = {}
+        self._last_poc_request = ""
+        self._last_poc_response = ""
 
     def _compute_adaptive_turn_budget(self, quick_mode: bool, candidate_count: int, variant: str) -> int:
         base = 4 if quick_mode else 6
@@ -244,6 +248,14 @@ INPUT: [Input]
         if "xss_d" in path or "javascript" in path:
             return "dom"
         return "generic"
+
+    @staticmethod
+    def _target_specific_candidate_params(target: str) -> List[str]:
+        """既知のXSS画面では、汎用候補より画面固有の入力欄を優先する。"""
+        path = urlparse(str(target or "")).path.lower()
+        if "xss_s" in path:
+            return ["txtName", "mtxMessage", "name", "message", "comment"]
+        return []
 
     def _prioritize_candidate_params(
         self,
@@ -323,6 +335,14 @@ INPUT: [Input]
                 dialog_timeout=5.0,
             )
             if pooled_result.executed:
+                if self._record_browser_verification_result(
+                    pooled_result,
+                    variant="dom",
+                    event="dom_runtime_execution",
+                ):
+                    return True
+                # Static reflection fallback is useful as a candidate signal,
+                # but it is not browser execution evidence.
                 return True
         except Exception as e:
             logger.debug("[%s] BrowserPool verifier fallback: %s", self.name, e)
@@ -352,6 +372,15 @@ INPUT: [Input]
             try:
                 executed = await validator.validate_xss(test_url, timeout=8.0, cookies=pw_cookies or None)
                 if executed:
+                    self._browser_execution_evidence = {
+                        "dialog_observed": True,
+                        "executor": "playwright",
+                        "event": "dom_runtime_execution",
+                        "variant": "dom",
+                        "parameter": param_name,
+                        "payload": payload,
+                        "test_url": test_url,
+                    }
                     return True
             except Exception:
                 continue
@@ -417,6 +446,15 @@ INPUT: [Input]
                             logger.info("[%s] DOM sink-like reflection observed (%s).", self.name, test_url)
                             await context.close()
                             await browser.close()
+                            self._browser_execution_evidence = {
+                                "dom_mutation_observed": True,
+                                "executor": "playwright",
+                                "event": "dom_sink_reflection",
+                                "variant": "dom",
+                                "parameter": param_name,
+                                "payload": payload,
+                                "test_url": test_url,
+                            }
                             return True
 
                 await context.close()
@@ -425,6 +463,121 @@ INPUT: [Input]
             return False
 
         return False
+
+    def _record_browser_verification_result(self, result: Any, *, variant: str, event: str) -> bool:
+        evidence = getattr(result, "evidence", {}) or {}
+        if not isinstance(evidence, dict):
+            evidence = {}
+        if evidence.get("method") == "static_reflection":
+            return False
+
+        self._browser_execution_evidence = {
+            "dialog_observed": True,
+            "executor": "browser_pool",
+            "event": event,
+            "variant": variant,
+            "parameter": getattr(result, "parameter", ""),
+            "payload": getattr(result, "payload", ""),
+            "test_url": evidence.get("test_url", getattr(result, "url", "")),
+            "dialog_message": evidence.get("dialog_message"),
+        }
+        return True
+
+    async def _validate_reflected_runtime_xss(
+        self,
+        target: str,
+        payload: str,
+        param_name: str,
+        cookies_str: str = "",
+    ) -> bool:
+        try:
+            from src.core.detection.browser_pool import BrowserPoolXSSVerifier
+            if self._dom_xss_verifier is None:
+                self._dom_xss_verifier = BrowserPoolXSSVerifier()
+            result = await self._dom_xss_verifier.verify(
+                target,
+                param_name,
+                payload,
+                dialog_timeout=5.0,
+            )
+            if result.executed:
+                if self._record_browser_verification_result(
+                    result,
+                    variant="reflected",
+                    event="reflected_browser_execution",
+                ):
+                    return True
+        except Exception as exc:
+            logger.debug("[%s] Reflected browser XSS validation failed: %s", self.name, exc)
+
+        try:
+            from src.tools.browser.playwright_validator import PlaywrightValidator
+        except Exception:
+            return False
+
+        validator = PlaywrightValidator()
+        if not validator.is_available:
+            return False
+
+        parsed_target = urlparse(target)
+        query = parse_qs(parsed_target.query, keep_blank_values=True)
+        query[param_name] = [payload]
+        query_encoded = urlencode({k: v[0] if isinstance(v, list) and v else v for k, v in query.items()})
+        test_url = urlunparse(parsed_target._replace(query=query_encoded, fragment=""))
+        pw_cookies = self._build_playwright_cookies(target, cookies_str)
+
+        try:
+            executed = await validator.validate_xss(test_url, timeout=8.0, cookies=pw_cookies or None)
+        except Exception as exc:
+            logger.debug("[%s] Reflected Playwright XSS fallback failed: %s", self.name, exc)
+            return False
+        if not executed:
+            return False
+
+        self._browser_execution_evidence = {
+            "dialog_observed": True,
+            "executor": "playwright",
+            "event": "reflected_browser_execution",
+            "variant": "reflected",
+            "parameter": param_name,
+            "payload": payload,
+            "test_url": test_url,
+        }
+        return True
+
+    async def _validate_stored_runtime_xss(self, target: str, payload: str, cookies_str: str, param_name: str) -> bool:
+        try:
+            from src.tools.browser.playwright_validator import PlaywrightValidator
+        except Exception:
+            return False
+
+        validator = PlaywrightValidator()
+        if not validator.is_available:
+            return False
+
+        pw_cookies = self._build_playwright_cookies(target, cookies_str)
+        try:
+            executed = await validator.validate_xss(target, timeout=8.0, cookies=pw_cookies or None)
+        except Exception:
+            return False
+        if not executed:
+            return False
+
+        self._browser_execution_evidence = {
+            "dialog_observed": True,
+            "executor": "playwright",
+            "event": "stored_revisit_browser_execution",
+            "variant": "stored",
+            "parameter": param_name,
+            "payload": payload,
+            "test_url": target,
+        }
+        self._stored_xss_revisit_evidence = {
+            "save_request_id": self._last_poc_request,
+            "revisit_request_id": f"GET {urlparse(target).path or '/'} HTTP/1.1",
+            "revisit_url": target,
+        }
+        return True
 
     async def close(self):
         """リソース解放"""
@@ -472,6 +625,22 @@ INPUT: [Input]
         findings = []
         confirmed_vulnerable = bool(result.get("vulnerable")) and bool(result.get("reflection_observed"))
         if confirmed_vulnerable:
+            additional_info = {
+                "parameter": result.get("param"),
+                "payload": (result.get("payloads_used") or [""])[-1],
+                "tested_params": result.get("tested_params", []),
+                "reflection_observed": result.get("reflection_observed", False),
+            }
+            for key in ("browser_execution", "stored_xss_revisit", "poc_request", "poc_response"):
+                value = result.get(key)
+                if value:
+                    additional_info[key] = value
+            self._align_runtime_poc_request(additional_info)
+            request_url = (
+                additional_info.get("browser_execution", {}).get("test_url")
+                if isinstance(additional_info.get("browser_execution"), dict)
+                else ""
+            ) or result.get("request_url") or task.target
             finding = Finding(
                 vuln_type=VulnType.XSS,
                 severity=Severity.HIGH,
@@ -479,18 +648,14 @@ INPUT: [Input]
                 description=result.get("description", "Detected by SmartXSSHunter."),
                 target_url=task.target,
                 evidence=Evidence(
-                    request_url=task.target,
+                    request_method="GET",
+                    request_url=request_url,
                     response_body=str(result.get("evidence", ""))
                 ),
                 source_agent=self.name,
                 confidence=0.9,
                 tags=["xss", "smart_agent"],
-                additional_info={
-                    "parameter": result.get("param"),
-                    "payload": (result.get("payloads_used") or [""])[-1],
-                    "tested_params": result.get("tested_params", []),
-                    "reflection_observed": result.get("reflection_observed", False),
-                }
+                additional_info=additional_info,
             )
             findings.append(finding)
         elif result.get("vulnerable"):
@@ -525,13 +690,19 @@ INPUT: [Input]
             if isinstance(raw, str):
                 _add(raw)
             elif isinstance(raw, dict):
-                for key in raw.keys():
-                    _add(key)
+                if "name" in raw:
+                    _add(raw.get("name"))
+                else:
+                    for key in raw.keys():
+                        _add(key)
             elif isinstance(raw, (list, tuple, set)):
                 for item in raw:
                     if isinstance(item, dict):
-                        for key in item.keys():
-                            _add(key)
+                        if "name" in item:
+                            _add(item.get("name"))
+                        else:
+                            for key in item.keys():
+                                _add(key)
                     else:
                         _add(item)
             return names
@@ -541,15 +712,28 @@ INPUT: [Input]
         scan_profile = str(params.get("scan_profile", "bbpt") or "bbpt").lower()
         if scan_profile not in {"bbpt", "ctf"}:
             scan_profile = "bbpt"
+        context_params = params.get("_context", {})
+        if not isinstance(context_params, dict):
+            context_params = {}
 
         explicit_param_names = _normalize_name_hints(params.get("param") or params.get("parameter"))
         explicit_param = explicit_param_names[0] if explicit_param_names else ""
         explicit_payload = params.get("payload")
         discovered_hints: List[str] = []
-        for source in [params.get("discovered_params"), params.get("candidate_params"), params.get("params_list")]:
+        for source in [
+            self._target_specific_candidate_params(target),
+            params.get("candidate_params"),
+            context_params.get("candidate_params"),
+            params.get("discovered_params"),
+            context_params.get("discovered_params"),
+            params.get("params_list"),
+            context_params.get("params_list"),
+        ]:
             for name in _normalize_name_hints(source):
                 if name not in discovered_hints:
                     discovered_hints.append(name)
+        if self._target_specific_candidate_params(target) and self._detect_xss_variant(target) == "stored":
+            method = "POST"
 
         META_KEYS = {
             "_auth", "method", "content_type", "task_id",
@@ -565,6 +749,8 @@ INPUT: [Input]
             "url_evidence", "selection_origin", "source_category",
             "phase2_on_empty_phase1", "phase1_force_full_coverage",
             "phase1_stop_on_first_hit", "phase1_early_return_on_findings",
+            "api_precision_mode", "balanced_mode", "detection_mode",
+            "manager_timeout_seconds", "per_url_timeout_seconds", "target_hints",
         }
         payload_params = {k: v for k, v in params.items() if k not in META_KEYS}
         # POSTボディ指定時は body 内キーを注入候補に展開する
@@ -628,7 +814,7 @@ INPUT: [Input]
                 pw_forms = await PlaywrightValidator().extract_forms(
                     target,
                     timeout=10.0,
-                    cookies=[{"name": cookie.split("=")[0].strip(), "value": cookie.split("=")[1].strip(), "domain": urlparse(target).hostname} for cookie in cookies_str.split(";") if "=" in cookie] if cookies_str else None
+                    cookies=[{"name": cookie.split("=")[0].strip(), "value": cookie.split("=")[1].strip(), "domain": urlparse(target).hostname, "path": "/"} for cookie in cookies_str.split(";") if "=" in cookie] if cookies_str else None
                 )
                 if pw_forms:
                     for form in pw_forms:
@@ -710,6 +896,10 @@ INPUT: [Input]
             self._suspicious_signal_observed = False
             self._used_rejudge_model = False
             self._used_final_model = False
+            self._browser_execution_evidence = {}
+            self._stored_xss_revisit_evidence = {}
+            self._last_poc_request = ""
+            self._last_poc_response = ""
             self.history_messages.append({"role": "system", "content": self.SYSTEM_PROMPT})
 
             initial_prompt = f"""Target URL: {target}
@@ -746,6 +936,20 @@ Start your XSS (Cross-Site Scripting) testing. First, send a simple marker to se
                         }
 
                     if precheck_obs.get("diff") == "reflected":
+                        if variant == "stored":
+                            await self._validate_stored_runtime_xss(
+                                target,
+                                deterministic_payload,
+                                cookies_str,
+                                param_name,
+                            )
+                        else:
+                            await self._validate_reflected_runtime_xss(
+                                target,
+                                deterministic_payload,
+                                param_name,
+                                cookies_str,
+                            )
                         self.vulnerable = True
                         self.reflection_observed = True
                         self.evidence = (
@@ -812,7 +1016,11 @@ Start your XSS (Cross-Site Scripting) testing. First, send a simple marker to se
             "tested_params": tested_params,
             "payloads_used": self.used_payloads,
             "description": f"XSS detected." if self.vulnerable else "No XSS detected.",
-            "loop_result": loop_result
+            "loop_result": loop_result,
+            "browser_execution": self._browser_execution_evidence,
+            "stored_xss_revisit": self._stored_xss_revisit_evidence,
+            "poc_request": self._last_poc_request,
+            "poc_response": self._last_poc_response,
         }
 
     async def decide(self, turn: int) -> Tuple[str, str, Any]:
@@ -936,6 +1144,10 @@ Decide next step for XSS testing. Focus on reflection context and escaping mecha
 
             # リクエスト送信
             obs = await self._send_request(payload)
+            if obs.get("poc_request"):
+                self._last_poc_request = str(obs.get("poc_request", "") or "")
+            if obs.get("poc_response"):
+                self._last_poc_response = str(obs.get("poc_response", "") or "")
             if self._is_suspicious_observation(obs):
                 self._suspicious_signal_observed = True
             diff_type = str(obs.get("diff", "")).lower()
@@ -954,6 +1166,21 @@ Decide next step for XSS testing. Focus on reflection context and escaping mecha
                 payload_lower = payload.lower()
                 xss_markers = ["<script", "</script>", "onerror=", "onload=", "javascript:", "alert("]
                 if any(marker in payload_lower for marker in xss_markers):
+                    variant = self._detect_xss_variant(str(self.context.get("target", "") or ""))
+                    if variant == "stored" or action == "stored_probe":
+                        await self._validate_stored_runtime_xss(
+                            str(self.context.get("target", "") or ""),
+                            payload,
+                            str(self.context.get("cookies", "") or ""),
+                            str(self.context.get("param", "") or ""),
+                        )
+                    elif variant == "reflected":
+                        await self._validate_reflected_runtime_xss(
+                            str(self.context.get("target", "") or ""),
+                            payload,
+                            str(self.context.get("param", "") or ""),
+                            str(self.context.get("cookies", "") or ""),
+                        )
                     self.vulnerable = True
                     self.evidence = (
                         f"Payload reflected without encoding: param={self.context.get('param')}, "
@@ -972,6 +1199,12 @@ Decide next step for XSS testing. Focus on reflection context and escaping mecha
                         )
                         body = resp.get("body", "") if isinstance(resp, dict) else ""
                         if payload.lower() in str(body).lower():
+                            await self._validate_stored_runtime_xss(
+                                reflection_url,
+                                payload,
+                                str(self.context.get("cookies", "") or ""),
+                                str(self.context.get("param", "") or ""),
+                            )
                             self.vulnerable = True
                             self.reflection_observed = True
                             self.evidence = (
@@ -1028,12 +1261,15 @@ Decide next step for XSS testing. Focus on reflection context and escaping mecha
         method = self.context.get("method", "GET")
         auth_headers = self.context.get("auth_headers", {})
         params = self.context.get("params", {}).copy()
+        request_url = str(target or "")
+        request_body = ""
 
         if param and param in params:
             params[param] = payload
 
         try:
             if method == "POST":
+                request_body = urlencode(params)
                 content_type = str(self.context.get("content_type", "")).lower()
                 if content_type == "json":
                     resp = await self.smart_client.request(
@@ -1055,6 +1291,7 @@ Decide next step for XSS testing. Focus on reflection context and escaping mecha
                 parsed = urlparse(target)
                 new_query = urlencode(params)
                 new_url = urlunparse(parsed._replace(query=new_query))
+                request_url = new_url
 
                 resp = await self.smart_client.request(
                     "GET",
@@ -1068,6 +1305,11 @@ Decide next step for XSS testing. Focus on reflection context and escaping mecha
             full_body = resp.get("body", "") if resp.get("body") else ""
             status = resp.get("status", 0)
             error = resp.get("error")
+            headers = resp.get("headers", {}) if isinstance(resp.get("headers"), dict) else {}
+            poc_request = self._build_poc_request(method=method, request_url=request_url, body=request_body)
+            poc_response = self._build_poc_response(status=status, body=full_body, headers=headers)
+            self._last_poc_request = poc_request
+            self._last_poc_response = poc_response
 
             # RequestGuard などでブロックされた場合
             if error or status == 0:
@@ -1080,7 +1322,13 @@ Decide next step for XSS testing. Focus on reflection context and escaping mecha
                     parse_error=False,
                 )
                 logger.warning(f"[{self.name}] Request blocked or failed: {error}")
-                return {"status": status, "diff": "blocked", "body_snippet": f"Blocked: {error}"}
+                return {
+                    "status": status,
+                    "diff": "blocked",
+                    "body_snippet": f"Blocked: {error}",
+                    "poc_request": poc_request,
+                    "poc_response": poc_response,
+                }
 
             # XSS 反射チェック
             is_reflected = payload.lower() in full_body.lower()
@@ -1097,7 +1345,13 @@ Decide next step for XSS testing. Focus on reflection context and escaping mecha
                 parse_error=False,
             )
 
-            return {"status": status, "diff": diff, "body_snippet": full_body[:300]}
+            return {
+                "status": status,
+                "diff": diff,
+                "body_snippet": full_body[:300],
+                "poc_request": poc_request,
+                "poc_response": poc_response,
+            }
 
         except Exception as e:
             self._waf_suite.record_payload_outcome(
@@ -1110,6 +1364,72 @@ Decide next step for XSS testing. Focus on reflection context and escaping mecha
             )
             logger.error(f"[{self.name}] Request failed: {e}")
             return {"status": 0, "diff": "error", "body_snippet": str(e)}
+
+    @staticmethod
+    def _poc_request_contains_payload(poc_request: str, payload: str) -> bool:
+        if not payload:
+            return True
+        haystack = str(poc_request or "")
+        if payload in haystack:
+            return True
+        try:
+            decoded = unquote_plus(haystack)
+        except Exception:
+            decoded = haystack
+        if payload in decoded:
+            return True
+        compact_payload = re.sub(r"\s+", "", payload)
+        compact_haystack = re.sub(r"\s+", "", decoded)
+        return bool(compact_payload and compact_payload in compact_haystack)
+
+    def _align_runtime_poc_request(self, additional_info: Dict[str, Any]) -> None:
+        browser_execution = additional_info.get("browser_execution")
+        if not isinstance(browser_execution, dict):
+            return
+
+        variant = str(browser_execution.get("variant", "") or "").lower()
+        if variant not in {"dom", "reflected"}:
+            return
+
+        test_url = str(browser_execution.get("test_url", "") or "").strip()
+        payload = str(browser_execution.get("payload", "") or additional_info.get("payload", "") or "")
+        if not test_url or not payload:
+            return
+
+        poc_request = str(additional_info.get("poc_request", "") or "")
+        if self._poc_request_contains_payload(poc_request, payload):
+            return
+
+        additional_info["poc_request"] = self._build_poc_request(
+            method="GET",
+            request_url=test_url,
+        )
+
+    @staticmethod
+    def _build_poc_request(*, method: str, request_url: str, body: str = "") -> str:
+        parsed = urlparse(str(request_url or ""))
+        path = parsed.path or "/"
+        if parsed.query:
+            path = f"{path}?{parsed.query}"
+        host = parsed.netloc or parsed.hostname or "target"
+        lines = [f"{str(method or 'GET').upper()} {path} HTTP/1.1", f"Host: {host}"]
+        if body:
+            lines.append("Content-Type: application/x-www-form-urlencoded")
+            lines.append("")
+            lines.append(body)
+        return "\n".join(lines)
+
+    @staticmethod
+    def _build_poc_response(*, status: Any, body: str, headers: Dict[str, Any] | None = None) -> str:
+        status_int = int(status or 0)
+        header_lines = [f"HTTP/1.1 {status_int}"]
+        for key, value in (headers or {}).items():
+            if str(key).lower() in {"set-cookie", "cookie", "authorization"}:
+                continue
+            header_lines.append(f"{key}: {value}")
+        header_lines.append("")
+        header_lines.append(str(body or ""))
+        return "\n".join(header_lines)
 
     # Day 3強化: Polyglotペイロード生成
     def _analyze_reflection(self, html: str, marker: str) -> List[Dict[str, str]]:

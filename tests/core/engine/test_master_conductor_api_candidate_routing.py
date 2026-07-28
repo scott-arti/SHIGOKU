@@ -7,11 +7,37 @@ from src.core.engine.task_queue import create_dynamic_queue
 from src.core.domain.model.task import Task
 
 
+class _QueueSpy:
+    def __init__(self) -> None:
+        self.items: list[Task] = []
+
+    def add(self, task: Task) -> None:
+        self.items.append(task)
+
+    def __len__(self) -> int:
+        return len(self.items)
+
+
 def _write_jsonl(path: Path, rows: list[dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
         for row in rows:
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def test_expand_plan_for_localhost_asset_reuses_context_target_scheme_and_port():
+    mc = MasterConductor.__new__(MasterConductor)
+    mc.context = SimpleNamespace(
+        discovered_assets=[],
+        target_info={"target": "http://localhost:4280/"},
+    )
+    mc.task_queue = _QueueSpy()
+
+    mc._expand_plan_for_assets(["localhost"])
+
+    assert mc.context.discovered_assets == ["localhost"]
+    assert len(mc.task_queue.items) == 1
+    assert mc.task_queue.items[0].params["url"] == "http://localhost:4280"
 
 
 def test_create_attack_tasks_routes_api_candidate_to_injection_swarm(tmp_path: Path):

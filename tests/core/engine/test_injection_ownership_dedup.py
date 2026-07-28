@@ -358,8 +358,8 @@ class TestOwnershipUrlNormalization:
         assert c1 == 1
         assert c2 == 0, "Hash fragment variant should be treated as duplicate"
 
-    def test_query_params_same_key_deduped(self, mc):
-        """Same query key, different values → deduplicated (key-only normalization)."""
+    def test_query_params_same_key_different_values_not_deduped(self, mc):
+        """Same query key, different values should remain distinct ownership targets."""
         url_a = "http://example.com/page?id=1"
         url_b = "http://example.com/page?id=2"
 
@@ -373,7 +373,24 @@ class TestOwnershipUrlNormalization:
         c1 = mc._add_tasks([task_a], source="test")
         c2 = mc._add_tasks([task_b], source="test")
         assert c1 == 1
-        assert c2 == 0, "Same query key, different value should be deduplicated"
+        assert c2 == 1, "Same query key with different values should stay distinct"
+
+    def test_query_params_same_pairs_different_order_deduped(self, mc):
+        """Equivalent query pairs in different orders should normalize to the same key."""
+        url_a = "http://example.com/page?b=2&a=1"
+        url_b = "http://example.com/page?a=1&b=2"
+
+        task_a = _make_task("a", category="xss_candidate", target=url_a,
+                            params={"_context": {}, "target": url_a, "category": "xss_candidate",
+                                    "tags": ["xss_candidate"], "selection_origin": "test"})
+        task_b = _make_task("b", category="xss_candidate", target=url_b,
+                            params={"_context": {}, "target": url_b, "category": "xss_candidate",
+                                    "tags": ["xss_candidate"], "selection_origin": "test"})
+
+        c1 = mc._add_tasks([task_a], source="test")
+        c2 = mc._add_tasks([task_b], source="test")
+        assert c1 == 1
+        assert c2 == 0, "Same query pairs in different orders should deduplicate"
 
     def test_query_params_different_key_not_deduped(self, mc):
         """Different query keys → not deduplicated."""

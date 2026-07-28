@@ -8,6 +8,7 @@ import re
 from typing import Any
 
 from src.core.utils.json_utils import safe_json_loads
+from src.reporting.expected_detection_matrix import extract_session_security_level
 from src.reporting.report_session_consistency import verify_report_session_consistency
 from src.reporting.session_finding_inspector import inspect_session_findings
 
@@ -820,7 +821,21 @@ def _parse_findings_class_summary(report_text: str) -> dict[str, Any]:
     }
 
 
-def _load_baseline_lock(report_file: Path) -> tuple[Path | None, Path | None]:
+def _session_security_level(session_path: Path | None) -> str:
+    if session_path is None:
+        return ""
+    try:
+        payload = json.loads(session_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+    return extract_session_security_level(payload) or ""
+
+
+def _load_baseline_lock(
+    report_file: Path,
+    *,
+    current_session: Path | None = None,
+) -> tuple[Path | None, Path | None]:
     lock_path = report_file.parent / _BASELINE_LOCK_FILENAME
     if not lock_path.exists():
         return None, None
@@ -851,6 +866,10 @@ def _load_baseline_lock(report_file: Path) -> tuple[Path | None, Path | None]:
         except Exception:
             baseline_session = None
 
+    current_level = _session_security_level(current_session)
+    baseline_level = _session_security_level(baseline_session)
+    if current_level and baseline_level and current_level != baseline_level:
+        return None, None
     return baseline_report, baseline_session
 
 
@@ -1344,7 +1363,10 @@ def evaluate_gate_separated(
     baseline_session_file = Path(baseline_session_path).expanduser().resolve() if baseline_session_path else None
     comparison_mode = "against_explicit_baseline" if baseline_report_file is not None else "self_baseline"
     if baseline_report_file is None:
-        locked_report, locked_session = _load_baseline_lock(report_file)
+        locked_report, locked_session = _load_baseline_lock(
+            report_file,
+            current_session=Path(session_path) if session_path else None,
+        )
         if locked_report is not None:
             baseline_report_file = locked_report
             baseline_session_file = locked_session

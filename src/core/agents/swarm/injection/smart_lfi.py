@@ -80,6 +80,7 @@ INPUT: [Input]
         self.smart_client = SmartRequest(network_client=self.network_client, execution_safeguard=safeguard)
         self.vulnerable = False
         self.evidence = ""
+        self.last_delivery_evidence: Dict[str, Any] = {}
 
     async def close(self):
         if self.network_client:
@@ -119,6 +120,7 @@ INPUT: [Input]
         findings = []
         if result.get("vulnerable"):
             tested_param = result.get("param")
+            delivery = result.get("delivery_evidence", {}) if isinstance(result.get("delivery_evidence"), dict) else {}
             finding = Finding(
                 vuln_type=VulnType.LFI,
                 severity=Severity.HIGH,
@@ -126,8 +128,10 @@ INPUT: [Input]
                 description=result.get("description", "Detected by SmartLFIHunter."),
                 target_url=task.target,
                 evidence=Evidence(
-                    request_url=task.target,
-                    response_body=str(result.get("evidence", ""))
+                    request_method=str(delivery.get("request_method", "") or ""),
+                    request_url=str(delivery.get("request_url", "") or task.target),
+                    response_status=int(delivery.get("response_status", 0) or 0),
+                    response_body=str(delivery.get("response_body", "") or result.get("evidence", ""))
                 ),
                 source_agent=self.name,
                 confidence=0.9,
@@ -136,6 +140,17 @@ INPUT: [Input]
                     "parameter": tested_param,
                     "tested_params": [tested_param] if tested_param else [],
                     "payload": result.get("payloads_used", [""])[-1] if result.get("payloads_used") else "",
+                    "file_marker_excerpt": str(result.get("file_marker_excerpt", "") or ""),
+                    "target_file": str(result.get("target_file", "") or ""),
+                    "poc_request": str(delivery.get("poc_request", "") or ""),
+                    "poc_response": str(delivery.get("poc_response", "") or ""),
+                    "payload_delivery": {
+                        "status": int(delivery.get("response_status", 0) or 0),
+                        "delivered": bool(delivery.get("delivered", False)),
+                        "request_url": str(delivery.get("request_url", "") or ""),
+                        "content_type": str(delivery.get("content_type", "") or ""),
+                        "body_length": int(delivery.get("body_length", 0) or 0),
+                    },
                 }
             )
             findings.append(finding)
@@ -208,12 +223,14 @@ INPUT: [Input]
         self.vulnerable = False
         self.evidence = ""
         self.used_payloads = []
+        self.last_delivery_evidence = {}
         loop_result: Dict[str, Any] = {"status": "not_run"}
         deterministic = await self._run_lfi_deterministic_precheck(tested_param_names)
         if deterministic.get("confirmed"):
             self.vulnerable = True
             self.context["param"] = deterministic.get("param", self.context.get("param"))
             self.evidence = str(deterministic.get("evidence", "LFI signal confirmed"))
+            self.last_delivery_evidence = deterministic.get("delivery_evidence", {}) if isinstance(deterministic.get("delivery_evidence"), dict) else {}
             payload = str(deterministic.get("payload", "") or "")
             if payload and payload not in self.used_payloads:
                 self.used_payloads.append(payload)
@@ -245,7 +262,10 @@ Start your LFI/Path Traversal testing.
             "tested_params": tested_param_names,
             "payloads_used": self.used_payloads,
             "description": f"LFI detected." if self.vulnerable else "No LFI detected.",
-            "loop_result": loop_result
+            "loop_result": loop_result,
+            "file_marker_excerpt": str(loop_result.get("file_marker_excerpt", "") or ""),
+            "target_file": str(loop_result.get("target_file", "") or ""),
+            "delivery_evidence": self.last_delivery_evidence,
         }
 
     async def _run_lfi_deterministic_precheck(self, tested_params: List[str]) -> Dict[str, Any]:
@@ -274,10 +294,24 @@ Start your LFI/Path Traversal testing.
             for payload in probe_payloads:
                 obs = await self._send_request(payload)
                 if obs.get("diff") == "lfi_found":
+                    delivery = {
+                        "request_method": obs.get("request_method", ""),
+                        "request_url": obs.get("request_url", ""),
+                        "response_status": obs.get("status", 0),
+                        "response_body": obs.get("body_snippet", ""),
+                        "poc_request": obs.get("poc_request", ""),
+                        "poc_response": obs.get("poc_response", ""),
+                        "content_type": obs.get("content_type", ""),
+                        "body_length": obs.get("body_length", 0),
+                        "delivered": True,
+                    }
                     return {
                         "confirmed": True,
                         "param": param_name,
                         "payload": payload,
+                        "target_file": self._infer_target_file(payload),
+                        "file_marker_excerpt": str(obs.get("file_marker_excerpt", "") or obs.get("match", "") or ""),
+                        "delivery_evidence": delivery,
                         "evidence": (
                             f"Deterministic LFI signal on '{param_name}'"
                             + (f" (matched: {obs.get('match')})" if obs.get("match") else "")
@@ -292,10 +326,17 @@ Start your LFI/Path Traversal testing.
         
         LLM の出力を検証し、不正な形式（Observation の自己生成など）を検出したらリトライ。
         """
-        history_text = "\n".join([
-            f"Turn {s.turn}: Act={s.action}({s.action_input}) -> {s.observation}"
-            for s in self.history
-        ])
+        history_lines = []
+        for s in self.history:
+            if hasattr(s, "turn"):
+                history_lines.append(
+                    f"Turn {s.turn}: Act={s.action}({s.action_input}) -> {s.observation}"
+                )
+            elif isinstance(s, dict):
+                history_lines.append(
+                    f"Turn {s.get('turn', '?')}: Act={s.get('action', '?')}({s.get('action_input', s.get('input', ''))}) -> {s.get('observation', '')}"
+                )
+        history_text = "\n".join(history_lines)
 
         prompt = f"""Target: {self.context['target']}
 Testing Parameter: {self.context['param']}
@@ -374,6 +415,18 @@ Decide next step for LFI testing.
 
             # リクエスト送信
             obs = await self._send_request(payload)
+            if obs.get("diff") == "lfi_found":
+                self.last_delivery_evidence = {
+                    "request_method": obs.get("request_method", ""),
+                    "request_url": obs.get("request_url", ""),
+                    "response_status": obs.get("status", 0),
+                    "response_body": obs.get("body_snippet", ""),
+                    "poc_request": obs.get("poc_request", ""),
+                    "poc_response": obs.get("poc_response", ""),
+                    "content_type": obs.get("content_type", ""),
+                    "body_length": obs.get("body_length", 0),
+                    "delivered": True,
+                }
             return f"Observation: Status={obs['status']}, Diff={obs['diff']}, Body={obs['body_snippet']}"
 
         return f"Unknown action: {action}"
@@ -391,8 +444,21 @@ Decide next step for LFI testing.
             "turns": len(self.history),
             "vulnerable": self.vulnerable,
             "evidence": self.evidence,
-            "payloads_used": self.used_payloads
+            "payloads_used": self.used_payloads,
+            "delivery_evidence": self.last_delivery_evidence,
         }
+
+    @staticmethod
+    def _infer_target_file(payload: str) -> str:
+        payload_text = str(payload or "")
+        lowered = payload_text.lower()
+        if "etc/passwd" in lowered:
+            return "/etc/passwd"
+        if "win.ini" in lowered:
+            return "C:\\windows\\win.ini"
+        if "php://filter" in lowered:
+            return "php://filter"
+        return payload_text
 
     async def _send_request(self, payload: str) -> Dict[str, Any]:
         """実際のリクエストを送信し、結果を返す"""
@@ -406,6 +472,8 @@ Decide next step for LFI testing.
             params[param] = payload
 
         try:
+            request_url = target
+            request_method = method
             if method == "POST":
                 resp = await self.smart_client.request(
                     "POST",
@@ -419,6 +487,7 @@ Decide next step for LFI testing.
                 parsed = urlparse(target)
                 new_query = urlencode(params)
                 new_url = urlunparse(parsed._replace(query=new_query))
+                request_url = new_url
 
                 resp = await self.smart_client.request(
                     "GET",
@@ -432,11 +501,25 @@ Decide next step for LFI testing.
             body_snippet = raw_body[:500]
             status = resp.get("status", 0)
             error = resp.get("error")
+            headers = resp.get("headers", {}) if isinstance(resp.get("headers", {}), dict) else {}
+            content_type = str(headers.get("Content-Type", headers.get("content-type", "")) or "")
+            poc_request = self._build_poc_request(method=request_method, request_url=request_url, body=params if method == "POST" else None)
+            poc_response = self._build_poc_response(status=status, body=body_snippet, headers=headers)
 
             # RequestGuard などでブロックされた場合
             if error or status == 0:
                 logger.warning(f"[{self.name}] Request blocked or failed: {error}")
-                return {"status": status, "diff": "blocked", "body_snippet": f"Blocked: {error}"}
+                return {
+                    "status": status,
+                    "diff": "blocked",
+                    "body_snippet": f"Blocked: {error}",
+                    "request_method": request_method,
+                    "request_url": request_url,
+                    "poc_request": poc_request,
+                    "poc_response": poc_response,
+                    "content_type": content_type,
+                    "body_length": len(raw_body),
+                }
 
             lfi_patterns = [
                 r"root:[^\n]*:0:0:",
@@ -449,10 +532,14 @@ Decide next step for LFI testing.
                 r"\[mci extensions\]",
                 r"PD9waH[A-Za-z0-9+/=]{8,}",
             ]
-            matched_pattern = next(
-                (pattern for pattern in lfi_patterns if re.search(pattern, raw_body, re.IGNORECASE | re.MULTILINE)),
-                None,
-            )
+            matched_pattern = None
+            matched_excerpt = ""
+            for pattern in lfi_patterns:
+                match = re.search(pattern, raw_body, re.IGNORECASE | re.MULTILINE)
+                if match:
+                    matched_pattern = pattern
+                    matched_excerpt = match.group(0)[:120]
+                    break
             diff = "lfi_found" if matched_pattern else "normal"
 
             return {
@@ -460,8 +547,43 @@ Decide next step for LFI testing.
                 "diff": diff,
                 "body_snippet": body_snippet[:200],
                 "match": matched_pattern or "",
+                "file_marker_excerpt": matched_excerpt,
+                "request_method": request_method,
+                "request_url": request_url,
+                "poc_request": poc_request,
+                "poc_response": poc_response,
+                "content_type": content_type,
+                "body_length": len(raw_body),
             }
 
         except Exception as e:
             logger.error(f"[{self.name}] Request failed: {e}")
             return {"status": 0, "diff": "error", "body_snippet": str(e)}
+
+    @staticmethod
+    def _build_poc_request(*, method: str, request_url: str, body: Any = None) -> str:
+        from urllib.parse import urlparse
+        parsed = urlparse(str(request_url or ""))
+        path = parsed.path or "/"
+        if parsed.query:
+            path = f"{path}?{parsed.query}"
+        host = parsed.netloc or parsed.hostname or "target"
+        lines = [f"{str(method or 'GET').upper()} {path} HTTP/1.1", f"Host: {host}"]
+        if body is not None:
+            lines.append("Content-Type: application/x-www-form-urlencoded")
+            lines.append("")
+            from urllib.parse import urlencode
+            lines.append(urlencode(body))
+        return "\n".join(lines)
+
+    @staticmethod
+    def _build_poc_response(*, status: Any, body: str, headers: Dict[str, Any] | None = None) -> str:
+        status_int = int(status or 0)
+        header_lines = [f"HTTP/1.1 {status_int}"]
+        for key, value in (headers or {}).items():
+            if str(key).lower() in {"set-cookie", "cookie", "authorization"}:
+                continue
+            header_lines.append(f"{key}: {value}")
+        header_lines.append("")
+        header_lines.append(str(body or ""))
+        return "\n".join(header_lines)
