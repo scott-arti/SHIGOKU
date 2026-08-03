@@ -186,3 +186,61 @@ def validate_recipe_schema(
         "details": [],
     }
 
+
+# ── VDP hypothesis vocabulary (SGK-2026-0420, public) ──────────────────
+# Public vocabulary reused by the VDP hypothesis generator. Additive:
+# existing recipe step actions are NOT modified.
+
+VDP_ACTION_CLASSES = {
+    "follow_up_probe",
+    "re_evaluate",
+    "manual_review",
+    "terminal",
+}
+
+VDP_RISK_CLASSES = {
+    "read_only",
+    "state_changing",
+    "out_of_band",
+}
+
+VDP_STOP_CONDITIONS = {
+    "evidence_gap_resolved_or_budget_exhausted",
+    "scope_revalidation_blocked",
+    "no_follow_up_needed",
+    "max_retries_exceeded",
+}
+
+VDP_SCOPE_VERDICTS = {
+    "allowed",
+    "out_of_scope",
+    "redirect_out_of_scope",
+    "scope_revalidation_blocked",
+}
+
+VDP_REASON_CODES = {
+    "label_leakage_detected",
+    "scope_revalidation_blocked",
+    "duplicate_dedup_key",
+    "diversity_budget_exceeded",
+    "no_observations",
+    "generator_exception",
+    "budget_estimate_missing",
+    "generated_candidate",
+}
+
+
+def validate_vdp_action_class(action: str) -> dict:
+    """Validate a VDP action class against the public vocabulary.
+
+    Returns {"ok": bool, "normalized": str, "allowed": bool, "reason": str}.
+    """
+    normalized = str(action or "").strip()
+    ok = bool(normalized) and normalized in VDP_ACTION_CLASSES
+    return {
+        "ok": ok,
+        "normalized": normalized,
+        "allowed": ok,
+        "reason": "" if ok else f"unknown action_class: {action!r}",
+    }
+

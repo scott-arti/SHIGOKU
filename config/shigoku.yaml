@@ -3,6 +3,7 @@
 
 # モード設定
 mode: bugbounty # bugbounty | vulntest | ctf
+ctf_flag_format: "flag{.*}"
 
 # ---- Task Queue Pruning (SGK-2026-0287) ----
 # shadow: record candidates only, no actual deletion.
@@ -44,21 +45,51 @@ scan:
   # Proxy Configuration (Caido/Burp) - leave empty to run without mandatory proxy
   proxy: ""
 
-# LLM統合設定 (Phase 1)
+# 並列実行設定。enabled を false にすると常に直列実行へ戻ります。
+parallelism:
+  enabled: true
+  kill_switch: false
+  shadow_mode: true
+  default_executor: serial
+
+# VDP (SGK-2026-0420): off | record_only | shadow (default: off)
+vdp:
+  mode: "off"
+  # label_leakage_denylist: []   # 製品名等を拒否リストへ追加する場合
+
+# LLM の設定場所です。モデルを変える時は、下の providers → profiles → roles の順で確認します。
+# API キーそのものはここに書かず、api_key_env で指定した OS 環境変数にだけ設定します。
 llm:
+  # 設定形式の版。通常は変更しません。
   schema_version: 1
+  # role を指定しない呼出しで使う役割です。
   default_role: specialist_light
+
+  # 接続先ごとの設定です。新しい会社・APIを追加する時は、名前、APIキーの環境変数名、明示的なURLを追加します。
+  # URL を省略してモデル名から自動判定することはしません。
   providers:
     deepseek:
       api_key_env: DEEPSEEK_API_KEY
-      base_url: null
+      base_url: https://api.deepseek.com/v1
     openai:
       api_key_env: OPENAI_API_KEY
-      base_url: null
+      base_url: https://api.openai.com/v1
+    deepinfra:
+      api_key_env: DEEPINFRA_API_KEY
+      base_url: https://api.deepinfra.com/v1
+    wandb:
+      api_key_env: WANDB_API_KEY
+      base_url: https://api.inference.wandb.ai/v1
+    cerebras:
+      api_key_env: Cerebras_API_KEY
+      base_url: https://api.cerebras.ai/v1
     any_llm:
       api_key_env: ANY_LLM_API_KEY
       base_url: http://localhost:8000/v1
 
+  # モデルごとの設定です。モデルを追加・変更する時はここに profile を追加します。
+  # provider は上の providers の名前、model はその provider が受け付けるモデル名です。
+  # thinking.type は enabled / disabled、reasoning_effort は provider にそのまま送る値です。不要なら null にします。
   profiles:
     cheap_api:
       provider: deepseek
@@ -68,6 +99,10 @@ llm:
       max_concurrency: 4
       rate_limit_per_minute: 60
       temperature: 0.0
+      extra:
+        thinking:
+          type: disabled
+          reasoning_effort: null
     reasoning_api:
       provider: deepseek
       model: deepseek/deepseek-v4-pro
@@ -79,12 +114,15 @@ llm:
       extra:
         thinking:
           type: enabled
-        reasoning_effort: high
+          reasoning_effort: high
     vision_api:
       provider: openai
       model: openai/gpt-4o
       timeout_seconds: 300
 
+  # SHIGOKU の機能ごとに使う profile を決めます。
+  # 例: planner を別モデルにしたい場合は、planner.profile を追加した profile 名へ変更します。
+  # fallback_profile は最初のモデルが失敗した時だけ使う予備の profile です。
   roles:
     planner:
       profile: reasoning_api
@@ -112,6 +150,14 @@ llm:
     xss_specialist:
       profile: cheap_api
       fallback_profile: reasoning_api
+      system_prompt_template: roles/xss_specialist.md
+    xss_rejudge:
+      profile: cheap_api
+      fallback_profile: reasoning_api
+      system_prompt_template: roles/xss_specialist.md
+    xss_final:
+      profile: reasoning_api
+      fallback_profile: cheap_api
       system_prompt_template: roles/xss_specialist.md
     sqli_specialist:
       profile: cheap_api

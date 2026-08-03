@@ -1,5 +1,5 @@
 version: 1
-updated_at: '2026-07-28'
+updated_at: '2026-07-31'
 namespace: SGK
 id_rules:
   core: SGK-YYYY-NNNN
@@ -4748,6 +4748,339 @@ tasks:
   - docs/shigoku/subtasks/done/2026-07-28_dvwa-high_subtask_plan.md
   - docs/shigoku/reports/2026-07-28_sgk-2026-0400_security-baseline-separation_work_report.md
   - docs/shigoku/worklogs/2026-07-28_sgk-2026-0400_security-baseline-separation_work_log.md
+- provisional_id: DOC-0457
+  task_id: SGK-2026-0401
+  doc_type: plan
+  title: LLM provider endpoint explicit configuration and legacy routing removal
+  primary_doc: docs/shigoku/plans/done/2026-07-29_llm-provider-endpoint-explicit-configuration-and-legacy-routing-removal_plan.md
+  status: done
+  provisional: false
+  task_summary: LLM provider endpoint explicit configuration and legacy routing removal
+  parent_task_id: null
+  related_docs:
+  - config/shigoku.yaml
+  - src/core/models/llm.py
+  - docs/shigoku/reports/2026-07-29_sgk-2026-0401_llm-routing-unification_work_report.md
+  - docs/shigoku/worklogs/2026-07-29_sgk-2026-0401_llm-routing-unification_work_log.md
+- provisional_id: DOC-0458
+  task_id: SGK-2026-0402
+  doc_type: subtask_plan
+  title: LLM thinking effort pass-through configuration
+  primary_doc: docs/shigoku/subtasks/done/2026-07-29_llm-thinking-effort-pass-through-configuration_subtask_plan.md
+  status: done
+  provisional: false
+  task_summary: LLM thinking effort pass-through configuration
+  parent_task_id: SGK-2026-0401
+  related_docs:
+  - docs/shigoku/plans/done/2026-07-29_llm-provider-endpoint-explicit-configuration-and-legacy-routing-removal_plan.md
+- provisional_id: DOC-0459
+  task_id: SGK-2026-0403
+  doc_type: plan
+  title: Legacy settings path removal and core configuration consolidation
+  primary_doc: docs/shigoku/plans/done/2026-07-29_legacy-settings-path-removal-and-core-configuration-consolidation_plan.md
+  status: done
+  provisional: false
+  task_summary: Legacy settings path removal and core configuration consolidation
+  parent_task_id: null
+  related_docs:
+  - src/config.py
+  - src/core/config/settings.py
+- provisional_id: DOC-0460
+  task_id: SGK-2026-0404
+  doc_type: plan
+  title: Docker cloud_enum installation compatibility fix
+  primary_doc: docs/shigoku/plans/2026-07-29_docker-cloud-enum-installation-compatibility-fix_plan.md
+  status: active
+  provisional: false
+  task_summary: Docker cloud_enum installation compatibility fix
+  parent_task_id: null
+  related_docs: []
+- provisional_id: DOC-0461
+  task_id: SGK-2026-0405
+  doc_type: plan
+  title: LLM configuration manual and YAML comments
+  primary_doc: docs/shigoku/plans/2026-07-29_llm-configuration-manual-and-yaml-comments_plan.md
+  status: active
+  provisional: false
+  task_summary: LLM configuration manual and YAML comments
+  parent_task_id: null
+  related_docs:
+  - config/shigoku.yaml
+  - docs/shigoku/manuals/MANUAL_JA.md
+- provisional_id: DOC-0462
+  task_id: SGK-2026-0406
+  doc_type: plan
+  title: ワークスペース保存構造とマニュアル案内の整備
+  primary_doc: docs/shigoku/plans/done/2026-07-29_sgk-2026-0406_workspace-storage-and-manual-guide_plan.md
+  status: done
+  provisional: false
+  task_summary: ワークスペース保存構造とマニュアル案内の整備
+  parent_task_id: null
+  related_docs:
+  - docs/shigoku/manuals/WORKSPACE_STORAGE_AND_MANUAL_GUIDE.md
+  - docs/shigoku/reports/2026-07-29_sgk-2026-0406_workspace-storage-and-manual-guide_work_report.md
+  - docs/shigoku/worklogs/2026-07-29_sgk-2026-0406_workspace-storage-and-manual-guide_work_log.md
+- provisional_id: DOC-0463
+  task_id: SGK-2026-0407
+  doc_type: plan
+  title: CLIマニュアルと実装の同期
+  primary_doc: docs/shigoku/plans/2026-07-30_cli_plan.md
+  status: active
+  provisional: false
+  task_summary: CLIマニュアルと実装の同期
+  parent_task_id: SGK-2026-0001
+  related_docs:
+  - docs/shigoku/manuals/USER_MANUAL.md
+  - docs/shigoku/manuals/REFERENCE.md
+  - docs/shigoku/manuals/QUICK_START.md
+  - docs/shigoku/manuals/manual_legacy/2026-07-02_sgk-2026-0337_detailed-command-reference.md
+  - docs/shigoku/README.md
+  - docs/shigoku/manuals/manual_legacy/2026-07-02_sgk-2026-0338_operator-user-manual.md
+- provisional_id: DOC-0464
+  task_id: SGK-2026-0408
+  doc_type: subtask_plan
+  title: Caido 接続ポート設定の運用マニュアル追記
+  primary_doc: docs/shigoku/subtasks/done/2026-07-31_caido_subtask_plan.md
+  status: done
+  provisional: false
+  task_summary: Caido 接続ポート設定の運用マニュアル追記
+  parent_task_id: SGK-2026-0407
+  related_docs:
+  - docs/shigoku/manuals/manual_legacy/2026-07-02_sgk-2026-0338_operator-user-manual.md
+  - docs/shigoku/reports/2026-07-31_sgk-2026-0408_caido-port-manual_work_report.md
+  - docs/shigoku/worklogs/2026-07-31_sgk-2026-0408_caido-port-manual_work_log.md
+- provisional_id: DOC-0465
+  task_id: SGK-2026-0409
+  doc_type: subtask_plan
+  title: Caido GraphQL 転送対応と事前チェック接続先表示修正
+  primary_doc: docs/shigoku/subtasks/done/2026-07-31_caido-graphql_subtask_plan.md
+  status: done
+  provisional: false
+  task_summary: Caido GraphQL 転送対応と事前チェック接続先表示修正
+  parent_task_id: SGK-2026-0408
+  related_docs:
+  - src/core/preflight/caido_check.py
+  - tests/unit/preflight/test_caido_check.py
+  - docs/shigoku/reports/2026-07-31_sgk-2026-0409_caido-graphql_work_report.md
+  - docs/shigoku/worklogs/2026-07-31_sgk-2026-0409_caido-graphql_work_log.md
+- provisional_id: DOC-0466
+  task_id: SGK-2026-0410
+  doc_type: subtask_plan
+  title: Master Conductor 内部事前チェックへの Caido 設定伝播修正
+  primary_doc: docs/shigoku/subtasks/done/2026-07-31_master-conductor-caido_subtask_plan.md
+  status: done
+  provisional: false
+  task_summary: Master Conductor 内部事前チェックへの Caido 設定伝播修正
+  parent_task_id: SGK-2026-0409
+  related_docs:
+  - src/core/engine/master_conductor.py
+  - tests/core/engine/test_master_conductor_caido_preflight.py
+  - workspace/projects/localhost:3000/reports/haddix_report_20260731_141807.md
+  - docs/shigoku/reports/2026-07-31_sgk-2026-0410_master-conductor-caido_work_report.md
+  - docs/shigoku/worklogs/2026-07-31_sgk-2026-0410_master-conductor-caido_work_log.md
+- provisional_id: DOC-0467
+  task_id: SGK-2026-0411
+  doc_type: subtask_plan
+  title: Caidoプロキシへの初回偵察通信伝播修正
+  primary_doc: docs/shigoku/subtasks/done/2026-07-31_sgk-2026-0411_caido-proxy-recon-routing_subtask_plan.md
+  status: done
+  provisional: false
+  task_summary: Caidoプロキシへの初回偵察通信伝播修正
+  parent_task_id: SGK-2026-0410
+  related_docs:
+  - src/core/swarm/worker/recon_workers.py
+  - docker-compose.yml
+  - tests/core/swarm/worker/test_recon_workers.py
+  - docs/shigoku/manuals/manual_legacy/2026-07-02_sgk-2026-0338_operator-user-manual.md
+  - docs/shigoku/reports/2026-07-31_sgk-2026-0411_caido-proxy-recon-routing_work_report.md
+  - docs/shigoku/worklogs/2026-07-31_sgk-2026-0411_caido-proxy-recon-routing_work_log.md
+- provisional_id: DOC-0468
+  task_id: SGK-2026-0412
+  doc_type: subtask_plan
+  title: Caido明示URLの実通信プロキシ適用修正
+  primary_doc: docs/shigoku/subtasks/done/2026-07-31_sgk-2026-0412_caido-url-proxy-fallback_subtask_plan.md
+  status: done
+  provisional: false
+  task_summary: Caido明示URLの実通信プロキシ適用修正
+  parent_task_id: SGK-2026-0411
+  related_docs:
+  - src/core/config/settings.py
+  - src/core/intel/caido_crawler.py
+  - tests/unit/config/test_caido_proxy_resolution.py
+  - docs/shigoku/manuals/manual_legacy/2026-07-02_sgk-2026-0338_operator-user-manual.md
+  - docs/shigoku/reports/2026-07-31_sgk-2026-0412_caido-url-proxy-fallback_work_report.md
+  - docs/shigoku/worklogs/2026-07-31_sgk-2026-0412_caido-url-proxy-fallback_work_log.md
+- provisional_id: DOC-0469
+  task_id: SGK-2026-0413
+  doc_type: plan
+  title: 探索・実行判定・カバー率ガードの依存整合性修正
+  primary_doc: docs/shigoku/plans/done/2026-07-31_execution-pipeline-dependency-admission-consistency_plan.md
+  status: done
+  provisional: false
+  task_summary: 探索・実行判定・カバー率ガードの依存整合性修正
+  parent_task_id: null
+  related_docs:
+  - src/core/engine/master_conductor.py
+  - src/core/engine/lane_policy.py
+  - src/core/engine/parallel_orchestrator.py
+  - src/core/domain/model/task.py
+  - tests/unit/engine/test_lane_policy.py
+  - tests/core/engine/test_master_conductor_phase5_parallelism.py
+  - tests/core/engine/test_master_conductor_execution_admission.py
+  - workspace/projects/localhost:3000/sessions/session_20260731_145535.json
+  - docs/shigoku/reports/2026-07-31_sgk-2026-0413_execution-pipeline-dependency-admission-consistency_work_report.md
+  - docs/shigoku/worklogs/2026-07-31_sgk-2026-0413_execution-pipeline-dependency-admission-consistency_work_log.md
+- provisional_id: DOC-0470
+  task_id: SGK-2026-0414
+  doc_type: plan
+  title: Recon設定型と並列結果正規化の実行時例外修正
+  primary_doc: docs/shigoku/plans/done/2026-07-31_sgk-2026-0414_recon-settings-and-task-result-runtime-contract_plan.md
+  status: done
+  provisional: false
+  task_summary: Recon設定型と並列結果正規化の実行時例外修正
+  parent_task_id: null
+  related_docs:
+  - src/core/engine/master_conductor.py
+  - src/recon/pipeline.py
+  - src/core/config/settings.py
+  - tests/core/engine/test_master_conductor_phase5_parallelism.py
+  - tests/recon/test_recon_pipeline_proxy_gate.py
+  - docs/shigoku/reports/2026-07-31_sgk-2026-0414_recon-settings-and-task-result-runtime-contract_work_report.md
+  - docs/shigoku/worklogs/2026-07-31_sgk-2026-0414_recon-settings-and-task-result-runtime-contract_work_log.md
+- provisional_id: DOC-0471
+  task_id: SGK-2026-0415
+  doc_type: plan
+  title: 外部ツール実行契約と偵察結果表示の整合性修正
+  primary_doc: docs/shigoku/plans/done/2026-07-31_sgk-2026-0415_external-tool-command-and-recon-outcome-consistency_plan.md
+  status: done
+  provisional: false
+  task_summary: 外部ツール実行契約と偵察結果表示の整合性修正
+  parent_task_id: null
+  related_docs:
+  - src/core/config/settings.py
+  - src/recon/tool_runner.py
+  - src/recon/pipeline.py
+  - src/tools/custom/httpx.py
+  - src/core/engine/master_conductor.py
+  - tests/unit/config/test_tool_command_resolution.py
+  - tests/recon/test_step3_livecheck.py
+  - tests/recon/test_step3b_hybrid_url.py
+  - tests/unit/test_robustness_phase4.py
+  - tests/tools/test_batch_execution.py
+  - tests/core/engine/test_master_conductor_execution_admission.py
+  - docs/shigoku/reports/2026-07-31_sgk-2026-0415_external-tool-command-and-recon-outcome-consistency_work_report.md
+  - docs/shigoku/worklogs/2026-07-31_sgk-2026-0415_external-tool-command-and-recon-outcome-consistency_work_log.md
+- provisional_id: DOC-0472
+  task_id: SGK-2026-0416
+  doc_type: plan
+  title: Session evidence summary labeling and Juice Shop VDP readiness assessment
+  primary_doc: docs/shigoku/plans/done/2026-07-31_session-evidence-summary-labeling-and-juice-shop-vdp-readiness-assessment_plan.md
+  status: done
+  provisional: false
+  task_summary: Session evidence summary labeling and Juice Shop VDP readiness assessment
+  parent_task_id: null
+  related_docs:
+  - src/reporting/initial_release_gate.py
+  - tests/unit/reporting/test_initial_release_gate.py
+  - workspace/projects/localhost:3000/reports/haddix_report_20260731_201628.md
+  - docs/shigoku/reports/2026-07-31_sgk-2026-0416_session-evidence-summary-and-juice-shop-vdp-readiness_work_report.md
+  - docs/shigoku/worklogs/2026-07-31_sgk-2026-0416_session-evidence-summary-and-juice-shop-vdp-readiness_work_log.md
+  - docs/shigoku/plans/2026-07-31_vdp-capability-benchmark-and-evidence-contract_plan.md
+- provisional_id: DOC-0473
+  task_id: SGK-2026-0417
+  doc_type: work_log
+  title: Juice Shop-specific VDP plan withdrawal
+  primary_doc: docs/shigoku/worklogs/2026-07-31_sgk-2026-0417_juice-shop-specific-plan-withdrawal_work_log.md
+  status: archived
+  provisional: false
+  task_summary: Juice Shop-specific VDP plan withdrawal
+  parent_task_id: SGK-2026-0416
+  related_docs:
+  - docs/shigoku/plans/2026-07-31_vdp-capability-benchmark-and-evidence-contract_plan.md
+- provisional_id: DOC-0474
+  task_id: SGK-2026-0418
+  doc_type: plan
+  title: VDP capability benchmark and staged evidence system
+  primary_doc: docs/shigoku/plans/2026-07-31_vdp-capability-benchmark-and-evidence-contract_plan.md
+  status: active
+  provisional: false
+  task_summary: VDP capability benchmark and staged evidence system
+  parent_task_id: SGK-2026-0416
+  related_docs:
+  - docs/shigoku/plans/done/2026-07-31_session-evidence-summary-labeling-and-juice-shop-vdp-readiness-assessment_plan.md
+  - docs/shigoku/subtasks/done/2026-07-31_sgk-2026-0419_vdp-evidence-schema-safety-budget-and-recovery-foundation_subtask_plan.md
+  - docs/shigoku/subtasks/done/2026-07-31_sgk-2026-0420_vdp-capability-driven-hypothesis-generation-shadow-workflow_subtask_plan.md
+  - docs/shigoku/subtasks/2026-07-31_sgk-2026-0421_vdp-evidence-gap-driven-verification-and-safe-follow-up_subtask_plan.md
+  - docs/shigoku/subtasks/2026-07-31_sgk-2026-0422_vdp-canonical-evidence-reporting-and-separated-quality-gates_subtask_plan.md
+  - docs/shigoku/subtasks/2026-07-31_sgk-2026-0423_vdp-hidden-holdout-evaluation-shadow-rollout-and-recovery_subtask_plan.md
+- provisional_id: DOC-0475
+  task_id: SGK-2026-0419
+  doc_type: subtask_plan
+  title: VDP evidence schema safety budget and recovery foundation
+  primary_doc: docs/shigoku/subtasks/done/2026-07-31_sgk-2026-0419_vdp-evidence-schema-safety-budget-and-recovery-foundation_subtask_plan.md
+  status: done
+  provisional: false
+  task_summary: VDP evidence schema safety budget and recovery foundation
+  parent_task_id: SGK-2026-0418
+  related_docs:
+  - docs/shigoku/plans/2026-07-31_vdp-capability-benchmark-and-evidence-contract_plan.md
+  - docs/shigoku/reports/2026-08-01_sgk-2026-0419_vdp-evidence-schema-safety-budget-and-recovery-foundation_work_report.md
+  - docs/shigoku/worklogs/2026-08-01_sgk-2026-0419_vdp-evidence-schema-safety-budget-and-recovery-foundation_work_log.md
+- provisional_id: DOC-0476
+  task_id: SGK-2026-0420
+  doc_type: subtask_plan
+  title: VDP capability driven hypothesis generation shadow workflow
+  primary_doc: docs/shigoku/subtasks/done/2026-07-31_sgk-2026-0420_vdp-capability-driven-hypothesis-generation-shadow-workflow_subtask_plan.md
+  status: done
+  provisional: false
+  task_summary: VDP capability driven hypothesis generation shadow workflow
+  parent_task_id: SGK-2026-0418
+  related_docs:
+  - docs/shigoku/plans/2026-07-31_vdp-capability-benchmark-and-evidence-contract_plan.md
+  - docs/shigoku/subtasks/done/2026-07-31_sgk-2026-0419_vdp-evidence-schema-safety-budget-and-recovery-foundation_subtask_plan.md
+  - docs/shigoku/reports/2026-08-03_sgk-2026-0420_vdp-capability-driven-hypothesis-generation-shadow-workflow_work_report.md
+  - docs/shigoku/worklogs/2026-08-03_sgk-2026-0420_vdp-capability-driven-hypothesis-generation-shadow-workflow_work_log.md
+- provisional_id: DOC-0477
+  task_id: SGK-2026-0421
+  doc_type: subtask_plan
+  title: VDP evidence gap driven verification and safe follow-up
+  primary_doc: docs/shigoku/subtasks/2026-07-31_sgk-2026-0421_vdp-evidence-gap-driven-verification-and-safe-follow-up_subtask_plan.md
+  status: active
+  provisional: false
+  task_summary: VDP evidence gap driven verification and safe follow-up
+  parent_task_id: SGK-2026-0418
+  related_docs:
+  - docs/shigoku/plans/2026-07-31_vdp-capability-benchmark-and-evidence-contract_plan.md
+  - docs/shigoku/subtasks/done/2026-07-31_sgk-2026-0419_vdp-evidence-schema-safety-budget-and-recovery-foundation_subtask_plan.md
+  - docs/shigoku/subtasks/done/2026-07-31_sgk-2026-0420_vdp-capability-driven-hypothesis-generation-shadow-workflow_subtask_plan.md
+- provisional_id: DOC-0478
+  task_id: SGK-2026-0422
+  doc_type: subtask_plan
+  title: VDP canonical evidence reporting and separated quality gates
+  primary_doc: docs/shigoku/subtasks/2026-07-31_sgk-2026-0422_vdp-canonical-evidence-reporting-and-separated-quality-gates_subtask_plan.md
+  status: active
+  provisional: false
+  task_summary: VDP canonical evidence reporting and separated quality gates
+  parent_task_id: SGK-2026-0418
+  related_docs:
+  - docs/shigoku/plans/2026-07-31_vdp-capability-benchmark-and-evidence-contract_plan.md
+  - docs/shigoku/subtasks/done/2026-07-31_sgk-2026-0419_vdp-evidence-schema-safety-budget-and-recovery-foundation_subtask_plan.md
+  - docs/shigoku/subtasks/2026-07-31_sgk-2026-0421_vdp-evidence-gap-driven-verification-and-safe-follow-up_subtask_plan.md
+- provisional_id: DOC-0479
+  task_id: SGK-2026-0423
+  doc_type: subtask_plan
+  title: VDP hidden holdout evaluation shadow rollout and recovery
+  primary_doc: docs/shigoku/subtasks/2026-07-31_sgk-2026-0423_vdp-hidden-holdout-evaluation-shadow-rollout-and-recovery_subtask_plan.md
+  status: active
+  provisional: false
+  task_summary: VDP hidden holdout evaluation shadow rollout and recovery
+  parent_task_id: SGK-2026-0418
+  related_docs:
+  - docs/shigoku/plans/2026-07-31_vdp-capability-benchmark-and-evidence-contract_plan.md
+  - docs/shigoku/subtasks/done/2026-07-31_sgk-2026-0419_vdp-evidence-schema-safety-budget-and-recovery-foundation_subtask_plan.md
+  - docs/shigoku/subtasks/done/2026-07-31_sgk-2026-0420_vdp-capability-driven-hypothesis-generation-shadow-workflow_subtask_plan.md
+  - docs/shigoku/subtasks/2026-07-31_sgk-2026-0421_vdp-evidence-gap-driven-verification-and-safe-follow-up_subtask_plan.md
+  - docs/shigoku/subtasks/2026-07-31_sgk-2026-0422_vdp-canonical-evidence-reporting-and-separated-quality-gates_subtask_plan.md
 doc_type_allowed_values:
 - spec
 - roadmap

@@ -1,3 +1,5 @@
+import pytest
+
 from types import SimpleNamespace
 
 from src.core.domain.model.task import Task
@@ -5,7 +7,23 @@ from src.core.engine.recipe_contracts import (
     validate_action_schema,
     validate_task_schema,
     validate_recipe_schema,
+    validate_vdp_action_class,
     ALLOWED_RECIPE_STEP_ACTIONS,
+    RECIPE_TO_SWARM_REASON_CODES,
+    RECIPE_ADDITIVE_REASONS,
+    RECIPE_SUPPRESSIVE_REASONS,
+    RECIPE_FOLLOW_UP_REASONS,
+    RECIPE_DECISION_OUTCOMES,
+    SUPPRESSION_KEY_PREFIX_SIGNAL,
+    SUPPRESSION_KEY_PREFIX_ENDPOINT,
+    RECIPE_DECISION_RUN_RECIPE,
+    RECIPE_DECISION_DIRECT_SWARM,
+    RECIPE_DECISION_DEFER,
+    VDP_ACTION_CLASSES,
+    VDP_RISK_CLASSES,
+    VDP_STOP_CONDITIONS,
+    VDP_SCOPE_VERDICTS,
+    VDP_REASON_CODES,
 )
 from src.core.engine.recipe_loader import Recipe, RecipeStep
 
@@ -196,3 +214,139 @@ def test_validate_all_auth_recipe_names_schema_pass():
         )
         result = validate_recipe_schema(recipe)
         assert result["ok"] is True, f"Auth recipe {name} failed validation: {result['error']}"
+
+
+# ── VDP hypothesis vocabulary (SGK-2026-0420, public) ────────────────
+
+
+def test_vdp_action_classes_contains_4_values():
+    assert VDP_ACTION_CLASSES == {
+        "follow_up_probe",
+        "re_evaluate",
+        "manual_review",
+        "terminal",
+    }
+
+
+def test_vdp_risk_classes_contains_3_values():
+    assert VDP_RISK_CLASSES == {
+        "read_only",
+        "state_changing",
+        "out_of_band",
+    }
+
+
+def test_validate_vdp_action_class_accepts_known():
+    result = validate_vdp_action_class("follow_up_probe")
+    assert result["ok"] is True
+    assert result["normalized"] == "follow_up_probe"
+    assert result["allowed"] is True
+    assert result["reason"] == ""
+
+
+def test_validate_vdp_action_class_rejects_unknown():
+    result = validate_vdp_action_class("unknown_action")
+    assert result["ok"] is False
+    assert result["normalized"] == "unknown_action"
+    assert result["allowed"] is False
+    assert "unknown_action" in result["reason"]
+
+
+def test_validate_vdp_action_class_rejects_empty():
+    result = validate_vdp_action_class("")
+    assert result["ok"] is False
+    assert result["normalized"] == ""
+    assert result["allowed"] is False
+    assert "unknown action_class" in result["reason"].lower()
+
+
+def test_validate_vdp_action_class_rejects_none():
+    result = validate_vdp_action_class(None)
+    assert result["ok"] is False
+    assert result["normalized"] == ""
+    assert result["allowed"] is False
+
+
+def test_validate_vdp_action_class_accepts_all_known():
+    for action in VDP_ACTION_CLASSES:
+        result = validate_vdp_action_class(action)
+        assert result["ok"] is True, f"{action!r} should be valid; got {result['reason']}"
+
+
+def test_vdp_stop_conditions_contains_fixed_strings():
+    assert VDP_STOP_CONDITIONS == {
+        "evidence_gap_resolved_or_budget_exhausted",
+        "scope_revalidation_blocked",
+        "no_follow_up_needed",
+        "max_retries_exceeded",
+    }
+
+
+def test_vdp_scope_verdicts_contains_fixed_strings():
+    assert VDP_SCOPE_VERDICTS == {
+        "allowed",
+        "out_of_scope",
+        "redirect_out_of_scope",
+        "scope_revalidation_blocked",
+    }
+
+
+def test_vdp_reason_codes_contains_fixed_strings():
+    assert VDP_REASON_CODES == {
+        "label_leakage_detected",
+        "scope_revalidation_blocked",
+        "duplicate_dedup_key",
+        "diversity_budget_exceeded",
+        "no_observations",
+        "generator_exception",
+        "budget_estimate_missing",
+        "generated_candidate",
+    }
+
+
+# ── Existing constants unchanged (guardrail) ─────────────────────────
+
+
+def test_existing_recipe_constants_unchanged():
+    """Existing constants must remain identical after VDP vocabulary addition."""
+    assert ALLOWED_RECIPE_STEP_ACTIONS == {
+        "recon", "scan", "report", "execute", "auth_attack",
+        "sqli_scan", "xss_scan", "run", "analyze", "verify_scope",
+        "parallel_recon", "check_takeover", "dns_check",
+        "cname_resolve", "http_probe", "takeover_scan",
+    }
+
+    assert RECIPE_TO_SWARM_REASON_CODES == {
+        "manual_review_required", "no_recipe_match", "low_confidence",
+        "unsupported_action", "suppression_active", "previous_run_exists",
+        "scope_blocked",
+    }
+
+    assert RECIPE_ADDITIVE_REASONS == {
+        "fresh_signal", "high_confidence", "nearby_finding_confirms",
+        "nearby_auth_surface", "nearby_endpoint_corroborates",
+        "tech_stack_match", "high_freshness_score",
+        "previous_recipe_succeeded", "multi_label_match",
+    }
+
+    assert RECIPE_SUPPRESSIVE_REASONS == {
+        "stale_signal", "low_confidence", "previous_recipe_run_exists",
+        "previous_recipe_failed", "nearby_finding_mitigated",
+        "unsupported_step_action", "blocking_signal_present",
+        "signal_manual_review", "kg_context_stale", "suppression_key_active",
+    }
+
+    assert RECIPE_FOLLOW_UP_REASONS == {
+        "new_signal_discovered", "adjacent_endpoint_exposed",
+        "evidence_insufficient", "recipe_partial_success", "recipe_failed",
+        "recommend_specialized_swarm", "recommend_manual_review",
+        "recommend_deepened_recipe", "no_follow_up_needed",
+        "recipe_completed_cleanly", "recipe_completely_blocked",
+    }
+
+    assert RECIPE_DECISION_OUTCOMES == {"run_recipe", "direct_swarm", "defer"}
+    assert SUPPRESSION_KEY_PREFIX_SIGNAL == "signal"
+    assert SUPPRESSION_KEY_PREFIX_ENDPOINT == "endpoint"
+    assert RECIPE_DECISION_RUN_RECIPE == "run_recipe"
+    assert RECIPE_DECISION_DIRECT_SWARM == "direct_swarm"
+    assert RECIPE_DECISION_DEFER == "defer"

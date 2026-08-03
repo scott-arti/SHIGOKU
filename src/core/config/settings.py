@@ -2,6 +2,7 @@
 Settings Module - Pydantic Settings based configuration management.
 """
 import os
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Type
 from pydantic import BaseModel, Field, model_validator, field_validator
@@ -11,6 +12,18 @@ from pydantic_settings import (
     YamlConfigSettingsSource,
     PydanticBaseSettingsSource,
 )
+
+
+@lru_cache(maxsize=8)
+def _load_auxiliary_yaml(filename: str) -> dict:
+    """Load a non-secret YAML settings file from the canonical config directory."""
+    config_file = Path(__file__).resolve().parents[3] / "config" / filename
+    if not config_file.exists():
+        return {}
+    import yaml
+    with config_file.open(encoding="utf-8") as handle:
+        data = yaml.safe_load(handle)
+    return data if isinstance(data, dict) else {}
 
 
 class NotificationSettings(BaseModel):
@@ -90,6 +103,16 @@ class LLMProviderSettings(BaseModel):
     api_key_env: str
     base_url: Optional[str] = None
 
+    @field_validator("base_url")
+    @classmethod
+    def _validate_base_url(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = value.strip().rstrip("/")
+        if not normalized.startswith(("https://", "http://")):
+            raise ValueError("base_url must be an explicit http(s) endpoint")
+        return normalized
+
 
 class LLMProfileSettings(BaseModel):
     """LLMプロファイル設定 (provider/model timing/retry/temperature)"""
@@ -101,6 +124,22 @@ class LLMProfileSettings(BaseModel):
     rate_limit_per_minute: int = 60
     temperature: float = 0.0
     extra: Dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _validate_thinking_configuration(self) -> "LLMProfileSettings":
+        if "reasoning_effort" in self.extra:
+            raise ValueError(
+                "reasoning_effort must be set at extra.thinking.reasoning_effort"
+            )
+        thinking = self.extra.get("thinking")
+        if thinking is None:
+            return self
+        if not isinstance(thinking, dict):
+            raise ValueError("extra.thinking must be a mapping")
+        thinking_type = thinking.get("type", "disabled")
+        if thinking_type not in {"enabled", "disabled"}:
+            raise ValueError("extra.thinking.type must be enabled or disabled")
+        return self
 
 
 class LLMRoleSettings(BaseModel):
@@ -278,6 +317,19 @@ class ParallelismSettings(BaseModel):
         return v
 
 
+class VdpModeSettings(BaseModel):
+    """VDP mode (SGK-2026-0420). Default off — VDP inactive unless enabled."""
+    mode: str = "off"
+    label_leakage_denylist: list[str] = Field(default_factory=list)
+
+    @field_validator("mode")
+    @classmethod
+    def _validate_mode(cls, v: str) -> str:
+        if v not in ("off", "record_only", "shadow"):
+            return "off"  # invalid mode fails safe to off
+        return v
+
+
 # ===== Phase 3 & Extended Feature Settings =====
 
 class WafBypassSettings(BaseModel):
@@ -389,6 +441,22 @@ class Settings(BaseSettings):
     project_name: str = ""
     project_path: str = ""
     scope_file: str = ""
+    environment: str = "local"
+    dev_mode: bool = False
+    log_level: str = "INFO"
+    guardrails_enabled: bool = True
+    ctf_target: Optional[str] = None
+    ctf_flag_format: str = "flag{.*}"
+    use_llm_planning: bool = False
+    checkpoint_interval: int = 5
+    intervention_gate_mode: str = "observe"
+    notify_on_task_start: bool = False
+    notify_critical_mention: str = ""
+    github_token: Optional[str] = None
+    tool_nuclei_path: str = "nuclei"
+    tool_httpx_path: str = ""
+    tool_gospider_path: str = "gospider"
+    tool_katana_path: str = "katana"
     
     # 安全設定
     safe_mode: bool = False
@@ -404,16 +472,12 @@ class Settings(BaseSettings):
     )
     report_initial_release_baseline_report_path: str = ""
     report_initial_release_baseline_session_path: str = ""
+    pruning_mode: str = "shadow"
+    pruning_killswitch_enabled: bool = False
 
     # LLM Settings
-    model: str = "deepseek/deepseek-v4-flash"
-    llm_auto_route: bool = True
-    llm_use_local: bool = False
-    llm_xss_rejudge_model: str = "openai/gpt-4o-mini"
-    llm_xss_final_model: str = "openai/gpt-4o"
-    llm_use_any_llm_proxy: bool = False
-    any_llm_base_url: str = "http://localhost:8000/v1"
-    any_llm_api_key: str = ""
+    # Deprecated compatibility field. Runtime LLM selection is role-based.
+    model: str = ""
     phase2_on_empty_force_disable: bool = False
     # SGK-2026-0367: safety switches for injection ownership and Phase2 suppression
     injection_ownership_dedup_enabled: bool = True
@@ -460,6 +524,7 @@ class Settings(BaseSettings):
     preflight: PreflightSettings = Field(default_factory=PreflightSettings)
     multi_session: MultiSessionSettings = Field(default_factory=MultiSessionSettings)
     parallelism: ParallelismSettings = Field(default_factory=ParallelismSettings)
+    vdp: VdpModeSettings = Field(default_factory=VdpModeSettings)
 
     # RAG設定
     rag_enabled: bool = True
@@ -472,8 +537,36 @@ class Settings(BaseSettings):
     neo4j_password: str = "shigoku2024"
 
     def get_proxy_url(self) -> Optional[str]:
-        """Proxy URLを取得する。優先度: scan.proxy > None"""
-        return self.scan.proxy if self.scan.proxy else None
+        """Proxy URLを取得する。優先度: scan.proxy > 明示Caido URL > None"""
+        if self.scan.proxy:
+            return self.scan.proxy
+        if os.getenv("SHIGOKU_CAIDO__URL", "").strip():
+            return self.caido.url
+        return None
+
+    def resolve_tool_command(
+        self,
+        tool_name: str,
+        configured_path: str | None = None,
+    ) -> str:
+        """設定済みの実行パス、または標準のツール名を返す。"""
+        candidate = (
+            configured_path
+            if configured_path is not None
+            else getattr(self, f"tool_{tool_name}_path", "")
+        )
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+        return tool_name
+
+    def get_intervention_scenarios(self) -> dict:
+        return _load_auxiliary_yaml("intervention_scenarios.yaml")
+
+    def get_vuln_info(self, vuln_type: str) -> dict:
+        return _load_auxiliary_yaml("vulnerabilities.yaml").get("vuln_types", {}).get(vuln_type, {})
+
+    def get_tool_profile(self, tool: str, profile: str = "standard") -> dict:
+        return _load_auxiliary_yaml("tools.yaml").get(tool, {}).get("profiles", {}).get(profile, {})
 
     @classmethod
     def settings_customise_sources(
@@ -544,6 +637,16 @@ def get_settings(reinit: bool = False, **kwargs) -> Settings:
         # kwargs がある場合は再初期化
         _settings = Settings(**kwargs)
     return _settings
+
+
+class _SettingsProxy:
+    """Lazy canonical settings access for legacy module-level consumers."""
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(get_settings(), name)
+
+
+settings = _SettingsProxy()
 
 
 def resolve_run_mode(explicit: Optional[str] = None) -> str:

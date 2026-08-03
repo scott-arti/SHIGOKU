@@ -1,7 +1,7 @@
 # SHIGOKU タスク台帳
 
-- 更新日: 2026-07-28
-- 総タスク数: 403
+- 更新日: 2026-07-31
+- 総タスク数: 426
 - ステータス許可値: backlog / active / done / deferred / archived
 - doc_type 許可値: spec / roadmap / plan / subtask_plan / work_report / work_log / manual
 
@@ -410,3 +410,26 @@
 | SGK-2026-0398 | 候補重複統合のreason code保持 | done | subtask_plan | SGK-2026-0385 | docs/shigoku/subtasks/done/2026-07-28_reason-code_subtask_plan.md |
 | SGK-2026-0399 | 全Securityレベルの汎用検出能力評価基準 | done | subtask_plan | SGK-2026-0385 | docs/shigoku/subtasks/done/2026-07-28_dvwa-high_subtask_plan.md |
 | SGK-2026-0400 | Securityレベル別レポート基準線の分離 | done | subtask_plan | SGK-2026-0385 | docs/shigoku/subtasks/done/2026-07-28_security_subtask_plan.md |
+| SGK-2026-0401 | LLM provider endpoint explicit configuration and legacy routing removal | done | plan |  | docs/shigoku/plans/done/2026-07-29_llm-provider-endpoint-explicit-configuration-and-legacy-routing-removal_plan.md |
+| SGK-2026-0402 | LLM thinking effort pass-through configuration | done | subtask_plan | SGK-2026-0401 | docs/shigoku/subtasks/done/2026-07-29_llm-thinking-effort-pass-through-configuration_subtask_plan.md |
+| SGK-2026-0403 | Legacy settings path removal and core configuration consolidation | done | plan |  | docs/shigoku/plans/done/2026-07-29_legacy-settings-path-removal-and-core-configuration-consolidation_plan.md |
+| SGK-2026-0404 | Docker cloud_enum installation compatibility fix | active | plan |  | docs/shigoku/plans/2026-07-29_docker-cloud-enum-installation-compatibility-fix_plan.md |
+| SGK-2026-0405 | LLM configuration manual and YAML comments | active | plan |  | docs/shigoku/plans/2026-07-29_llm-configuration-manual-and-yaml-comments_plan.md |
+| SGK-2026-0406 | ワークスペース保存構造とマニュアル案内の整備 | done | plan |  | docs/shigoku/plans/done/2026-07-29_sgk-2026-0406_workspace-storage-and-manual-guide_plan.md |
+| SGK-2026-0407 | CLIマニュアルと実装の同期 | active | plan | SGK-2026-0001 | docs/shigoku/plans/2026-07-30_cli_plan.md |
+| SGK-2026-0408 | Caido 接続ポート設定の運用マニュアル追記 | done | subtask_plan | SGK-2026-0407 | docs/shigoku/subtasks/done/2026-07-31_caido_subtask_plan.md |
+| SGK-2026-0409 | Caido GraphQL 転送対応と事前チェック接続先表示修正 | done | subtask_plan | SGK-2026-0408 | docs/shigoku/subtasks/done/2026-07-31_caido-graphql_subtask_plan.md |
+| SGK-2026-0410 | Master Conductor 内部事前チェックへの Caido 設定伝播修正 | done | subtask_plan | SGK-2026-0409 | docs/shigoku/subtasks/done/2026-07-31_master-conductor-caido_subtask_plan.md |
+| SGK-2026-0411 | Caidoプロキシへの初回偵察通信伝播修正 | done | subtask_plan | SGK-2026-0410 | docs/shigoku/subtasks/done/2026-07-31_sgk-2026-0411_caido-proxy-recon-routing_subtask_plan.md |
+| SGK-2026-0412 | Caido明示URLの実通信プロキシ適用修正 | done | subtask_plan | SGK-2026-0411 | docs/shigoku/subtasks/done/2026-07-31_sgk-2026-0412_caido-url-proxy-fallback_subtask_plan.md |
+| SGK-2026-0413 | 探索・実行判定・カバー率ガードの依存整合性修正 | done | plan |  | docs/shigoku/plans/done/2026-07-31_execution-pipeline-dependency-admission-consistency_plan.md |
+| SGK-2026-0414 | Recon設定型と並列結果正規化の実行時例外修正 | done | plan |  | docs/shigoku/plans/done/2026-07-31_sgk-2026-0414_recon-settings-and-task-result-runtime-contract_plan.md |
+| SGK-2026-0415 | 外部ツール実行契約と偵察結果表示の整合性修正 | done | plan |  | docs/shigoku/plans/done/2026-07-31_sgk-2026-0415_external-tool-command-and-recon-outcome-consistency_plan.md |
+| SGK-2026-0416 | Session evidence summary labeling and Juice Shop VDP readiness assessment | done | plan |  | docs/shigoku/plans/done/2026-07-31_session-evidence-summary-labeling-and-juice-shop-vdp-readiness-assessment_plan.md |
+| SGK-2026-0417 | Juice Shop-specific VDP plan withdrawal | archived | work_log | SGK-2026-0416 | docs/shigoku/worklogs/2026-07-31_sgk-2026-0417_juice-shop-specific-plan-withdrawal_work_log.md |
+| SGK-2026-0418 | VDP capability benchmark and staged evidence system | active | plan | SGK-2026-0416 | docs/shigoku/plans/2026-07-31_vdp-capability-benchmark-and-evidence-contract_plan.md |
+| SGK-2026-0419 | VDP evidence schema safety budget and recovery foundation | done | subtask_plan | SGK-2026-0418 | docs/shigoku/subtasks/done/2026-07-31_sgk-2026-0419_vdp-evidence-schema-safety-budget-and-recovery-foundation_subtask_plan.md |
+| SGK-2026-0420 | VDP capability driven hypothesis generation shadow workflow | done | subtask_plan | SGK-2026-0418 | docs/shigoku/subtasks/done/2026-07-31_sgk-2026-0420_vdp-capability-driven-hypothesis-generation-shadow-workflow_subtask_plan.md |
+| SGK-2026-0421 | VDP evidence gap driven verification and safe follow-up | active | subtask_plan | SGK-2026-0418 | docs/shigoku/subtasks/2026-07-31_sgk-2026-0421_vdp-evidence-gap-driven-verification-and-safe-follow-up_subtask_plan.md |
+| SGK-2026-0422 | VDP canonical evidence reporting and separated quality gates | active | subtask_plan | SGK-2026-0418 | docs/shigoku/subtasks/2026-07-31_sgk-2026-0422_vdp-canonical-evidence-reporting-and-separated-quality-gates_subtask_plan.md |
+| SGK-2026-0423 | VDP hidden holdout evaluation shadow rollout and recovery | active | subtask_plan | SGK-2026-0418 | docs/shigoku/subtasks/2026-07-31_sgk-2026-0423_vdp-hidden-holdout-evaluation-shadow-rollout-and-recovery_subtask_plan.md |

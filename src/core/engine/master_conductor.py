@@ -31,7 +31,7 @@ try:
 except ImportError:
     HAS_DEBUG_LOGGER = False
 
-from src.config import settings
+from src.core.config.settings import settings
 from src.core.engine.smart_scheduler import SmartScheduler, ScheduledTask
 from src.core.notifications.notifier import get_notifier, Notifier
 from src.core.engine.phase_gate import get_phase_gate, Phase
@@ -57,7 +57,9 @@ from src.core.engine.master_conductor_session_service import (
     build_async_session_payload,
     build_checkpoint_session_state,
     build_start_session_payload,
+    build_session_with_vdp,
     deserialize_legacy_session_task_queue,
+    inject_vdp_section_to_session_payload,
     load_session_payload_from_path,
     resolve_running_task_resume_policy,
     restore_legacy_resume_session_state,
@@ -87,7 +89,7 @@ from src.core.models.run_ledger import (
 from src.core.engine.run_ledger_redactor import redact_for_ledger
 # Phase 4 (SGK-2026-0313): Lane Scheduler shadow mode (observation only)
 from src.core.engine.scheduling_decision import SchedulingDecision
-from src.core.engine.lane_policy import LanePolicy
+from src.core.engine.lane_policy import LanePolicy, resolve_execution_profile
 from src.core.engine.mutex_policy import MutexPolicy
 from src.core.engine.admission_policy import ActionAdmissionPolicy
 from src.core.engine.snapshot_validity import check_snapshot_validity
@@ -695,6 +697,18 @@ class MasterConductor:
             cooldown_window_seconds=getattr(settings, "reauth_cooldown_seconds", 60.0),
             max_inflight=getattr(settings, "reauth_max_inflight", 3),
         )
+
+        # === SGK-2026-0419: VDP Contract State ===
+        self._vdp_state = {
+            "vdp_active": False,  # VDP inactive by default — no M0 gate needed
+            "hypotheses": [],
+            "attempts": [],
+            "evidence_records": [],
+            "verdicts": [],
+            "next_actions": [],
+            "budget_snapshot": {},
+            "run_health": {},
+        }
 
         # === Tier 2 Phase 4-5: EventBus Wiring ===
         self.event_bus = get_event_bus()
@@ -3921,35 +3935,71 @@ class MasterConductor:
             run_id=self.run_ledger_recorder.run_id,
         )
 
+            # --- Inject VDP contract section (SGK-2026-0419) ---
+            # Always inject; an empty vdp_section signals VDP is not active yet.
+            vdp_state = getattr(self, '_vdp_state', None)
+            if vdp_state is None:
+                vdp_state = {
+                    "hypotheses": [],
+                    "attempts": [],
+                    "evidence_records": [],
+                    "verdicts": [],
+                    "next_actions": [],
+                    "budget_snapshot": {},
+                    "run_health": {},
+                }
+            session_data = inject_vdp_section_to_session_payload(session_data, vdp_state)
+
+            # --- M0 gate validation before save (SGK-2026-0419) ---
+            # The M0 gate itself validates vdp_active consistency (inactive + data
+            # → reject). MasterConductor does not duplicate the condition.
+            vdp_state = getattr(self, '_vdp_state', {})
+            if vdp_state.get("vdp_active", False) or any(
+                vdp_state.get(k) for k in (
+                    "hypotheses", "attempts", "evidence_records",
+                    "verdicts", "next_actions",
+                )
+            ) or any(vdp_state.get(k) for k in ("budget_snapshot", "run_health")):
+                from src.core.engine.vdp_m0_gate import VdpM0ContractGate
+                m0_result = VdpM0ContractGate().validate(session_data)
+                if not m0_result.passed:
+                    logger.error(
+                        "M0 gate FAILED: %s — reason_codes=%s — ABORTING save",
+                        m0_result.detail,
+                        m0_result.reason_codes,
+                    )
+                    raise RuntimeError(
+                        f"M0 contract gate failed: {m0_result.detail}. "
+                        f"Reason codes: {m0_result.reason_codes}"
+                    )
+
             if self.project_manager:
                 filename = None
                 if filepath != "session_state.json":
                     filename = Path(filepath).name
-                
+
                 await self.project_manager.save_session(session_data, filename=filename)
             else:
-                # レガシー保存 (Atomic)
-                import asyncio
-                import aiofiles
-                
+                # Legacy save (Atomic) — kept for environments without ProjectManager
+                import asyncio as _asyncio
+                import aiofiles as _aiofiles
+
                 path = Path(filepath)
                 tmp_path = path.with_suffix(".tmp")
                 try:
-                    # CPUバウンドなJSONダンプをスレッドに逃がす
-                    content = await asyncio.to_thread(json.dumps, session_data, indent=2, ensure_ascii=False)
-                    async with aiofiles.open(tmp_path, "w", encoding="utf-8") as f:
+                    content = await _asyncio.to_thread(json.dumps, session_data, indent=2, ensure_ascii=False)
+                    async with _aiofiles.open(tmp_path, "w", encoding="utf-8") as f:
                         await f.write(content)
                         await f.flush()
-                        
-                    # Rename
-                    await asyncio.to_thread(tmp_path.replace, path)
+                    await _asyncio.to_thread(tmp_path.replace, path)
                 except Exception as e:
                     if tmp_path.exists():
-                        await asyncio.to_thread(tmp_path.unlink)
+                        await _asyncio.to_thread(tmp_path.unlink)
                     raise e
-                
+
         except Exception as e:
             logger.error(f"Failed to save session asynchronously: {e}")
+            raise
 
     def save_session(self, filepath: str = "session_state.json") -> None:
         """
@@ -3961,6 +4011,7 @@ class MasterConductor:
             await_session_save_future(future, timeout=15)
         except Exception as e:
             logger.error(f"Failed to save session (sync wrapper): {e}")
+            raise
     
     def load_session(self, filepath: str = "session_state.json") -> bool:
         """
@@ -5737,9 +5788,11 @@ class MasterConductor:
             name="Deep Reconnaissance (Parallel)",
             agent_type="recon_master",
             action="parallel_recon",
+            phase="recon",
             params={"target": target, "start_step": recon_start_step, "end_step": recon_end_step},
             priority=90,
             parent_id="task_001",
+            depends_on_task_ids=["task_001"],
         ))
         
         if self.recipe_loader:
@@ -6396,6 +6449,60 @@ class MasterConductor:
             "skip_reason": result.reason_code,
         }
 
+    def _terminalize_task_before_execution(
+        self,
+        task: Task,
+        reason: str,
+        *,
+        failure_phase: str,
+        lifecycle_status: str = "rejected",
+    ) -> dict:
+        """Record a task that was deliberately stopped before worker execution.
+
+        Admission and dependency decisions are terminal outcomes.  Recording
+        them here keeps the task state, the session execution log, and the
+        batch result aligned instead of leaving an already-selected task in
+        ``PENDING``.
+        """
+        metadata = task.metadata if isinstance(getattr(task, "metadata", None), dict) else {}
+        task.metadata = metadata
+        metadata["lifecycle_status"] = lifecycle_status
+        metadata["lifecycle_reason"] = reason
+        metadata["terminalized_without_execution"] = True
+
+        task.state = TaskState.SKIPPED
+        task.error = f"Skipped before execution: {reason}"
+        self._record_failure_context(task, failure_phase, reason)
+
+        execution_log = getattr(self, "execution_log", None)
+        if execution_log is not None and hasattr(execution_log, "add_record"):
+            from datetime import datetime
+            from src.core.models.task_execution_log import TaskResult as ExecutionTaskResult
+
+            record = TaskExecutionRecord(
+                task_id=task.id,
+                task_name=task.name,
+                agent_type=task.agent_type,
+                action=task.action,
+                target_url=task.params.get("target", ""),
+                parameters=task.params.copy(),
+                source=getattr(task, "source", "unknown"),
+            )
+            record.result = ExecutionTaskResult.SKIPPED
+            record.completed_at = datetime.now()
+            record.result_summary = f"Skipped before execution: {reason}"
+            record.error_message = task.error
+            record.metadata["failure_phase"] = failure_phase
+            record.metadata["reason_code"] = getattr(task, "failure_reason_code", "")
+            execution_log.add_record(record)
+
+        return {
+            "success": False,
+            "skipped": True,
+            "task_id": task.id,
+            "skip_reason": reason,
+        }
+
     def _dispatch_batch(self, batch_tasks: list, force_serial: bool = False) -> dict:
         """Route batch tasks to serial or gated parallel execution. (SGK-2026-0314 Phase 5)
 
@@ -6410,7 +6517,7 @@ class MasterConductor:
         Returns: dict with keys 'parallel_tasks' and 'serial_task_ids'
         for the caller to handle async execution and post-batch feedback.
         """
-        from src.core.engine.parallel_orchestrator import CATEGORY_TO_LANE, create_parallel_task
+        from src.core.engine.parallel_orchestrator import create_parallel_task
 
         self._sync_parallelism_admission_policy(getattr(settings, "parallelism", None))
 
@@ -6418,17 +6525,20 @@ class MasterConductor:
         serial_task_ids = []
         serial_results: list = []
         rejected_task_ids: list[str] = []
+        rejected_results: list[dict] = []
 
         if not force_serial:
             lane_policy = getattr(self, '_lane_policy', None)
             for task in batch_tasks:
                 if lane_policy is not None:
-                    lane, parallel_safe, _, _, _, _ = lane_policy.classify(
+                    lane, parallel_safe, rate_limited, compat_lane, lane_disagreement, reason_code = lane_policy.classify(
                         task.agent_type or "",
                         task.metadata if task.metadata else None,
                     )
                 else:
                     lane, parallel_safe = "sequential_required", False
+                    rate_limited, compat_lane, lane_disagreement = False, None, False
+                    reason_code = "missing_lane_policy"
 
                 # Phase 7 (SGK-2026-0316): Origin suppressor check for all non-aggressive lanes.
                 # If an aggressive_exclusive task owns this origin, suppress.
@@ -6441,26 +6551,39 @@ class MasterConductor:
                         origin_key, lane=lane, task_id=task.id,
                     )
                     if not suppress_decision.allowed:
-                        metadata["lifecycle_status"] = "rejected"
-                        metadata["lifecycle_reason"] = suppress_decision.reason_code
                         metadata["suppressed_by"] = suppress_decision.owner_task_id
                         rejected_task_ids.append(task.id)
+                        rejected_results.append(
+                            self._terminalize_task_before_execution(
+                                task,
+                                suppress_decision.reason_code,
+                                failure_phase="admission",
+                            )
+                        )
                         continue
 
                 if lane == "read_only" and parallel_safe:
-                    strict_category_gate = bool(getattr(self, "_phase7_strict_category_gate", False))
-                    if strict_category_gate and (task.agent_type or "default") not in CATEGORY_TO_LANE:
-                        task.metadata = metadata
-                        metadata["lifecycle_status"] = "rejected"
-                        metadata["lifecycle_reason"] = "unknown_execution_category"
+                    profile = resolve_execution_profile(
+                        (lane, parallel_safe, rate_limited, compat_lane, lane_disagreement, reason_code),
+                        metadata,
+                    )
+                    if profile.rejection_reason:
                         rejected_task_ids.append(task.id)
+                        rejected_results.append(
+                            self._terminalize_task_before_execution(
+                                task,
+                                profile.rejection_reason,
+                                failure_phase="admission",
+                            )
+                        )
                         continue
 
+                    strict_category_gate = bool(getattr(self, "_phase7_strict_category_gate", False))
                     p_task = create_parallel_task(
                         task.id,
                         self._execute_single_task_full_flow,
                         task,
-                        category=task.agent_type or "default",
+                        category=profile.execution_category or "default",
                         origin_key=metadata.get("origin_key"),
                         target_key=metadata.get("target_key"),
                         lane=lane,
@@ -6473,9 +6596,14 @@ class MasterConductor:
                     if p_task.admitted:
                         parallel_tasks.append(p_task)
                     else:
-                        metadata["lifecycle_status"] = "rejected"
-                        metadata["lifecycle_reason"] = p_task.reject_reason
                         rejected_task_ids.append(task.id)
+                        rejected_results.append(
+                            self._terminalize_task_before_execution(
+                                task,
+                                p_task.reject_reason,
+                                failure_phase="admission",
+                            )
+                        )
                 else:
                     # Phase 7 (SGK-2026-0316): If aggressive_exclusive lane,
                     # enter origin suppress before serial execution and release after.
@@ -6515,6 +6643,7 @@ class MasterConductor:
             'serial_task_ids': serial_task_ids,
             'serial_results': serial_results,
             'rejected_task_ids': rejected_task_ids,
+            'rejected_results': rejected_results,
         }
 
     def _apply_post_batch_feedback(self, batch_tasks: list, results: list) -> None:
@@ -6546,9 +6675,16 @@ class MasterConductor:
                         rid = getattr(r, "task_id", getattr(r, "id", ""))
                     if str(rid) == str(task.id):
                         result = r
-                        # Convert TaskResult to dict if needed
-                        if hasattr(result, 'data'):
-                            result = result.data if isinstance(result.data, dict) else {}
+                        # ParallelOrchestrator returns TaskResult(result=...),
+                        # while older execution paths return a dict directly
+                        # or expose a legacy ``data`` dict.  Normalize only
+                        # those documented payload containers before reading
+                        # deferred feedback.
+                        if not isinstance(result, dict):
+                            payload = getattr(result, "result", None)
+                            if not isinstance(payload, dict):
+                                payload = getattr(result, "data", None)
+                            result = payload if isinstance(payload, dict) else {}
                         break
 
                 if result is None:
@@ -6887,16 +7023,7 @@ class MasterConductor:
         # singleton facade returns the cached result instantly. If not yet
         # gated, this is the first (and only) call.
         try:
-            gate_context = PreflightContext(
-                target=str(self.context.target_info.get("target", "") or ""),
-                mode=self.mode.lower() if self.mode else "bugbounty",
-                goal=getattr(self.context, "goal", "") or "",
-                profile=getattr(self.context, "profile", "") or "",
-                cookies=self._normalize_cookies_for_gate(self.context.target_info.get("cookies")),
-                bearer_token=str(self.context.target_info.get("bearer_token", "") or ""),
-                auth_headers=self.context.target_info.get("auth_headers", {}) if isinstance(self.context.target_info.get("auth_headers"), dict) else {},
-                gate_policy=GatePolicy.STRICT_PROD,
-            )
+            gate_context = self._build_preflight_context()
             gate_result = self._run_async_safe(
                 EntryGateFacade().run_once(gate_context),
                 timeout_override=60,
@@ -6957,13 +7084,15 @@ class MasterConductor:
             if self._shutdown_requested:
                 break
 
-            # 最終カバレッジガード: CSRF 必須なのに候補タスクが皆無な場合は実行ループ側で補完する
-            logger.debug("🔑 MainThread attempting to acquire _state_lock for global csrf guard")
-            with self._state_lock:
-                logger.debug("🔓 MainThread acquired _state_lock for global csrf guard")
-                self._ensure_global_csrf_guard_task(trigger_source="execute_loop")
-                self._ensure_global_xss_guard_task(trigger_source="execute_loop")
-                self._ensure_global_oob_guard_task(trigger_source="execute_loop")
+            # Coverage guards require recon evidence.  The PhaseGate is the
+            # single authority that unlocks attack work after recon succeeds.
+            if self._can_enqueue_global_coverage_guards():
+                logger.debug("🔑 MainThread attempting to acquire _state_lock for global coverage guards")
+                with self._state_lock:
+                    logger.debug("🔓 MainThread acquired _state_lock for global coverage guards")
+                    self._ensure_global_csrf_guard_task(trigger_source="execute_loop")
+                    self._ensure_global_xss_guard_task(trigger_source="execute_loop")
+                    self._ensure_global_oob_guard_task(trigger_source="execute_loop")
 
             # タスクキューが空で、かつ進行中のタスクもない場合、終了とみなす（無限ループ防止）
             if self.task_queue.empty():
@@ -7050,12 +7179,23 @@ class MasterConductor:
             with self._state_lock:
                 logger.debug(f"🔓 MainThread acquired _state_lock for batch creation")
                 while len(batch_tasks) < suggested_batch and not self.task_queue.is_empty():
-                    task = self._select_next_task_from_queue()
+                    task = self._select_next_task_from_queue(
+                        reserved_task_ids={queued_task.id for queued_task in batch_tasks},
+                    )
                     if task is None:
                         break
                     batch_tasks.append(task)
             
             if not batch_tasks:
+                with self._state_lock:
+                    terminalized = self._terminalize_dependency_deadlock()
+                if terminalized:
+                    executed += terminalized
+                    logger.warning(
+                        "Terminalized %d task(s) with unsatisfiable dependencies.",
+                        terminalized,
+                    )
+                    continue
                 # キュー空なら待機
                 active_background = [t for t in threading.enumerate() if t.name.startswith("ReconWorker-")]
                 if active_background:
@@ -7100,7 +7240,7 @@ class MasterConductor:
                     )
 
                     # 制限付き並列実行（チャンク単位）
-                    results = list(batch_info.get('serial_results', []))
+                    results = list(batch_info.get('serial_results', [])) + list(batch_info.get('rejected_results', []))
                     for i in range(0, len(p_tasks), chunk_size):
                         chunk = p_tasks[i:i + chunk_size]
                         result = self._run_async_safe(
@@ -7119,7 +7259,7 @@ class MasterConductor:
                     batch_info = self._dispatch_batch(batch_tasks, force_serial=force_serial)
                     parallel_tasks = batch_info['parallel_tasks']
 
-                    results = list(batch_info.get('serial_results', []))
+                    results = list(batch_info.get('serial_results', [])) + list(batch_info.get('rejected_results', []))
                     if parallel_tasks:
                         batch_timeout = int(getattr(settings, "parallel_batch_timeout", 600))
                         has_recon_master = any(
@@ -7213,12 +7353,26 @@ class MasterConductor:
             if self._auto_checkpoint and executed % getattr(settings, "checkpoint_interval", 10) == 0:
                 self.save_session()
 
+        summary = self._generate_summary()
         if not self._shutdown_requested:
-            self._finished_normally = True
-            rich_logger.status("success", "ミッションが正常に完了しました。")
+            outcome_status = summary.get("outcome_status", "incomplete")
+            if outcome_status == "succeeded":
+                self._finished_normally = True
+                rich_logger.status("success", "ミッションが正常に完了しました。")
+            elif outcome_status == "completed_with_failures":
+                self._finished_normally = True
+                rich_logger.status(
+                    "warning",
+                    "ミッションは失敗したタスクを記録して終了しました。",
+                )
+            else:
+                self._finished_normally = False
+                rich_logger.status(
+                    "warning",
+                    "ミッションは未完了です。未解決タスクを記録して終了します。",
+                )
 
         self.save_session()
-        summary = self._generate_summary()
         
         # 最終サマリーの表示
         total_duration = time.time() - self.context.metrics["start_time"]
@@ -7234,6 +7388,7 @@ class MasterConductor:
                 ["Failed", summary["failed"]],
                 ["Skipped", summary.get("skipped", 0)],
                 ["Replanned", summary["replanned"]],
+                ["Outcome", summary.get("outcome_status", "incomplete")],
                 ["Success Rate", f"{summary['success_rate']:.1%}"],
                 ["Discovered Assets", len(summary["discovered_assets"])],
                 ["Total Duration", f"{total_duration:.2f}s"],
@@ -8715,9 +8870,96 @@ class MasterConductor:
         
         return task
 
-    def _select_next_task_from_queue(self) -> Optional[Task]:
-        """TaskPrioritizer があれば選択に使い、失敗時は通常 pop にフォールバックする。"""
+    def _dependency_admission_state(
+        self,
+        task: Task,
+        *,
+        queued_task_ids: set[str],
+        reserved_task_ids: set[str],
+    ) -> tuple[str, str]:
+        """Return whether a task may enter this batch under its dependencies."""
+        dependency_ids = [
+            str(task_id).strip()
+            for task_id in getattr(task, "depends_on_task_ids", []) or []
+            if str(task_id).strip()
+        ]
+        if not dependency_ids:
+            return "ready", ""
+
+        completed_by_id = {
+            completed_task.id: completed_task
+            for completed_task in getattr(self, "completed_tasks", []) or []
+            if getattr(completed_task, "id", None)
+        }
+        terminal_states = {TaskState.FAILED, TaskState.SKIPPED, TaskState.REPLANNED}
+        for dependency_id in dependency_ids:
+            dependency_task = completed_by_id.get(dependency_id)
+            if dependency_task is not None:
+                if dependency_task.state == TaskState.SUCCESS:
+                    continue
+                if dependency_task.state in terminal_states:
+                    return "terminal", "dependency_not_satisfied"
+                return "blocked", "dependency_incomplete"
+
+            if dependency_id in queued_task_ids or dependency_id in reserved_task_ids:
+                return "blocked", "dependency_incomplete"
+            return "terminal", "dependency_missing"
+
+        return "ready", ""
+
+    def _terminalize_dependency_task(self, task: Task, reason: str) -> None:
+        """Remove and record a queued task that can never satisfy dependencies."""
+        self._terminalize_task_before_execution(
+            task,
+            reason,
+            failure_phase="dependency_admission",
+            lifecycle_status="dependency_rejected",
+        )
+        self.task_queue.remove_by_id(task.id)
+        completed_tasks = getattr(self, "completed_tasks", None)
+        if completed_tasks is None:
+            self.completed_tasks = [task]
+        elif not any(getattr(item, "id", None) == task.id for item in completed_tasks):
+            completed_tasks.append(task)
+
+    def _terminalize_dependency_deadlock(self) -> int:
+        """Terminalize a dependency cycle only when no queued task is runnable."""
+        candidates = self.task_queue.get_all()
+        if not isinstance(candidates, list) or not candidates:
+            return 0
+
+        queued_task_ids = {task.id for task in candidates}
+        terminalized = 0
+        blocked_tasks: list[Task] = []
+        for task in candidates:
+            state, reason = self._dependency_admission_state(
+                task,
+                queued_task_ids=queued_task_ids,
+                reserved_task_ids=set(),
+            )
+            if state == "terminal":
+                self._terminalize_dependency_task(task, reason)
+                terminalized += 1
+            elif state == "blocked":
+                blocked_tasks.append(task)
+            else:
+                return terminalized
+
+        if terminalized or not blocked_tasks:
+            return terminalized
+
+        for task in blocked_tasks:
+            self._terminalize_dependency_task(task, "dependency_cycle")
+            terminalized += 1
+        return terminalized
+
+    def _select_next_task_from_queue(
+        self,
+        reserved_task_ids: set[str] | None = None,
+    ) -> Optional[Task]:
+        """Select a priority task whose declared dependencies are satisfied."""
         self._sync_task_queue_snapshot_versions()
+        reserved_task_ids = set(reserved_task_ids or set())
 
         def _pop_non_quarantined() -> Optional[Task]:
             while True:
@@ -8729,20 +8971,41 @@ class MasterConductor:
                     continue
                 return candidate
 
-        prioritizer = getattr(self, "task_prioritizer", None)
-        if prioritizer is None:
-            return _pop_non_quarantined()
-
         try:
             candidates = self.task_queue.get_all()
+            # Preserve compatibility for lightweight/mocked legacy queues that
+            # only implement pop().  DynamicTaskQueue always returns a list.
+            if not isinstance(candidates, list):
+                return _pop_non_quarantined()
             if not candidates:
                 return None
 
-            selected = prioritizer.select_task(candidates)
-            if selected is None:
-                return self.task_queue.pop()
+            queued_task_ids = {task.id for task in candidates}
+            ready_candidates: list[Task] = []
+            for candidate in candidates:
+                admission_state, reason = self._dependency_admission_state(
+                    candidate,
+                    queued_task_ids=queued_task_ids,
+                    reserved_task_ids=reserved_task_ids,
+                )
+                if admission_state == "terminal":
+                    self._terminalize_dependency_task(candidate, reason)
+                elif admission_state == "ready" and not self._is_task_quarantined(candidate):
+                    ready_candidates.append(candidate)
 
-            if hasattr(prioritizer, "get_last_selection_trace"):
+            if not ready_candidates:
+                return None
+
+            prioritizer = getattr(self, "task_prioritizer", None)
+            selected = (
+                prioritizer.select_task(ready_candidates)
+                if prioritizer is not None
+                else ready_candidates[0]
+            )
+            if selected not in ready_candidates:
+                selected = ready_candidates[0]
+
+            if prioritizer is not None and hasattr(prioritizer, "get_last_selection_trace"):
                 trace = prioritizer.get_last_selection_trace()
                 logger.debug(
                     "TaskPrioritizer select trace: mode=%s selected=%s arm=%s candidates=%s score=%s",
@@ -8757,17 +9020,18 @@ class MasterConductor:
             if selected_id and self.task_queue.remove_by_id(selected_id):
                 if self._is_task_quarantined(selected):
                     logger.info("Skip quarantined selected task: %s", selected_id)
-                    return _pop_non_quarantined()
-                self.run_ledger_recorder.record(
-                    event_type=RunLedgerEventType.DECISION_MADE,
-                    phase="planning",
-                    actor_type="MC",
-                    actor_name="MasterConductor",
-                    task_id=getattr(selected, "id", None),
-                    input_summary="Task selected from queue" + (" (via prioritizer)" if prioritizer else ""),
-                    action="select_task",
-                    result="selected",
-                )
+                    return self._select_next_task_from_queue(reserved_task_ids)
+                if prioritizer is not None:
+                    self.run_ledger_recorder.record(
+                        event_type=RunLedgerEventType.DECISION_MADE,
+                        phase="planning",
+                        actor_type="MC",
+                        actor_name="MasterConductor",
+                        task_id=getattr(selected, "id", None),
+                        input_summary="Task selected from queue (via prioritizer)",
+                        action="select_task",
+                        result="selected",
+                    )
                 return selected
 
             return _pop_non_quarantined()
@@ -9580,6 +9844,11 @@ class MasterConductor:
                             " + signal_bundle" if signal_bundle_has_signals else "",
                         )
 
+                        # --- SGK-2026-0420: VDP hypothesis generation (record-only / shadow) ---
+                        # Additive hook: does NOT modify task_queue, existing tasks,
+                        # findings, or priority.  Reads vdp.mode from config.
+                        self._generate_vdp_hypotheses(merged_results)
+
                         # Attack タスクを生成(サブエージェント生成)
                         attack_tasks = self._create_attack_tasks_from_recon(merged_results)
                         if attack_tasks:
@@ -9632,7 +9901,7 @@ class MasterConductor:
                 return {"success": False, "error": str(e)}
 
         # エージェント生成
-        effective_model = task.params.get("model") or getattr(settings, "security_agent_model", settings.model)
+        effective_model = task.params.get("model") or ""
         try:
             agent = AgentFactory.create_agent(
                 task.agent_type,
@@ -10228,6 +10497,18 @@ class MasterConductor:
             return f"{scheme}://{fallback_host}/"
         return ""
 
+    def _can_enqueue_global_coverage_guards(self) -> bool:
+        """Return whether recon has unlocked attack-phase coverage checks."""
+        phase_gate = getattr(self, "phase_gate", None)
+        is_unlocked = getattr(phase_gate, "is_unlocked", None)
+        if not callable(is_unlocked):
+            return False
+        try:
+            return bool(is_unlocked(Phase.ATTACK))
+        except Exception as exc:
+            logger.warning("Could not verify ATTACK phase for coverage guards: %s", exc)
+            return False
+
     def _ensure_global_csrf_guard_task(self, trigger_source: str = "execute_loop") -> bool:
         required_families = set(self._resolve_required_vuln_families())
         if "csrf" not in required_families:
@@ -10622,6 +10903,213 @@ class MasterConductor:
         except Exception as exc:
             logger.error("Failed to load import recon dir %s: %s", self._import_recon_dir, exc)
             return None
+
+    # ==================================================================
+    # SGK-2026-0420: VDP hypothesis generation (record-only / shadow)
+    # ==================================================================
+
+    def _generate_vdp_hypotheses(self, merged_results: dict) -> None:
+        """Additive VDP hypothesis generation hook.
+
+        Called AFTER recon result integration and BEFORE existing attack
+        task generation. All VDP work is record-only; this method never
+        touches ``self.task_queue``, existing tasks, findings, priority
+        boosts, or the network.
+
+        Mode control: ``settings.vdp.mode``.
+        - ``off``: immediate return (default — no VDP activation).
+        - ``record_only``: generate hypotheses, store in ``_vdp_state``,
+          set ``vdp_active=True`` only when >= 1 valid hypothesis.
+        - ``shadow``: same as record_only + build candidate verdicts
+          and NextAction proposals (still no queue injection).
+
+        When 0 hypotheses are generated (all rejected, suppressed, or no
+        observations), ``vdp_active`` stays ``False`` and a degraded
+        reason is appended to ``_shadow_decisions`` (NOT the VDP section,
+        because M0 rejects inactive+data).
+        """
+        # --- read vdp mode (lazy init, hasattr guard) ---
+        if not hasattr(self, '_vdp_mode'):
+            self._vdp_mode = None
+        self._ensure_vdp_mode_loaded()
+
+        mode = getattr(self._vdp_mode, 'mode', 'off')
+        if mode == 'off':
+            return
+
+        # --- Replace VDP state on every non-off run (I-03) ---
+        # Success, empty input, all-rejected, and exception paths all leave a
+        # fresh, consistent state: active only when >= 1 hypothesis survives.
+        self._vdp_state['vdp_active'] = False
+        self._vdp_state['hypotheses'] = []
+        self._vdp_state['verdicts'] = []
+        self._vdp_state['next_actions'] = []
+        self._vdp_state['budget_snapshot'] = {}
+        self._vdp_state['run_health'] = {}
+
+        # --- extract signal bundle ---
+        signal_bundle = (
+            merged_results.get('_signal_bundle', {})
+            if isinstance(merged_results, dict) else {}
+        )
+        if not isinstance(signal_bundle, dict) or not signal_bundle:
+            self._record_vdp_degraded(None, {'reason': 'no_signal_bundle'})
+            self._record_vdp_observation_status(None, None)
+            return
+
+        try:
+            # --- adapt observations ---
+            from src.core.engine.vdp_observation_adapter import ObservationAdapter
+            adapter = ObservationAdapter()
+            adapter_result = adapter.adapt_signal_bundle(signal_bundle)
+
+            if not adapter_result.has_observations:
+                self._record_vdp_degraded(adapter_result, {'reason': 'no_observations'})
+                self._record_vdp_observation_status(adapter_result, None)
+                return
+
+            # --- generate hypotheses ---
+            from src.core.engine.vdp_hypothesis_generator import generate_hypotheses
+            from src.core.domain.scope.vdp_scope_validator import revalidate_scope_for_request
+            from src.core.models.vdp_contract import ExecutionBudgetV1, ScopeRevalidationResult
+
+            def _scope_provider(url: str) -> ScopeRevalidationResult:
+                return revalidate_scope_for_request(url)
+
+            leakage_denylist = (
+                getattr(self._vdp_mode, 'label_leakage_denylist', None) or []
+            )
+
+            result = generate_hypotheses(
+                adapter_result.observations,
+                scope_verdict_provider=_scope_provider,
+                budget_model=ExecutionBudgetV1(),
+                leakage_denylist=leakage_denylist,
+            )
+
+            # --- record observation source status ---
+            self._record_vdp_observation_status(adapter_result, result)
+
+            # --- persist hypotheses ---
+            if result.has_hypotheses:
+                self._vdp_state['vdp_active'] = True
+                self._vdp_state['hypotheses'] = [h.to_dict() for h in result.hypotheses]
+
+                if mode == 'shadow':
+                    from src.core.engine.vdp_hypothesis_generator import build_shadow_proposals
+                    proposals = build_shadow_proposals(result.hypotheses)
+                    self._vdp_state['verdicts'] = [p.verdict.to_dict() for p in proposals]
+                    self._vdp_state['next_actions'] = [p.next_action.to_dict() for p in proposals]
+            else:
+                # 0 hypotheses — keep vdp_active=False (M0 gate passes)
+                self._vdp_state['vdp_active'] = False
+                self._record_vdp_degraded(
+                    adapter_result,
+                    result.degraded or {'reason': 'no_hypotheses'},
+                )
+
+            # --- record rejection/suppression reasons ---
+            for rejected_info in result.rejected:
+                self._record_vdp_rejected(rejected_info)
+            for suppressed_info in result.suppressed:
+                self._record_vdp_suppressed(suppressed_info)
+
+        except Exception as exc:
+            logger.exception(
+                "VDP hypothesis generation failed — continuing with existing attack task generation"
+            )
+            self._vdp_state['vdp_active'] = False
+            self._vdp_state['hypotheses'] = []
+            self._vdp_state['verdicts'] = []
+            self._vdp_state['next_actions'] = []
+            self._record_vdp_degraded(
+                None,
+                {
+                    'reason': 'generator_exception',
+                    'detail': repr(exc),
+                },
+            )
+
+    # ------------------------------------------------------------------
+    # VDP hook helpers (private, NO task_queue / network interaction)
+    # ------------------------------------------------------------------
+
+    def _ensure_vdp_mode_loaded(self) -> None:
+        """Lazy-load VDP mode settings."""
+        if not hasattr(self, '_vdp_mode'):
+            self._vdp_mode = None
+        if self._vdp_mode is not None:
+            return
+        try:
+            from src.core.config.settings import get_settings
+            settings = get_settings()
+        except Exception:
+            return
+        vdp = getattr(settings, 'vdp', None)
+        if vdp is None:
+            from types import SimpleNamespace
+            self._vdp_mode = SimpleNamespace(mode='off', label_leakage_denylist=[])
+        else:
+            self._vdp_mode = vdp
+
+    def _ensure_shadow_decisions(self) -> list:
+        """Lazy-init shadow decisions list (record-only trace, existing pattern)."""
+        if not hasattr(self, '_shadow_decisions'):
+            self._shadow_decisions = []
+        return self._shadow_decisions
+
+    def _record_vdp_degraded(self, adapter_result, degraded_info: dict) -> None:
+        """Record degraded generation status (not VDP section — M0-safe)."""
+        decisions = self._ensure_shadow_decisions()
+        decisions.append({
+            'scope': 'vdp_hypothesis_generation',
+            'status': 'degraded',
+            'reason': str(degraded_info.get('reason', 'unknown')),
+            'skipped_signals': len(adapter_result.skipped) if adapter_result else 0,
+            'generator_version': str(degraded_info.get('generator_version', 'unknown')),
+        })
+
+    def _record_vdp_observation_status(self, adapter_result, generation_result) -> None:
+        """Record per-source observation availability.
+
+        When ``generation_result`` is None (early return paths such as empty
+        signal bundle or zero observations), the deterministic 7-source
+        unavailable inventory is recorded so the audit trail always shows
+        which observation sources were unavailable and why.
+        """
+        from src.core.engine.vdp_hypothesis_generator import build_unavailable_source_inventory
+        decisions = self._ensure_shadow_decisions()
+        status_entry = {
+            'scope': 'vdp_observation_sources',
+            'observations_count': len(adapter_result.observations) if adapter_result else 0,
+            'skipped': len(adapter_result.skipped) if adapter_result else 0,
+            'sources_unavailable': [],
+        }
+        if generation_result is not None:
+            sources = getattr(generation_result, 'sources_unavailable', []) or []
+        else:
+            sources = build_unavailable_source_inventory()
+        for src in sources:
+            status_entry['sources_unavailable'].append(dict(src))
+        decisions.append(status_entry)
+
+    def _record_vdp_rejected(self, rejected_info: dict) -> None:
+        decisions = self._ensure_shadow_decisions()
+        decisions.append({
+            'scope': 'vdp_rejected',
+            'observation_id': rejected_info.get('observation_id', 'unknown'),
+            'reasons': rejected_info.get('reasons', []),
+            'phase': rejected_info.get('phase', 'unknown'),
+        })
+
+    def _record_vdp_suppressed(self, suppressed_info: dict) -> None:
+        decisions = self._ensure_shadow_decisions()
+        decisions.append({
+            'scope': 'vdp_suppressed',
+            'hypothesis_id': suppressed_info.get('hypothesis_id', 'unknown'),
+            'reason': suppressed_info.get('reason', 'unknown'),
+            'phase': suppressed_info.get('phase', 'unknown'),
+        })
 
     def _merge_imported_recon_results(self, fresh_results: dict) -> dict:
         """Merge imported recon results into fresh results.
@@ -13171,6 +13659,48 @@ class MasterConductor:
         
         return None
     
+    def _completion_state(self) -> tuple[str, list[str]]:
+        """Return a fail-closed completion status for selected and queued tasks."""
+        unresolved_task_ids: list[str] = []
+
+        def _append_unresolved(task: Task) -> None:
+            state = getattr(task, "state", TaskState.PENDING)
+            state_value = state.value if isinstance(state, TaskState) else str(state).strip().lower()
+            if state_value not in {TaskState.PENDING.value, TaskState.RUNNING.value}:
+                return
+            task_id = str(getattr(task, "id", "") or "")
+            if task_id and task_id not in unresolved_task_ids:
+                unresolved_task_ids.append(task_id)
+
+        for task in getattr(self, "completed_tasks", []) or []:
+            _append_unresolved(task)
+
+        task_queue = getattr(self, "task_queue", None)
+        get_all = getattr(task_queue, "get_all", None)
+        if callable(get_all):
+            queued_tasks = get_all()
+        elif isinstance(task_queue, (list, tuple)):
+            queued_tasks = task_queue
+        else:
+            queued_tasks = []
+        if isinstance(queued_tasks, list):
+            for task in queued_tasks:
+                _append_unresolved(task)
+
+        return (
+            "incomplete" if unresolved_task_ids else "completed",
+            unresolved_task_ids,
+        )
+
+    @staticmethod
+    def _outcome_status(summary: dict) -> str:
+        """Return the user-facing result without changing completion semantics."""
+        if summary.get("completion_status") != "completed":
+            return "incomplete"
+        if int(summary.get("failed", 0) or 0) > 0:
+            return "completed_with_failures"
+        return "succeeded"
+
     def _generate_summary(self) -> dict:
         """実行結果サマリーを生成"""
         total = len(self.completed_tasks)
@@ -13227,6 +13757,10 @@ class MasterConductor:
         coverage_gate = self._evaluate_vuln_family_coverage()
         scenario_coverage = self._evaluate_intervention_scenario_coverage()
         pending_hitl_items = self.list_pending_hitl_tickets(statuses={"pending", "approved", "queued"})
+        completion_status, unresolved_task_ids = self._completion_state()
+        outcome_status = self._outcome_status(
+            {"completion_status": completion_status, "failed": failed}
+        )
         if not coverage_gate.get("gate_passed", False):
             logger.warning(
                 "Vulnerability-family coverage gate not reached. Missing: %s",
@@ -13243,6 +13777,9 @@ class MasterConductor:
             "discovered_assets": self.context.discovered_assets,
             "bypass_methods_learned": self.context.bypass_methods,
             "pending_tasks": len(self.task_queue),
+            "completion_status": completion_status,
+            "outcome_status": outcome_status,
+            "unresolved_task_ids": unresolved_task_ids,
             "estimated_cost": self.context.metrics.get("estimated_cost", 0.0),
             "total_duration": self.context.metrics.get("total_duration", 0),
             "vulnerability_family_coverage": coverage_gate,
@@ -13382,16 +13919,13 @@ class MasterConductor:
 
         if preflight_enabled:
             # Build context from restored session before executing any tasks.
-            gate_context = PreflightContext(
-                target=str(self.context.target_info.get("target", "") or getattr(session, "target_url", "") or ""),
-                mode=self.mode.lower() if self.mode else "bugbounty",
-                goal=getattr(self.context, "goal", "") or "",
-                profile=getattr(self.context, "profile", "") or "",
-                cookies=self._normalize_cookies_for_gate(self.context.target_info.get("cookies")),
-                bearer_token=str(self.context.target_info.get("bearer_token", "") or ""),
-                auth_headers=self.context.target_info.get("auth_headers", {}) if isinstance(self.context.target_info.get("auth_headers"), dict) else {},
+            gate_context = self._build_preflight_context(
+                target=str(
+                    self.context.target_info.get("target", "")
+                    or getattr(session, "target_url", "")
+                    or ""
+                ),
                 resume_session_id=session_id,
-                gate_policy=GatePolicy.STRICT_PROD,
             )
             try:
                 gate_result = self._run_async_safe(
@@ -13436,6 +13970,36 @@ class MasterConductor:
                     result[k.strip()] = v.strip()
             return result
         return {}
+
+    def _build_preflight_context(
+        self,
+        *,
+        target: str | None = None,
+        resume_session_id: str = "",
+    ) -> PreflightContext:
+        """Build an internal gate context from canonical runtime settings."""
+        target_info = self.context.target_info
+        auth_headers = target_info.get("auth_headers", {})
+        if not isinstance(auth_headers, dict):
+            auth_headers = {}
+
+        return PreflightContext(
+            target=str(
+                target
+                if target is not None
+                else target_info.get("target", "") or ""
+            ),
+            mode=self.mode.lower() if self.mode else "bugbounty",
+            goal=getattr(self.context, "goal", "") or "",
+            profile=getattr(self.context, "profile", "") or "",
+            cookies=self._normalize_cookies_for_gate(target_info.get("cookies")),
+            bearer_token=str(target_info.get("bearer_token", "") or ""),
+            auth_headers=auth_headers,
+            resume_session_id=resume_session_id,
+            gate_policy=GatePolicy.STRICT_PROD,
+            caido_url=settings.caido.url,
+            caido_token=settings.caido.token,
+        )
 
     def _serialize_task_queue(self) -> list[str]:
         """タスクキューをJSON文字列リストにシリアライズ"""
