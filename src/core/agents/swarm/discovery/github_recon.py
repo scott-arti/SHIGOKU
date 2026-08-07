@@ -6,7 +6,7 @@ import logging
 import asyncio
 from typing import Dict, Any, Optional
 
-from src.config import settings
+from src.core.config.settings import settings
 from src.mcp.mcp_client import add_mcp_server, get_mcp_client
 from src.core.models.finding import Finding, VulnType, Severity
 

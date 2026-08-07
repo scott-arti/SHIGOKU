@@ -379,11 +379,11 @@ class DynamicTaskQueue:
         return True
     
     def add(self, task: Any) -> None:
-        """
+        # PCR-P1: task_queue mutation must be on main thread (enforced, SGK-2026-0421)
         assert threading.current_thread() is threading.main_thread(), (
             "PCR-P1: task_queue mutation must be on main thread"
         )
-
+        """
         タスクを優先度付きで追加 (O(log n))
         
         Args:
@@ -423,11 +423,11 @@ class DynamicTaskQueue:
         self.add(task)
     
     def add_batch(self, tasks: List[Any], source: str = "unknown") -> int:
-        """
+        # PCR-P1: task_queue mutation must be on main thread (enforced, SGK-2026-0421)
         assert threading.current_thread() is threading.main_thread(), (
             "PCR-P1: task_queue mutation must be on main thread"
         )
-
+        """
         複数タスクを一括追加 (O(k log n))
         
         Args:
@@ -551,11 +551,11 @@ class DynamicTaskQueue:
         return self.is_empty()
 
     def inject_context(self, context: TaskContext) -> int:
-        """
+        # PCR-P1: task_queue mutation must be on main thread (enforced, SGK-2026-0421)
         assert threading.current_thread() is threading.main_thread(), (
             "PCR-P1: task_queue mutation must be on main thread"
         )
-
+        """
         キュー内タスクにコンテキストを反映
         """
         if context.is_empty():
@@ -600,11 +600,11 @@ class DynamicTaskQueue:
         condition: Callable[[Any], bool],
         new_priority: int,
     ) -> int:
-        """
+        # PCR-P1: task_queue mutation must be on main thread (enforced, SGK-2026-0421)
         assert threading.current_thread() is threading.main_thread(), (
             "PCR-P1: task_queue mutation must be on main thread"
         )
-
+        """
         条件にマッチするタスクの優先度を変更
         """
         return self._modify_priority(condition, lambda t: setattr(t, 'priority', new_priority))
@@ -645,11 +645,11 @@ class DynamicTaskQueue:
         return affected
 
     def remove_tasks_for_assets(self, asset_ids: List[str]) -> int:
-        """
+        # PCR-P1: task_queue mutation must be on main thread (enforced, SGK-2026-0421)
         assert threading.current_thread() is threading.main_thread(), (
             "PCR-P1: task_queue mutation must be on main thread"
         )
-
+        """
         指定された資産に関連する未実行タスクをキューから削除
         """
         if not asset_ids:
@@ -726,11 +726,11 @@ class DynamicTaskQueue:
         return task_pruning_policy_shared.is_coverage_critical_task(task)
 
     def boost_priority_for_assets(self, asset_ids: List[str], boost_value: int) -> int:
-        """
+        # PCR-P1: task_queue mutation must be on main thread (enforced, SGK-2026-0421)
         assert threading.current_thread() is threading.main_thread(), (
             "PCR-P1: task_queue mutation must be on main thread"
         )
-
+        """
         指定された資産に関連するタスクの優先度をブースト
         """
         if not asset_ids:

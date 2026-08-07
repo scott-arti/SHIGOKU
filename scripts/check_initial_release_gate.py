@@ -112,7 +112,41 @@ def main() -> int:
         action="store_true",
         help="Use the 5-gate separated evaluation (evaluate_gate_separated) instead of the unified wrapper.",
     )
+    # SGK-2026-0422: additive gate profile selection.
+    parser.add_argument(
+        "--profile",
+        default="legacy",
+        choices=["legacy", "vdp-training", "vdp-real"],
+        help=(
+            "Gate profile: legacy (default, current initial-release gate), "
+            "vdp-training (training capability gate, requires --labels), "
+            "vdp-real (real VDP run-quality gate)."
+        ),
+    )
+    parser.add_argument(
+        "--labels",
+        help="Label manifest (fixture-manifest JSON) required for the vdp-training profile.",
+    )
     args = parser.parse_args()
+
+    # SGK-2026-0422 (audit I-07): when --report is a member of a separated
+    # report group, the group manifest MUST verify before the gate consumes
+    # the artifact. A partially-promoted group (manifest missing / modified /
+    # file missing) is rejected as non-official.
+    try:
+        from src.reporting.vdp_report_projection import verify_separated_group
+
+        sep_check = verify_separated_group(args.report)
+        if not sep_check["ok"]:
+            verdict = {
+                "status": "fail",
+                "reason_codes": [str(sep_check.get("reason", "separated_manifest_invalid"))],
+                "manifest": sep_check.get("manifest"),
+            }
+            print(json.dumps(verdict, ensure_ascii=False, indent=2))
+            return 3
+    except Exception:
+        pass
 
     if args.set_locked_baseline:
         result = set_locked_baseline(
@@ -122,6 +156,97 @@ def main() -> int:
         )
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if bool(result.get("updated", False)) else 2
+
+    # SGK-2026-0422: VDP gate profiles.
+    if args.profile in ("vdp-training", "vdp-real"):
+        from src.reporting.vdp_gates import evaluate_vdp_gate
+        from src.core.utils.json_utils import safe_json_loads
+        from src.reporting.report_session_consistency import (
+            verify_report_session_consistency,
+        )
+
+        session_path = (
+            Path(args.session).expanduser().resolve()
+            if args.session
+            else None
+        )
+        if session_path is None:
+            verdict = {
+                "status": "blocked",
+                "reason_codes": ["session_required_for_vdp_gate"],
+                "profile": args.profile,
+            }
+            print(json.dumps(verdict, ensure_ascii=False, indent=2))
+            return 2
+
+        # Audit I-05: the vdp-real profile MUST run report/session
+        # consistency and only continue when consistent. --report is the
+        # required artifact for the real profile.
+        consistency_status = "consistent"
+        consistency_reason_codes: list[str] = []
+        if args.profile == "vdp-real":
+            report_path = Path(args.report).expanduser().resolve()
+            if not report_path.exists():
+                verdict = {
+                    "status": "blocked",
+                    "reason_codes": ["report_not_found_for_vdp_real"],
+                    "profile": args.profile,
+                }
+                print(json.dumps(verdict, ensure_ascii=False, indent=2))
+                return 2
+            consistency = verify_report_session_consistency(
+                report_path,
+                session_path=session_path,
+                sessions_dir=(
+                    Path(args.sessions_dir).expanduser().resolve()
+                    if args.sessions_dir
+                    else None
+                ),
+            )
+            consistency_status = str(consistency.get("status", "") or "").strip().lower()
+            consistency_reason_codes = [
+                str(c) for c in consistency.get("reason_codes", [])
+            ]
+            if consistency_status != "consistent":
+                verdict = {
+                    "status": "blocked",
+                    "reason_codes": [
+                        f"consistency_{consistency_status}",
+                        *consistency_reason_codes,
+                    ],
+                    "profile": args.profile,
+                    "consistency": consistency,
+                }
+                print(json.dumps(verdict, ensure_ascii=False, indent=2))
+                return 2
+
+        session_data = safe_json_loads(
+            session_path.read_text(encoding="utf-8"),
+            context=f"vdp_gate:{session_path.name}",
+        )
+        profile_name = "training" if args.profile == "vdp-training" else "real"
+        gate = evaluate_vdp_gate(
+            profile_name,
+            session_data,
+            labels_path=Path(args.labels) if args.labels else None,
+            consistency_status=consistency_status,
+            consistency_reason_codes=consistency_reason_codes,
+        )
+        payload = gate.to_dict()
+        if args.profile == "vdp-real":
+            payload["consistency"] = {
+                "status": consistency_status,
+                "reason_codes": consistency_reason_codes,
+            }
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+        status = str(payload.get("status", "") or "").strip().lower()
+        decision = str(payload.get("decision", "") or "").strip().lower()
+        if status == "pass" and decision in {"", "go"}:
+            return 0
+        if decision == "no_go" or status == "fail":
+            return 3
+        return 2
 
     allowed_missing = _parse_csv_tokens(args.allowed_missing)
     required_confirmed_classes = _parse_csv_tokens(args.required_confirmed_classes)

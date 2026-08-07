@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.config import settings
+from src.core.config.settings import settings
 from src.core.domain.model.task import Task
 from src.core.engine.master_conductor import MasterConductor
 

@@ -1,0 +1,6 @@
+# SGK-2026-0427 — egress allowlist proxy image (harness tooling).
+# Stdlib only; no runtime repo code is copied in.
+FROM python:3.13-slim
+COPY m5_proxy.py /app/m5_proxy.py
+EXPOSE 3128
+CMD ["python", "/app/m5_proxy.py"]

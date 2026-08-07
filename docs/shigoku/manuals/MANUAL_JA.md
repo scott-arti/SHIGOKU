@@ -7,7 +7,7 @@ related_docs:
 - docs/shigoku/specs/TECHNICAL_SPEC_JA.md
 - docs/shigoku/roadmaps/IMPLEMENTATION_ROADMAP.md
 created_at: '2026-05-19'
-updated_at: '2026-07-02'
+updated_at: '2026-08-07'
 ---
 
 # 📖 SHIGOKU ユーザーマニュアル（日本語版）
@@ -278,15 +278,44 @@ python src/main.py --dns example.com --json
 | `SHIGOKU_NOTIFY_ON_ERROR`         | `true`     | システムエラー時に通知                    |
 | `SHIGOKU_NOTIFY_CRITICAL_MENTION` | (空)       | CRITICAL 発見時のメンション (@channel 等) |
 
-### モデルルーティング設定 (コスト最適化)
+### モデルルーティング設定
 
-| 変数                                | デフォルト        | 説明                                  |
-| :---------------------------------- | :---------------- | :------------------------------------ |
-| `SHIGOKU_MODEL_LIGHTWEIGHT`         | `ollama/qwen3:8b` | 軽量タスク用モデル (ReAct, Critic)    |
-| `SHIGOKU_MODEL_OUTPUT`              | `gpt-4o`          | 高精度タスク用モデル (Report, Plan)   |
-| `SHIGOKU_USE_LOCAL_FOR_LIGHTWEIGHT` | `true`            | 軽量タスクにローカル LLM を使用するか |
+LLM の設定場所は `config/shigoku.yaml` の `llm:` です。`.env` や `SHIGOKU_MODEL` は使いません。API キーの値だけは、YAML ではなく OS の環境変数で渡します。
 
-> **推奨**: コストを抑えるために `SHIGOKU_USE_LOCAL_FOR_LIGHTWEIGHT=true` (デフォルト) を使用し、Ollama で `qwen3:8b` などを実行してください。API のみを使用する場合は `false` に設定し、`SHIGOKU_MODEL_LIGHTWEIGHT` に `gpt-4o-mini` などを指定します。
+設定は次の3段階です。
+
+1. `providers`: 接続先の API URL と、APIキーを入れる環境変数名を決めます。
+2. `profiles`: 使うモデル、タイムアウト、Thinking を決めます。
+3. `roles`: SHIGOKU の各機能に、どの profile を使わせるか決めます。
+
+たとえば DeepInfra のモデルを追加する場合は、`providers.deepinfra` に URL と `DEEPINFRA_API_KEY` を置き、profile を追加してから、使いたい role の `profile` をその名前に変えます。
+
+```yaml
+llm:
+  providers:
+    deepinfra:
+      api_key_env: DEEPINFRA_API_KEY
+      base_url: https://api.deepinfra.com/v1
+  profiles:
+    my_fast_model:
+      provider: deepinfra
+      model: deepinfra/モデル名
+      extra:
+        thinking:
+          type: disabled
+          reasoning_effort: null
+  roles:
+    planner:
+      profile: my_fast_model
+```
+
+API キーは起動前に設定します。
+
+```bash
+export DEEPINFRA_API_KEY="あなたのAPIキー"
+```
+
+Thinking を使う profile では `type: enabled` とし、`reasoning_effort` にプロバイダーが受け付ける値を入れます。SHIGOKU は値を勝手に変換しません。Thinking を使わない profile は、`type: disabled` と `reasoning_effort: null` を明示します。
 
 > **注意**: 通知を受け取るには `~/.config/notify/provider-config.yaml` の設定が必要です。
 
@@ -559,10 +588,10 @@ CTFモードなどで、フラグ（例: `FLAG{...}`）を自動的に検出・�
 - コマンド実行結果（標準出力）
 - OOB（Out-of-Band）コールバック
 
-設定方法 (`.env`):
+設定方法 (`config/shigoku.yaml`):
 
-```env
-SHIGOKU_CTF_FLAG_FORMAT="FLAG\{[a-zA-Z0-9_-]+\}"
+```yaml
+ctf_flag_format: "FLAG\\{[a-zA-Z0-9_-]+\\}"
 ```
 
 ### 🕵️ Post-Exploitation Swarm

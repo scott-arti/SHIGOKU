@@ -119,6 +119,61 @@ async def test_step3_tool_check():
 
 
 @pytest.mark.asyncio
+async def test_step3_blank_httpx_path_uses_standard_command_for_check_and_run(tmp_path):
+    """Blank runtime config must resolve once for both availability and launch."""
+    pipeline = ReconPipeline(
+        config={"tool_httpx_path": ""},
+        project_manager=None,
+        target="*.example.test",
+        workspace_root=tmp_path,
+    )
+    resolvers_file = tmp_path / "resolvers.txt"
+    resolvers_file.write_text("1.1.1.1\n")
+    pipeline.fetch_resolvers = AsyncMock(return_value=resolvers_file)
+    pipeline.runner.is_tool_available = MagicMock(
+        side_effect=lambda tool_name: tool_name == "httpx"
+    )
+    pipeline.runner.run_json = AsyncMock(
+        return_value=[{"url": "http://app.example.test/", "status_code": 200}]
+    )
+
+    await pipeline.step3_live_check(["app.example.test"])
+
+    assert "httpx" in [
+        args[0] for args, _ in pipeline.runner.is_tool_available.call_args_list
+    ]
+    assert pipeline.runner.run_json.await_args.args[0][0] == "httpx"
+
+
+@pytest.mark.asyncio
+async def test_step3_custom_httpx_path_is_used_for_check_and_run(tmp_path):
+    """A configured custom executable must remain the single command source."""
+    custom_httpx = "/opt/custom tools/httpx"
+    pipeline = ReconPipeline(
+        config={"tool_httpx_path": custom_httpx},
+        project_manager=None,
+        target="*.example.test",
+        workspace_root=tmp_path,
+    )
+    resolvers_file = tmp_path / "resolvers.txt"
+    resolvers_file.write_text("1.1.1.1\n")
+    pipeline.fetch_resolvers = AsyncMock(return_value=resolvers_file)
+    pipeline.runner.is_tool_available = MagicMock(
+        side_effect=lambda tool_name: tool_name == custom_httpx
+    )
+    pipeline.runner.run_json = AsyncMock(
+        return_value=[{"url": "http://app.example.test/", "status_code": 200}]
+    )
+
+    await pipeline.step3_live_check(["app.example.test"])
+
+    assert custom_httpx in [
+        args[0] for args, _ in pipeline.runner.is_tool_available.call_args_list
+    ]
+    assert pipeline.runner.run_json.await_args.args[0][0] == custom_httpx
+
+
+@pytest.mark.asyncio
 async def test_step3_takeover_candidates_saved(tmp_path):
     """Step 3: takeover_candidates.json が保存される"""
     

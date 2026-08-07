@@ -2,7 +2,7 @@ from pathlib import Path
 from types import SimpleNamespace
 import json
 
-from src.config import settings
+from src.core.config.settings import settings
 from src.core.domain.model.task import Task
 from src.core.engine.intervention_policy import InterventionPolicy
 from src.core.engine.master_conductor import MasterConductor

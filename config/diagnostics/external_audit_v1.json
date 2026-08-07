@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "eval_version": "v1",
+  "mode": "offline_consistent_artifacts_only",
+  "generated_at": "2026-08-06",
+  "task": "SGK-2026-0425 M5",
+  "conclusion": "Both sealed targets were diagnosed offline from pre-M1 artifacts (no diagnostic telemetry exists in them). As the plan §8 M5 predicts, the first-failure baseline is U00 (producer_trace_missing / stage_event_missing) with confidence unattributable. No fabrication: real first-failure signals require the instrumented active rerun, which is NOT executed (requires explicit user approval + isolated network).",
+  "targets": [
+    {
+      "label": "sealed_target_A_offline",
+      "product_note": "sealed audit target (offline pre-M1 artifacts only; product identity held evaluator-side)",
+      "consistency_status": "consistent",
+      "consistency_reason_codes": [],
+      "telemetry": {
+        "diagnostics_section": "absent",
+        "events": 0
+      },
+      "first_failure": {
+        "cause_candidates": [
+          "C13"
+        ],
+        "confidence": "unattributable",
+        "evidence_refs": [],
+        "missing_artifacts": [
+          "vdp_diagnostics_v1.events (event_id, stage_id, outcome, reason_codes)",
+          "canonical_summary.hypotheses",
+          "canonical_summary.attempts",
+          "canonical_summary.evidence_records",
+          "canonical_summary.verdicts",
+          "canonical_summary.next_actions"
+        ],
+        "outcome": "unattributable",
+        "reason_codes": [
+          "producer_trace_missing",
+          "stage_event_missing"
+        ],
+        "stage_id": "U00"
+      },
+      "confidence": "unattributable",
+      "coverage_note": "coverage_not_measurable_without_sealed_labels",
+      "consistency_evidence": "formula checker: status=consistent, reason_codes=[] (run on 2026-08-06)",
+      "report_path_ref": "sha256:0415a5773d22d7c2eea9986fc439453654cf4af738270c91b230a4870c429b70",
+      "session_path_ref": "sha256:67e9b94e055a479258989a1d51ef4355e7998cd354f085ed6238d63b4d0ff23c",
+      "first_failure_artifact_ref": "sha256:ada880b1c105f275168287baef0897545fcc88373a9bbe98c99018600532f135"
+    },
+    {
+      "label": "sealed_target_B_offline",
+      "product_note": "sealed audit target (offline pre-M1 artifacts only; product identity held evaluator-side)",
+      "consistency_status": "consistent",
+      "consistency_reason_codes": [],
+      "telemetry": {
+        "diagnostics_section": "absent",
+        "events": 0
+      },
+      "first_failure": {
+        "cause_candidates": [
+          "C13"
+        ],
+        "confidence": "unattributable",
+        "evidence_refs": [],
+        "missing_artifacts": [
+          "vdp_diagnostics_v1.events (event_id, stage_id, outcome, reason_codes)",
+          "canonical_summary.hypotheses",
+          "canonical_summary.attempts",
+          "canonical_summary.evidence_records",
+          "canonical_summary.verdicts",
+          "canonical_summary.next_actions"
+        ],
+        "outcome": "unattributable",
+        "reason_codes": [
+          "producer_trace_missing",
+          "stage_event_missing"
+        ],
+        "stage_id": "U00"
+      },
+      "confidence": "unattributable",
+      "coverage_note": "coverage_not_measurable_without_sealed_labels",
+      "consistency_evidence": "formula checker: status=consistent, reason_codes=[] (run on 2026-08-06)",
+      "report_path_ref": "sha256:368f458ec8acf3fa0849598ba4d347e8cdc1700b85e2aab6f5f1ede8a29133bf",
+      "session_path_ref": "sha256:296ced0ce72fc4eb03471b4bca0efbad0e4609210d85029f444bdc4969c81f1c",
+      "first_failure_artifact_ref": "sha256:72a49ec54a0880c83a11eb6c061cb684e9fcbab09ceebc41b11534d0b2221fa0"
+    }
+  ],
+  "active_rerun": {
+    "status": "not_executed",
+    "requirement": "user explicit approval + isolated network + external egress 0 + test account only + per-case init/rollback, 1 run per eval version"
+  },
+  "content_hash": "sha256:70b24d74e26a23badfd2bbf9bb09de5cdea3d30eb07a70f97aebe4e4e671a15f"
+}

@@ -10,7 +10,7 @@ import asyncio
 import os
 import sys
 from typing import Any, Awaitable, Callable
-from src.config import settings as runtime_settings
+from src.core.config.settings import settings as runtime_settings
 from src.core.engine.master_conductor import MasterConductor, Task, TaskState
 from src.core.engine.phase_gate import Phase
 from src.core.config_manager import get_config_manager

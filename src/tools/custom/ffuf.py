@@ -79,7 +79,7 @@ Use these features for bug bounty and penetration testing."""
                         },
                         "ai_model": {
                             "type": "string",
-                            "description": "AI model to use (e.g., 'gpt-4o', 'deepseek/deepseek-chat')."
+                            "description": "AI model to use (e.g., 'openai/gpt-4o', 'deepseek/deepseek-v4-flash')."
                         },
                         "ai_endpoint": {
                             "type": "string",

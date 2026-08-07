@@ -155,6 +155,11 @@ class LLMRoleResolver:
                 f"Provider '{provider_name}' (referenced by profile '{profile_name}') "
                 f"not found in providers"
             )
+        if not provider.base_url:
+            raise LLMResolutionError(
+                f"Provider '{provider_name}' must define an explicit base_url; "
+                "implicit provider endpoint selection is not supported"
+            )
 
         return LLMResolutionResult(
             role_name=role_name,
@@ -187,4 +192,3 @@ class LLMRoleResolver:
 
 
 # build_legacy_profile_mapping removed (SGK-2026-0303 D02).
-# Legacy env vars SHIGOKU_MODEL_OUTPUT / SHIGOKU_MODEL_LIGHTWEIGHT are no longer supported.

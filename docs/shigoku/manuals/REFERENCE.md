@@ -5,7 +5,7 @@ status: active
 parent_task_id: null
 related_docs: []
 created_at: '2026-05-19'
-updated_at: '2026-07-02'
+updated_at: '2026-08-07'
 ---
 
 # ⚙️ SHIGOKU リファレンスガイド
@@ -179,24 +179,26 @@ volumes:
 ## 3. CLI オプション
 
 現行の詳細版コマンド体系は
-[`2026-07-02_sgk-2026-0337_detailed-command-reference.md`](2026-07-02_sgk-2026-0337_detailed-command-reference.md)
+[`2026-07-02_sgk-2026-0337_detailed-command-reference.md`](manual_legacy/2026-07-02_sgk-2026-0337_detailed-command-reference.md)
 を参照してください。特に `report` / `session` / `validate` / `recon state` 系は
 `shigoku-ops` が正規の入口です。
 
 ### コマンド構文
 
 ```
-python -m src.main [MODE] [OPTIONS]
+shigoku [OPTIONS]
 ```
 
 ### モードオプション
 
 | オプション | 引数           | 説明                     |
 | :--------- | :------------- | :----------------------- |
-| `--recon`  | `<URL>`        | 偵察モード               |
-| `--log`    | `<FILE>`       | ハイブリッドハントモード |
-| `--watch`  | `<OWNER/REPO>` | センチネルモード         |
-| `--demo`   | (なし)         | デモモード               |
+| `--recon` / `-r` | `<URL>`        | 偵察モード               |
+| `--target` / `-t` | `<URL>`      | 対象を指定して総合スキャン |
+| `--log` / `-l` | `<FILE>`       | ハイブリッドハントモード |
+| `--watch` / `-w` | `<OWNER/REPO>` | センチネルモード       |
+| `--demo` / `-d` | (なし)         | デモモード               |
+| `--interactive` / `-i` | (なし)  | 対話モード               |
 
 ### RAG オプション ✨ New
 
@@ -215,41 +217,41 @@ python -m src.main [MODE] [OPTIONS]
 | :--------- | :--------- | :----------------------------------- |
 | `--dns`    | `<DOMAIN>` | DNS 履歴取得                         |
 | `--json`   | (なし)     | JSON 形式出力                        |
-| `--mode`   | `<MODE>`   | 動作モード（bugbounty/vulntest/ctf） |
+| `--mode`   | `<MODE>`   | 動作モード（`bugbounty` / `vulntest` / `ctf`） |
+| `--format` | `<FORMAT>` | `json` / `csv` / `pdf` / `markdown` / `html` / `haddix` / `haddix-ja-en` |
 
 ### 共通オプション
 
 | オプション       | 引数     | デフォルト   | 説明                   |
 | :--------------- | :------- | :----------- | :--------------------- |
-| `--scope`        | `<FILE>` | (なし)       | スコープ定義ファイル   |
-| `--vault`        | `<PATH>` | 環境変数参照 | Obsidian Vault パス    |
-| `--full-refresh` | (なし)   | `false`      | RAG 完全再インデックス |
-| `--verbose`      | (なし)   | `false`      | 詳細ログ出力           |
-| `--output`       | `<DIR>`  | `reports/`   | レポート出力先         |
-| `--help`         | (なし)   | -            | ヘルプ表示             |
+| `--scope` / `-s` | `<FILE>` | (なし) | スコープ定義ファイル |
+| `--cookie` / `--bearer-token` | 認証情報 | (なし) | 認証済みスキャン用 |
+| `--dry-run` / `--debug` / `--json` | (なし) | `false` | 安全実行・詳細ログ・JSON出力 |
+| `--recon-resume` / `--fast-iterate` | (なし) | `false` | 偵察の再開・短縮実行 |
+| `--quality-loop short` | (選択式) | (なし) | 改善・検証・短縮スキャンのループ |
 
 ### 使用例
 
 ```bash
 # 基本的な偵察
-python -m src.main --recon https://api.target.com
+shigoku --recon https://api.target.com
 
 # スコープ付き偵察
-python -m src.main --recon https://api.target.com --scope scopes/target.yaml
+shigoku --recon https://api.target.com --scope scopes/target.yaml
 
 # ハイブリッドハント
-python -m src.main --log traffic.har --scope scopes/target.yaml --mode vulntest
+shigoku --log traffic.har --scope scopes/target.yaml --mode vulntest
 
 # GitHub監視
-python -m src.main --watch facebook/react
+shigoku --watch facebook/react
 
 # RAGナレッジベース操作
-python -m src.main --rag-ingest ./knowledge
-python -m src.main --rag-query "JWT bypass" --json -n 10
-python -m src.main --rag-stats
+shigoku --rag-ingest ./knowledge
+shigoku --rag-query "JWT bypass" --json -n 10
+shigoku --rag-stats
 
 # DNS履歴
-python -m src.main --dns example.com --json
+shigoku --dns example.com --json
 ```
 
 ---

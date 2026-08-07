@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 import psutil
 
-from src.config import settings
+from src.core.config.settings import settings
 from src.core.engine.parallel_orchestrator import ParallelOrchestrator
 
 logger = logging.getLogger(__name__)

@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, AsyncMock
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from src.core.agents.general.command import CommandAgent
-from src.config import settings
+from src.core.config.settings import settings
 
 async def run_quick_verification():
     print("🚀 Starting Quick Verification for Nuclei Path Fix...")

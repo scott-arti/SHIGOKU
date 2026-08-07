@@ -1,6 +1,6 @@
 import threading
 
-from src.config import settings
+from src.core.config.settings import settings
 from src.core.domain.model.task import Task, TaskState
 from src.core.engine.intervention_policy import InterventionPolicy
 from src.core.engine.master_conductor_hitl_ticket import build_pending_hitl_ticket

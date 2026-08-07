@@ -1,6 +1,7 @@
 from typing import List, Optional, Dict, Any
 import logging
 from src.core.domain.model.task import Task, TaskResult
+from src.core.config.settings import settings
 from src.core.swarm.worker.procedural import ProceduralWorker
 
 logger = logging.getLogger(__name__)
@@ -27,7 +28,7 @@ class DiscoveryWorker(ProceduralWorker):
         try:
             # KatanaTool.run expects 'target'
             url = target if target.startswith("http") else f"http://{target}"
-            result = tool.run(target=url)
+            result = tool.run(target=url, proxy=settings.get_proxy_url())
             return TaskResult(success=True, data=result)
         except Exception as e:
             return TaskResult(success=False, error=str(e))
@@ -52,7 +53,7 @@ class LiveCheckWorker(ProceduralWorker):
         tool = HttpxTool()
         try:
             # HttpxTool.run expects 'target'
-            result = tool.run(target=target)
+            result = tool.run(target=target, proxy=settings.get_proxy_url())
             return TaskResult(success=True, data=result)
         except Exception as e:
             return TaskResult(success=False, error=str(e))

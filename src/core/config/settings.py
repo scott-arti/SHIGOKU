@@ -317,16 +317,190 @@ class ParallelismSettings(BaseModel):
         return v
 
 
+# ---------------------------------------------------------------------------
+# SGK-2026-0423: VDP staged rollout ladder (shared truth for config, engine,
+# and reporting). M0-M4 states; ``off`` mode is M0-inactive.
+# ---------------------------------------------------------------------------
+
+VDP_STAGES: tuple[str, ...] = ("m0", "m1", "m2", "m3a", "m3b", "m3c", "m4")
+VDP_STAGE_RANKS: dict[str, int] = {stage: rank for rank, stage in enumerate(VDP_STAGES)}
+# Enforce-equivalent stages: real communication is enabled from M3a onward
+# (read-only enforce); state-changing enforce starts at M3b.
+VDP_ENFORCE_STAGES: frozenset[str] = frozenset({"m3a", "m3b", "m3c", "m4"})
+
+
+def derive_stage_from_mode(mode: str) -> str:
+    """Map the 0420/0421 mode vocabulary onto the 0423 stage ladder
+    (backward compatibility; unknown modes fail closed to M0)."""
+    if mode == "record_only":
+        return "m1"
+    if mode == "shadow":
+        return "m2"
+    if mode == "readonly_enforce":
+        return "m3a"
+    return "m0"  # off / invalid -> M0 (contract only, no enforcement)
+
+
+def is_enforce_stage(stage: str) -> bool:
+    """True when the effective stage performs real communication (M3a+)."""
+    return stage in VDP_ENFORCE_STAGES
+
+
+def min_stage(a: str, b: str) -> str:
+    """Lower-ranked of two stages (fail-closed direction)."""
+    rank_a = VDP_STAGE_RANKS.get(a, 0)
+    rank_b = VDP_STAGE_RANKS.get(b, 0)
+    return a if rank_a <= rank_b else b
+
+
 class VdpModeSettings(BaseModel):
-    """VDP mode (SGK-2026-0420). Default off — VDP inactive unless enabled."""
+    """VDP mode (SGK-2026-0420 / SGK-2026-0421 / SGK-2026-0423).
+    Default off — VDP inactive unless enabled.
+
+    Modes (0420/0421, unchanged):
+    - off: VDP inactive.
+    - record_only: hypotheses saved, nothing executed.
+    - shadow: hypotheses + candidate verdicts + NextAction proposals, no queue.
+    - readonly_enforce (SGK-2026-0421 M3a): read-equivalent follow-ups only,
+      behind the full admission/scope/budget/HITL gates.
+
+    SGK-2026-0423 staged rollout (additive):
+    - stage: explicit rollout stage (m0..m4); "" derives from mode.
+      The explicit stage acts as a CAP — the effective stage is the lower
+      of (mode-derived stage, explicit stage) so config alone cannot raise
+      capability above the mode.
+    - stage_flags: per-stage independent disable (stage and above are
+      capped down when the flag is false). Unknown keys are dropped.
+    - key_provider / key_env_var / key_file_path: confirmed-key provider
+      sources. Enforce stages (M3a+) never fall back to the implicit home
+      directory key file.
+    - key_registry_path: versioned key registry JSON; required for enforce.
+    - progression_records_path: M0-M4 progression evidence artifact; M3b+
+      stages require it (config alone cannot enable state-changing enforce).
+    - thresholds_path: frozen hidden-holdout threshold artifact (M4 gate).
+    """
     mode: str = "off"
     label_leakage_denylist: list[str] = Field(default_factory=list)
+    kill_switch: bool = False  # SGK-2026-0421/0423: stops queue injection AND pre-communication
+    capability_rules: dict[str, str] = Field(default_factory=dict)
+
+    # --- SGK-2026-0423 staged rollout (additive) ---
+    stage: str = ""
+    stage_flags: dict[str, bool] = Field(default_factory=dict)
+    key_provider: str = "env"
+    key_env_var: str = "SHIGOKU_VDP_SIGNING_KEY"
+    key_file_path: str = ""
+    key_registry_path: str = ""
+    progression_records_path: str = ""
+    thresholds_path: str = ""
+    rollout_state_path: str = ""  # persisted rollback/rollout state (can only lower capability)
+    holdout_result_path: str = ""  # hidden holdout evaluation result artifact (M4 Go evidence)
+    decision_records_path: str = ""  # Go/Hold/No-Go decision records artifact (M4 Go evidence)
+    gate_result_path: str = ""  # real VDP run-quality gate result artifact (M4 Go evidence)
 
     @field_validator("mode")
     @classmethod
     def _validate_mode(cls, v: str) -> str:
-        if v not in ("off", "record_only", "shadow"):
+        if v not in ("off", "record_only", "shadow", "readonly_enforce"):
             return "off"  # invalid mode fails safe to off
+        return v
+
+    @field_validator("stage")
+    @classmethod
+    def _validate_stage(cls, v: str) -> str:
+        if v in ("", *VDP_STAGES):
+            return v
+        return ""  # invalid stage fails closed to mode-derived stage
+
+    @field_validator("stage_flags")
+    @classmethod
+    def _validate_stage_flags(cls, v: dict[str, bool]) -> dict[str, bool]:
+        if not v:
+            return {}
+        return {
+            str(stage): bool(enabled)
+            for stage, enabled in v.items()
+            if str(stage) in VDP_STAGES
+        }
+
+    @field_validator("key_provider")
+    @classmethod
+    def _validate_key_provider(cls, v: str) -> str:
+        if v in ("env", "file", "env_or_file"):
+            return v
+        return "env"  # unknown provider fails closed to env-only
+
+    @field_validator("capability_rules")
+    @classmethod
+    def _validate_capability_rules(cls, v: dict[str, str]) -> dict[str, str]:
+        allowed_levels = {
+            "allowed", "confirmation_required", "prohibited", "unavailable",
+        }
+        return {
+            str(capability): (
+                str(level) if str(level) in allowed_levels else "prohibited"
+            )
+            for capability, level in (v or {}).items()
+        }
+
+
+# ===== SGK-2026-0425: VDP diagnostic telemetry (additive, default off) =====
+
+_DIAGNOSTICS_DEFAULTS = {
+    "max_events": 2000,
+    "max_artifact_bytes": 10 * 1024 * 1024,
+    "checkpoint_interval_events": 500,
+    "event_queue_capacity": 5000,
+}
+
+
+class DiagnosticsSettings(BaseModel):
+    """SGK-2026-0425: VDP diagnostic telemetry (additive, default off).
+
+    - ``enabled``: False — no diagnostic events collected; existing
+      session / report / decision-trace / attack-task output stays
+      bit-identical (characterization contract, plan §8 M0).
+    - ``required``: False — normal runs keep the existing path when a
+      diagnostic hook fails (degraded note only). True (evaluation runs):
+      stop BEFORE the next network communication, checkpoint and Hold.
+    - Bound values (max_events / max_artifact_bytes /
+      checkpoint_interval_events / event_queue_capacity) fail closed to the
+      defaults above: an invalid value must never silently relax limits.
+    """
+    enabled: bool = False
+    required: bool = False
+    max_events: int = _DIAGNOSTICS_DEFAULTS["max_events"]
+    max_artifact_bytes: int = _DIAGNOSTICS_DEFAULTS["max_artifact_bytes"]
+    checkpoint_interval_events: int = _DIAGNOSTICS_DEFAULTS["checkpoint_interval_events"]
+    event_queue_capacity: int = _DIAGNOSTICS_DEFAULTS["event_queue_capacity"]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_invalid_bounds_before_coercion(cls, data):
+        # pydantic coerces True -> 1 BEFORE field validators run, so bool
+        # input for a bound field must be rejected here on the raw input.
+        if isinstance(data, dict):
+            for key in _DIAGNOSTICS_DEFAULTS:
+                if key in data and (
+                    isinstance(data[key], bool)
+                    or not isinstance(data[key], int)
+                    or data[key] <= 0
+                ):
+                    data = dict(data)
+                    data[key] = _DIAGNOSTICS_DEFAULTS[key]
+        return data
+
+    @field_validator(
+        "max_events",
+        "max_artifact_bytes",
+        "checkpoint_interval_events",
+        "event_queue_capacity",
+    )
+    @classmethod
+    def _validate_positive_bounds(cls, v: int, info) -> int:
+        # Defense in depth: bool is an int subclass in Python — reject it.
+        if isinstance(v, bool) or not isinstance(v, int) or v <= 0:
+            return _DIAGNOSTICS_DEFAULTS[info.field_name]
         return v
 
 
@@ -525,6 +699,7 @@ class Settings(BaseSettings):
     multi_session: MultiSessionSettings = Field(default_factory=MultiSessionSettings)
     parallelism: ParallelismSettings = Field(default_factory=ParallelismSettings)
     vdp: VdpModeSettings = Field(default_factory=VdpModeSettings)
+    diagnostics: DiagnosticsSettings = Field(default_factory=DiagnosticsSettings)
 
     # RAG設定
     rag_enabled: bool = True

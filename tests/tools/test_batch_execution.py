@@ -58,6 +58,7 @@ def test_httpx_batch_execution(mock_safe_run):
         # safe_run に -l オプションが渡されているか
         args, _kwargs = mock_safe_run.call_args
         cmd = args[0]
+        assert cmd[0] == "httpx"
         assert "-l" in cmd
         assert "/tmp/fake_batch.txt" in cmd
         

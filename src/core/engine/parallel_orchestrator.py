@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 import asyncio
 
-from src.config import settings
+from src.core.config.settings import settings
 from src.core.engine.adaptive_rate_limiter import AdaptiveRateLimiter, get_rate_limiter
 from src.core.engine.admission_policy import ActionAdmissionPolicy
 

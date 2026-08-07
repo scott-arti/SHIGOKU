@@ -10,6 +10,7 @@ import re
 import shlex
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -46,6 +47,10 @@ from src.core.learning.findings_repository import FindingsRepository  # noqa: E4
 from src.core.models.ops_artifacts import extract_host_from_url  # noqa: E402
 from src.reporting.runtime_control_release_gate import evaluate_gate_evidence_bundle  # noqa: E402
 from src.reporting.runtime_control_release_gate import evaluate_phase9_evidence_bundle  # noqa: E402
+from src.reporting.vdp_diagnostic import (  # noqa: E402
+    COVERAGE_NOTE,
+    analyze_observed_lineages,
+)
 from src.reporting.run_narrative_formatter import RunNarrativeFormatter  # noqa: E402
 from src.reporting.target_profile_formatter import TargetProfileFormatter  # noqa: E402
 from src.reporting.attack_path_formatter import AttackPathFormatter  # noqa: E402
@@ -98,6 +103,10 @@ VALIDATION_SUITES: dict[str, list[str]] = {
         "tests/unit/scripts/test_shigoku_ops_expected_detection_cli.py",
         "tests/unit/scripts/test_shigoku_ops_intent_cli.py",
         "tests/unit/cli/test_intent_parser.py",
+        # SGK-2026-0422: vdp gate CLI
+        "tests/unit/scripts/test_shigoku_ops_vdp_gate.py",
+        # SGK-2026-0425 M2: vdp diagnose CLI (plan §17.2)
+        "tests/unit/scripts/test_shigoku_ops_vdp_diagnose.py",
     ],
     "runtime_control": [
         "tests/unit/reporting/test_runtime_control_release_gate.py",
@@ -197,17 +206,386 @@ def _emit_command_payload(args: argparse.Namespace, payload: dict[str, Any]) -> 
     _emit_payload(payload, output_json=output_json)
 
 
+def _write_json_atomic(path: Path, data: dict[str, Any]) -> Path:
+    """Atomically write a JSON artifact: temp file in the SAME directory,
+    then os.replace — a partial artifact is never left under the official
+    filename. PermissionError/OSError propagate (never swallowed)."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=str(path.parent),
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as fh:
+            tmp_path = Path(fh.name)
+            json.dump(data, fh, sort_keys=True, ensure_ascii=False, indent=2)
+        os.replace(str(tmp_path), str(path))
+        tmp_path = None
+    finally:
+        # Best-effort cleanup of the temp file on failure; never mask the
+        # original exception.
+        if tmp_path is not None:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+    return path
+
+
+def _load_vdp_key_provider(path: Any) -> dict | None:
+    """Public-key-only provider {key_id: bytes} from a VDP key registry JSON.
+
+    SGK-2026-0423 close-out: the registry serialization is public data
+    (``{"schema_version": 1, "keys": {key_id: {"public_key": <hex>}}}``);
+    parsed directly so the CLI never imports engine modules (0422
+    structural boundary). Missing/malformed → None (fail-closed: proofs
+    stay unverifiable).
+    """
+    if not path:
+        return None
+    try:
+        import json as _json
+
+        registry_path = Path(str(path))
+        if not registry_path.exists():
+            return None
+        data = _json.loads(registry_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    keys = data.get("keys") if isinstance(data, dict) else None
+    if not isinstance(keys, dict) or not keys:
+        return None
+    provider: dict = {}
+    for key_id, entry in keys.items():
+        if not isinstance(entry, dict):
+            continue
+        raw = str(entry.get("public_key", "") or "")
+        try:
+            provider[str(key_id)] = bytes.fromhex(raw)
+        except ValueError:
+            continue
+    return provider or None
+
+
+def _run_vdp_gate(args: argparse.Namespace) -> int:
+    """Handle 'vdp gate' — separated VDP quality gate (training|real)."""
+    from src.core.utils.json_utils import safe_json_loads
+    from src.reporting.vdp_gates import evaluate_vdp_gate
+
+    session_path = Path(args.session).expanduser().resolve() if args.session else None
+    if session_path is None or not session_path.exists():
+        payload = {
+            "status": "blocked",
+            "reason_codes": ["session_required_for_vdp_gate"],
+            "profile": args.profile,
+        }
+        _emit_command_payload(args, payload)
+        return 2
+
+    session_data = safe_json_loads(
+        session_path.read_text(encoding="utf-8"),
+        context=f"vdp_gate:{session_path.name}",
+    )
+
+    consistency_status = "consistent"
+    consistency_reason_codes: list[str] = []
+    vdp_key_provider = _load_vdp_key_provider(getattr(args, "vdp_key_registry", None))
+    if args.report:
+        # Audit I-07: a separated report group must be manifest-verified
+        # before its content is consumed by the gate.
+        rejected = _reject_unverified_separated_group(args.report, args)
+        if rejected is not None:
+            return rejected
+        consistency = verify_report_session_consistency(
+            Path(args.report),
+            session_path=session_path,
+            sessions_dir=Path(args.sessions_dir) if args.sessions_dir else None,
+            public_key_provider=vdp_key_provider,
+        )
+        consistency_status = str(consistency.get("status", "") or "").strip().lower()
+        consistency_reason_codes = [
+            str(c) for c in consistency.get("reason_codes", [])
+        ]
+        # real profile: continue only when consistency is consistent.
+        if args.profile == "real" and consistency_status != "consistent":
+            payload = {
+                "status": "blocked",
+                "reason_codes": [f"consistency_{consistency_status}"] + consistency_reason_codes,
+                "profile": args.profile,
+                "consistency": consistency,
+            }
+            _emit_command_payload(args, payload)
+            return 2
+
+    gate = evaluate_vdp_gate(
+        args.profile,
+        session_data,
+        labels_path=Path(args.labels) if getattr(args, "labels", None) else None,
+        consistency_status=consistency_status,
+        consistency_reason_codes=consistency_reason_codes,
+        public_key_provider=vdp_key_provider,
+    )
+    payload = gate.to_dict()
+    if args.report:
+        payload["consistency"] = {
+            "status": consistency_status,
+            "reason_codes": consistency_reason_codes,
+        }
+    _emit_command_payload(args, payload)
+
+    status = str(payload.get("status", "") or "").strip().lower()
+    decision = str(payload.get("decision", "") or "").strip().lower()
+    # exit: 0=pass/go, 2=blocked/hold/input-missing, 3=fail/no_go
+    if status == "pass" and decision in {"", "go"}:
+        return 0
+    if decision == "no_go" or status == "fail":
+        return 3
+    return 2
+
+
+def _run_vdp_diagnose(args: argparse.Namespace) -> int:
+    """Handle 'vdp diagnose' — read-only, artifact-only first-failure
+    diagnosis of a session's ``vdp_diagnostics_v1`` telemetry
+    (SGK-2026-0425 M2).
+
+    - when ``--report`` is given, the official consistency checker ALWAYS
+      runs first (regardless of session explicitness) and any verdict other
+      than ``consistent`` blocks the artifact (exit 2);
+    - the JSON artifact is deep-redacted, hash/count-only and written
+      atomically; an existing artifact with a DIFFERENT
+      ``diagnostics_section_hash`` is refused, the same hash is an idempotent
+      success;
+    - no ``--labels`` / ground-truth argument exists; recall / S01-miss
+      estimates are NEVER output (plan §5.2 / §11 test 24).
+    """
+    from src.core.engine.master_conductor_session_service import (
+        load_session_payload_from_path,
+    )
+    from src.core.models.vdp_contract import redact_secrets_deep
+    from src.reporting.vdp_canonical import extract_vdp_canonical
+
+    session_path = Path(args.session).expanduser().resolve()
+    output_path = Path(args.output).expanduser().resolve()
+    report_path = (
+        Path(args.report).expanduser().resolve()
+        if getattr(args, "report", None)
+        else None
+    )
+
+    try:
+        session_data = load_session_payload_from_path(str(session_path))
+    except OSError:
+        session_data = None
+    if not isinstance(session_data, dict):
+        print(
+            f"vdp diagnose: session missing or unreadable: {session_path}",
+            file=sys.stderr,
+        )
+        if bool(getattr(args, "json", False)):
+            _emit_command_payload(
+                args,
+                {
+                    "status": "blocked",
+                    "reason_codes": ["session_missing_or_unreadable"],
+                    "session_path": str(session_path),
+                },
+            )
+        return 2
+
+    vdp_key_provider = _load_vdp_key_provider(getattr(args, "vdp_key_registry", None))
+    if report_path is not None:
+        # Consumer-side manifest enforcement for separated report groups
+        # (audit I-07), then the official consistency checker.
+        rejected = _reject_unverified_separated_group(report_path, args)
+        if rejected is not None:
+            return rejected
+        consistency = verify_report_session_consistency(
+            report_path,
+            session_path=session_path,
+            public_key_provider=vdp_key_provider,
+        )
+        if str(consistency.get("status", "") or "").strip().lower() != "consistent":
+            print(
+                json.dumps(consistency, ensure_ascii=False, indent=2),
+                file=sys.stderr,
+            )
+            if bool(getattr(args, "json", False)):
+                _emit_command_payload(
+                    args,
+                    {
+                        "status": "blocked",
+                        "reason_codes": ["consistency_not_consistent"]
+                        + [str(c) for c in consistency.get("reason_codes", [])],
+                        "report_path": str(report_path),
+                    },
+                )
+            return 2
+
+    diag_section = session_data.get("vdp_diagnostics_v1")
+    if "vdp_diagnostics_v1" in session_data and not isinstance(diag_section, dict):
+        print(
+            "vdp diagnose: vdp_diagnostics_v1 section invalid (not a dict)",
+            file=sys.stderr,
+        )
+        if bool(getattr(args, "json", False)):
+            _emit_command_payload(
+                args,
+                {
+                    "status": "blocked",
+                    "reason_codes": ["diagnostic_section_invalid"],
+                    "session_path": str(session_path),
+                },
+            )
+        return 2
+    events = diag_section.get("events") if isinstance(diag_section, dict) else []
+    if not isinstance(events, list):
+        events = []
+
+    try:
+        analysis = analyze_observed_lineages(
+            events,
+            canonical_summary=extract_vdp_canonical(session_data).to_dict(),
+        )
+    except Exception as exc:
+        print(f"vdp diagnose: runtime error: {exc}", file=sys.stderr)
+        return 3
+
+    events_hash = "sha256:" + hashlib.sha256(
+        json.dumps(events, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+
+    artifact = redact_secrets_deep(
+        {
+            "schema_version": 1,
+            "command": "vdp diagnose",
+            "session_path": str(session_path),
+            "report_path": str(report_path) if report_path is not None else None,
+            "analysis": analysis,
+            "diagnostics_section_hash": events_hash,
+            "coverage_note": COVERAGE_NOTE,
+        }
+    )
+
+    # Overwrite protection: an existing artifact must carry the SAME
+    # diagnostics_section_hash (idempotent success, no rewrite); a different
+    # hash is refused and nothing is written.
+    if output_path.exists():
+        try:
+            existing = json.loads(output_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            existing = None
+        if (
+            not isinstance(existing, dict)
+            or existing.get("diagnostics_section_hash") != events_hash
+        ):
+            print(
+                f"vdp diagnose: refusing to overwrite {output_path}: existing "
+                "artifact has a different diagnostics_section_hash",
+                file=sys.stderr,
+            )
+            if bool(getattr(args, "json", False)):
+                _emit_command_payload(
+                    args,
+                    {
+                        "status": "blocked",
+                        "reason_codes": ["output_hash_conflict"],
+                        "output": str(output_path),
+                    },
+                )
+            return 2
+    else:
+        try:
+            _write_json_atomic(output_path, artifact)
+        except OSError as exc:
+            print(
+                f"vdp diagnose: runtime error: cannot write artifact: {exc}",
+                file=sys.stderr,
+            )
+            return 3
+
+    # stdout carries the human summary; the compact JSON payload is emitted
+    # only with the global --json flag. stderr stays empty on success.
+    first_failures = sum(
+        1
+        for lineage in (analysis.get("lineages") or [])
+        if isinstance(lineage, dict) and lineage.get("first_failure") is not None
+    )
+    stage_counts: dict[str, int] = {}
+    for ev in events:
+        if isinstance(ev, dict) and isinstance(ev.get("stage_id"), str):
+            key = str(ev["stage_id"])
+            stage_counts[key] = stage_counts.get(key, 0) + 1
+    print(
+        f"diagnostic: events={len(events)} first_failures={first_failures} "
+        f"stage_counts={json.dumps(stage_counts, sort_keys=True, ensure_ascii=False)} "
+        f"coverage_note={COVERAGE_NOTE}"
+    )
+    if bool(getattr(args, "json", False)):
+        _emit_command_payload(
+            args,
+            {
+                "status": "ok",
+                "command": "vdp diagnose",
+                "session_path": str(session_path),
+                "report_path": str(report_path) if report_path is not None else None,
+                "output": str(output_path),
+                "events": len(events),
+                "first_failures": first_failures,
+                "coverage_note": COVERAGE_NOTE,
+            },
+        )
+    return 0
+
+
+def _reject_unverified_separated_group(report_path: Any, args: argparse.Namespace) -> int | None:
+    """Consumer-side manifest enforcement (SGK-2026-0422 audit I-07).
+
+    When ``report_path`` is a member of a separated report group, the group
+    completion manifest MUST exist and all recorded files MUST match their
+    sha256. Returns an exit code when the artifact is rejected (None when
+    the report is a plain single-file report or the group verifies).
+    """
+    try:
+        from src.reporting.vdp_report_projection import verify_separated_group
+    except Exception:
+        return None
+    check = verify_separated_group(report_path)
+    if check["ok"]:
+        return None
+    payload = {
+        "status": "fail",
+        "reason_codes": [str(check.get("reason", "separated_manifest_invalid"))],
+        "manifest": check.get("manifest"),
+    }
+    _emit_command_payload(args, payload)
+    return 3
+
+
 def _run_report_consistency(args: argparse.Namespace) -> int:
+    rejected = _reject_unverified_separated_group(args.report, args)
+    if rejected is not None:
+        return rejected
     verdict = verify_report_session_consistency(
         Path(args.report),
         session_path=Path(args.session) if args.session else None,
         sessions_dir=Path(args.sessions_dir) if args.sessions_dir else None,
+        public_key_provider=_load_vdp_key_provider(
+            getattr(args, "vdp_key_registry", None)
+        ),
     )
     _emit_command_payload(args, verdict)
     return _status_exit_code(verdict.get("status"), ok="consistent", fail="inconsistent")
 
 
 def _run_report_gate(args: argparse.Namespace) -> int:
+    rejected = _reject_unverified_separated_group(args.report, args)
+    if rejected is not None:
+        return rejected
     if args.set_locked_baseline:
         result = set_locked_baseline(
             Path(args.report),
@@ -243,6 +621,9 @@ def _run_report_gate(args: argparse.Namespace) -> int:
 
 
 def _run_report_loop(args: argparse.Namespace) -> int:
+    rejected = _reject_unverified_separated_group(args.report, args)
+    if rejected is not None:
+        return rejected
     finding_fields = _resolve_finding_fields(
         args.finding_fields,
         getattr(args, "finding_preset", None),
@@ -1803,6 +2184,10 @@ def build_parser() -> argparse.ArgumentParser:
     report_consistency.add_argument("--report", required=True, help="Path to haddix_report_*.md")
     report_consistency.add_argument("--session", help="Optional explicit session_*.json path")
     report_consistency.add_argument("--sessions-dir", help="Optional sessions directory path")
+    report_consistency.add_argument(
+        "--vdp-key-registry",
+        help="Optional VDP key registry JSON (public keys only) for proof verification.",
+    )
     report_consistency.set_defaults(handler=_run_report_consistency)
 
     report_gate = report_sub.add_parser(
@@ -2267,6 +2652,68 @@ def build_parser() -> argparse.ArgumentParser:
         help="Gate evaluation phase. 'phase9' routes to Phase 9 specific evaluator with extended metrics.",
     )
     runtime_control_gate.set_defaults(handler=_run_runtime_control_gate)
+
+    # SGK-2026-0422: separated VDP quality gates (training | real).
+    vdp_parser = top.add_parser("vdp", help="VDP quality gate operations")
+    vdp_sub = vdp_parser.add_subparsers(dest="action", required=True)
+
+    vdp_gate = vdp_sub.add_parser(
+        "gate",
+        help=(
+            "Evaluate the separated VDP quality gate. "
+            "--profile training requires --labels; --profile real accepts "
+            "an optional --report and only continues when consistency is "
+            "consistent."
+        ),
+    )
+    vdp_gate.add_argument(
+        "--profile",
+        required=True,
+        choices=["training", "real"],
+        help="Gate profile: training capability gate or real VDP run-quality gate.",
+    )
+    vdp_gate.add_argument("--session", help="Path to session_*.json (required)")
+    vdp_gate.add_argument("--report", help="Optional haddix_report_*.md path (real profile)")
+    vdp_gate.add_argument("--sessions-dir", help="Optional sessions directory for --report")
+    vdp_gate.add_argument(
+        "--vdp-key-registry",
+        help=(
+            "Optional VDP key registry JSON (public keys only) so confirmed "
+            "proofs are verified (SGK-2026-0423 close-out)."
+        ),
+    )
+    vdp_gate.add_argument(
+        "--labels",
+        help="Label manifest (fixture-manifest JSON) — REQUIRED for the training profile.",
+    )
+    vdp_gate.set_defaults(handler=_run_vdp_gate)
+
+    # SGK-2026-0425 M2: read-only artifact-only first-failure diagnosis.
+    # NO --labels / ground-truth argument (plan §11 test 24).
+    vdp_diagnose = vdp_sub.add_parser(
+        "diagnose",
+        help=(
+            "Read-only artifact-only first-failure diagnosis of a session's "
+            "vdp_diagnostics_v1 telemetry. When --report is given the "
+            "official consistency checker always runs first and any verdict "
+            "other than consistent blocks the artifact."
+        ),
+    )
+    vdp_diagnose.add_argument("--session", required=True, help="Path to session_*.json")
+    vdp_diagnose.add_argument(
+        "--report",
+        help="Optional haddix_report_*.md path — consistency checker runs first.",
+    )
+    vdp_diagnose.add_argument(
+        "--output",
+        required=True,
+        help="Path for the JSON diagnostic artifact (atomic write, overwrite-protected).",
+    )
+    vdp_diagnose.add_argument(
+        "--vdp-key-registry",
+        help="Optional VDP key registry JSON (public keys only) for proof verification.",
+    )
+    vdp_diagnose.set_defaults(handler=_run_vdp_diagnose)
 
     ops_parser = top.add_parser("ops", help="Operational hardening helpers")
     ops_sub = ops_parser.add_subparsers(dest="action", required=True)

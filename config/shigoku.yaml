@@ -52,10 +52,43 @@ parallelism:
   shadow_mode: true
   default_executor: serial
 
-# VDP (SGK-2026-0420): off | record_only | shadow (default: off)
+# VDP (SGK-2026-0420/0421): off | record_only | shadow | readonly_enforce (default: off)
+#   readonly_enforce (M3a): 読取系follow-upのみをfull admission/scope/budget/HITL gateで実行
 vdp:
   mode: "off"
+  # M3a is fail-closed unless the program explicitly allows the action.
+  # capability_rules:
+  #   follow_up_probe: "allowed"
+  # kill_switch: false   # SGK-2026-0421/0423: true で queue投入前・通信直前の両方でVDP follow-upを停止
   # label_leakage_denylist: []   # 製品名等を拒否リストへ追加する場合
+  #
+  # SGK-2026-0423: 段階導入 (m0..m4)。"" なら mode から導出。明示stageはmodeを超える昇格には使えない。
+  # stage: ""
+  # stage_flags: {}      # 各段階の独立無効化（false にするとその段階以上が cap される）
+  #   # m3b: false
+  #   # m3c: false
+  #   # m4: false
+  #
+  # SGK-2026-0423: confirmed鍵 provider / registry（enforce段階 M3a+ では home フォールバック禁止）
+  # key_provider: "env"  # env | file | env_or_file（enforce では env か file の明示のみ）
+  # key_env_var: "SHIGOKU_VDP_SIGNING_KEY"
+  # key_file_path: ""    # 明示パス（enforce では必須; ~ フォールバックは行わない）
+  # key_registry_path: ""   # version付きkey registry JSON（enforce では必須）
+  # progression_records_path: ""  # M0-M4 進級実証記録（M3b 以上は必須。設定だけで状態変更を有効化できない）
+  # thresholds_path: ""       # hidden holdout 用 frozen threshold artifact
+
+# SGK-2026-0425: VDP診断telemetry（additive。default off で既存出力と bit 単位同一）
+#   enabled=false: 診断event収集なし（通常run。既存経路を維持）
+#   required=true:  評価run。hook失敗時は次のネットワーク通信前に停止・checkpoint・Hold
+#   max_events / max_artifact_bytes / checkpoint_interval_events / event_queue_capacity:
+#     イベント・artifact上限（不正値は fail-closed で既定値へ）
+diagnostics:
+  enabled: false
+  required: false
+  max_events: 2000
+  max_artifact_bytes: 10485760
+  checkpoint_interval_events: 500
+  event_queue_capacity: 5000
 
 # LLM の設定場所です。モデルを変える時は、下の providers → profiles → roles の順で確認します。
 # API キーそのものはここに書かず、api_key_env で指定した OS 環境変数にだけ設定します。

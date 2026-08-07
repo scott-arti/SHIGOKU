@@ -11,7 +11,7 @@ from src.core.agents.swarm.injection.manager_internal.unknown_hypotheses import 
 from src.core.agents.swarm.injection.manager_internal.api_probe_payload import (
     extract_mass_assignment_schema_candidates,
 )
-from src.config import settings
+from src.core.config.settings import settings
 
 @pytest.mark.asyncio
 async def test_injection_manager_delegation():

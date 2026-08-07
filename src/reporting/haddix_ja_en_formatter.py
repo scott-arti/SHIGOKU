@@ -53,6 +53,18 @@ class HaddixJaEnFormatter:
         self._scenario_coverage: Dict[str, Any] = {}
         self._vulnerability_family_coverage: Dict[str, Any] = {}
         self._initial_release_gate: Dict[str, Any] = {}
+        # SGK-2026-0422: optional immutable canonical VDP summary. When set
+        # for a canonical_vdp session, the VDP funnel/verdicts section is
+        # appended from the same shared projection and the machine-readable
+        # canonical index is embedded.
+        self._vdp_canonical_summary: Any = None
+
+    def set_vdp_canonical_summary(self, summary) -> None:
+        """Attach the immutable canonical VDP summary (reporting read-only)."""
+        self._vdp_canonical_summary = summary
+
+    def _required_report_sections(self) -> Optional[List[str]]:
+        return ["# SHIGOKU", "# Submission Report"]
 
     # ------------------------------------------------------------------
     # Setters (mirror HaddixFormatter interface)
@@ -526,11 +538,31 @@ class HaddixJaEnFormatter:
         # English Submission Section
         lines.extend(self._format_english_section())
 
+        # SGK-2026-0422: canonical VDP funnel/verdicts (shared projection).
+        if self._vdp_canonical_summary is not None:
+            from src.reporting.vdp_report_projection import render_vdp_section_markdown
+            if lines and lines[-1] != "":
+                lines.append("")
+            lines.extend(render_vdp_section_markdown(self._vdp_canonical_summary))
+
         return "\n".join(lines)
 
     def save_markdown(self, output_path: Path) -> None:
-        """Write the paired report to a file."""
+        """Write the paired report to a file (SGK-2026-0422 atomic promotion
+        when a canonical VDP summary is attached)."""
         content = self.format_markdown()
+        if self._vdp_canonical_summary is not None:
+            from src.reporting.vdp_report_projection import (
+                atomic_write_report,
+                embed_vdp_canonical_index,
+            )
+            content = embed_vdp_canonical_index(content, self._vdp_canonical_summary)
+            atomic_write_report(
+                output_path,
+                content,
+                required_sections=self._required_report_sections(),
+            )
+            return
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(content, encoding="utf-8")
 
@@ -562,6 +594,7 @@ def generate_haddix_ja_en_report(
     vulnerability_family_coverage: Optional[Dict[str, Any]] = None,
     initial_release_gate: Optional[Dict[str, Any]] = None,
     source_session: str = "",
+    vdp_canonical_summary: Any = None,
 ) -> None:
     """
     Generate a ja-en paired Haddix report from findings.
@@ -576,6 +609,9 @@ def generate_haddix_ja_en_report(
         vulnerability_family_coverage: Vulnerability family coverage gate data.
         initial_release_gate: Initial release gate evaluation result.
         source_session: Path to the source session file.
+        vdp_canonical_summary: Optional immutable canonical VDP summary
+            (SGK-2026-0422) — appends the shared VDP funnel/verdicts section
+            and embeds the machine-readable canonical index.
     """
     formatter = HaddixJaEnFormatter()
     formatter.set_target(target, program_name)
@@ -584,6 +620,8 @@ def generate_haddix_ja_en_report(
     formatter.set_scenario_coverage(scenario_coverage or {})
     formatter.set_vulnerability_family_coverage(vulnerability_family_coverage or {})
     formatter.set_initial_release_gate(initial_release_gate or {})
+    if vdp_canonical_summary is not None:
+        formatter.set_vdp_canonical_summary(vdp_canonical_summary)
 
     for f in findings:
         formatter.add_finding_from_dict(f)

@@ -1,18 +1,22 @@
 ---
 task_id: SGK-2026-0418
 doc_type: plan
-status: active
+status: done
 parent_task_id: SGK-2026-0416
 related_docs:
 - docs/shigoku/plans/done/2026-07-31_session-evidence-summary-labeling-and-juice-shop-vdp-readiness-assessment_plan.md
 - docs/shigoku/subtasks/done/2026-07-31_sgk-2026-0419_vdp-evidence-schema-safety-budget-and-recovery-foundation_subtask_plan.md
 - docs/shigoku/subtasks/done/2026-07-31_sgk-2026-0420_vdp-capability-driven-hypothesis-generation-shadow-workflow_subtask_plan.md
-- docs/shigoku/subtasks/2026-07-31_sgk-2026-0421_vdp-evidence-gap-driven-verification-and-safe-follow-up_subtask_plan.md
-- docs/shigoku/subtasks/2026-07-31_sgk-2026-0422_vdp-canonical-evidence-reporting-and-separated-quality-gates_subtask_plan.md
-- docs/shigoku/subtasks/2026-07-31_sgk-2026-0423_vdp-hidden-holdout-evaluation-shadow-rollout-and-recovery_subtask_plan.md
+- docs/shigoku/subtasks/done/2026-07-31_sgk-2026-0421_vdp-evidence-gap-driven-verification-and-safe-follow-up_subtask_plan.md
+- docs/shigoku/subtasks/done/2026-07-31_sgk-2026-0422_vdp-canonical-evidence-reporting-and-separated-quality-gates_subtask_plan.md
+- docs/shigoku/subtasks/done/2026-07-31_sgk-2026-0423_vdp-hidden-holdout-evaluation-shadow-rollout-and-recovery_subtask_plan.md
+- docs/shigoku/subtasks/2026-08-05_sgk-2026-0424_vdp-m3a-readonly-pilot_subtask_plan.md
+- docs/shigoku/subtasks/done/2026-08-05_sgk-2026-0425_vdp-causal-attack-funnel-diagnosis_subtask_plan.md
+- docs/shigoku/reports/2026-08-05_sgk-2026-0418_vdp-capability-benchmark-and-evidence-contract_work_report.md
+- docs/shigoku/worklogs/2026-08-05_sgk-2026-0418_vdp-capability-benchmark-and-evidence-contract_work_log.md
 title: VDP capability benchmark and staged evidence system
 created_at: '2026-07-31'
-updated_at: '2026-08-03'
+updated_at: '2026-08-07'
 tags:
 - shigoku
 target: src/core/engine,src/core/agents/swarm,src/reporting,tests
@@ -22,11 +26,11 @@ target: src/core/engine,src/core/agents/swarm,src/reporting,tests
 
 ## 1. 達成したいゴール
 
-- [ ] 特定製品の既知脆弱性や固有URLを正解として使わず、未知のVDP対象でも探索の広さ、検証の深さ、証拠の完全性を測定できる。
-- [ ] 発見、仮説、実送信、追加検証、確定、反証、未検証を同じID系列で追跡できる。
-- [ ] 候補は脆弱性クラス固有の証拠がそろうまで確定へ昇格せず、インフラ障害や前提不足を陰性結果へ混ぜない。
-- [ ] 実VDPへの影響を抑えるため、record-only、shadow、限定enforce、全面enforceの順で段階導入できる。
-- [ ] 中断、依存停止、保存失敗、旧session読取時にも、誤判定や二重送信を起こさず回復できる。
+- [x] 特定製品の既知脆弱性や固有URLを正解として使わず、未知のVDP対象でも探索の広さ、検証の深さ、証拠の完全性を測定できる。
+- [x] 発見、仮説、実送信、追加検証、確定、反証、未検証を同じID系列で追跡できる。
+- [x] 候補は脆弱性クラス固有の証拠がそろうまで確定へ昇格せず、インフラ障害や前提不足を陰性結果へ混ぜない。
+- [x] 実VDPへの影響を抑えるため、record-only、shadow、限定enforce、全面enforceの順で段階導入できる。
+- [x] 中断、依存停止、保存失敗、旧session読取時にも、誤判定や二重送信を起こさず回復できる。
 
 ## 2. 設計原則
 
@@ -185,4 +189,3 @@ ID系列は observation_id -> hypothesis_id -> attempt_id -> evidence_id -> verd
 - real artifactでreport/session consistencyがconsistentとなる。
 - secret漏洩、scope逸脱、二重状態変更、理由不明confirmedが0件。
 - rollback、kill switch、中断再開が検証済み。
-

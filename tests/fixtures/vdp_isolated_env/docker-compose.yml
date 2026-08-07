@@ -1,0 +1,113 @@
+# Lane O-1 disposable isolated verification stack — SGK-2026-0423.
+#
+# Three containers, NO external network from runtime+fixture:
+#   - fixture-target:      the generic read-only fixture (internal network)
+#   - shigoku-runtime:     the M3a read-only production-path driver
+#   - holdout-evaluator:   one-shot holdout evaluator (network_mode: none,
+#                          profile "eval", run explicitly AFTER the runtime)
+#
+# The iso network is `internal: true`: no external egress for the fixture
+# and the runtime (docker pull of the base image is the only network use,
+# identical to the existing OS-boundary tests).
+#
+# Mounts (paths relative to THIS compose file):
+#   - repo (read-only) and the host .venv (read-only) at /repo
+#   - the host uv-python directory at its ABSOLUTE path (read-only) so the
+#     venv's python symlink resolves inside the container
+#     (resolve via: readlink -f .venv/bin/python)
+#   - ./out  (writable runtime output; thresholds are frozen HOST-side into
+#     out/eval/thresholds_v1.json BEFORE the runtime run — the runtime
+#     never reads them; the evaluator does)
+#   - ./logs (fixture access log; the POST=0 proof)
+#   - ./holdout_labels (read-only hidden-holdout label artifact)
+#
+# Overridable via environment: VDP_ISO_OUT_DIR, VDP_ISO_LOGS_DIR,
+# HOLDOUT_LABELS_DIR, UV_PYTHON_DIR.
+services:
+  fixture-target:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # Run as the host uid/gid (override via VDP_ISO_UID/VDP_ISO_GID) so the
+    # access log and output artifacts stay host-readable and the runtime
+    # (same uid) can read the fixture log for the POST=0 proof.
+    user: "${VDP_ISO_UID:-1000}:${VDP_ISO_GID:-1000}"
+    environment:
+      ACCESS_LOG_PATH: /logs/access.log
+    volumes:
+      - ${VDP_ISO_LOGS_DIR:-./logs}:/logs
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readonly-ok', timeout=2)"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+      start_period: 5s
+    networks:
+      - iso
+
+  shigoku-runtime:
+    image: python:3.13-slim
+    user: "${VDP_ISO_UID:-1000}:${VDP_ISO_GID:-1000}"
+    working_dir: /repo
+    command: [".venv/bin/python", "tests/fixtures/vdp_isolated_env/runtime_driver.py"]
+    environment:
+      PYTHONPATH: /repo
+      FIXTURE_BASE_URL: http://fixture-target:8000
+      OUT_DIR: /out
+      FIXTURE_SCOPE_HOST: fixture-target
+      TARGET_NAME: vdp-iso-fixture
+      ACCESS_LOG_PATH: /logs/access.log
+      # Dummy LLM key env vars (same convention as tests/conftest.py):
+      # config/shigoku.yaml references these via api_key_env and the
+      # Settings model validates them on every get_settings() call (the
+      # network client reads the proxy URL via get_settings()).
+      DEEPSEEK_API_KEY: iso-fixture-dummy
+      OPENAI_API_KEY: iso-fixture-dummy
+      DEEPINFRA_API_KEY: iso-fixture-dummy
+      WANDB_API_KEY: iso-fixture-dummy
+      Cerebras_API_KEY: iso-fixture-dummy
+      ANY_LLM_API_KEY: iso-fixture-dummy
+    volumes:
+      - ../../..:/repo:ro
+      - ../../../.venv:/repo/.venv:ro
+      - ${UV_PYTHON_DIR:-/home/bbb/.local/share/uv/python/cpython-3.13.5-linux-x86_64-gnu}:/home/bbb/.local/share/uv/python/cpython-3.13.5-linux-x86_64-gnu:ro
+      - ${VDP_ISO_OUT_DIR:-./out}:/out
+      - ${VDP_ISO_LOGS_DIR:-./logs}:/logs:ro
+    depends_on:
+      fixture-target:
+        condition: service_healthy
+    networks:
+      - iso
+
+  holdout-evaluator:
+    image: python:3.13-slim
+    profiles: ["eval"]
+    restart: "no"
+    network_mode: "none"
+    user: "${VDP_ISO_UID:-1000}:${VDP_ISO_GID:-1000}"
+    working_dir: /repo
+    command: [".venv/bin/python", "tests/fixtures/vdp_isolated_env/evaluator_job.py"]
+    environment:
+      PYTHONPATH: /repo
+      LABELS_PATH: /labels/labels.json
+      THRESHOLDS_PATH: /out/eval/thresholds_v1.json
+      SESSION_PATH: /out/session_latest.json
+      RESULT_PATH: /out/eval/holdout_result_iso.json
+      # Dummy LLM key env vars (same convention as tests/conftest.py) so
+      # any Settings-model validation inside the reporting path succeeds.
+      DEEPSEEK_API_KEY: iso-fixture-dummy
+      OPENAI_API_KEY: iso-fixture-dummy
+      DEEPINFRA_API_KEY: iso-fixture-dummy
+      WANDB_API_KEY: iso-fixture-dummy
+      Cerebras_API_KEY: iso-fixture-dummy
+      ANY_LLM_API_KEY: iso-fixture-dummy
+    volumes:
+      - ../../..:/repo:ro
+      - ../../../.venv:/repo/.venv:ro
+      - ${UV_PYTHON_DIR:-/home/bbb/.local/share/uv/python/cpython-3.13.5-linux-x86_64-gnu}:/home/bbb/.local/share/uv/python/cpython-3.13.5-linux-x86_64-gnu:ro
+      - ${VDP_ISO_OUT_DIR:-./out}:/out
+      - ${HOLDOUT_LABELS_DIR:-./holdout_labels}:/labels:ro
+
+networks:
+  iso:
+    internal: true

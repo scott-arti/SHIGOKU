@@ -32,6 +32,10 @@ dependencies = [
     "redis>=5.0.0",           # Checkpoint persistence
     "scipy>=1.11.0",          # Statistical detection (Mann-Whitney U)
     "playwright>=1.40.0",   # XSS detection (optional)
+    # ===== SGK-2026-0422: Ed25519 confirmed-verdict signing =====
+    # Direct dependency promotion of an already-resolved lock entry
+    # (pygithub -> pyjwt -> cryptography chain). No new package is added.
+    "cryptography==46.0.4",
 ]
 
 [project.scripts]

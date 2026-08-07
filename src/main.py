@@ -29,7 +29,7 @@ from src.core.factory import AgentFactory
 from src.core.models.llm import LLMClient
 from src.core.recon.orchestrator import ReconOrchestrator
 from src.core.domain.scope.scope_manager import ScopeManager
-from src.config import settings
+from src.core.config.settings import settings
 from src.core.preflight import EntryGateFacade, PreflightContext, GatePolicy
 
 logger = logging.getLogger(__name__)
@@ -175,6 +175,7 @@ def _auto_generate_standard_reports_for_target(target: str) -> dict[str, Path] |
                 )
         vulnerability_family_coverage = raw_coverage_gate if isinstance(raw_coverage_gate, dict) else {}
         report_target = session_data.get("goal_target") or target
+        vdp_summary = _maybe_vdp_canonical_summary(session_data)
 
         generate_haddix_report(
             findings=haddix_findings,
@@ -186,6 +187,13 @@ def _auto_generate_standard_reports_for_target(target: str) -> dict[str, Path] |
             vulnerability_family_coverage=vulnerability_family_coverage,
             initial_release_gate={},
             source_session=str(session_path.resolve()),
+            vdp_canonical_summary=vdp_summary,
+            vdp_diagnostics_section=session_data.get("vdp_diagnostics_v1"),
+            vdp_run_outcome=(
+                session_data.get("vdp_contract", {}).get("run_outcome")
+                if isinstance(session_data.get("vdp_contract"), dict)
+                else None
+            ),
         )
         gate_result = evaluate_initial_release_gate(
             haddix_report_path,
@@ -212,6 +220,13 @@ def _auto_generate_standard_reports_for_target(target: str) -> dict[str, Path] |
             vulnerability_family_coverage=vulnerability_family_coverage,
             initial_release_gate=gate_result,
             source_session=str(session_path.resolve()),
+            vdp_canonical_summary=vdp_summary,
+            vdp_diagnostics_section=session_data.get("vdp_diagnostics_v1"),
+            vdp_run_outcome=(
+                session_data.get("vdp_contract", {}).get("run_outcome")
+                if isinstance(session_data.get("vdp_contract"), dict)
+                else None
+            ),
         )
         haddix_gate_path.write_text(json.dumps(gate_result, ensure_ascii=False, indent=2), encoding="utf-8")
         haddix_deferred_path.write_text(
@@ -706,6 +721,21 @@ def _resolve_scn_catalog_for_report() -> list[dict[str, Any]]:
             }
         )
     return normalized
+
+
+def _maybe_vdp_canonical_summary(session_data: dict[str, Any]):
+    """Build the canonical VDP summary when the session carries a
+    ``vdp_contract`` section (SGK-2026-0422). Returns None for legacy
+    sessions so existing report paths keep their legacy behaviour."""
+    try:
+        from src.reporting.finding_extractor import extract_vdp_canonical
+
+        summary = extract_vdp_canonical(session_data)
+        if summary.source_kind == "canonical_vdp":
+            return summary
+    except Exception:
+        return None
+    return None
 
 
 def _extract_findings_and_execution_notes(
@@ -3270,6 +3300,7 @@ def main():
                 if isinstance(raw_coverage_gate, dict):
                     vulnerability_family_coverage = raw_coverage_gate
                 report_target = session_data.get("goal_target", args.target)
+                vdp_summary = _maybe_vdp_canonical_summary(session_data)
 
                 heuristic_budget = int(getattr(settings, "report_heuristic_max_candidates", 6) or 6)
                 if haddix_findings:
@@ -3403,6 +3434,7 @@ def main():
                     vulnerability_family_coverage=vulnerability_family_coverage,
                     initial_release_gate={},
                     source_session=str(Path(session_file).resolve()),
+                    vdp_canonical_summary=vdp_summary,
                 )
 
                 raw_allowed_missing = getattr(
@@ -3460,10 +3492,40 @@ def main():
                     else None
                 )
 
-                gate_result = evaluate_initial_release_gate(
-                    output_path,
-                    session_path=Path(session_file),
-                    baseline_report_path=baseline_report_path,
+                # SGK-2026-0422 (audit I-05): canonical VDP sessions must use
+                # the real VDP run-quality gate — never the legacy
+                # initial-release gate with confirmed_min/candidate_max.
+                # Audit I-07: the gate MUST receive the MEASURED report/session
+                # consistency (never a hardcoded "consistent").
+                if vdp_summary is not None:
+                    from src.reporting.vdp_gates import evaluate_vdp_gate
+                    from src.reporting.report_session_consistency import (
+                        verify_report_session_consistency,
+                    )
+
+                    # The report was generated above (placeholder gate); verify
+                    # the ACTUAL generated artifact against its session so an
+                    # index-missing / index-mismatch report becomes No-Go.
+                    measured = verify_report_session_consistency(
+                        output_path,
+                        session_path=Path(session_file),
+                    )
+                    consistency_status = str(measured.get("status", "") or "").strip().lower()
+                    consistency_reason_codes = [
+                        str(c) for c in measured.get("reason_codes", [])
+                    ]
+                    gate_result = evaluate_vdp_gate(
+                        "real",
+                        session_data,
+                        public_key_provider=None,
+                        consistency_status=consistency_status,
+                        consistency_reason_codes=consistency_reason_codes,
+                    ).to_dict()
+                else:
+                    gate_result = evaluate_initial_release_gate(
+                        output_path,
+                        session_path=Path(session_file),
+                        baseline_report_path=baseline_report_path,
                     baseline_session_path=baseline_session_path,
                     allowed_missing_scenarios=allowed_missing_scenarios,
                     confirmed_min=max(
@@ -3506,6 +3568,7 @@ def main():
                     vulnerability_family_coverage=vulnerability_family_coverage,
                     initial_release_gate=gate_result,
                     source_session=str(Path(session_file).resolve()),
+                    vdp_canonical_summary=vdp_summary,
                 )
                 gate_output_path.write_text(
                     json.dumps(gate_result, ensure_ascii=False, indent=2),
@@ -3572,6 +3635,9 @@ def main():
 
                 # 共有抽出ヘルパーで findings + execution_notes を準備
                 ja_en_findings, ja_en_exec_notes = _extract_findings_and_execution_notes(session_data)
+
+                # 共有抽出ヘルパーで canonical VDP summary を準備（legacy は None）
+                vdp_summary = _maybe_vdp_canonical_summary(session_data)
 
                 # report_target を定義（haddix 分岐と同じ）
                 report_target = session_data.get("goal_target", args.target)
@@ -3778,6 +3844,7 @@ def main():
                         vulnerability_family_coverage=vulnerability_family_coverage,
                         initial_release_gate={},
                         source_session=str(Path(session_file).resolve()),
+                        vdp_canonical_summary=vdp_summary,
                     )
 
                     if not tmp_path.exists() or tmp_path.stat().st_size == 0:
@@ -3792,20 +3859,49 @@ def main():
                         tmp_path.unlink(missing_ok=True)
                     raise
 
-                # Gate 評価
-                gate_result = evaluate_initial_release_gate(
-                    tmp_path,
-                    session_path=Path(session_file),
-                    baseline_report_path=baseline_report_path,
-                    baseline_session_path=baseline_session_path,
-                    allowed_missing_scenarios=allowed_missing_scenarios,
-                    confirmed_min=max(0, int(getattr(settings, "report_initial_release_confirmed_min", 3) or 3)),
-                    candidate_max=max(0, int(getattr(settings, "report_initial_release_candidate_max", 2) or 2)),
-                    confirmed_poc_missing_max=max(0, int(getattr(settings, "report_initial_release_confirmed_poc_missing_max", 0) or 0)),
-                    reason_code_missing_max=max(0, int(getattr(settings, "report_initial_release_reason_code_missing_max", 0) or 0)),
-                    required_confirmed_classes=required_confirmed_classes,
-                    required_class_confirmed_min=max(0, int(getattr(settings, "report_initial_release_required_class_confirmed_min", 1) or 1)),
-                )
+                # SGK-2026-0422 (audit I-05): canonical VDP sessions must use
+                # the real VDP run-quality gate, never the legacy
+                # initial-release gate with confirmed_min/candidate_max.
+                # Audit I-07: the gate MUST receive the MEASURED report/session
+                # consistency (never a hardcoded "consistent").
+                if vdp_summary is not None:
+                    from src.reporting.vdp_gates import evaluate_vdp_gate
+                    from src.reporting.report_session_consistency import (
+                        verify_report_session_consistency,
+                    )
+
+                    # The temp report above IS the actual generated artifact;
+                    # verify it against its session so an index-missing /
+                    # index-mismatch report becomes No-Go.
+                    measured = verify_report_session_consistency(
+                        tmp_path,
+                        session_path=Path(session_file),
+                    )
+                    consistency_status = str(measured.get("status", "") or "").strip().lower()
+                    consistency_reason_codes = [
+                        str(c) for c in measured.get("reason_codes", [])
+                    ]
+                    gate_result = evaluate_vdp_gate(
+                        "real",
+                        session_data,
+                        public_key_provider=None,
+                        consistency_status=consistency_status,
+                        consistency_reason_codes=consistency_reason_codes,
+                    ).to_dict()
+                else:
+                    gate_result = evaluate_initial_release_gate(
+                        tmp_path,
+                        session_path=Path(session_file),
+                        baseline_report_path=baseline_report_path,
+                        baseline_session_path=baseline_session_path,
+                        allowed_missing_scenarios=allowed_missing_scenarios,
+                        confirmed_min=max(0, int(getattr(settings, "report_initial_release_confirmed_min", 3) or 3)),
+                        candidate_max=max(0, int(getattr(settings, "report_initial_release_candidate_max", 2) or 2)),
+                        confirmed_poc_missing_max=max(0, int(getattr(settings, "report_initial_release_confirmed_poc_missing_max", 0) or 0)),
+                        reason_code_missing_max=max(0, int(getattr(settings, "report_initial_release_reason_code_missing_max", 0) or 0)),
+                        required_confirmed_classes=required_confirmed_classes,
+                        required_class_confirmed_min=max(0, int(getattr(settings, "report_initial_release_required_class_confirmed_min", 1) or 1)),
+                    )
 
                 # Gate 結果を埋め込んだ最終レポートを再生成
                 generate_haddix_ja_en_report(
@@ -3818,10 +3914,14 @@ def main():
                     vulnerability_family_coverage=vulnerability_family_coverage,
                     initial_release_gate=gate_result,
                     source_session=str(Path(session_file).resolve()),
+                    vdp_canonical_summary=vdp_summary,
                 )
 
-                # Atomic rename to final path
-                shutil.move(str(tmp_path), str(output_path))
+                # SGK-2026-0422 (audit I-06): atomic promotion — os.replace
+                # only, never shutil.move (which is non-atomic cross-device).
+                import os as _os
+
+                _os.replace(str(tmp_path), str(output_path))
 
                 abs_path = str(output_path.resolve())
                 logger.info(f"ja-en report saved: {abs_path}")

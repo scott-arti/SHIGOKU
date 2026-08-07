@@ -596,8 +596,9 @@ def test_initial_release_gate_uses_session_raw_findings_summary_for_threshold_de
     verdict = evaluate_initial_release_gate(report_file)
     # With the P3 fix: Finding Policy Gate uses the report's findings summary
     # (Confirmed: 3 / Candidate: 0). The report has 3 >= 3 confirmed, so this
-    # passes. Session data (2 confirmed) is preserved in session_findings_summary
-    # for evidence quality comparison but does not override the finding policy.
+    # passes. Session data (2 unflagged findings) is preserved in
+    # session_findings_summary for evidence quality comparison but does not
+    # override the finding policy.
     assert verdict["status"] == "pass"
     assert "confirmed_below_minimum" not in verdict["reason_codes"]
     findings_summary = verdict["report_metrics"]["findings_summary"]
@@ -605,8 +606,16 @@ def test_initial_release_gate_uses_session_raw_findings_summary_for_threshold_de
     assert findings_summary["confirmed_count"] == 3
     assert findings_summary["candidate_count"] == 0
     assert verdict["report_metrics"]["report_findings_summary"]["confirmed_count"] == 3
-    # Session raw data (2 confirmed) is still available but does not override
-    assert verdict["report_metrics"]["session_findings_summary"]["confirmed_count"] == 2
+    # Session raw data (2 unflagged findings) is still available but does not
+    # override the report.  The display metadata must make clear that this is
+    # not a submission-confirmed count.
+    session_summary = verdict["report_metrics"]["session_findings_summary"]
+    assert session_summary["confirmed_count"] == 2
+    assert session_summary["classification_scope"] == "pre_evidence_quality_session_metadata"
+    assert session_summary["confirmed_count_label"] == (
+        "Raw findings without candidate flags (not submission-confirmed)"
+    )
+    assert session_summary["authoritative_confirmation_source"] == "report_findings_summary"
 
 
 def test_initial_release_gate_uses_session_detection_class_for_required_class_decision(tmp_path: Path) -> None:

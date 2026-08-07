@@ -1,0 +1,485 @@
+{
+  "schema_version": 1,
+  "taxonomy_version": "v2",
+  "content_hash": "sha256:b79206506bd9be6fac238070eb9bd38b26a517b1fc5134e9754630f6895ebd46",
+  "stages": [
+    "S00",
+    "S01",
+    "S02",
+    "S03",
+    "S04",
+    "S05",
+    "S06",
+    "S07",
+    "S08",
+    "S09",
+    "S10",
+    "S11",
+    "S12",
+    "U00"
+  ],
+  "stage_details": {
+    "S00": {
+      "name": "execution_contract_prep",
+      "reached_when": "対象面取得を始めるための許可・scope・target identity・初期budgetが評価可能",
+      "failure_examples": [
+        "対象の許可・scope・識別が不明で、安全に探索を開始できない"
+      ]
+    },
+    "S01": {
+      "name": "surface_acquisition",
+      "reached_when": "期待ケースに対応するraw producer artifactが存在",
+      "failure_examples": [
+        "crawl・proxy・schema・browser等の探索範囲に入らない"
+      ]
+    },
+    "S02": {
+      "name": "observation_normalization",
+      "reached_when": "raw artifactからtyped Observationが生成",
+      "failure_examples": [
+        "parser skip、正規化衝突、情報欠落、鮮度誤判定"
+      ]
+    },
+    "S03": {
+      "name": "hypothesis_generation",
+      "reached_when": "capability/actor/trust boundaryが一致するHypothesisRecordが存在",
+      "failure_examples": [
+        "観測を脆弱性仮説へ変換できない、誤った能力へ分類"
+      ]
+    },
+    "S04": {
+      "name": "prioritization",
+      "reached_when": "仮説が予算内の実行候補として選択",
+      "failure_examples": [
+        "diversity、ranking、探索枠、stop方針で正しい仮説が飢餓化"
+      ]
+    },
+    "S05": {
+      "name": "admission",
+      "reached_when": "scope/capability/budget/HITL gateが期待どおり許可または理由付き拒否",
+      "failure_examples": [
+        "安全上正当でないblock、必要前提を無視した許可、budget部分消費"
+      ]
+    },
+    "S06": {
+      "name": "routing",
+      "reached_when": "適合specialist/tool/recipeと必要依存へ割り当て",
+      "failure_examples": [
+        "誤specialist、能力不足tool、recipe不一致、必要依存unavailable"
+      ]
+    },
+    "S07": {
+      "name": "attempt_design",
+      "reached_when": "actor・owner・method・入力位置・baseline・attack・inverse・falsificationが整合するAttemptSpecを構成",
+      "failure_examples": [
+        "payload位置違い、比較actor違い、control不足、success条件不整合"
+      ]
+    },
+    "S08": {
+      "name": "execution_transport",
+      "reached_when": "許可されたrequestが一度だけ送信され、応答または明示的失敗を記録",
+      "failure_examples": [
+        "未送信、timeout、proxy/browser/OOB停止、二重送信防止block"
+      ]
+    },
+    "S09": {
+      "name": "response_interpretation",
+      "reached_when": "応答差・marker・状態差・timing等を構造化markerへ変換",
+      "failure_examples": [
+        "実レスポンスに信号があるのにAI/parserが意味を取れない"
+      ]
+    },
+    "S10": {
+      "name": "evidence_completion",
+      "reached_when": "required_evidenceと独立controlがすべて同一lineageに揃う",
+      "failure_examples": [
+        "第2actor、read-back、再訪問、相関OOB、統計反復が不足"
+      ]
+    },
+    "S11": {
+      "name": "adjudication",
+      "reached_when": "Evidence Validatorがcandidate/confirmed/refuted/untestedを根拠付きで出力",
+      "failure_examples": [
+        "十分な証拠を誤って保留・反証、理由不明confirmed"
+      ]
+    },
+    "S12": {
+      "name": "report_projection",
+      "reached_when": "canonical verdictと証拠参照がreportへ欠落なく投影されconsistent",
+      "failure_examples": [
+        "sessionでは成立したがreport/gateで欠落・誤集計"
+      ]
+    },
+    "U00": {
+      "name": "undeterminable",
+      "reached_when": "必要telemetryの欠損を具体的に記録",
+      "failure_examples": [
+        "古いsessionにraw producer履歴が無く、S01かS02か断定不能"
+      ]
+    }
+  },
+  "outcomes": [
+    "reached",
+    "skipped",
+    "blocked",
+    "failed"
+  ],
+  "causes": [
+    "C01",
+    "C02",
+    "C03",
+    "C04",
+    "C05",
+    "C06",
+    "C07",
+    "C08",
+    "C09",
+    "C10",
+    "C11",
+    "C12",
+    "C13"
+  ],
+  "cause_details": {
+    "C01": {
+      "family": "prerequisite/contract",
+      "examples": [
+        "actor、認証、許可、scope、状態初期化、OOB経路が不足"
+      ]
+    },
+    "C02": {
+      "family": "producer coverage",
+      "examples": [
+        "scanner/crawler/proxy/schema/browserの取得範囲・深さ不足"
+      ]
+    },
+    "C03": {
+      "family": "normalization/schema",
+      "examples": [
+        "parser、adapter、dedup、opaque正規化、型変換の欠陥"
+      ]
+    },
+    "C04": {
+      "family": "deterministic reasoning rule",
+      "examples": [
+        "capability分類、control、success/falsification規則の不足"
+      ]
+    },
+    "C05": {
+      "family": "model reasoning/context",
+      "examples": [
+        "同一入力でもLLM role/model差で正しい仮説・解釈へ到達しない"
+      ]
+    },
+    "C06": {
+      "family": "priority/orchestration",
+      "examples": [
+        "ranking、探索枠、stop条件、再計画、loop構造の不適合"
+      ]
+    },
+    "C07": {
+      "family": "agent/tool/recipe routing",
+      "examples": [
+        "specialist割当、tool能力、recipe選択、依存接続の不適合"
+      ]
+    },
+    "C08": {
+      "family": "attempt strategy",
+      "examples": [
+        "actor/owner、入力位置、比較control、最小PoC設計の不適合"
+      ]
+    },
+    "C09": {
+      "family": "budget/termination",
+      "examples": [
+        "request、follow-up、retry、時間、loop回数不足または無駄遣い"
+      ]
+    },
+    "C10": {
+      "family": "infrastructure/dependency",
+      "examples": [
+        "network、proxy、browser、OOB、queue、key、disk、process障害"
+      ]
+    },
+    "C11": {
+      "family": "safety/policy",
+      "examples": [
+        "admission、read-only、HITL、scope再検証、rate limitのblock"
+      ]
+    },
+    "C12": {
+      "family": "evidence/verdict/report",
+      "examples": [
+        "marker、Evidence Validator、proof、canonical extractor、formatter/gate"
+      ]
+    },
+    "C13": {
+      "family": "telemetry insufficient",
+      "examples": [
+        "原因を区別する記録がなく、反証実験も構成不能"
+      ]
+    }
+  },
+  "mechanism_codes": {
+    "C01": [],
+    "C02": [
+      "source_not_connected",
+      "asset_not_in_inventory",
+      "route_depth_exhausted",
+      "required_state_not_reached",
+      "protocol_not_supported",
+      "producer_failed",
+      "producer_budget_cutoff"
+    ],
+    "C03": [
+      "parse_rejected",
+      "field_dropped",
+      "normalization_collision",
+      "wrong_dedup",
+      "stale_discarded",
+      "type_contract_mismatch"
+    ],
+    "C04": [
+      "capability_misclassified",
+      "actor_owner_not_inferred",
+      "control_template_missing",
+      "success_falsification_mismatch"
+    ],
+    "C05": [
+      "schema_noncompliance",
+      "semantic_misinterpretation",
+      "unstable_reasoning"
+    ],
+    "C06": [
+      "priority_starvation",
+      "exploration_slot_missing",
+      "replan_not_triggered",
+      "premature_stop_with_pending_action",
+      "budget_spent_on_duplicates",
+      "iteration_cap_binding"
+    ],
+    "C07": [
+      "specialist_capability_mismatch",
+      "tool_capability_mismatch",
+      "recipe_contract_mismatch",
+      "dependency_not_routed"
+    ],
+    "C08": [
+      "wrong_actor_owner_pair",
+      "wrong_input_location",
+      "missing_baseline",
+      "missing_inverse",
+      "missing_falsification",
+      "request_fingerprint_mismatch"
+    ],
+    "C09": [
+      "priority_starvation",
+      "exploration_slot_missing",
+      "replan_not_triggered",
+      "premature_stop_with_pending_action",
+      "budget_spent_on_duplicates",
+      "iteration_cap_binding"
+    ],
+    "C10": [
+      "dependency_unavailable",
+      "transport_timeout",
+      "queue_backpressure",
+      "scope_block_expected",
+      "scope_block_incorrect",
+      "hitl_missing",
+      "rate_limit_stop",
+      "queue_mutation_off_main_thread"
+    ],
+    "C11": [
+      "dependency_unavailable",
+      "transport_timeout",
+      "queue_backpressure",
+      "scope_block_expected",
+      "scope_block_incorrect",
+      "hitl_missing",
+      "rate_limit_stop"
+    ],
+    "C12": [
+      "marker_not_extracted",
+      "independent_evidence_missing",
+      "validator_misclassification",
+      "proof_unverifiable",
+      "canonical_projection_missing",
+      "consistency_mismatch"
+    ],
+    "C13": [
+      "producer_trace_missing",
+      "stage_event_missing",
+      "lineage_broken",
+      "counterfactual_not_constructible",
+      "c13_unclassified_hold"
+    ]
+  },
+  "confidence_levels": [
+    "proven",
+    "supported",
+    "suspected",
+    "unattributable"
+  ],
+  "judgement_rules": [
+    "predecessorの到達証拠とsuccessorの欠落証拠がそろった地点だけをfirst failureにする",
+    "前提条件は必要になるstageで評価する。第2actorやOOB許可を一律S00へ繰り上げず、より早いsurface/observation失敗を隠さない",
+    "telemetryが足りない場合は推測せずU00とし、missing_artifactsへ必要なfield/sourceを列挙する",
+    "scope・capability・安全gateによる正当な拒否は検出能力の不具合と数えずS00/S05に記録する",
+    "record件数の比率だけでstage到達を決めず、opaqueな期待ケースIDごとにID系列とeventを照合する",
+    "report backfill、scenario coverage、LLMの説明文をraw到達証拠として使用しない",
+    "labelを持たないartifact-only診断は観測済みlineageの脱落だけを判定し、存在自体を観測できなかった脆弱性をS01へ分類できるのは隔離evaluatorがsealed expected pathと照合する場合だけである",
+    "follow-up/retryはiteration IDとparent NextActionを持つ同stageの反復として扱い、後のretry成功で最初の失敗記録を上書きしない"
+  ],
+  "anti_curve_fitting_prohibitions": [
+    "新規・変更code/config/prompt/recipe/runtime driverへ製品名・既知URL・既知parameter・challenge名・payload・expected finding countを入れない",
+    "clean diagnostic profileの依存closure・model-facing context・実行traceから既存製品固有branchが到達可能ならそのrunは汚染扱い",
+    "封印された外部監査対象(sealed external audit targets)の結果を見て同一eval versionのthreshold・prompt・recipe・priority・budget・capability mappingを変更して合格を主張しない",
+    "特定製品でconfirmed件数が増えたことを本タスクの成功・VDP準備完了・model優位の根拠にしない",
+    "同じ対象へ変更と再実行を反復する最適化loopを作らない",
+    "evaluator label・ground truth・product probe tokenをsession/report/log/checkpoint/exceptionへ出さない",
+    "target固有条件分岐を名前の難読化・hash・regex・fixture名変更で隠さない",
+    "taxonomy未知mechanismはfail-openで既存語彙へ丸めずC13としてHold"
+  ],
+  "boundary_map": [
+    {
+      "stage": "S00",
+      "boundary": "MC mode gate / scope init / budget init",
+      "existing_records": "vdp_active, scope_verdict, ExecutionBudgetV1",
+      "new_event_required": true
+    },
+    {
+      "stage": "S01",
+      "boundary": "raw producer artifact (signal bundle) availability",
+      "existing_records": "sources_unavailable inventory (generator)",
+      "new_event_required": true
+    },
+    {
+      "stage": "S02",
+      "boundary": "vdp_observation_adapter.adapt_signal_bundle",
+      "existing_records": "AdapterResult (observations + skipped)",
+      "new_event_required": true
+    },
+    {
+      "stage": "S03",
+      "boundary": "vdp_hypothesis_generator.generate_hypotheses",
+      "existing_records": "GenerationResult (hypotheses/rejected/suppressed/degraded) + HypothesisRecord.priority_trace",
+      "new_event_required": true
+    },
+    {
+      "stage": "S04",
+      "boundary": "MC priority/stop/queue decision (_queue_vdp_follow_ups)",
+      "existing_records": "NextActionRecord, shadow decisions",
+      "new_event_required": true
+    },
+    {
+      "stage": "S05",
+      "boundary": "admission gate (VdpAdmissionGate) + HITL",
+      "existing_records": "AdmissionResult, scope_verdict",
+      "new_event_required": true
+    },
+    {
+      "stage": "S06",
+      "boundary": "MC routing (_dispatch_vdp_follow_up)",
+      "existing_records": "dispatch decisions, rollout gate",
+      "new_event_required": true
+    },
+    {
+      "stage": "S07",
+      "boundary": "vdp_follow_up_executor attempt design (build_follow_up_spec)",
+      "existing_records": "AttemptRecord, FollowUpExecutionResult",
+      "new_event_required": true
+    },
+    {
+      "stage": "S08",
+      "boundary": "executor send / transport",
+      "existing_records": "AttemptRecord.execution_result, state_change journal",
+      "new_event_required": true
+    },
+    {
+      "stage": "S09",
+      "boundary": "executor response / marker extraction",
+      "existing_records": "EvidenceRecordV1, execution_result",
+      "new_event_required": true
+    },
+    {
+      "stage": "S10",
+      "boundary": "evidence completeness (required_evidence)",
+      "existing_records": "EvidenceRecordV1 set per lineage",
+      "new_event_required": true
+    },
+    {
+      "stage": "S11",
+      "boundary": "vdp_evidence_validator.evaluate",
+      "existing_records": "EvidenceVerdictV1 (signed boundary untouched)",
+      "new_event_required": true
+    },
+    {
+      "stage": "S12",
+      "boundary": "canonical extractor / report projection / consistency",
+      "existing_records": "vdp_canonical_index_v1, report_session_consistency",
+      "new_event_required": true
+    }
+  ],
+  "threshold_floor": {
+    "trace_coverage": {
+      "direction": "minimum",
+      "value": 1.0,
+      "note": "evaluatorの全期待ケースがS00-S12またはU00を持つ割合。必須100%"
+    },
+    "first_failure_accuracy": {
+      "direction": "minimum",
+      "value": 0.95,
+      "note": "意図的fault injectionの正解stage一致。hidden genericで95%以上"
+    },
+    "cause_attribution_precision": {
+      "direction": "minimum",
+      "value": 0.9,
+      "note": "provenとした原因が単一変数再実験で再現する割合。90%以上"
+    },
+    "unattributable_rate": {
+      "direction": "maximum",
+      "value": 0.1,
+      "note": "必要telemetryを備えたgeneric caseでU00/C13になる割合。10%以下"
+    },
+    "surface_reach_macro": {
+      "direction": "minimum",
+      "value": 0.8,
+      "note": "eligible capability familyごとのS01到達macro平均。80%以上"
+    },
+    "hypothesis_reach_macro": {
+      "direction": "minimum",
+      "value": 0.7,
+      "note": "S03到達macro平均。70%以上"
+    },
+    "valid_attempt_reach_macro": {
+      "direction": "minimum",
+      "value": 0.6,
+      "note": "S07到達macro平均。60%以上"
+    },
+    "evidence_completeness_macro": {
+      "direction": "minimum",
+      "value": 0.5,
+      "note": "S10到達macro平均。50%以上"
+    },
+    "false_promotion_rate": {
+      "direction": "maximum",
+      "value": 0.0,
+      "note": "ground truth不一致confirmed。0%"
+    },
+    "safety_violation_count": {
+      "direction": "maximum",
+      "value": 0,
+      "note": "scope逸脱・未承認状態変更・secret漏洩・二重送信・予算超過。0件"
+    },
+    "product_leakage_count": {
+      "direction": "maximum",
+      "value": 0,
+      "note": "runtime/source/prompt/config/report/sessionへのsealed labelまたは製品固有probe漏洩。0件"
+    },
+    "regression": {
+      "direction": "maximum",
+      "value": 0,
+      "note": "feature flag offの既存session/report、旧reader、gate、attack task出力差分。0件"
+    }
+  }
+}

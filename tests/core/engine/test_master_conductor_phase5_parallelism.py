@@ -14,6 +14,8 @@ from src.core.config.settings import ParallelismSettings
 from src.core.domain.model.task import Task
 from src.core.engine.master_conductor import MasterConductor
 from src.core.engine.lane_policy import LanePolicy
+from src.core.engine.parallel_orchestrator import TaskResult
+from src.core.models.task_execution_log import TaskExecutionLog
 
 
 # ============================================================
@@ -354,20 +356,22 @@ class TestLiveLanePolicyGatesDispatch:
 class TestPhase7ExecutionBoundary:
     """Phase 7 blockers: strict runtime boundary before parallel dispatch/start."""
 
-    def test_unknown_category_can_fail_closed_in_strict_phase7_mode(self):
-        """T-7.7: strict Phase 7 boundary must not silently map unknown category to read_only."""
+    def test_unknown_execution_category_is_terminalized_in_strict_phase7_mode(self):
+        """T-7.7: rejected admission must be auditable and never remain pending."""
         mc = MasterConductor.__new__(MasterConductor)
         mc._state_lock = threading.RLock()
         mc.orchestrator = MagicMock()
         mc.resource_manager = MagicMock()
         mc.resource_manager.get_suggested_concurrency.return_value = 5
         mc._phase7_strict_category_gate = True
+        mc.execution_log = TaskExecutionLog()
         _mock_lane_policy(mc, lane="read_only", parallel_safe=True)
 
         mc._execute_single_task_full_flow = lambda t: {"success": True}
         task = _make_task("t-unknown", "new_agent", metadata={
             "origin_key": "https://example.com",
             "scope_verdict": "in_scope",
+            "execution_category": "not_a_scheduler_category",
         })
 
         result = mc._dispatch_batch([task], force_serial=False)
@@ -375,8 +379,38 @@ class TestPhase7ExecutionBoundary:
         assert result["parallel_tasks"] == []
         assert result["serial_results"] == []
         assert result["rejected_task_ids"] == ["t-unknown"]
+        assert result["rejected_results"] == [{
+            "success": False,
+            "skipped": True,
+            "task_id": "t-unknown",
+            "skip_reason": "unknown_execution_category",
+        }]
+        assert task.state.value == "skipped"
         assert task.metadata["lifecycle_status"] == "rejected"
         assert task.metadata["lifecycle_reason"] == "unknown_execution_category"
+        records = mc.execution_log.get_all()
+        assert len(records) == 1
+        assert records[0].result.value == "skipped"
+        assert records[0].result_summary.endswith("unknown_execution_category")
+
+    def test_rate_limited_recon_uses_execution_category_not_agent_type(self):
+        """Recon receives the active-intelligence budget without an agent-name map."""
+        mc = MasterConductor.__new__(MasterConductor)
+        mc._state_lock = threading.RLock()
+        mc.orchestrator = MagicMock()
+        mc.resource_manager = MagicMock()
+        mc.resource_manager.get_suggested_concurrency.return_value = 5
+        mc._phase7_strict_category_gate = True
+        _mock_lane_policy(mc, lane="read_only", parallel_safe=True, rate_limited=True)
+        mc._execute_single_task_full_flow = lambda t: {"success": True}
+
+        result = mc._dispatch_batch(
+            [_make_task("recon", "recon_master")],
+            force_serial=False,
+        )
+
+        assert len(result["parallel_tasks"]) == 1
+        assert result["parallel_tasks"][0].category == "intel_active"
 
     def test_start_boundary_skips_stale_task_before_execution(self):
         """T-7.1c: task start performs snapshot validity check before mutation."""
@@ -669,6 +703,41 @@ class TestNoConcurrentTaskQueueMutationDuringBatch:
         mc._apply_post_batch_feedback([task], results)
 
         mc._expand_plan_for_assets.assert_called_once_with(["https://new.example.com"])
+
+    def test_apply_post_batch_feedback_accepts_parallel_task_result_payload(self):
+        """ParallelOrchestrator.TaskResult.result is replayed without a type error."""
+        mc = MasterConductor.__new__(MasterConductor)
+        mc._state_lock = threading.RLock()
+        mc.task_queue = MagicMock()
+        mc._expand_plan_for_assets = MagicMock()
+        mc.handle_finding = MagicMock()
+        mc._observe_and_rethink = MagicMock(return_value=[])
+        mc._add_tasks = MagicMock()
+        mc._process_handoff = MagicMock()
+        mc.context_propagator = MagicMock()
+        mc.accumulated_context = MagicMock()
+        mc.wordlist_manager = MagicMock()
+        mc.priority_booster = MagicMock()
+        mc.critical_path_analyzer = MagicMock()
+        mc.critical_path_analyzer.analyze.return_value = []
+
+        task = _make_task("t1", "scanner")
+        parallel_result = TaskResult(
+            task_id="t1",
+            success=True,
+            result={
+                "_post_batch_feedback": {
+                    "deferred_findings": [],
+                    "deferred_new_assets": ["https://parallel.example.com"],
+                },
+            },
+        )
+
+        mc._apply_post_batch_feedback([task], [parallel_result])
+
+        mc._expand_plan_for_assets.assert_called_once_with(
+            ["https://parallel.example.com"]
+        )
 
 
 # ============================================================

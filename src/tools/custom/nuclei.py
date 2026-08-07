@@ -1,13 +1,13 @@
 """
 Custom Nuclei Tool - Enhanced version with Profile support for AI use.
-Path: Controlled by src.config.settings.tool_nuclei_path
+Path: Controlled by config/shigoku.yaml -> tool_nuclei_path
 """
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 import shlex
 import logging
 from src.tools.base import BaseTool
-from src.config import settings
+from src.core.config.settings import settings
 from src.tools import ToolRegistry
 from src.core.utils.batch_utils import create_batch_file
 from src.core.security.safe_subprocess import safe_run, SecurityViolationError

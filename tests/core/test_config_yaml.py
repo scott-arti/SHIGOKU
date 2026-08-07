@@ -1,5 +1,5 @@
 import pytest
-from src.config import settings, _load_yaml_cached
+from src.core.config.settings import _load_auxiliary_yaml as _load_yaml_cached, settings
 from src.core.reports.auto_reporter import AutoReporter
 from src.core.models.finding import Finding, VulnType, Severity, Evidence
 from pathlib import Path

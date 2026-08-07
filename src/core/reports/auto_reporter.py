@@ -23,7 +23,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from src.core.models.finding import Finding, Severity, VulnType
 from src.core.notifications.notifier import get_notifier
-from src.config import settings
+from src.core.config.settings import settings
 from src.core.reports.poc_generator import PoCGenerator
 
 if TYPE_CHECKING:

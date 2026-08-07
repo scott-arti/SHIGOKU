@@ -4,7 +4,7 @@ Caido Crawler - gospider/katana をCaido IO経由で実行
 Caido IOプロキシ経由でクロールし、全リクエストをCaidoに記録。
 
 プロキシ設定方法:
-1. 環境変数: SHIGOKU_CRAWLER_PROXY=http://127.0.0.1:8080
+1. 環境変数: SHIGOKU_CRAWLER_PROXY=http://127.0.0.1:8081
 2. コンストラクタ引数: CaidoCrawler(proxy="http://...")
 3. set_proxy()メソッド: crawler.set_proxy("http://...")
 """
@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 from pathlib import Path
 
-from src.config import settings
+from src.core.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,8 @@ class CaidoCrawler:
     プロキシ設定優先順位:
     1. コンストラクタ引数
     2. 環境変数 SHIGOKU_CRAWLER_PROXY
-    3. デフォルト値 (127.0.0.1:8080)
+    3. 共通プロキシ設定（明示されたCaido URLを含む）
+    4. デフォルト値 (127.0.0.1:8080)
     """
     
     DEFAULT_PROXY = "http://127.0.0.1:8080"
@@ -56,8 +57,13 @@ class CaidoCrawler:
     }
     
     def __init__(self, proxy: str = None):
-        # 優先順位: 引数 > 環境変数 > デフォルト
-        self.proxy = proxy or os.getenv(self.ENV_PROXY_KEY) or self.DEFAULT_PROXY
+        # 優先順位: 引数 > 専用環境変数 > 共通プロキシ設定 > デフォルト
+        self.proxy = (
+            proxy
+            or os.getenv(self.ENV_PROXY_KEY)
+            or settings.get_proxy_url()
+            or self.DEFAULT_PROXY
+        )
         self._gospider_path = settings.tool_gospider_path
         self._katana_path = settings.tool_katana_path
         logger.info("CaidoCrawler初期化: プロキシ=%s", self.proxy)

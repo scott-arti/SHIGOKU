@@ -4,10 +4,10 @@ doc_type: subtask_plan
 status: done
 parent_task_id: SGK-2026-0418
 related_docs:
-- docs/shigoku/plans/2026-07-31_vdp-capability-benchmark-and-evidence-contract_plan.md
+- docs/shigoku/plans/done/2026-07-31_vdp-capability-benchmark-and-evidence-contract_plan.md
 title: VDP evidence schema safety budget and recovery foundation
 created_at: '2026-07-31'
-updated_at: '2026-08-03'
+updated_at: '2026-08-07'
 tags:
 - shigoku
 target: src/core/engine,src/core/infra,src/reporting

@@ -758,14 +758,17 @@ class TestConfirmedRoundtrip:
 
     def test_confirmed_roundtrip_save_m0_pass_restore_confirmed(self):
         from src.core.engine.vdp_m0_gate import VdpM0ContractGate
+        from src.core.engine.vdp_evidence_validator import Ed25519EvidenceSigner
         from src.core.models.vdp_contract import (
-            _create_confirmed_verdict,
+            restore_confirmed_from_dict,
             HypothesisRecord,
             AttemptRecord,
             EvidenceRecordV1,
             VDP_CONTRACT_SCHEMA_VERSION,
         )
         from src.core.engine.master_conductor_session_service import inject_vdp_section_to_session_payload
+
+        signer = Ed25519EvidenceSigner(private_key=bytes.fromhex("11" * 32))
 
         hyp = HypothesisRecord(
             hypothesis_id="hyp-rt-001", observation_id="obs-rt-001",
@@ -790,12 +793,13 @@ class TestConfirmedRoundtrip:
             redacted_excerpt="test", schema_version=VDP_CONTRACT_SCHEMA_VERSION,
         )
 
-        verdict = _create_confirmed_verdict(
+        verdict = signer.create_confirmed_verdict(
             verdict_id="ver-rt-001", hypothesis_id="hyp-rt-001",
-            evidence_ids=["ev-rt-001"], validator_version="1.0.0",
-            reason_codes=["payload_matched"], schema_version=VDP_CONTRACT_SCHEMA_VERSION,
-            hypothesis=hyp,
+            reason_codes=["payload_matched"], validator_version="1.0.0",
+            evidence_records=[ev.to_dict()], hypothesis=hyp,
         )
+        assert verdict.status == "confirmed"
+        assert verdict.validation_proof.startswith("ed25519:")
 
         vdp_state = {
             "vdp_active": True,
@@ -810,16 +814,21 @@ class TestConfirmedRoundtrip:
         session = inject_vdp_section_to_session_payload({"task_queue": [], "context": {}}, vdp_state)
         assert "vdp_contract" in session
 
-        m0 = VdpM0ContractGate().validate(session)
+        m0 = VdpM0ContractGate().validate(
+            session, public_key_provider=signer.public_key_provider()
+        )
         assert m0.passed is True, f"M0 should pass: {m0.detail}"
 
-        # Restore from saved data — must go through the internal proof-verified path
-        from src.core.models.vdp_contract import _restore_confirmed_from_dict
+        # Restore from saved data — must go through the proof-verified path
         saved_verdict_dict = session["vdp_contract"]["verdicts"][0]
         assert saved_verdict_dict["status"] == "confirmed"
         assert saved_verdict_dict["validation_proof"]  # proof must be present
 
-        restored = _restore_confirmed_from_dict(saved_verdict_dict)
+        restored = restore_confirmed_from_dict(
+            saved_verdict_dict,
+            [ev.to_dict()],
+            public_key_provider=signer.public_key_provider(),
+        )
         assert restored.status == "confirmed"
         assert restored.evaluated_evidence_ids == ["ev-rt-001"]
 
@@ -954,16 +963,22 @@ class TestConfirmedForgery:
 
     def test_forged_confirmed_without_proof_rejected(self):
         """Correct IDs + fake validator name + no proof → REJECT."""
-        from src.core.models.vdp_contract import _restore_confirmed_from_dict
-        with pytest.raises(ValueError, match="validation_proof"):
-            _restore_confirmed_from_dict(self._base_verdict())
+        from src.core.models.vdp_contract import restore_confirmed_from_dict
+        with pytest.raises(ValueError, match="proof_missing"):
+            restore_confirmed_from_dict(
+                self._base_verdict(),
+                [{"evidence_id": "ev-m0-001", "attempt_id": "att-m0-001"}],
+                public_key_provider={},
+            )
 
     def test_forged_confirmed_with_garbage_proof_rejected(self):
         """Correct IDs + fake validator name + garbage proof → REJECT."""
-        from src.core.models.vdp_contract import _restore_confirmed_from_dict
-        with pytest.raises(ValueError, match="validation_proof"):
-            _restore_confirmed_from_dict(
-                self._base_verdict(validation_proof="hmac-sha256:deadbeef")
+        from src.core.models.vdp_contract import restore_confirmed_from_dict
+        with pytest.raises(ValueError, match="unknown_proof_version|legacy"):
+            restore_confirmed_from_dict(
+                self._base_verdict(validation_proof="ed25519:deadbeef"),
+                [{"evidence_id": "ev-m0-001", "attempt_id": "att-m0-001"}],
+                public_key_provider={},
             )
 
     def test_public_from_dict_rejects_confirmed(self):
@@ -981,12 +996,13 @@ class TestConfirmedForgery:
 
     def test_legit_confirmed_roundtrip_preserves_status(self):
         """Legitimate Evidence Validator output survives save/restore with proof."""
+        from src.core.engine.vdp_evidence_validator import Ed25519EvidenceSigner
         from src.core.models.vdp_contract import (
-            _create_confirmed_verdict,
-            _restore_confirmed_from_dict,
+            restore_confirmed_from_dict,
             HypothesisRecord,
             VDP_CONTRACT_SCHEMA_VERSION,
         )
+        signer = Ed25519EvidenceSigner(private_key=bytes.fromhex("22" * 32))
         hyp = HypothesisRecord(
             hypothesis_id="hyp-m0-001", observation_id="obs-m0-001",
             asset="https://example.com", capability="test",
@@ -996,17 +1012,35 @@ class TestConfirmedForgery:
         )
         hyp.state = "attempted"
 
-        verdict = _create_confirmed_verdict(
+        verdict = signer.create_confirmed_verdict(
             verdict_id="ver-ok-001", hypothesis_id="hyp-m0-001",
-            evidence_ids=["ev-m0-001"], validator_version="1.0.0",
-            reason_codes=["payload_matched"],
-            schema_version=VDP_CONTRACT_SCHEMA_VERSION,
+            reason_codes=["payload_matched"], validator_version="1.0.0",
+            evidence_records=[{
+                "schema_version": 1, "evidence_id": "ev-m0-001",
+                "attempt_id": "att-m0-001", "evidence_type": "real_http_response",
+                "raw_hash": "sha256:raw", "redacted_excerpt": "ok",
+                "normalization_rule_version": "v1", "auth_context_version": "none",
+                "captured_at": "", "original_size": 2, "truncated": False,
+                "truncation_reason": "",
+            }],
             hypothesis=hyp,
         )
         assert verdict.status == "confirmed"
         assert verdict.validation_proof  # proof auto-generated
+        assert verdict.validation_proof.startswith("ed25519:")
 
-        restored = _restore_confirmed_from_dict(verdict.to_dict())
+        restored = restore_confirmed_from_dict(
+            verdict.to_dict(),
+            [{
+                "schema_version": 1, "evidence_id": "ev-m0-001",
+                "attempt_id": "att-m0-001", "evidence_type": "real_http_response",
+                "raw_hash": "sha256:raw", "redacted_excerpt": "ok",
+                "normalization_rule_version": "v1", "auth_context_version": "none",
+                "captured_at": "", "original_size": 2, "truncated": False,
+                "truncation_reason": "",
+            }],
+            public_key_provider=signer.public_key_provider(),
+        )
         assert restored.status == "confirmed"
         assert restored.validator_version == "1.0.0"
         assert restored.evaluated_evidence_ids == ["ev-m0-001"]
@@ -1040,9 +1074,11 @@ class TestConfirmedForgery:
             "next_actions": [],
         }
         session = inject_vdp_section_to_session_payload({"task_queue": [], "context": {}}, vdp_state)
-        result = VdpM0ContractGate().validate(session)
+        result = VdpM0ContractGate().validate(
+            session, public_key_provider={}
+        )
         assert result.passed is False
-        assert any("validation_proof" in err for err in result.schema_errors)
+        assert any("proof" in err or "verification" in err for err in result.schema_errors)
 
 
 # ============================================================================
@@ -1050,96 +1086,126 @@ class TestConfirmedForgery:
 # ============================================================================
 
 class TestCrossProcessConfirmed:
-    """Confirmed verdicts must survive process restart via a STABLE key."""
+    """Confirmed verdicts must survive process restart via the public key."""
 
     def test_cross_process_generate_restore_preserves_confirmed(self, tmp_path):
-        """Subprocess (process A) creates confirmed + JSON; this process (B) restores it."""
+        """Subprocess (process A) signs with the private key; this process (B)
+        verifies and restores with the PUBLIC key only."""
+        key_path = tmp_path / "signing.key"
+        private_key = bytes.fromhex("33" * 32)
+        key_path.write_bytes(private_key)
+
         script = (
-            "import os, sys, json\n"
-            "os.environ.setdefault('SHIGOKU_VDP_CONFIRMATION_KEY', sys.argv[1])\n"
-            "from src.core.models.vdp_contract import (_create_confirmed_verdict,\n"
+            "import json, sys\n"
+            "from pathlib import Path\n"
+            "from src.core.engine.vdp_evidence_validator import Ed25519EvidenceSigner\n"
+            "from src.core.models.vdp_contract import (\n"
             "    HypothesisRecord, VDP_CONTRACT_SCHEMA_VERSION)\n"
+            "priv = Path(sys.argv[1]).read_bytes()\n"
+            "signer = Ed25519EvidenceSigner(private_key=priv)\n"
             "hyp = HypothesisRecord(hypothesis_id='hyp-xp-001', observation_id='obs-xp-001',\n"
             "    asset='https://example.com', capability='test', hypothesis_text='t',\n"
             "    trust_boundary='b', actors=['a'], success_condition='s',\n"
             "    falsification_condition='f', required_evidence=['e'],\n"
             "    schema_version=VDP_CONTRACT_SCHEMA_VERSION)\n"
             "hyp.state = 'attempted'\n"
-            "ver = _create_confirmed_verdict(verdict_id='ver-xp-001',\n"
-            "    hypothesis_id='hyp-xp-001', evidence_ids=['ev-xp-001'],\n"
-            "    validator_version='1.0.0', schema_version=VDP_CONTRACT_SCHEMA_VERSION,\n"
-            "    hypothesis=hyp)\n"
-            "print(json.dumps(ver.to_dict()))\n"
+            "ev = {'schema_version': 1, 'evidence_id': 'ev-xp-001',\n"
+            "      'attempt_id': 'att-xp-001', 'evidence_type': 'real_http_response',\n"
+            "      'raw_hash': 'sha256:raw', 'redacted_excerpt': 'ok',\n"
+            "      'normalization_rule_version': 'v1', 'auth_context_version': 'none',\n"
+            "      'captured_at': '', 'original_size': 2, 'truncated': False,\n"
+            "      'truncation_reason': ''}\n"
+            "ver = signer.create_confirmed_verdict(verdict_id='ver-xp-001',\n"
+            "    hypothesis_id='hyp-xp-001', reason_codes=['payload_matched'],\n"
+            "    validator_version='1.0.0', evidence_records=[ev], hypothesis=hyp)\n"
+            "provider = {k: v.hex() for k, v in signer.public_key_provider().items()}\n"
+            "print(json.dumps({'verdict': ver.to_dict(), 'evidence': ev,\n"
+            "                  'provider': provider}))\n"
         )
-        env = dict(os.environ)
-        env["SHIGOKU_VDP_CONFIRMATION_KEY"] = _TEST_CONFIRMATION_KEY
         result = subprocess.run(
-            [sys.executable, "-c", script, _TEST_CONFIRMATION_KEY],
-            capture_output=True, text=True, env=env, cwd="/home/bbb/Documents/App/Shigoku",
+            [sys.executable, "-c", script, str(key_path)],
+            capture_output=True, text=True, env=dict(os.environ),
+            cwd="/home/bbb/Documents/App/Shigoku",
         )
         assert result.returncode == 0, result.stderr
-        verdict_json = json.loads(result.stdout.strip())
+        payload = json.loads(result.stdout.strip())
 
-        # This process (process B) restores with the SAME stable key
-        from src.core.models.vdp_contract import _restore_confirmed_from_dict
-        restored = _restore_confirmed_from_dict(verdict_json)
+        # This process (process B) restores with the PUBLIC key provider only
+        provider = {k: bytes.fromhex(v) for k, v in payload["provider"].items()}
+        from src.core.models.vdp_contract import restore_confirmed_from_dict
+        restored = restore_confirmed_from_dict(
+            payload["verdict"],
+            [payload["evidence"]],
+            public_key_provider=provider,
+        )
         assert restored.status == "confirmed"
         assert restored.validator_version == "1.0.0"
         assert restored.evaluated_evidence_ids == ["ev-xp-001"]
 
-    def test_key_missing_rejects_confirmed_restore(self, monkeypatch):
-        """No key available (env unset + no key file) → fail-closed REJECT."""
-        import src.core.models.vdp_contract as vc
-        monkeypatch.delenv("SHIGOKU_VDP_CONFIRMATION_KEY", raising=False)
-        monkeypatch.setattr(vc, "_CONFIRMATION_KEY_FILE", Path("/nonexistent/definitely/missing.key"))
-        monkeypatch.setattr(vc, "_resolve_confirmation_key", lambda: None)
+    def test_key_missing_rejects_confirmed_restore(self):
+        """No public key available → fail-closed REJECT (key_unavailable)."""
+        from src.core.engine.vdp_evidence_validator import Ed25519EvidenceSigner
+        from src.core.models.vdp_contract import restore_confirmed_from_dict
 
-        from src.core.models.vdp_contract import _restore_confirmed_from_dict
-        # Create a legit proof first (with key available)
-        monkeypatch.setattr(vc, "_resolve_confirmation_key",
-                            lambda: bytes.fromhex(_TEST_CONFIRMATION_KEY))
-        from src.core.models.vdp_contract import _create_confirmed_verdict
-        ver = _create_confirmed_verdict(
+        signer = Ed25519EvidenceSigner(private_key=bytes.fromhex("44" * 32))
+        ev = {
+            "schema_version": 1, "evidence_id": "ev-m0-001",
+            "attempt_id": "att-m0-001", "evidence_type": "real_http_response",
+            "raw_hash": "sha256:raw", "redacted_excerpt": "ok",
+            "normalization_rule_version": "v1", "auth_context_version": "none",
+            "captured_at": "", "original_size": 2, "truncated": False,
+            "truncation_reason": "",
+        }
+        ver = signer.create_confirmed_verdict(
             verdict_id="ver-km-001", hypothesis_id="hyp-m0-001",
-            evidence_ids=["ev-m0-001"], validator_version="1.0.0",
+            reason_codes=["evidence_contract_satisfied"], validator_version="1.0.0", evidence_records=[ev],
         )
         ver_dict = ver.to_dict()
 
-        # Now simulate key missing → REJECT
-        monkeypatch.setattr(vc, "_resolve_confirmation_key", lambda: None)
-        with pytest.raises(ValueError, match="confirmation key unavailable"):
-            _restore_confirmed_from_dict(ver_dict)
-
-    def test_key_changed_rejects_restore(self, monkeypatch):
-        """Key rotated since signing → fail-closed REJECT with key_id reason."""
-        import src.core.models.vdp_contract as vc
-        from src.core.models.vdp_contract import _create_confirmed_verdict, _restore_confirmed_from_dict
-
-        # Sign with key A
-        monkeypatch.setattr(vc, "_resolve_confirmation_key",
-                            lambda: bytes.fromhex(_TEST_CONFIRMATION_KEY))
-        ver = _create_confirmed_verdict(
-            verdict_id="ver-kc-001", hypothesis_id="hyp-m0-001",
-            evidence_ids=["ev-m0-001"], validator_version="1.0.0",
-        )
-        ver_dict = ver.to_dict()
-
-        # Restore with key B (different) → REJECT with key_id mismatch
-        key_b = "cd" * 32
-        monkeypatch.setattr(vc, "_resolve_confirmation_key", lambda: bytes.fromhex(key_b))
-        with pytest.raises(ValueError, match="key_id mismatch"):
-            _restore_confirmed_from_dict(ver_dict)
-
-    def test_key_missing_blocks_confirmed_creation(self, monkeypatch):
-        """No key available → cannot even CREATE a confirmed verdict (fail-closed)."""
-        import src.core.models.vdp_contract as vc
-        monkeypatch.setattr(vc, "_resolve_confirmation_key", lambda: None)
-        from src.core.models.vdp_contract import _create_confirmed_verdict
-        with pytest.raises(ValueError, match="confirmation key unavailable"):
-            _create_confirmed_verdict(
-                verdict_id="ver-kmc-001", hypothesis_id="hyp-m0-001",
-                evidence_ids=["ev-m0-001"], validator_version="1.0.0",
+        # Now simulate key missing → REJECT (provider None = fail-closed)
+        with pytest.raises(ValueError, match="key_unavailable"):
+            restore_confirmed_from_dict(
+                ver_dict, [ev], public_key_provider=None
             )
+
+    def test_unknown_key_id_rejects_restore(self):
+        """Key rotated since signing → fail-closed REJECT with unknown key id."""
+        from src.core.engine.vdp_evidence_validator import Ed25519EvidenceSigner
+        from src.core.models.vdp_contract import restore_confirmed_from_dict
+
+        signer_a = Ed25519EvidenceSigner(private_key=bytes.fromhex("55" * 32))
+        signer_b = Ed25519EvidenceSigner(private_key=bytes.fromhex("66" * 32))
+        ev = {
+            "schema_version": 1, "evidence_id": "ev-m0-001",
+            "attempt_id": "att-m0-001", "evidence_type": "real_http_response",
+            "raw_hash": "sha256:raw", "redacted_excerpt": "ok",
+            "normalization_rule_version": "v1", "auth_context_version": "none",
+            "captured_at": "", "original_size": 2, "truncated": False,
+            "truncation_reason": "",
+        }
+        # Sign with key A
+        ver = signer_a.create_confirmed_verdict(
+            verdict_id="ver-kc-001", hypothesis_id="hyp-m0-001",
+            reason_codes=["evidence_contract_satisfied"], validator_version="1.0.0", evidence_records=[ev],
+        )
+        ver_dict = ver.to_dict()
+
+        # Restore with key B (different public key) → REJECT (unknown_key_id)
+        with pytest.raises(ValueError, match="unknown_key_id"):
+            restore_confirmed_from_dict(
+                ver_dict, [ev], public_key_provider=signer_b.public_key_provider()
+            )
+
+    def test_no_signing_key_blocks_confirmed_creation(self, monkeypatch):
+        """No configured signing key → default_signer() is None → no confirmed
+        verdict can be produced (fail-closed, candidate/Hold instead)."""
+        import src.core.engine.vdp_evidence_validator as vev
+        monkeypatch.delenv("SHIGOKU_VDP_SIGNING_KEY", raising=False)
+        monkeypatch.setattr(
+            vev, "_SIGNING_KEY_FILE", Path("/nonexistent/definitely/missing.key")
+        )
+        assert vev.resolve_signing_key() is None
+        assert vev.default_signer() is None
 
 
 # ============================================================================
@@ -1149,10 +1215,21 @@ class TestCrossProcessConfirmed:
 class TestConfirmationSignerBoundary:
     """No production module may import the confirmation signer or key internals."""
 
-    def test_signer_referenced_only_in_vdp_contract_module(self):
-        """Scan src/ for references to the signer functions — only vdp_contract.py allowed."""
+    def test_signer_referenced_only_in_validator_module(self):
+        """Scan src/ for references to the signer symbols — only the engine
+        Evidence Validator module (Ed25519 signer) and the legacy HMAC
+        verifier module may hold key/signing internals."""
         import re as _re
-        allowed = {"src/core/models/vdp_contract.py"}
+        allowed = {
+            "src/core/engine/vdp_evidence_validator.py",
+            "src/core/engine/vdp_legacy_proof_verifier.py",
+            # SGK-2026-0423 (Lane A): vdp_key_registry.py is the CONFIGURATION
+            # boundary — it lazily constructs Ed25519EvidenceSigner in
+            # configured_signer() but holds NO key/signing internals (no
+            # private key bytes, no proof generation, no env/file key reads
+            # outside its explicit provider classes).
+            "src/core/engine/vdp_key_registry.py",
+        }
         offenders = []
         for root, _dirs, files in os.walk("src"):
             for fname in files:
@@ -1166,13 +1243,16 @@ class TestConfirmationSignerBoundary:
                 except OSError:
                     continue
                 for symbol in (
-                    "_compute_validation_proof",
-                    "_verify_validation_proof",
+                    "Ed25519EvidenceSigner",
+                    "create_confirmed_verdict",
+                    "resolve_signing_key",
+                    "_SIGNING_KEY_ENV",
+                    "resolve_legacy_confirmation_key",
                     "_CONFIRMATION_KEY_ENV",
                 ):
                     if symbol in text:
                         offenders.append(f"{path} references {symbol}")
-        assert offenders == [], f"Signer referenced outside vdp_contract: {offenders}"
+        assert offenders == [], f"Signer referenced outside validator boundary: {offenders}"
 
     def test_signature_has_no_trusted_bypass(self):
         """from_dict must not expose a trusted/secret bypass parameter."""

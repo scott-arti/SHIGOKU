@@ -3,34 +3,34 @@
   "arms": {
     "exploit::generic": {
       "alpha": 1.0,
-      "beta": 59.0,
-      "pulls": 58,
+      "beta": 68.0,
+      "pulls": 67,
       "total_reward": 0.0,
       "successes": 0,
-      "failures": 58
+      "failures": 67
     },
     "scanner::generic": {
       "alpha": 1.0,
-      "beta": 58.0,
-      "pulls": 57,
+      "beta": 67.0,
+      "pulls": 66,
       "total_reward": 0.0,
       "successes": 0,
-      "failures": 57
+      "failures": 66
     },
     "discovery::generic": {
-      "alpha": 35.20000000000004,
-      "beta": 23.799999999999983,
-      "pulls": 57,
-      "total_reward": 34.20000000000004,
-      "successes": 57,
+      "alpha": 40.60000000000005,
+      "beta": 27.39999999999997,
+      "pulls": 66,
+      "total_reward": 39.60000000000005,
+      "successes": 66,
       "failures": 0
     },
     "recon::generic": {
-      "alpha": 35.20000000000004,
-      "beta": 23.799999999999983,
-      "pulls": 57,
-      "total_reward": 34.20000000000004,
-      "successes": 57,
+      "alpha": 40.60000000000005,
+      "beta": 27.39999999999997,
+      "pulls": 66,
+      "total_reward": 39.60000000000005,
+      "successes": 66,
       "failures": 0
     },
     "injectionswarm::csrf_candidate": {

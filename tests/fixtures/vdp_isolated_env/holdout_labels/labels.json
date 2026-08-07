@@ -1,0 +1,21 @@
+{
+  "class": {
+    "urls": [
+      "http://holdout-internal.example/secret-label-path"
+    ],
+    "payloads": [
+      "holdout-payload-token-xyz"
+    ],
+    "product_names": [
+      "holdout-product-name"
+    ]
+  },
+  "ground_truth": [
+    {
+      "class": "public-read",
+      "capability": "object_read_write_delete",
+      "method": "GET",
+      "endpoint": "/readonly-ok"
+    }
+  ]
+}

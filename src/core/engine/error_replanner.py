@@ -8,7 +8,7 @@ Implementation Plan Phase 1.5 準拠
 
 import logging
 from typing import List, Optional, Any, Dict, TYPE_CHECKING
-from src.config import settings
+from src.core.config.settings import settings
 
 if TYPE_CHECKING:
     from src.core.engine.master_conductor import Task, ExecutionContext

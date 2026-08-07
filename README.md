@@ -325,10 +325,9 @@ SHIGOKUは、完全自律型のAIエージェント群による脆弱性発見�
 - Critical/High脆弱性発見時にリアルタイム通知
 - タスク完了時のリッチサマリー (Findings数, 新規資産数)
 - CRITICALメンション機能 (`@channel`, `@here`)
-- カスタマイズ可能な設定 (`.env`):
-  - `SHIGOKU_NOTIFY_ON_TASK_START=false` (デフォルトOFF)
-  - `SHIGOKU_NOTIFY_ON_FINDING=true`
-  - Critical mention support (`SHIGOKU_NOTIFY_CRITICAL_MENTION`).
+- 設定は `config/shigoku.yaml` に集約:
+  - 通知・並列実行・LLM の役割ごとのモデルをここで指定
+  - API キーだけは OS の環境変数で渡す（YAML や `.env` には保存しない）
 
 - **RAG Engine 2.0**:
   - Implemented **ReAct Observation Loop** in MasterConductor (`_observe_and_rethink`) to discover additional attack vectors from successful tasks.

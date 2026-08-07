@@ -77,7 +77,7 @@ class TestPhase3ConfigYAML:
     
     def test_config_has_yaml_loader(self):
         """config.pyにYAMLローダーがあるか"""
-        from src.config import settings
+        from src.core.config.settings import settings
         
         assert hasattr(settings, 'get_vuln_info')
         assert hasattr(settings, 'get_tool_profile')
@@ -124,7 +124,7 @@ class TestInterfacePreservation:
     
     def test_settings_interface_unchanged(self):
         """Settings クラスのインターフェースが保持されているか"""
-        from src.config import settings
+        from src.core.config.settings import settings
         
         # 既存の属性が存在するか
         assert hasattr(settings, 'model')

@@ -11,7 +11,7 @@ related_docs:
   - docs/shigoku/reports/2026-07-02_sgk-2026-0337_work_report.md
   - docs/shigoku/worklogs/2026-07-02_sgk-2026-0337_work_log.md
 created_at: '2026-07-02'
-updated_at: '2026-07-28'
+updated_at: '2026-08-07'
 ---
 
 # SHIGOKU 詳細コマンドリファレンス
@@ -175,7 +175,36 @@ Haddix report と source session の整合性を検査します。
 | `--method` | HTTP method 絞り込み |
 | `--limit` | 件数上限 |
 
-### 3.7 `report narrative`
+### 3.7 `report expected-detections`
+
+整合性を確認した report/session を、指定した期待検知プロファイルと比較します。
+
+```bash
+.venv/bin/shigoku-ops --json report expected-detections \
+  --report <haddix_report.md> \
+  --profile generic
+```
+
+主要オプション:
+
+| オプション | 説明 |
+| :--- | :--- |
+| `--profile` | `generic` または `dvwa-low-regression` |
+| `--include-matrix` | 期待検知の完全な比較表も出力 |
+
+### 3.8 `report compare-findings`
+
+2つの整合性確認済み report/session 組の canonical finding key を比較します。
+
+```bash
+.venv/bin/shigoku-ops --json report compare-findings \
+  --baseline-report <baseline_haddix_report.md> \
+  --report <current_haddix_report.md>
+```
+
+`--baseline-session` / `--baseline-sessions-dir` と `--session` / `--sessions-dir` を指定すると、各 report の source session 解決を補助できます。
+
+### 3.9 `report narrative`
 
 session から `run_narrative.md` 相当の Markdown を生成します。
 
@@ -187,7 +216,7 @@ session から `run_narrative.md` 相当の Markdown を生成します。
 - `--report` を使う場合は内部で consistency check を行い、不整合なら `blocked` を返します。
 - `--session` を直接渡すと report 整合性をバイパスして生成できます。
 
-### 3.8 `report target-profile`
+### 3.10 `report target-profile`
 
 session から `target_profile.md` を生成します。
 
@@ -204,7 +233,7 @@ session から `target_profile.md` を生成します。
 | `--sessions-dir` | report 解決時の探索先 |
 | `--output` | 出力ファイル。省略時は stdout |
 
-### 3.9 `report attack-paths`
+### 3.11 `report attack-paths`
 
 session から `attack_paths.md` を生成し、必要なら Neo4j 取り込み用 `attack_paths.json` / `attack_paths.cypher` を出力します。
 
@@ -225,6 +254,17 @@ session から `attack_paths.md` を生成し、必要なら Neo4j 取り込み�
 | `--json-output` | `attack_paths.json` も併せて生成 |
 | `--cypher-output` | `attack_paths.cypher` も併せて生成 |
 | `--neo4j-ingest` | 生成した attack path graph をそのまま Neo4j に書き込む |
+
+### 3.12 `report decision-tree` / `attack-review`
+
+session の判断経路または攻撃レビューを Markdown として生成します。両方とも `--session` または `--report` を受け、`--sessions-dir` と `--output` を指定できます。
+
+```bash
+.venv/bin/shigoku-ops report decision-tree --session <session.json> --only-failures
+.venv/bin/shigoku-ops report attack-review --report <haddix_report.md> --output attack_review.md
+```
+
+`decision-tree` ではさらに `--phase`、`--actor`、`--max-nodes`、`--max-edges`、`--max-depth`、`--max-children-per-node` で出力範囲を制御できます。
 
 ## 4. `shigoku-ops session`
 
@@ -638,6 +678,7 @@ allowlist:
 | `--focus-fail-fast` | focus 実行時の fail-fast |
 | `--quality-loop short` | 標準改善ループを短縮実行 |
 | `--quality-loop-full-scan` | `quality-loop short` 後にフルスキャン追加 |
+| `--intervention-gate-mode <MODE>` | `observe` / `enforce_human_preferred` / `enforce_hitl` で人の確認ゲートを上書き |
 
 ## 13. よく使う実行例
 

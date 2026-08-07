@@ -6,7 +6,7 @@ import tarfile
 import io
 import time
 from typing import Tuple, Optional
-from src.config import settings
+from src.core.config.settings import settings
 
 class DockerSandbox:
     """

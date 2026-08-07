@@ -6,7 +6,7 @@ import subprocess
 import shlex
 from src.tools.base import BaseTool
 from src.tools import ToolRegistry
-from src.config import settings
+from src.core.config.settings import settings
 
 @ToolRegistry.register
 class NaabuTool(BaseTool):

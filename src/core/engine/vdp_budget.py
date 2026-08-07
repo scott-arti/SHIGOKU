@@ -176,6 +176,83 @@ class VdpExecutionBudget:
     # Main consumption interface
     # ------------------------------------------------------------------
 
+    def _check_limits(
+        self,
+        asset_key: str,
+        actor_key: str,
+        hypothesis_key: str,
+        *,
+        check_concurrency: bool = True,
+    ) -> BudgetDecision:
+        """Check ALL budget limits WITHOUT consuming anything.
+
+        Atomicity contract (SGK-2026-0421 design constraint G): consumption
+        must never end partially — either every dimension commits or none
+        does. ``peek()`` / ``consume()`` share this single check.
+        """
+        # 0. Runtime budget check
+        runtime_result = self._check_runtime()
+        if not runtime_result.allowed:
+            return runtime_result
+
+        # 1. Global request count
+        if self._requests_used >= self.max_requests:
+            return BudgetDecision.reject(0.0, BudgetReasonCodeV1.REQUESTS_EXHAUSTED)
+
+        # 2. Concurrency check
+        if check_concurrency and self._inflight >= self.max_concurrency:
+            return BudgetDecision.reject(0.0, BudgetReasonCodeV1.CONCURRENCY_EXCEEDED)
+
+        # 3. Circuit breaker check (per asset)
+        if asset_key:
+            circuit_result = self._check_circuit(asset_key)
+            if not circuit_result.allowed:
+                return circuit_result
+
+        # 4. Per-key budget checks (asset, actor, hypothesis)
+        if asset_key:
+            asset_result = self._check_key_budget(
+                self._assets, asset_key,
+                self.per_asset_burst, self.per_asset_cooldown_seconds,
+                BudgetReasonCodeV1.ASSET_BUDGET_EXHAUSTED,
+            )
+            if not asset_result.allowed:
+                return asset_result
+
+        if actor_key:
+            actor_result = self._check_key_budget(
+                self._actors, actor_key,
+                self.per_actor_burst, self.per_actor_cooldown_seconds,
+                BudgetReasonCodeV1.ACTOR_BUDGET_EXHAUSTED,
+            )
+            if not actor_result.allowed:
+                return actor_result
+
+        if hypothesis_key:
+            hyp_result = self._check_key_budget(
+                self._hypotheses, hypothesis_key,
+                self.per_hypothesis_burst, self.per_hypothesis_cooldown_seconds,
+                BudgetReasonCodeV1.HYPOTHESIS_BUDGET_EXHAUSTED,
+            )
+            if not hyp_result.allowed:
+                return hyp_result
+
+        return BudgetDecision.allow()
+
+    def peek(
+        self,
+        asset_key: str = "",
+        actor_key: str = "",
+        hypothesis_key: str = "",
+    ) -> BudgetDecision:
+        """Check whether a request token is available WITHOUT consuming.
+
+        Used by the admission gate before capability/HITL checks so a
+        rejected admission never consumes budget (design constraint G).
+        """
+        with self._lock:
+            return self._check_limits(asset_key, actor_key, hypothesis_key)
+
     def consume(
         self,
         asset_key: str = "",
@@ -184,67 +261,32 @@ class VdpExecutionBudget:
     ) -> BudgetDecision:
         """Attempt to consume a request token across all budget dimensions.
 
-        Checks are performed in order; the first exhausted budget returns the rejection.
+        Atomic: all limits are checked first; increments are committed only
+        when every dimension passes. A rejected consumption never leaves
+        partial consumption behind.
         """
         with self._lock:
-            # 0. Runtime budget check
-            runtime_result = self._check_runtime()
-            if not runtime_result.allowed:
-                return runtime_result
+            decision = self._check_limits(asset_key, actor_key, hypothesis_key)
+            if not decision.allowed:
+                return decision
 
-            # 1. Global request count
-            if self._requests_used >= self.max_requests:
-                return BudgetDecision.reject(0.0, BudgetReasonCodeV1.REQUESTS_EXHAUSTED)
-
-            # 2. Concurrency check
-            if self._inflight >= self.max_concurrency:
-                return BudgetDecision.reject(0.0, BudgetReasonCodeV1.CONCURRENCY_EXCEEDED)
-
-            # 3. Circuit breaker check (per asset)
-            if asset_key:
-                circuit_result = self._check_circuit(asset_key)
-                if not circuit_result.allowed:
-                    return circuit_result
-
-            # 4. Per-key budget checks (asset, actor, hypothesis)
-            if asset_key:
-                asset_result = self._consume_key_budget(
-                    self._assets, asset_key,
-                    self.per_asset_burst, self.per_asset_cooldown_seconds,
-                    BudgetReasonCodeV1.ASSET_BUDGET_EXHAUSTED,
-                )
-                if not asset_result.allowed:
-                    return asset_result
-
-            if actor_key:
-                actor_result = self._consume_key_budget(
-                    self._actors, actor_key,
-                    self.per_actor_burst, self.per_actor_cooldown_seconds,
-                    BudgetReasonCodeV1.ACTOR_BUDGET_EXHAUSTED,
-                )
-                if not actor_result.allowed:
-                    return actor_result
-
-            if hypothesis_key:
-                hyp_result = self._consume_key_budget(
-                    self._hypotheses, hypothesis_key,
-                    self.per_hypothesis_burst, self.per_hypothesis_cooldown_seconds,
-                    BudgetReasonCodeV1.HYPOTHESIS_BUDGET_EXHAUSTED,
-                )
-                if not hyp_result.allowed:
-                    return hyp_result
-
-            # All checks passed
+            # ---- atomic commit (all dimensions) ----
             self._requests_used += 1
+            if asset_key:
+                self._commit_key_budget(self._assets, asset_key, self.per_asset_cooldown_seconds)
+            if actor_key:
+                self._commit_key_budget(self._actors, actor_key, self.per_actor_cooldown_seconds)
+            if hypothesis_key:
+                self._commit_key_budget(self._hypotheses, hypothesis_key, self.per_hypothesis_cooldown_seconds)
             return BudgetDecision.allow()
 
     def consume_follow_up(self, hypothesis_key: str) -> BudgetDecision:
-        """Consume a follow-up token for a hypothesis."""
+        """Consume a follow-up token for a hypothesis (atomic)."""
         with self._lock:
             if self._follow_ups_used >= self.max_follow_ups:
                 return BudgetDecision.reject(0.0, BudgetReasonCodeV1.FOLLOW_UPS_EXHAUSTED)
 
-            hyp_result = self._consume_key_budget(
+            hyp_result = self._check_key_budget(
                 self._hypotheses, hypothesis_key,
                 self.per_hypothesis_burst, self.per_hypothesis_cooldown_seconds,
                 BudgetReasonCodeV1.FOLLOW_UPS_EXHAUSTED,
@@ -253,6 +295,53 @@ class VdpExecutionBudget:
                 return hyp_result
 
             self._follow_ups_used += 1
+            self._commit_key_budget(self._hypotheses, hypothesis_key, self.per_hypothesis_cooldown_seconds)
+            return BudgetDecision.allow()
+
+    def consume_follow_up_request(
+        self,
+        *,
+        asset_key: str,
+        actor_key: str,
+        hypothesis_key: str,
+    ) -> BudgetDecision:
+        """Atomically reserve one follow-up and its first network request.
+
+        No counter or per-key window is changed unless both the follow-up and
+        request limits allow the operation.  This is the M3a admission path;
+        it prevents a rejected request from leaving a partially consumed
+        follow-up budget.
+        """
+        with self._lock:
+            if self._follow_ups_used >= self.max_follow_ups:
+                return BudgetDecision.reject(
+                    0.0, BudgetReasonCodeV1.FOLLOW_UPS_EXHAUSTED
+                )
+            request_result = self._check_limits(
+                asset_key,
+                actor_key,
+                hypothesis_key,
+                check_concurrency=False,
+            )
+            if not request_result.allowed:
+                return request_result
+
+            self._follow_ups_used += 1
+            self._requests_used += 1
+            if asset_key:
+                self._commit_key_budget(
+                    self._assets, asset_key, self.per_asset_cooldown_seconds
+                )
+            if actor_key:
+                self._commit_key_budget(
+                    self._actors, actor_key, self.per_actor_cooldown_seconds
+                )
+            if hypothesis_key:
+                self._commit_key_budget(
+                    self._hypotheses,
+                    hypothesis_key,
+                    self.per_hypothesis_cooldown_seconds,
+                )
             return BudgetDecision.allow()
 
     def consume_retry(self, attempt_key: str) -> BudgetDecision:
@@ -396,10 +485,10 @@ class VdpExecutionBudget:
         return BudgetDecision.allow()
 
     # ------------------------------------------------------------------
-    # Per-key budget helper
+    # Per-key budget helpers (check / commit separated for atomicity)
     # ------------------------------------------------------------------
 
-    def _consume_key_budget(
+    def _check_key_budget(
         self,
         store: Dict[str, _KeyBudget],
         key: str,
@@ -407,24 +496,35 @@ class VdpExecutionBudget:
         cooldown_seconds: float,
         reason_code: str,
     ) -> BudgetDecision:
+        """Check a per-key burst window WITHOUT consuming (non-mutating)."""
         now = time.monotonic()
         budget = store.get(key)
-
-        if budget is not None:
-            if (now - budget.window_start) >= cooldown_seconds:
-                budget.count = 0
-                budget.window_start = now
-        else:
-            budget = _KeyBudget(count=0, window_start=now)
-            store[key] = budget
-
-        if budget.count < burst:
-            budget.count += 1
+        if budget is None:
             return BudgetDecision.allow()
-
+        if (now - budget.window_start) >= cooldown_seconds:
+            # Window would be reset on commit — treat as available.
+            return BudgetDecision.allow()
+        if budget.count < burst:
+            return BudgetDecision.allow()
         remaining = cooldown_seconds - (now - budget.window_start)
-        wait = max(0.0, remaining)
-        return BudgetDecision.reject(wait, reason_code)
+        return BudgetDecision.reject(max(0.0, remaining), reason_code)
+
+    def _commit_key_budget(
+        self,
+        store: Dict[str, _KeyBudget],
+        key: str,
+        cooldown_seconds: float,
+    ) -> None:
+        """Commit one consumption to a per-key budget (mutating)."""
+        now = time.monotonic()
+        budget = store.get(key)
+        if budget is None:
+            store[key] = _KeyBudget(count=1, window_start=now)
+            return
+        if (now - budget.window_start) >= cooldown_seconds:
+            budget.count = 0
+            budget.window_start = now
+        budget.count += 1
 
     # ------------------------------------------------------------------
     # Snapshot

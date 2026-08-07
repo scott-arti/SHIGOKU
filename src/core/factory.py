@@ -1,7 +1,6 @@
 from typing import Optional, Dict, Any
 from src.core.agents.base import BaseAgent, AgentConfig
 # Legacy agents removed: CodeAgent, CommandAgent
-from src.config import settings
 from src.prompts import get_agent_prompt
 
 class AgentFactory:
@@ -28,7 +27,7 @@ class AgentFactory:
             "src.core" 
         ])
 
-        model = model or "deepseek/deepseek-chat"
+        model = model or ""
         effective_workspace = workspace_root or os.getcwd()
         
         # Registry Lookup
@@ -76,7 +75,7 @@ class AgentFactory:
             return GenAgent(
                 name=agent_name,
                 instructions=get_agent_prompt(mode),
-                model=settings.security_agent_model or model,
+                model=model,
                 mode=mode,
                 tools=effective_tools,
                 workspace_root=workspace_root,

@@ -179,6 +179,50 @@ class HaddixFormatter:
         self._vulnerability_family_coverage: Dict[str, Any] = {}
         self._initial_release_gate: Dict[str, Any] = {}
         self._suppressed_findings: List[Dict[str, Any]] = []
+        # SGK-2026-0422: optional immutable canonical VDP summary. When set
+        # for a canonical_vdp session, confirmed/candidate/refuted/untested
+        # classification comes ONLY from canonical verdicts — never from raw
+        # finding labels or formatter-side re-judgement.
+        self._vdp_canonical_summary: Any = None
+        # SGK-2026-0425 M5 (D04 resolution): optional additive
+        # ``vdp_diagnostics_v1`` session section. When present, the machine-
+        # readable diagnostic index is embedded so the report/session
+        # consistency checker can compare diagnostic digests. Absent -> no
+        # block (additive-absent, bit-identical legacy reports).
+        self._vdp_diagnostics_section: Any = None
+        # SGK-2026-0426 W3: optional fail-closed run outcome
+        # (``vdp_contract.run_outcome``). When the run failed at the VDP
+        # follow-up stage (attempts=0), the report carries the machine-
+        # readable ``vdp_run_failed_v1`` marker so it is never presented as
+        # a normal completion. Absent -> no marker (additive-absent).
+        self._vdp_run_outcome: Any = None
+
+    def set_vdp_canonical_summary(self, summary) -> None:
+        """Attach the immutable canonical VDP summary (reporting read-only)."""
+        self._vdp_canonical_summary = summary
+
+    def set_vdp_diagnostics_section(self, section) -> None:
+        """Attach the session's ``vdp_diagnostics_v1`` section (read-only).
+
+        Used only to embed the additive ``vdp_diagnostic_index_v1`` block;
+        the section itself is never copied into the report.
+        """
+        self._vdp_diagnostics_section = section
+
+    def set_vdp_run_outcome(self, run_outcome) -> None:
+        """Attach the session's fail-closed run outcome (W3, read-only).
+
+        ``follow_up_stage_failed`` (attempts=0) embeds the machine-readable
+        ``vdp_run_failed_v1`` marker; healthy runs pass None (no marker).
+        """
+        self._vdp_run_outcome = run_outcome
+
+    @property
+    def _has_canonical_summary(self) -> bool:
+        return (
+            self._vdp_canonical_summary is not None
+            and getattr(self._vdp_canonical_summary, "source_kind", "") == "canonical_vdp"
+        )
 
     @staticmethod
     def classify_duration_status(vuln_type: str, duration_seconds: float, status: str) -> str:
@@ -1116,7 +1160,12 @@ class HaddixFormatter:
             for i, finding in enumerate(candidate_findings, 1):
                 lines.extend(self._format_finding(i, finding, include_confirmed_evidence_template=False))
                 lines.append("")
-        
+
+        # SGK-2026-0422: canonical VDP funnel/verdicts (shared projection).
+        if self._vdp_canonical_summary is not None:
+            from src.reporting.vdp_report_projection import render_vdp_section_markdown
+            lines.extend(render_vdp_section_markdown(self._vdp_canonical_summary))
+
         return "\n".join(lines)
     
     def _format_finding(
@@ -1783,13 +1832,62 @@ class HaddixFormatter:
         return json.dumps(report, indent=2, ensure_ascii=False)
     
     def save_markdown(self, output_path: Path) -> None:
-        """Markdown ファイルとして保存"""
+        """Markdown ファイルとして保存 (SGK-2026-0422: atomic promotion)."""
         content = self.format_markdown()
+        from src.reporting.vdp_report_projection import (
+            atomic_write_report,
+            embed_vdp_canonical_index,
+            embed_vdp_diagnostic_index,
+            embed_vdp_run_failed_marker,
+        )
+
+        if self._vdp_canonical_summary is not None:
+            content = embed_vdp_canonical_index(content, self._vdp_canonical_summary)
+        content = embed_vdp_diagnostic_index(content, self._vdp_diagnostics_section)
+        content = embed_vdp_run_failed_marker(content, self._vdp_run_outcome)
+        if (
+            self._vdp_canonical_summary is not None
+            or self._vdp_diagnostics_section is not None
+            or self._vdp_run_outcome is not None
+        ):
+            atomic_write_report(
+                output_path,
+                content,
+                required_sections=self._required_report_sections(),
+            )
+            return
         output_path.write_text(content, encoding="utf-8")
-    
+
+    def _required_report_sections(self) -> Optional[List[str]]:
+        """Required section markers for atomic promotion (canonical VDP path).
+
+        Subclasses override with the headers they actually emit so the
+        post-generation re-verification is honest per formatter.
+        """
+        return None
+
     def save_json(self, output_path: Path) -> None:
-        """JSON ファイルとして保存"""
+        """JSON ファイルとして保存 (SGK-2026-0422: canonical index included)."""
         content = self.format_json()
+        if (
+            self._vdp_canonical_summary is not None
+            or self._vdp_diagnostics_section is not None
+        ):
+            from src.reporting.vdp_report_projection import (
+                atomic_write_report,
+                build_vdp_diagnostic_index,
+            )
+            from src.reporting.vdp_canonical import build_vdp_canonical_index
+            data = json.loads(content)
+            if self._vdp_canonical_summary is not None:
+                data["vdp_canonical_index_v1"] = build_vdp_canonical_index(
+                    self._vdp_canonical_summary
+                )
+            diag_index = build_vdp_diagnostic_index(self._vdp_diagnostics_section)
+            if diag_index is not None:
+                data["vdp_diagnostic_index_v1"] = diag_index
+            atomic_write_report(output_path, json.dumps(data, indent=2, ensure_ascii=False))
+            return
         output_path.write_text(content, encoding="utf-8")
     
     def get_findings_count(self) -> int:
@@ -2148,10 +2246,49 @@ class HaddixFormatter:
                 deduped[index] = self._merge_confirmed_duplicate(existing, finding)
         return deduped
 
+    def _canonical_status_for_finding(self, finding: HaddixFinding) -> Optional[str]:
+        """Return the canonical verdict status for a finding, or None.
+
+        For canonical VDP sessions (summary attached), confirmation is NEVER
+        derived from raw finding labels — only from canonical verdicts.
+        Matching uses the hypothesis_id / verdict_id recorded in
+        additional_info when present, falling back to no match (None → the
+        finding is shown as candidate, never confirmed).
+        """
+        if self._vdp_canonical_summary is None:
+            return None
+        if getattr(self._vdp_canonical_summary, "source_kind", "") != "canonical_vdp":
+            return None
+        info = finding.additional_info if isinstance(finding.additional_info, dict) else {}
+        hypothesis_id = str(info.get("hypothesis_id") or "").strip()
+        verdict_id = str(info.get("verdict_id") or "").strip()
+        for verdict in self._vdp_canonical_summary.verdicts:
+            if verdict_id and verdict.verdict_id == verdict_id:
+                return verdict.status
+            if hypothesis_id and verdict.hypothesis_id == hypothesis_id:
+                return verdict.status
+        return None
+
     def _split_findings_by_confirmation(
         self,
         findings: List[HaddixFinding],
     ) -> tuple[List[HaddixFinding], List[HaddixFinding]]:
+        # SGK-2026-0422: canonical VDP sessions use ONLY canonical verdicts.
+        # No formatter-side re-judgement, no promotion from raw labels.
+        if self._vdp_canonical_summary is not None:
+            confirmed: List[HaddixFinding] = []
+            candidates: List[HaddixFinding] = []
+            for finding in findings:
+                status = self._canonical_status_for_finding(finding)
+                if status == "confirmed":
+                    confirmed.append(finding)
+                else:
+                    candidates.append(finding)
+            return (
+                self._deduplicate_confirmed_findings(confirmed),
+                self._deduplicate_candidate_findings(candidates),
+            )
+
         confirmed: List[HaddixFinding] = []
         candidates: List[HaddixFinding] = []
 
@@ -2657,12 +2794,30 @@ def generate_haddix_report(
     vulnerability_family_coverage: Optional[Dict[str, Any]] = None,
     initial_release_gate: Optional[Dict[str, Any]] = None,
     source_session: str = "",
+    vdp_canonical_summary: Any = None,
+    vdp_diagnostics_section: Any = None,
+    vdp_run_outcome: Any = None,
 ) -> None:
     """Generate the canonical Haddix report.
 
     Markdown output now delegates to the submission/internal split renderer so
     direct callers and CLI-generated reports use the same report path. JSON
     output keeps the legacy structured formatter for compatibility.
+
+    ``vdp_canonical_summary`` (SGK-2026-0422): optional immutable canonical
+    VDP summary; when provided for a canonical_vdp session, confirmed/
+    candidate classification comes ONLY from canonical verdicts and the
+    machine-readable canonical index is embedded.
+
+    ``vdp_diagnostics_section`` (SGK-2026-0425 M5, additive): the session's
+    ``vdp_diagnostics_v1`` section; when present the machine-readable
+    ``vdp_diagnostic_index_v1`` block is embedded for the consistency
+    checker. Absent -> no block (legacy reports unchanged).
+
+    ``vdp_run_outcome`` (SGK-2026-0426 W3, additive): the session's
+    fail-closed run outcome (``vdp_contract.run_outcome``); a failed
+    follow-up stage embeds the ``vdp_run_failed_v1`` marker so the report is
+    never presented as a normal completion.
     """
     if format_type != "json":
         from src.reporting.haddix_submission_internal_formatter import (
@@ -2679,6 +2834,9 @@ def generate_haddix_report(
             vulnerability_family_coverage=vulnerability_family_coverage,
             initial_release_gate=initial_release_gate,
             source_session=source_session,
+            vdp_canonical_summary=vdp_canonical_summary,
+            vdp_diagnostics_section=vdp_diagnostics_section,
+            vdp_run_outcome=vdp_run_outcome,
         )
         return
 
@@ -2689,6 +2847,12 @@ def generate_haddix_report(
     formatter.set_scenario_coverage(scenario_coverage or {})
     formatter.set_vulnerability_family_coverage(vulnerability_family_coverage or {})
     formatter.set_initial_release_gate(initial_release_gate or {})
+    if vdp_canonical_summary is not None:
+        formatter.set_vdp_canonical_summary(vdp_canonical_summary)
+    if vdp_diagnostics_section is not None:
+        formatter.set_vdp_diagnostics_section(vdp_diagnostics_section)
+    if vdp_run_outcome is not None:
+        formatter.set_vdp_run_outcome(vdp_run_outcome)
 
     for f in findings:
         formatter.add_finding_from_dict(f)

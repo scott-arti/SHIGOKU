@@ -17,7 +17,7 @@ from neo4j import GraphDatabase
 from src.core.intel.cartographer import SiteMap, SiteNode
 from src.core.intel.fingerprinter import TechInfo
 from src.core.domain.model.target import TargetAsset
-from src.config import settings
+from src.core.config.settings import settings
 
 logger = logging.getLogger(__name__)
 

@@ -1,0 +1,471 @@
+{
+  "schema_version": 1,
+  "eval_version": "v1",
+  "threshold_artifact": "config/diagnostics/thresholds_v1.json",
+  "generated_at": "2026-08-06",
+  "task": "SGK-2026-0425 M4",
+  "runner": "tests/fixtures/vdp_diagnostic_env/run_diagnostic_eval.sh",
+  "seeds": [
+    "1",
+    "2",
+    "3"
+  ],
+  "runs_total": 39,
+  "runs_completed": 39,
+  "runs_failed": [],
+  "per_stage": {
+    "S00": {
+      "runs": 3,
+      "accuracy_values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "mean_accuracy": 1.0,
+      "correct_total": 9,
+      "total": 9,
+      "trace_coverage_values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "section_valid_all": true,
+      "dag_excluded": [
+        [],
+        [],
+        []
+      ],
+      "aggregate_excluded": [
+        [],
+        [],
+        []
+      ]
+    },
+    "S01": {
+      "runs": 3,
+      "accuracy_values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "mean_accuracy": 1.0,
+      "correct_total": 9,
+      "total": 9,
+      "trace_coverage_values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "section_valid_all": true,
+      "dag_excluded": [
+        [],
+        [],
+        []
+      ],
+      "aggregate_excluded": [
+        [],
+        [],
+        []
+      ]
+    },
+    "S02": {
+      "runs": 3,
+      "accuracy_values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "mean_accuracy": 1.0,
+      "correct_total": 9,
+      "total": 9,
+      "trace_coverage_values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "section_valid_all": true,
+      "dag_excluded": [
+        [],
+        [],
+        []
+      ],
+      "aggregate_excluded": [
+        [],
+        [],
+        []
+      ]
+    },
+    "S03": {
+      "runs": 3,
+      "accuracy_values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "mean_accuracy": 1.0,
+      "correct_total": 9,
+      "total": 9,
+      "trace_coverage_values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "section_valid_all": true,
+      "dag_excluded": [
+        [],
+        [],
+        []
+      ],
+      "aggregate_excluded": [
+        [],
+        [],
+        []
+      ]
+    },
+    "S04": {
+      "runs": 3,
+      "accuracy_values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "mean_accuracy": 1.0,
+      "correct_total": 9,
+      "total": 9,
+      "trace_coverage_values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "section_valid_all": true,
+      "dag_excluded": [
+        [],
+        [],
+        []
+      ],
+      "aggregate_excluded": [
+        [],
+        [],
+        []
+      ]
+    },
+    "S05": {
+      "runs": 3,
+      "accuracy_values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "mean_accuracy": 1.0,
+      "correct_total": 9,
+      "total": 9,
+      "trace_coverage_values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "section_valid_all": true,
+      "dag_excluded": [
+        [],
+        [],
+        []
+      ],
+      "aggregate_excluded": [
+        [],
+        [],
+        []
+      ]
+    },
+    "S06": {
+      "runs": 3,
+      "accuracy_values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "mean_accuracy": 1.0,
+      "correct_total": 9,
+      "total": 9,
+      "trace_coverage_values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "section_valid_all": true,
+      "dag_excluded": [
+        [],
+        [],
+        []
+      ],
+      "aggregate_excluded": [
+        [],
+        [],
+        []
+      ]
+    },
+    "S07": {
+      "runs": 3,
+      "accuracy_values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "mean_accuracy": 1.0,
+      "correct_total": 9,
+      "total": 9,
+      "trace_coverage_values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "section_valid_all": true,
+      "dag_excluded": [
+        [],
+        [],
+        []
+      ],
+      "aggregate_excluded": [
+        [],
+        [],
+        []
+      ]
+    },
+    "S08": {
+      "runs": 3,
+      "accuracy_values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "mean_accuracy": 1.0,
+      "correct_total": 9,
+      "total": 9,
+      "trace_coverage_values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "section_valid_all": true,
+      "dag_excluded": [
+        [],
+        [],
+        []
+      ],
+      "aggregate_excluded": [
+        [],
+        [],
+        []
+      ]
+    },
+    "S09": {
+      "runs": 3,
+      "accuracy_values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "mean_accuracy": 1.0,
+      "correct_total": 9,
+      "total": 9,
+      "trace_coverage_values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "section_valid_all": true,
+      "dag_excluded": [
+        [],
+        [],
+        []
+      ],
+      "aggregate_excluded": [
+        [],
+        [],
+        []
+      ]
+    },
+    "S10": {
+      "runs": 3,
+      "accuracy_values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "mean_accuracy": 1.0,
+      "correct_total": 9,
+      "total": 9,
+      "trace_coverage_values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "section_valid_all": true,
+      "dag_excluded": [
+        [],
+        [],
+        []
+      ],
+      "aggregate_excluded": [
+        [],
+        [],
+        []
+      ]
+    },
+    "S11": {
+      "runs": 3,
+      "accuracy_values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "mean_accuracy": 1.0,
+      "correct_total": 9,
+      "total": 9,
+      "trace_coverage_values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "section_valid_all": true,
+      "dag_excluded": [
+        [],
+        [],
+        []
+      ],
+      "aggregate_excluded": [
+        [],
+        [],
+        []
+      ]
+    },
+    "S12": {
+      "runs": 3,
+      "accuracy_values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "mean_accuracy": 1.0,
+      "correct_total": 9,
+      "total": 9,
+      "trace_coverage_values": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "section_valid_all": true,
+      "dag_excluded": [
+        [],
+        [],
+        []
+      ],
+      "aggregate_excluded": [
+        [],
+        [],
+        []
+      ]
+    }
+  },
+  "overall": {
+    "first_failure_accuracy": 1.0,
+    "correct": 117,
+    "total": 117,
+    "unattributable_rate": 0.0,
+    "u00_cases": 0,
+    "total_cases": 117,
+    "cross_seed_case_overlaps": {
+      "1vs2": 0,
+      "1vs3": 0,
+      "2vs3": 0
+    },
+    "per_seed_case_counts": {
+      "1": 3,
+      "2": 3,
+      "3": 3
+    },
+    "per_seed_trace_coverage": {
+      "1": {
+        "runs": 13,
+        "trace_coverage_values": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "min": 1.0
+      },
+      "2": {
+        "runs": 13,
+        "trace_coverage_values": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "min": 1.0
+      },
+      "3": {
+        "runs": 13,
+        "trace_coverage_values": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "min": 1.0
+      }
+    },
+    "threshold_floor_comparison": {
+      "trace_coverage_floor_1.0": true,
+      "first_failure_accuracy_floor_0.95": true,
+      "unattributable_rate_cap_0.10": true
+    },
+    "macro_reach": {
+      "surface_reach_macro": {
+        "value": 1.0,
+        "basis": "genuine (fixture runtime adapter)"
+      },
+      "hypothesis_reach_macro": {
+        "value": 1.0,
+        "basis": "genuine (fixture runtime generator)"
+      },
+      "valid_attempt_reach_macro": {
+        "value": 1.0,
+        "basis": "harness-simulated (instrumented executor not in fixture runtime)"
+      },
+      "evidence_completeness_macro": {
+        "value": 1.0,
+        "basis": "harness-simulated (instrumented executor not in fixture runtime)"
+      }
+    },
+    "cause_attribution_note": "attribution agreement with injected fault stage == first_failure_accuracy (1.0); single-variable enforcement and reproduction rules are enforced by src.reporting.vdp_counterfactual (unit-tested)"
+  },
+  "content_hash": "sha256:4c0775f80e93311e5f9b5182a47e6b5ed8549274f69abe26298ab68b280afd65"
+}

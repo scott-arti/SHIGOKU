@@ -143,7 +143,7 @@ def test_record_react_decision_updates_context_snapshot():
 
 
 def test_react_setting_prefers_core_settings(monkeypatch):
-    from src.config import settings as legacy_settings
+    from src.core.config.settings import settings as legacy_settings
     import src.core.config.settings as core_settings_module
 
     mc = _new_min_mc()

@@ -276,12 +276,31 @@ def _extract_param_names(params: Any) -> Tuple[str, ...]:
     return tuple(sorted(names))
 
 
+def _extract_param_locations(params: Any) -> Tuple[str, ...]:
+    """Extract sorted parameter locations (query/form/...) from a signal.
+
+    SGK-2026-0421: ``location == "form"`` marks form-derived parameters
+    produced by the recon pipeline (``_endpoint_signals[*].params[*]``).
+    Values are never inspected — only the safe ``location`` key.
+    """
+    locations: set[str] = set()
+    if not isinstance(params, list):
+        return ()
+    for p in params:
+        if isinstance(p, dict):
+            loc = str(p.get("location", "") or "").strip().lower()
+            if loc:
+                locations.add(loc)
+    return tuple(sorted(locations))
+
+
 def _canonical_observation_payload(
     url: str,
     method: str,
     entity_type: str,
     primary_label: str,
     param_names: Tuple[str, ...],
+    param_locations: Tuple[str, ...],
     source_kind: ObservationSourceKind,
     has_auth_header: bool,
     has_cookie: bool,
@@ -300,6 +319,7 @@ def _canonical_observation_payload(
         "entity_type": entity_type,
         "primary_label": primary_label,
         "param_names": list(param_names),
+        "param_locations": list(param_locations),
         "source_kind": source_kind.value,
         "has_auth_header": has_auth_header,
         "has_cookie": has_cookie,
@@ -322,13 +342,25 @@ class Observation:
     entity_type: str
     primary_label: str
     param_names: Tuple[str, ...] = ()
+    param_locations: Tuple[str, ...] = ()
     source_kind: ObservationSourceKind = ObservationSourceKind.RECON_SIGNAL_BUNDLE
     has_auth_header: bool = False
     has_cookie: bool = False
     candidate_labels: Tuple[str, ...] = ()
     freshness_days: int = 0
+    freshness_basis: str = ""  # SGK-2026-0421: e.g. "recon_artifact" (no wall-clock in IDs)
     has_second_actor_evidence: bool = False
     has_admin_evidence: bool = False
+
+    @property
+    def has_form_params(self) -> bool:
+        """True when any param came from an HTML form (location == "form").
+
+        SGK-2026-0421: form provenance is derived from the existing signal
+        bundle (recon pipeline ``_endpoint_signals[*].params[*].location``)
+        — no new crawl or communication is performed.
+        """
+        return "form" in self.param_locations
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -338,11 +370,13 @@ class Observation:
             "entity_type": self.entity_type,
             "primary_label": self.primary_label,
             "param_names": list(self.param_names),
+            "param_locations": list(self.param_locations),
             "source_kind": self.source_kind.value,
             "has_auth_header": self.has_auth_header,
             "has_cookie": self.has_cookie,
             "candidate_labels": list(self.candidate_labels),
             "freshness_days": self.freshness_days,
+            "freshness_basis": self.freshness_basis,
             "has_second_actor_evidence": self.has_second_actor_evidence,
             "has_admin_evidence": self.has_admin_evidence,
         }
@@ -426,6 +460,12 @@ class ObservationAdapter:
         has_auth_header, has_cookie = _split_auth_flags(signal.get("auth_context"))
         has_second, has_admin = _split_actor_evidence(signal.get("auth_context"))
         param_names = _extract_param_names(signal.get("params"))
+        param_locations = _extract_param_locations(signal.get("params"))
+        source_kind = (
+            ObservationSourceKind.FORM
+            if "form" in param_locations
+            else self._source_kind
+        )
 
         labels = signal.get("candidate_labels")
         candidate_labels = tuple(
@@ -438,7 +478,8 @@ class ObservationAdapter:
             entity_type=entity_type,
             primary_label=primary_label,
             param_names=param_names,
-            source_kind=self._source_kind,
+            param_locations=param_locations,
+            source_kind=source_kind,
             has_auth_header=has_auth_header,
             has_cookie=has_cookie,
             candidate_labels=candidate_labels,
@@ -454,10 +495,12 @@ class ObservationAdapter:
             entity_type=entity_type,
             primary_label=primary_label,
             param_names=param_names,
-            source_kind=self._source_kind,
+            param_locations=param_locations,
+            source_kind=source_kind,
             has_auth_header=has_auth_header,
             has_cookie=has_cookie,
             candidate_labels=candidate_labels,
+            freshness_basis="recon_artifact",
             has_second_actor_evidence=has_second,
             has_admin_evidence=has_admin,
         )

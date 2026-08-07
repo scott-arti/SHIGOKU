@@ -224,7 +224,7 @@ class TestL1_TimeoutConfiguration:
     
     def test_config_has_agent_execution_timeout(self):
         """設定にagent_execution_timeoutが存在すること"""
-        from src.config import settings
+        from src.core.config.settings import settings
         
         assert hasattr(settings, 'agent_execution_timeout')
         assert settings.agent_execution_timeout == 60
@@ -239,7 +239,7 @@ class TestL1_TimeoutConfiguration:
             os.environ['SHIGOKU_AGENT_EXECUTION_TIMEOUT'] = '120'
             
             # 新しいSettingsインスタンスを作成
-            from src.config import Settings
+            from src.core.config.settings import Settings
             new_settings = Settings()
             
             assert new_settings.agent_execution_timeout == 120

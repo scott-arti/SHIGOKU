@@ -113,7 +113,10 @@ async def test_async_save_session_persists_normalized_skipped_reason_codes() -> 
         project_dir="/tmp/shigoku-test-project",
         save_session=AsyncMock(),
     )
-    cast(Any, mc).run_ledger_recorder = SimpleNamespace(prepare_for_session=lambda spool_dir=None: {})
+    cast(Any, mc).run_ledger_recorder = SimpleNamespace(
+        prepare_for_session=lambda spool_dir=None: {},
+        run_id="test-run-id",
+    )
 
     skipped_task = Task(
         id="task_skip_reason_code_03",

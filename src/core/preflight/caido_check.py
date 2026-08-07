@@ -198,6 +198,7 @@ class CaidoCheck:
                         timeout=_HTTP_TIMEOUT,
                         retries=0,
                         use_proxy=False,
+                        follow_redirects=True,
                     ),
                     timeout=_HTTP_TIMEOUT + 3,
                 )
@@ -232,6 +233,7 @@ class CaidoCheck:
                         timeout=_HTTP_TIMEOUT,
                         retries=0,
                         use_proxy=False,
+                        follow_redirects=True,
                     ),
                     timeout=_HTTP_TIMEOUT + 3,
                 )
@@ -296,6 +298,7 @@ class CaidoCheck:
                         timeout=_HTTP_TIMEOUT,
                         retries=0,
                         use_proxy=False,
+                        follow_redirects=True,
                     ),
                     timeout=_HTTP_TIMEOUT + 3,
                 )
@@ -422,8 +425,10 @@ class CaidoCheck:
                     "unexpected response. Check Caido server logs."
                 )
             elif http_reason == "CAIDO_IDENTITY_UNVERIFIED":
+                parsed_url = urlparse(self._state.url)
+                port = parsed_url.port or 8080
                 remediation = (
-                    "Port 8080 is reachable but Caido identity could not "
+                    f"Port {port} is reachable but Caido identity could not "
                     "be confirmed. Ensure Caido is running and accessible."
                 )
 

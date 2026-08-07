@@ -14,7 +14,7 @@ import logging
 from unittest.mock import Mock, patch, MagicMock
 from dataclasses import dataclass
 
-from src.config import settings
+from src.core.config.settings import settings
 from src.core.engine.master_conductor import MasterConductor, Task, TaskState
 
 

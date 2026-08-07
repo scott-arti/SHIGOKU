@@ -88,7 +88,7 @@ class BaseAgent(ABC):
 
     @property
     def model(self) -> str:
-        return self.config.model
+        return self.llm.model
 
     @property
     def instructions(self) -> str:

@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "artifact_kind": "diagnostic_readiness_evidence",
+  "task": "SGK-2026-0426",
+  "generated_at": "2026-08-06",
+  "status": "evidence_ready",
+  "readiness_decision_for_0424": "future_stage_recorded_in_0424_plan",
+  "fix_set": {
+    "W1_taxonomy_v2": {
+      "taxonomy_version": "v2",
+      "content_hash": "sha256:b79206506bd9be6fac238070eb9bd38b26a517b1fc5134e9754630f6895ebd46",
+      "new_mechanism": "queue_mutation_off_main_thread"
+    },
+    "W2_thread_confinement": {
+      "changed_variable": "thread_confinement",
+      "attribution": "proven",
+      "counterfactual_artifact": "config/diagnostics/counterfactual_sgk2026_0426_c10.json",
+      "generic_reproduction": "tests/unit/engine/test_vdp_followup_thread_confinement.py"
+    },
+    "W3_fail_closed": {
+      "run_outcome_marker": "vdp_run_failed_v1",
+      "consistency_reason": "vdp_run_failed_not_reflected"
+    },
+    "W4_reach_semantics": {
+      "evidence_backed_stages": [
+        "S09",
+        "S10",
+        "S11"
+      ],
+      "attempts_required": true
+    }
+  },
+  "validation": {
+    "hidden_holdout_accuracy": 1.0,
+    "trace_coverage": 1.0,
+    "vdp_regression_tests": "1345 passed, 1 skipped",
+    "preflight": "exit 0",
+    "pcr_p1_asserts": "5 sites unchanged (task_queue.py:382/426/554/603/648)"
+  },
+  "content_hash": "sha256:7d5cf2f0c674f03ad5938c3624a4aac0609c3731c6400547fb3cce3e7fdfb8f5"
+}

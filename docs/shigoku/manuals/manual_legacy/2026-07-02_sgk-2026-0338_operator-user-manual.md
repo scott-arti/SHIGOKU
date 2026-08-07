@@ -5,13 +5,13 @@ status: active
 parent_task_id: SGK-2026-0001
 related_docs:
   - docs/shigoku/plans/done/2026-07-02_sgk-2026-0338_user-manual-and-internal-spec_plan.md
-  - docs/shigoku/manuals/2026-07-02_sgk-2026-0337_detailed-command-reference.md
+  - docs/shigoku/manuals/manual_legacy/2026-07-02_sgk-2026-0337_detailed-command-reference.md
   - docs/shigoku/manuals/QUICK_START.md
   - docs/shigoku/manuals/USER_MANUAL.md
   - docs/shigoku/specs/2026-07-02_sgk-2026-0338_internal-architecture-and-dataflow-spec.md
 title: SHIGOKU ユーザーマニュアル 2026-07 運用版
 created_at: '2026-07-02'
-updated_at: '2026-07-28'
+updated_at: '2026-08-07'
 tags:
   - shigoku
   - manual
@@ -328,7 +328,34 @@ HAR やプロキシログを入力して解析します。
   --analyze
 ```
 
-Caido 連携を使う場合は、`CAIDO_API_URL` と `CAIDO_API_TOKEN` を環境変数または設定で渡します。
+### Caido の API と通信記録用プロキシを設定する
+
+SHIGOKUではAPI確認と実通信プロキシを別の用途として扱いますが、Caidoは同じ待受URLで両方を処理します。
+
+- `SHIGOKU_CAIDO__URL`: Caido の GraphQL API 接続先。事前チェックやAPI操作に使います。
+- `SHIGOKU_SCAN__PROXY`: Caido以外のプロキシを使う場合や、実通信の接続先を個別に上書きする設定です。
+
+Caido を `8081` で使う場合は、次のURLを1つ設定するとAPI確認と実通信の両方に使われます。
+
+```bash
+export SHIGOKU_CAIDO__URL="http://127.0.0.1:8081"
+
+# Caido の token も使う場合（実際の値は自分の token に置き換える）
+export SHIGOKU_CAIDO__TOKEN="caido_..."
+```
+
+Docker Composeへ明示的に渡す場合は次のようにします。
+
+```bash
+docker compose run --rm --no-deps \
+  -e SHIGOKU_CAIDO__URL \
+  -e SHIGOKU_CAIDO__TOKEN \
+  shigoku python3 -m src.main \
+  --target http://localhost:3000/ \
+  --mode vulntest
+```
+
+`SHIGOKU_CAIDO__URL` を明示すると、事前チェックと対象サイトへのHTTP通信の両方が同じCaido接続先を使います。`SHIGOKU_SCAN__PROXY` が設定されている場合は、そちらが実通信で優先されます。設定変更のために `settings.py` を書き換える必要はありません。なお、Naabu のTCPポート探索はHTTP通信ではないため、CaidoのHTTP Historyには表示されません。
 
 ### 7.6 Docker だけで一通り動かしたい
 
@@ -441,5 +468,5 @@ python3 scripts/shigoku_ops_cli.py report consistency --report "$REPORT"
 ## 9. 次に読む文書
 
 - 詳細コマンド: [`2026-07-02_sgk-2026-0337_detailed-command-reference.md`](2026-07-02_sgk-2026-0337_detailed-command-reference.md)
-- 内部仕様: [`../specs/2026-07-02_sgk-2026-0338_internal-architecture-and-dataflow-spec.md`](../specs/2026-07-02_sgk-2026-0338_internal-architecture-and-dataflow-spec.md)
-- クイックスタート: [`QUICK_START.md`](QUICK_START.md)
+- 内部仕様: [`../../specs/2026-07-02_sgk-2026-0338_internal-architecture-and-dataflow-spec.md`](../../specs/2026-07-02_sgk-2026-0338_internal-architecture-and-dataflow-spec.md)
+- クイックスタート: [`QUICK_START.md`](../QUICK_START.md)

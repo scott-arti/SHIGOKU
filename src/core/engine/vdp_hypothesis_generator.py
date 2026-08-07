@@ -573,22 +573,37 @@ def build_hypothesis(
 
 
 def build_unavailable_source_inventory() -> List[Dict[str, Any]]:
-    """Deterministic inventory of not-yet-wired observation sources.
+    """Deterministic inventory of observation sources without a passive
+    producer that the VDP hook can consume without starting new activity.
 
-    SGK-2026-0420 wires ``recon_signal_bundle`` only; every other declared
-    observation source (crawler, form, JavaScript, API schema, GraphQL,
-    browser traffic, proxy history) is recorded as unavailable with a reason
-    and the tracking task that will connect it (SGK-2026-0421).
+    SGK-2026-0421: only ``recon_signal_bundle`` (with form params via
+    ``params[].location == "form"``) is wired. Every other declared source
+    is recorded as unavailable with a source-specific reason:
+    - crawler / javascript: producers are active crawl tools (gospider /
+      katana / cartographer); 0421 must not start new crawls.
+    - api_schema / graphql: no passive artifact producer confirmed.
+    - browser_traffic / proxy_history: only derived endpoint signals exist
+      (manifest / signal bundle), not raw traffic history.
+    The inventory is used to distinguish "zero observations" from
+    "source unavailable" (completion condition §9-6). Real wiring is tracked
+    as deferred follow-up SGK-2026-0423 (producer identification there).
     """
-    not_wired = [
-        ObservationSourceKind.CRAWLER, ObservationSourceKind.FORM,
-        ObservationSourceKind.JAVASCRIPT, ObservationSourceKind.API_SCHEMA,
-        ObservationSourceKind.GRAPHQL, ObservationSourceKind.BROWSER_TRAFFIC,
-        ObservationSourceKind.PROXY_HISTORY,
-    ]
+    reasons = {
+        ObservationSourceKind.CRAWLER: "producer_requires_new_crawl",
+        ObservationSourceKind.JAVASCRIPT: "producer_requires_new_crawl",
+        ObservationSourceKind.API_SCHEMA: "producer_not_found",
+        ObservationSourceKind.GRAPHQL: "producer_not_found",
+        ObservationSourceKind.BROWSER_TRAFFIC: "no_passive_artifact",
+        ObservationSourceKind.PROXY_HISTORY: "no_passive_artifact",
+    }
     return [
-        {"source": k.value, "status": "unavailable", "reason": "not_wired_in_0420", "tracking_task": "SGK-2026-0421"}
-        for k in sorted(not_wired, key=lambda k: k.value)
+        {
+            "source": k.value,
+            "status": "unavailable",
+            "reason": reasons[k],
+            "tracking_task": "SGK-2026-0423",
+        }
+        for k in sorted(reasons, key=lambda k: k.value)
     ]
 
 

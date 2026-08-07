@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import copy
 import json
-from typing import Callable
+from typing import Any, Callable
 from pathlib import Path
 
 from src.core.domain.model.task import Task, _redact_secrets
 from src.core.utils.json_utils import safe_json_loads
 from src.reporting.attack_review_builder import build_all_review_fields
+from src.core.models.vdp_contract import redact_secrets_deep, VDP_CONTRACT_SCHEMA_VERSION
 
 
 def resolve_running_task_resume_policy(
@@ -253,6 +254,107 @@ def deserialize_legacy_session_task_queue(serialized: list[str]) -> tuple[list[T
         except (json.JSONDecodeError, KeyError):
             failed_ids.append(s[:50] if len(s) > 50 else s)
     return tasks, failed_ids
+
+
+def inject_vdp_section_to_session_payload(payload: dict, vdp_state: dict) -> dict:
+    """Add a ``vdp_contract`` section to a session payload (backward-compatible).
+
+    Redacts ALL secrets in the ENTIRE payload using ``redact_secrets_deep()``
+    before returning. The VDP section records are also individually redacted.
+    Does **not** mutate the input payload — returns a new shallow copy.
+
+    Args:
+        payload: Existing session payload dict (e.g. from build_async_session_payload).
+        vdp_state: Dict with optional VDP contract fields:
+            - vdp_contract_version (int)
+            - hypotheses (list of HypothesisRecord.to_dict() dicts)
+            - attempts (list of AttemptRecord.to_dict() dicts)
+            - evidence_records (list of EvidenceRecordV1.to_dict() dicts)
+            - verdicts (list of EvidenceVerdictV1.to_dict() dicts)
+            - next_actions (list of NextActionRecord.to_dict() dicts)
+            - budget_snapshot (dict from VdpExecutionBudget.snapshot())
+            - run_health (RunHealthRecord.to_dict() dict)
+
+    Returns:
+        New payload dict with ``vdp_contract`` section added.
+        Entire payload (including task metadata, context, etc.) is deep-redacted
+        to strip secrets (Authorization, Cookie, X-API-Key etc.) from all paths.
+        Missing vdp_state keys are omitted (empty dicts not added).
+    """
+    result = dict(payload)
+
+    vdp_section: dict[str, Any] = {}
+    vdp_active = vdp_state.get("vdp_active", False)
+
+    version = vdp_state.get("vdp_contract_version", VDP_CONTRACT_SCHEMA_VERSION)
+    vdp_section["vdp_contract_version"] = version
+    vdp_section["vdp_active"] = vdp_active
+
+    # Always include all five record lists (even if empty) when VDP is active
+    for key in ("hypotheses", "attempts", "evidence_records", "verdicts", "next_actions"):
+        items = vdp_state.get(key, [])
+        vdp_section[key] = redact_secrets_deep(list(items) if items else [])
+
+    budget = vdp_state.get("budget_snapshot", {})
+    vdp_section["budget_snapshot"] = redact_secrets_deep(dict(budget)) if budget else {}
+
+    run_health = vdp_state.get("run_health", {})
+    vdp_section["run_health"] = redact_secrets_deep(dict(run_health)) if run_health else {}
+
+    # SGK-2026-0423 Lane C: shadow/enforce diff trace (append-only, no
+    # secrets) — included only when present.
+    shadow_diff = vdp_state.get("shadow_diff")
+    if shadow_diff is not None:
+        vdp_section["shadow_diff"] = redact_secrets_deep(list(shadow_diff))
+
+    # SGK-2026-0426 W3 (additive): fail-closed run outcome surfaced in the
+    # session. Absent = normal run. When follow-up injection failed with
+    # zero attempts, ``run_outcome=follow_up_stage_failed`` and
+    # ``verdicts_finalized=false`` are persisted so the reporting layer can
+    # degrade the report and the consistency checker can refuse a
+    # "normal completion" pass.
+    if vdp_state.get("run_outcome"):
+        vdp_section["run_outcome"] = str(vdp_state["run_outcome"])
+    if vdp_state.get("verdicts_finalized") is not None:
+        vdp_section["verdicts_finalized"] = bool(vdp_state["verdicts_finalized"])
+
+    result["vdp_contract"] = vdp_section
+
+    # Redact the ENTIRE payload (not just VDP section)
+    return redact_secrets_deep(result)
+
+
+def build_session_with_vdp(
+    task_queue,
+    completed_tasks,
+    context,
+    vdp_state: dict | None = None,
+    **kwargs,
+) -> dict:
+    """Build a session payload with VDP contract section injected.
+
+    Wraps ``build_async_session_payload()`` + ``inject_vdp_section_to_session_payload()``.
+
+    Args:
+        task_queue: Task queue list.
+        completed_tasks: Completed tasks list.
+        context: Conductor context.
+        vdp_state: Optional VDP state dict with keys: hypotheses, attempts,
+            evidence_records, verdicts, next_actions, budget_snapshot, run_health.
+        **kwargs: Passed through to ``build_async_session_payload()``.
+
+    Returns:
+        Session payload dict with ``vdp_contract`` section if vdp_state provided.
+    """
+    payload = build_async_session_payload(
+        task_queue=task_queue,
+        completed_tasks=completed_tasks,
+        context=context,
+        **kwargs,
+    )
+    if vdp_state:
+        payload = inject_vdp_section_to_session_payload(payload, vdp_state)
+    return payload
 
 
 def safe_json_dumps(payload) -> str:

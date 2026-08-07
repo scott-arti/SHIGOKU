@@ -1,0 +1,124 @@
+# SGK-2026-0423 Lane P-2 — random/opaque isolated holdout stack.
+#
+# Strict technical isolation:
+#   - network ``iso2`` is `internal: true` (no external egress for the
+#     fixture and the runtime; docker pull of the base images is the only
+#     network use — identical to the existing OS-boundary tests);
+#   - the runtime mounts ONLY src, config, .venv, the uv-python directory,
+#     the driver file, the host private out dir and the fixture access log
+#     — NO tests/ tree, NO labels/holdout mounts (the secrets path is NOT
+#     mounted into the runtime at all);
+#   - the fixture-target writes the HOLD OUT to /secrets/secret.json (host
+#     private dir ``VDP_HOLDOUT_SECRETS_DIR`` — a mktemp dir OUTSIDE the
+#     repo created by the orchestration; default ./_private_secrets for
+#     manual runs, never part of the repo) and the access log to /logs
+#     (``VDP_HOLDOUT_LOGS_DIR``, same convention);
+#   - holdout-evaluator runs with ``network_mode: none`` and reads the
+#     hold out + session + thresholds from read-only mounts only.
+#
+# The runtime receives the account credentials via VDP_ACCOUNT_* env vars
+# (exported from the host private secrets by the orchestration) and never
+# writes them anywhere.
+#
+# Overridable via environment: VDP_HOLDOUT_OUT_DIR, VDP_HOLDOUT_SECRETS_DIR,
+# VDP_HOLDOUT_LOGS_DIR, UV_PYTHON_DIR, VDP_ISO_UID/VDP_ISO_GID.
+services:
+  fixture-target:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    user: "${VDP_ISO_UID:-1000}:${VDP_ISO_GID:-1000}"
+    environment:
+      SECRETS_OUT_PATH: /secrets/secret.json
+      ACCESS_LOG_PATH: /logs/access.log
+    volumes:
+      - ${VDP_HOLDOUT_SECRETS_DIR:-./_private_secrets}:/secrets
+      - ${VDP_HOLDOUT_LOGS_DIR:-./_private_logs}:/logs
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=2)"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+    networks:
+      - iso2
+
+  shigoku-runtime:
+    image: python:3.13-slim
+    user: "${VDP_ISO_UID:-1000}:${VDP_ISO_GID:-1000}"
+    working_dir: /repo
+    command: [".venv/bin/python", "/repo/holdout_runtime_driver.py"]
+    environment:
+      PYTHONPATH: /repo
+      FIXTURE_BASE_URL: http://fixture-target:8000
+      OUT_DIR: /out
+      FIXTURE_SCOPE_HOST: fixture-target
+      TARGET_NAME: vdp-opaque-holdout
+      ACCESS_LOG_PATH: /logs/access.log
+      VDP_ACCOUNT_A_ID: "${VDP_ACCOUNT_A_ID:-}"
+      VDP_ACCOUNT_A_SECRET: "${VDP_ACCOUNT_A_SECRET:-}"
+      VDP_ACCOUNT_B_ID: "${VDP_ACCOUNT_B_ID:-}"
+      VDP_ACCOUNT_B_SECRET: "${VDP_ACCOUNT_B_SECRET:-}"
+      # Dummy LLM key env vars (same convention as tests/conftest.py):
+      # config/shigoku.yaml references these via api_key_env and the
+      # Settings model validates them on every get_settings() call.
+      DEEPSEEK_API_KEY: iso-fixture-dummy
+      OPENAI_API_KEY: iso-fixture-dummy
+      DEEPINFRA_API_KEY: iso-fixture-dummy
+      WANDB_API_KEY: iso-fixture-dummy
+      Cerebras_API_KEY: iso-fixture-dummy
+      ANY_LLM_API_KEY: iso-fixture-dummy
+    volumes:
+      # SELECTIVE mounts only — no tests/, no labels, no holdout content.
+      - ../../../src:/repo/src:ro
+      - ../../../config:/repo/config:ro
+      - ../../../.venv:/repo/.venv:ro
+      - ${UV_PYTHON_DIR:-/home/bbb/.local/share/uv/python/cpython-3.13.5-linux-x86_64-gnu}:/home/bbb/.local/share/uv/python/cpython-3.13.5-linux-x86_64-gnu:ro
+      - ./holdout_runtime_driver.py:/repo/holdout_runtime_driver.py:ro
+      - ${VDP_HOLDOUT_OUT_DIR:-./_private_out}:/out
+      - ${VDP_HOLDOUT_LOGS_DIR:-./_private_logs}:/logs:ro
+    depends_on:
+      fixture-target:
+        condition: service_healthy
+    networks:
+      - iso2
+
+  holdout-evaluator:
+    image: python:3.13-slim
+    profiles: ["eval"]
+    restart: "no"
+    network_mode: "none"
+    user: "${VDP_ISO_UID:-1000}:${VDP_ISO_GID:-1000}"
+    working_dir: /repo
+    command: [".venv/bin/python", "/repo/holdout_evaluator.py"]
+    environment:
+      PYTHONPATH: /repo
+      SECRETS_PATH: /secrets/secret.json
+      THRESHOLDS_PATH: /out/eval/thresholds_v1.json
+      SESSION_PATH: /out/session_latest.json
+      RESULT_PATH: /out/eval/holdout_result_iso.json
+      REGISTRY_PATH: /out/keys/registry.json
+      FIXTURE_BASE_URL: http://fixture-target:8000
+      # Dummy LLM key env vars (same convention as tests/conftest.py).
+      DEEPSEEK_API_KEY: iso-fixture-dummy
+      OPENAI_API_KEY: iso-fixture-dummy
+      DEEPINFRA_API_KEY: iso-fixture-dummy
+      WANDB_API_KEY: iso-fixture-dummy
+      Cerebras_API_KEY: iso-fixture-dummy
+      ANY_LLM_API_KEY: iso-fixture-dummy
+    volumes:
+      - ../../../src:/repo/src:ro
+      - ../../../config:/repo/config:ro
+      - ../../../.venv:/repo/.venv:ro
+      - ${UV_PYTHON_DIR:-/home/bbb/.local/share/uv/python/cpython-3.13.5-linux-x86_64-gnu}:/home/bbb/.local/share/uv/python/cpython-3.13.5-linux-x86_64-gnu:ro
+      - ./holdout_evaluator.py:/repo/holdout_evaluator.py:ro
+      - ${VDP_HOLDOUT_SECRETS_DIR:-./_private_secrets}:/secrets:ro
+      # /out is read-only (session + registry + holdout stay unwritable);
+      # the nested /out/eval mount is the ONLY writable path — the result
+      # artifact is written there.
+      - ${VDP_HOLDOUT_OUT_DIR:-./_private_out}:/out:ro
+      - ${VDP_HOLDOUT_OUT_DIR:-./_private_out}/eval:/out/eval
+
+networks:
+  iso2:
+    internal: true

@@ -12,3 +12,14 @@
 - 主要ドキュメントは `parent_task_id` と `related_docs` を必須で設定する。
 - 変更後は必ず `python3 scripts/validate_shigoku_docs.py` を実行し、0エラーであることを確認する。
 - 変更後は必ず `python3 scripts/sync_shigoku_updated_at.py` を先に実行し、変更した Markdown の `updated_at` を当日付に揃えてから `python3 scripts/validate_shigoku_docs.py` を実行する。
+
+## Completion Contract and Final Audit
+
+- 実装開始時点で承認された計画書の対象、完了条件、必須テスト、NOT in scopeを「完了契約」として固定する。
+- 最終監査は、各指摘を `in_scope_blocker`、`deferred_followup`、`non_blocking_observation` のいずれかに分類する。
+- `in_scope_blocker`にできるのは、完了契約の未達、必須テスト失敗、当該変更による回帰、現在有効な機能の安全境界違反だけとする。必ず違反する計画書項目と再現可能な証拠を併記する。
+- scope逸脱、secret漏洩、未承認状態変更、回復不能なデータ損失、通常経路の利用不能、完了根拠の偽装・無効化は、計画外でも例外的blockerにできる。
+- 将来段階のhardening、現在無効な機能の運用課題、計画外の設計改善は`deferred_followup`とし、追跡タスクの実装手順、必須テスト、完了条件へ組み込む。
+- 監査中に新しい完了条件を暗黙追加しない。完了契約を変更する必要がある場合は、先にユーザーの明示承認を得て計画書を更新する。
+- 完了契約がすべてPASSし、`in_scope_blocker`が0件なら、追跡可能な`deferred_followup`が残っていても元タスクを`done`にする。
+- 同じ差分に対する最終監査後、新しいコード差分または新しい具体的証拠がない限り、新規blockerを追加しない。

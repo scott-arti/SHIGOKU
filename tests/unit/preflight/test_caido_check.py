@@ -147,6 +147,14 @@ class TestCaidoCheckHTTP:
             ok, reason = await ck.check_http()
             assert ok is True
             assert reason == ""
+            m.return_value.request.assert_awaited_once_with(
+                "GET",
+                "http://127.0.0.1:8080/graphql",
+                timeout=5,
+                retries=0,
+                use_proxy=False,
+                follow_redirects=True,
+            )
 
     @pytest.mark.asyncio
     async def test_identity_graphql_json_with_caido_body(self):
@@ -356,6 +364,8 @@ class TestCaidoCheckHTTP:
             ok, reason = await ck.check_http()
             assert ok is False
             assert reason == "CAIDO_TOKEN_INVALID"
+            mock_client.request.assert_awaited_once()
+            assert mock_client.request.await_args.kwargs["follow_redirects"] is True
 
     @pytest.mark.asyncio
     async def test_graphql_403(self):
@@ -450,6 +460,19 @@ class TestCaidoCheckRun:
                 assert f.reason_code == "CAIDO_IDENTITY_UNVERIFIED"
                 assert f.severity == "critical"
                 assert "Caido identity" in f.remediation
+
+    @pytest.mark.asyncio
+    async def test_run_identity_unverified_reports_configured_port(self):
+        """The remediation must name the actual configured Caido port."""
+        ck = CaidoCheck(caido_url="http://127.0.0.1:8081")
+        with patch.object(ck, "check_tcp", new_callable=AsyncMock) as mock_tcp:
+            with patch.object(ck, "check_http", new_callable=AsyncMock) as mock_http:
+                mock_tcp.return_value = (True, "")
+                mock_http.return_value = (False, "CAIDO_IDENTITY_UNVERIFIED")
+
+                _, failures = await ck.run()
+
+        assert "Port 8081" in failures[0].remediation
 
     @pytest.mark.asyncio
     async def test_run_token_invalid_remediation(self):

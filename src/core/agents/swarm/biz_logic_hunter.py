@@ -30,7 +30,7 @@ from src.core.security.ethics_guard import (
 )
 from src.core.models.finding import Finding, Evidence, Severity, VulnType
 from src.intelligence.proxy_log_analyzer import FindingCandidate, SmellType
-from src.config import settings
+from src.core.config.settings import settings
 from src.core.engine.agent_registry import register_agent
 from src.core.agents.base import BaseAgent, AgentConfig
 from src.core.intelligence import get_diff_analyzer
@@ -118,7 +118,7 @@ class BizLogicHunter(BaseAgent):
             config = AgentConfig(
                 name="BizLogic-Hunter",
                 description="Business logic vulnerability verification agent",
-                model="default",
+                model="",
                 instructions="Verify business logic vulnerabilities"
             )
             

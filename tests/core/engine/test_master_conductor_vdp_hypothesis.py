@@ -566,7 +566,11 @@ class TestRealSavePathIntegration:
 
 class TestUnavailableSourceRecording:
     """I-03b: 観測0件（空signal bundle / 空_endpoint_signals）でも
-    7観測源のunavailable記録をdecision traceへ保存する。"""
+    未接続観測源のunavailable記録をdecision traceへ保存する。
+
+    SGK-2026-0421: form源は既存signal bundleの location=="form" から
+    接続済みのため、unavailable inventoryは6源（crawler/javascript/
+    api_schema/graphql/browser_traffic/proxy_history）となる。"""
 
     @staticmethod
     def _assert_m0_passes(mc):
@@ -587,11 +591,19 @@ class TestUnavailableSourceRecording:
         traces = [d for d in mc._shadow_decisions if d.get('scope') == 'vdp_observation_sources']
         assert traces, "vdp_observation_sources trace missing"
         sources = traces[-1].get('sources_unavailable', [])
-        assert len(sources) == 7, f"expected 7 sources, got {len(sources)}"
+        assert len(sources) == 6, f"expected 6 sources, got {len(sources)}"
+        expected_reasons = {
+            "crawler": "producer_requires_new_crawl",
+            "javascript": "producer_requires_new_crawl",
+            "api_schema": "producer_not_found",
+            "graphql": "producer_not_found",
+            "browser_traffic": "no_passive_artifact",
+            "proxy_history": "no_passive_artifact",
+        }
         for src in sources:
             assert src['status'] == 'unavailable', src
-            assert src['reason'] == 'not_wired_in_0420', src
-            assert src['tracking_task'] == 'SGK-2026-0421', src
+            assert src['reason'] == expected_reasons[src['source']], src
+            assert src['tracking_task'] == 'SGK-2026-0423', src
         degraded = [d for d in mc._shadow_decisions if d.get('scope') == 'vdp_hypothesis_generation']
         assert degraded, "degraded trace missing"
         assert any(expected_degraded_reason in str(d.get('reason', '')) for d in degraded)
@@ -670,6 +682,7 @@ class TestRealDispatchConnection:
         # mode: vulntest にすることで bugbounty bundle gate / ctf filter を回避
         mc.context.target_info = {
             "target": "https://example.com",
+            "in_scope_domains": ["example.com"],
             "mode": "vulntest",
             "start_time": time.time(),
         }
@@ -702,9 +715,9 @@ class TestRealDispatchConnection:
         hook_calls = []
         real_hook = mc._generate_vdp_hypotheses
 
-        def _spy_hook(merged_results):
-            hook_calls.append(1)
-            return real_hook(merged_results)
+        def _spy_hook(merged_results, **kwargs):
+            hook_calls.append(kwargs)
+            return real_hook(merged_results, **kwargs)
 
         mc._generate_vdp_hypotheses = _spy_hook
 
@@ -740,6 +753,9 @@ class TestRealDispatchConnection:
 
         assert result.get("success") is True, result
         assert len(hook_calls) == 1, f"production hook must be called exactly once, got {len(hook_calls)}"
+        scope_snapshot = hook_calls[0].get("scope_definition")
+        assert scope_snapshot is not None
+        assert scope_snapshot.in_scope_domains == ["example.com"]
         assert mc._vdp_state['vdp_active'] is True
         assert len(mc._vdp_state['hypotheses']) > 0
 

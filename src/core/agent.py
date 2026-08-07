@@ -23,7 +23,7 @@ class Agent(BaseAgent):
         project_manager: Any = None,
         **kwargs,
     ):
-        resolved_model = model or "deepseek/deepseek-chat"
+        resolved_model = model or ""
         # Adapt legacy init to Config
         config = AgentConfig(
             name=name,
@@ -40,7 +40,7 @@ class Agent(BaseAgent):
     def name(self): return self.config.name
     
     @property
-    def model(self): return self.config.model
+    def model(self): return self.llm.model
     
     @property
     def tools(self): return self.config.tools

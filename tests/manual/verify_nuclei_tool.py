@@ -6,7 +6,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from src.tools.custom.nuclei import NucleiTool
-from src.config import settings
+from src.core.config.settings import settings
 
 def verify_nuclei_tool():
     print(f"[*] Testing NucleiTool with correct flag...")

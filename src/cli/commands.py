@@ -99,7 +99,7 @@ def cmd_model(cli, *args):
         models = {
             "OpenAI": ["gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo"],
             "Anthropic": ["claude-3-5-sonnet-20240620", "claude-3-opus-20240229"],
-            "DeepSeek": ["deepseek/deepseek-v4-flash", "deepseek/deepseek-coder", "deepseek/deepseek-chat"]
+            "DeepSeek": ["deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro"]
         }
         
         for provider, model_list in models.items():
@@ -867,4 +867,3 @@ def cmd_external_tools(cli):
         cli.console.print(msg('cmd.external_tools.error', error=str(e)))
     
     cli.console.print()
-

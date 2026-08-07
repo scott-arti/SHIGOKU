@@ -8,7 +8,7 @@ import json
 import logging
 import time
 
-from src.config import settings
+from src.core.config.settings import settings
 from src.core.intelligence.chain_proposal import (
     ChainProposalEngine,
     LLMChainProposalEngine,

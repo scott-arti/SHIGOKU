@@ -5,12 +5,12 @@ status: done
 parent_task_id: SGK-2026-0418
 related_docs:
 - docs/shigoku/subtasks/done/2026-07-31_sgk-2026-0420_vdp-capability-driven-hypothesis-generation-shadow-workflow_subtask_plan.md
-- docs/shigoku/plans/2026-07-31_vdp-capability-benchmark-and-evidence-contract_plan.md
+- docs/shigoku/plans/done/2026-07-31_vdp-capability-benchmark-and-evidence-contract_plan.md
 - docs/shigoku/subtasks/done/2026-07-31_sgk-2026-0419_vdp-evidence-schema-safety-budget-and-recovery-foundation_subtask_plan.md
-- docs/shigoku/subtasks/2026-07-31_sgk-2026-0421_vdp-evidence-gap-driven-verification-and-safe-follow-up_subtask_plan.md
+- docs/shigoku/subtasks/done/2026-07-31_sgk-2026-0421_vdp-evidence-gap-driven-verification-and-safe-follow-up_subtask_plan.md
 title: VDP capability driven hypothesis generation shadow workflow 作業完了報告
 created_at: '2026-08-03'
-updated_at: '2026-08-03'
+updated_at: '2026-08-07'
 tags:
 - shigoku
 target: src/core/engine,src/core/models,src/core/intelligence

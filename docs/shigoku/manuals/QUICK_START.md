@@ -5,7 +5,7 @@ status: active
 parent_task_id: null
 related_docs: []
 created_at: '2026-05-19'
-updated_at: '2026-07-02'
+updated_at: '2026-08-07'
 ---
 
 # 🚀 SHIGOKU クイックスタートガイド
@@ -163,20 +163,11 @@ pip install -r requirements.txt
 - `Pillow`: 画像処理
 - `pytesseract`: OCR バインディング
 
-### 3-3. 環境変数の設定 (オプション)
+### 3-3. 設定と API キー
 
-`.env` ファイルを作成して環境変数を設定できます：
+動作設定は `config/shigoku.yaml` を編集します。LLM は `llm.providers` に接続先とキーの環境変数名、`llm.profiles` にモデルとThinking、`llm.roles` に役割ごとの割当を記述します。詳しい変更例は「ユーザーマニュアル」の「モデルルーティング設定」を参照してください。
 
-```bash
-# .env ファイル例
-NEO4J_URI=bolt://localhost:7687
-NEO4J_USER=neo4j
-NEO4J_PASSWORD=deephunter2024
-CHROMA_HOST=localhost
-CHROMA_PORT=8001
-GITHUB_TOKEN=ghp_your_token_here  # オプション
-OBSIDIAN_VAULT_PATH=~/Obsidian/Security  # オプション
-```
+API キーは `.env` には保存せず、起動するシェルまたは秘密情報管理機能で環境変数として渡してください。例: `export DEEPSEEK_API_KEY="..."`。
 
 ---
 
@@ -375,10 +366,10 @@ pytho3 -c "import pytesseract; print(pytesseract.get_tesseract_version())"
 
 | ドキュメント                               | 内容                                          |
 | :----------------------------------------- | :-------------------------------------------- |
-| [2026-07-02_sgk-2026-0338_operator-user-manual.md](2026-07-02_sgk-2026-0338_operator-user-manual.md) | 初期設定、Docker、モード、出力ファイル、ユースケース別コマンド |
+| [2026-07-02_sgk-2026-0338_operator-user-manual.md](manual_legacy/2026-07-02_sgk-2026-0338_operator-user-manual.md) | 初期設定、Docker、モード、出力ファイル、ユースケース別コマンド |
 | [../specs/2026-07-02_sgk-2026-0338_internal-architecture-and-dataflow-spec.md](../specs/2026-07-02_sgk-2026-0338_internal-architecture-and-dataflow-spec.md) | 現行の実行経路、データフロー、内部モジュール仕様 |
 | [USER_MANUAL.md](USER_MANUAL.md)           | 3 つのモード（Recon/Hybrid/Sentinel）の使い方 |
-| [2026-07-02_sgk-2026-0337_detailed-command-reference.md](2026-07-02_sgk-2026-0337_detailed-command-reference.md) | `shigoku-ops` と `src.main` の詳細CLIリファレンス |
+| [2026-07-02_sgk-2026-0337_detailed-command-reference.md](manual_legacy/2026-07-02_sgk-2026-0337_detailed-command-reference.md) | `shigoku-ops` と `shigoku` の詳細CLIリファレンス |
 | [../specs/TECHNICAL_DESIGN2026-01-26.md](../specs/TECHNICAL_DESIGN2026-01-26.md) | 内部アーキテクチャの理解                      |
 | [REFERENCE.md](REFERENCE.md)               | 全設定オプションと環境変数                    |
 

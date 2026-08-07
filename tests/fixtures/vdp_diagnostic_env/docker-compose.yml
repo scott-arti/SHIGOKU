@@ -1,0 +1,130 @@
+# SGK-2026-0425 M4 — generated opaque diagnostic evaluation stack.
+#
+# Three containers with STRICT isolation:
+#   - fixture-target:  the generated opaque surface (seeded per run) +
+#                      sealed manifest/labels written to the private dir
+#   - runtime:         the REAL deterministic VDP pipeline
+#                      (ObservationAdapter + generate_hypotheses) driven
+#                      against the fixture surface
+#   - evaluator:       one-shot privileged reader (network_mode: none),
+#                      joins sealed labels + runtime events, runs the real
+#                      first-failure analyzer
+#
+# The ``diagnet`` network is ``internal: true`` (no external egress for the
+# fixture and the runtime; docker pull of the base images is the only
+# network use, identical to the existing OS-boundary tests).
+#
+# Mounts (paths relative to THIS compose file):
+#   - runtime  mounts ONLY: ../../../src (read-only), the host .venv
+#     (read-only), the host uv-python tree at its ABSOLUTE path (read-only,
+#     so the venv python symlink resolves; resolve via
+#     `readlink -f .venv/bin/python`), the driver file, and the host private
+#     out dir. NO config/, NO tests/, NO labels, NO secrets, NO repo root —
+#     label path / tests / repo-root reads inside the runtime container must
+#     fail with ENOENT.
+#   - evaluator mounts: src + venv + uv-python (read-only), the evaluator
+#     file, the private secrets dir (read-only: manifest + labels) and the
+#     private out dir (read-only; the nested /out/eval mount is the ONLY
+#     writable path for the result artifact). NO network at all.
+#
+# Overridable via environment: DIAG_SEED, DIAG_CASE_COUNT, DIAG_FAULT_STAGE,
+# DIAG_RUN_ID, DIAG_SECRETS_DIR, DIAG_OUT_DIR, RUNTIME_EVENTS_PATH,
+# SIMULATED_EVENTS_PATH, GENUINE_EVENTS_PATH, UV_PYTHON_DIR,
+# VDP_ISO_UID/VDP_ISO_GID.
+services:
+  fixture-target:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    user: "${VDP_ISO_UID:-1000}:${VDP_ISO_GID:-1000}"
+    environment:
+      DIAG_SEED: "${DIAG_SEED:-1}"
+      DIAG_CASE_COUNT: "${DIAG_CASE_COUNT:-3}"
+      DIAG_FAULT_STAGE: "${DIAG_FAULT_STAGE:-S00}"
+      DIAG_RUN_ID: "${DIAG_RUN_ID:-diag-run}"
+      SECRETS_OUT_PATH: /secrets
+      MANIFEST_BASE_URL: http://fixture-target:8000
+    volumes:
+      - ${DIAG_SECRETS_DIR:-./_private_secrets}:/secrets
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+    networks:
+      - diagnet
+
+  runtime:
+    image: python:3.12-slim
+    user: "${VDP_ISO_UID:-1000}:${VDP_ISO_GID:-1000}"
+    working_dir: /repo
+    command: [".venv/bin/python", "/repo/runtime_driver.py"]
+    environment:
+      PYTHONPATH: /repo
+      FIXTURE_BASE_URL: http://fixture-target:8000
+      OUT_DIR: /out
+      DIAG_RUN_ID: "${DIAG_RUN_ID:-diag-run}"
+      TARGET_NAME: vdp-diag-fixture
+      # Dummy LLM key env vars (same convention as tests/conftest.py):
+      # config/shigoku.yaml references these via api_key_env and Settings
+      # validation can be triggered by imported modules.
+      DEEPSEEK_API_KEY: iso-fixture-dummy
+      OPENAI_API_KEY: iso-fixture-dummy
+      DEEPINFRA_API_KEY: iso-fixture-dummy
+      WANDB_API_KEY: iso-fixture-dummy
+      Cerebras_API_KEY: iso-fixture-dummy
+      ANY_LLM_API_KEY: iso-fixture-dummy
+    volumes:
+      # SELECTIVE mounts only — NO tests/, NO labels, NO secrets, NO config,
+      # NO repo root. /repo contains ONLY src + .venv + the driver.
+      - ../../../src:/repo/src:ro
+      - ../../../.venv:/repo/.venv:ro
+      - ${UV_PYTHON_DIR:-/home/bbb/.local/share/uv/python/cpython-3.13.5-linux-x86_64-gnu}:/home/bbb/.local/share/uv/python/cpython-3.13.5-linux-x86_64-gnu:ro
+      - ./runtime_driver.py:/repo/runtime_driver.py:ro
+      - ${DIAG_OUT_DIR:-./_private_out}:/out
+    depends_on:
+      fixture-target:
+        condition: service_healthy
+    networks:
+      - diagnet
+
+  evaluator:
+    image: python:3.12-slim
+    profiles: ["eval"]
+    restart: "no"
+    network_mode: "none"
+    user: "${VDP_ISO_UID:-1000}:${VDP_ISO_GID:-1000}"
+    working_dir: /repo
+    command: [".venv/bin/python", "/repo/evaluator.py"]
+    environment:
+      PYTHONPATH: /repo
+      MANIFEST_PATH: /secrets/case_manifest.json
+      LABELS_PATH: /secrets/expected_path_labels.json
+      RUNTIME_EVENTS_PATH: "${RUNTIME_EVENTS_PATH:-/out/runtime_events_simulated.jsonl}"
+      SIMULATED_EVENTS_PATH: "${SIMULATED_EVENTS_PATH:-/out/runtime_events_simulated.jsonl}"
+      GENUINE_EVENTS_PATH: "${GENUINE_EVENTS_PATH:-/out/runtime_events.jsonl}"
+      SUMMARY_PATH: /out/canonical_summary.json
+      RESULT_PATH: /out/eval/evaluator_result.json
+      DIAG_FAULT_STAGE: "${DIAG_FAULT_STAGE:-S00}"
+      DIAG_RUN_ID: "${DIAG_RUN_ID:-diag-run}"
+      # Dummy LLM key env vars (same convention as tests/conftest.py).
+      DEEPSEEK_API_KEY: iso-fixture-dummy
+      OPENAI_API_KEY: iso-fixture-dummy
+      DEEPINFRA_API_KEY: iso-fixture-dummy
+      WANDB_API_KEY: iso-fixture-dummy
+      Cerebras_API_KEY: iso-fixture-dummy
+      ANY_LLM_API_KEY: iso-fixture-dummy
+    volumes:
+      - ../../../src:/repo/src:ro
+      - ../../../.venv:/repo/.venv:ro
+      - ${UV_PYTHON_DIR:-/home/bbb/.local/share/uv/python/cpython-3.13.5-linux-x86_64-gnu}:/home/bbb/.local/share/uv/python/cpython-3.13.5-linux-x86_64-gnu:ro
+      - ./evaluator.py:/repo/evaluator.py:ro
+      # /secrets and /out are read-only; /out/eval is the only writable path.
+      - ${DIAG_SECRETS_DIR:-./_private_secrets}:/secrets:ro
+      - ${DIAG_OUT_DIR:-./_private_out}:/out:ro
+      - ${DIAG_OUT_DIR:-./_private_out}/eval:/out/eval
+
+networks:
+  diagnet:
+    internal: true

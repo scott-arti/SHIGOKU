@@ -23,7 +23,7 @@ class MCPClient:
             import os
             env = os.environ.copy()
             # GitHub Tokenがある場合は環境変数として渡す
-            from src.config import settings
+            from src.core.config.settings import settings
             if settings.github_token:
                 env["GITHUB_TOKEN"] = settings.github_token
                 env["GITHUB_PERSONAL_ACCESS_TOKEN"] = settings.github_token

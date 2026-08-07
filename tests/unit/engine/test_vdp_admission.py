@@ -46,6 +46,27 @@ def _make_capability_matrix(**rules) -> ProgramCapabilityMatrix:
     return ProgramCapabilityMatrix(rules=rules, program_name="test-program")
 
 
+def _approved_vdp_ticket(ticket_id: str, hypothesis: HypothesisRecord) -> dict:
+    """Build an approved, bound VDP HITL ticket for a hypothesis.
+
+    SGK-2026-0421 (design constraint G): a ticket ID alone is never
+    approval — the ticket must exist, be approved, and bind the same
+    action/hypothesis/actor/risk_class.
+    """
+    from src.core.engine.vdp_hitl_guard import build_vdp_hitl_ticket
+
+    ticket = build_vdp_hitl_ticket(
+        ticket_id,
+        action="follow_up_probe",
+        hypothesis_id=hypothesis.hypothesis_id,
+        actor=hypothesis.actors[0] if hypothesis.actors else "",
+        risk_class=hypothesis.risk_class,
+        evidence_gap="payload_request_mismatch",
+    )
+    ticket["status"] = "approved"
+    return ticket
+
+
 # ============================================================================
 # T-0419-A01: Scope revalidation — fail-closed
 # ============================================================================
@@ -158,7 +179,27 @@ class TestCapabilityLevelChecks:
         assert result.reason_code == AdmissionReasonCode.HITL_REQUIRED
 
     def test_confirmation_required_passes_with_hitl(self):
-        """CONFIRMATION_REQUIRED must be admitted when a HITL ticket is provided."""
+        """CONFIRMATION_REQUIRED must be admitted only with a VERIFIED HITL
+        ticket (exists in the store, approved, bound to the hypothesis)."""
+        from src.core.engine.vdp_admission import VdpAdmissionGate
+
+        gate = VdpAdmissionGate(capability_matrix=_make_capability_matrix(
+            idor_detector=CapabilityLevel.CONFIRMATION_REQUIRED,
+        ))
+        hyp = _make_hypothesis(capability="idor_detector")
+
+        tickets = [_approved_vdp_ticket("HITL-123", hyp)]
+
+        result = gate.evaluate(
+            hyp, scope_verdict="allowed", hitl_ticket_id="HITL-123",
+            hitl_tickets=tickets, action="follow_up_probe",
+        )
+
+        assert result.admitted is True
+
+    def test_confirmation_required_rejects_arbitrary_ticket_id(self):
+        """An arbitrary ticket ID with no verifiable store entry must NOT pass
+        (SGK-2026-0421: 任意ticket IDによるHITL通過禁止)."""
         from src.core.engine.vdp_admission import VdpAdmissionGate
 
         gate = VdpAdmissionGate(capability_matrix=_make_capability_matrix(
@@ -167,10 +208,11 @@ class TestCapabilityLevelChecks:
         hyp = _make_hypothesis(capability="idor_detector")
 
         result = gate.evaluate(
-            hyp, scope_verdict="allowed", hitl_ticket_id="HITL-123",
+            hyp, scope_verdict="allowed", hitl_ticket_id="ARBITRARY-999",
         )
 
-        assert result.admitted is True
+        assert result.admitted is False
+        assert result.reason_code == "hitl_ticket_not_found"
 
     def test_prohibited_capability_rejected(self):
         """PROHIBITED capability must always be rejected."""
@@ -440,10 +482,16 @@ class TestIntegrationWithContracts:
         hyp_hitl = _make_hypothesis(capability="fuzzing")
         assert gate.evaluate(hyp_hitl, scope_verdict="allowed").admitted is False
 
-        # CONFIRMATION_REQUIRED passes with HITL
+        # CONFIRMATION_REQUIRED passes only with a verified, bound ticket
+        tickets = [_approved_vdp_ticket("T-001", hyp_hitl)]
         assert gate.evaluate(
             hyp_hitl, scope_verdict="allowed", hitl_ticket_id="T-001",
+            hitl_tickets=tickets, action="follow_up_probe",
         ).admitted is True
+        # Arbitrary ID (not in the store) must be rejected
+        assert gate.evaluate(
+            hyp_hitl, scope_verdict="allowed", hitl_ticket_id="T-999",
+        ).admitted is False
 
         # PROHIBITED always fails
         hyp_proh = _make_hypothesis(capability="exploit")

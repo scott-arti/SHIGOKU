@@ -1,0 +1,50 @@
+{
+  "eval_version": "v1",
+  "generated_at": "2026-08-06",
+  "mode": "m3a-readonly",
+  "schema_version": 1,
+  "targets": [
+    {
+      "cases": [
+        {
+          "confidence": "not_applicable",
+          "opaque_case_id": "OPAQUE-AUTH-01",
+          "reason": "state_changing_not_allowed_m3a_readonly",
+          "stage": "S05"
+        },
+        {
+          "confidence": "not_applicable",
+          "opaque_case_id": "OPAQUE-IDOR-01",
+          "reason": "state_changing_not_allowed_m3a_readonly",
+          "stage": "S05"
+        },
+        {
+          "confidence": "supported",
+          "opaque_case_id": "OPAQUE-XSS-01",
+          "reason": "no_reason_code",
+          "stage": "S05"
+        },
+        {
+          "confidence": "supported",
+          "opaque_case_id": "OPAQUE-DATA-01",
+          "reason": "no_reason_code",
+          "stage": "S05"
+        },
+        {
+          "confidence": "supported",
+          "opaque_case_id": "OPAQUE-AUTH-02",
+          "reason": "no_reason_code",
+          "stage": "S05"
+        },
+        {
+          "confidence": "not_applicable",
+          "opaque_case_id": "OPAQUE-PRIV-01",
+          "reason": "state_changing_not_allowed_m3a_readonly",
+          "stage": "S05"
+        }
+      ],
+      "label": "sealed_target_A_instrumented"
+    }
+  ],
+  "task": "SGK-2026-0427 M5 sealed audit active rerun (instrumented)"
+}

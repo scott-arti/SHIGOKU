@@ -18,7 +18,7 @@ try:
     from src.core.engine.master_conductor import Task
 except ImportError:
     Task = Any  # テスト用ダミー
-from src.config import settings
+from src.core.config.settings import settings
 
 logger = logging.getLogger(__name__)
 

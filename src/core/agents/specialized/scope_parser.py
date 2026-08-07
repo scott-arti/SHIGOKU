@@ -45,7 +45,7 @@ class ScopeParserAgent(GeneralAgent):
             super().__init__(
                 name="ScopeParser",
                 instructions=get_agent_prompt("scope_parser"),
-                model="deepseek/deepseek-chat",
+                model="",
                 mode="security",
                 workspace_root=workspace_root,
                 project_manager=project_manager,

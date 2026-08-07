@@ -18,12 +18,11 @@ class CaidoSitemapAgent(BaseAgent):
 
     def __init__(self, **kwargs):
         cfg = get_settings()
-        default_model = cfg.model if getattr(cfg, "model", "") else "deepseek/deepseek-chat"
         super().__init__(
             config={
                 "name": "CaidoSitemapAgent",
                 "description": "Extracts endpoints and context from Caido via GraphQL API",
-                "model": kwargs.get("model", default_model),
+                "model": kwargs.get("model", ""),
                 "instructions": "CaidoのSitemapデータを解析し、SHIGOKUが攻撃可能なエンドポイントを抽出してください。"
             },
             **kwargs

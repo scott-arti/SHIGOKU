@@ -29,7 +29,7 @@ from src.tools.custom.gau import GAUTool
 from src.tools.custom.playwright_recon import PlaywrightCrawler
 from src.core.intel.tagging_filter import TaggingFilter
 from src.core.validation.url_classifier import URLClassifier, classify_url
-from src.config import settings
+from src.core.config.settings import settings
 from src.core.engine.adaptive_rate_limiter import get_rate_limiter
 from src.core.engine.tag_taxonomy_registry import (
     PIPELINE_HISTORY_CANDIDATE_CATEGORIES,
@@ -1536,9 +1536,12 @@ class ReconPipeline:
         
         httpx_json_file = self._get_path("httpx", "json")
         httpx_out = []
-        if self.runner.is_tool_available("httpx"):
+        tool_httpx = settings.resolve_tool_command(
+            "httpx",
+            self.config.get("tool_httpx_path"),
+        )
+        if self.runner.is_tool_available(tool_httpx):
             # Use configured tool path (wrapper support)
-            tool_httpx = self.config.get("tool_httpx_path", "httpx")
             logger.info(f"Executing httpx tool: {tool_httpx}")
             
             httpx_cmd = [tool_httpx, "-l", str(resolved_file_for_httpx), "-json", "-o", str(httpx_json_file)]
@@ -1816,7 +1819,7 @@ class ReconPipeline:
             logger.warning("[Step 3b] No live subdomains available for crawling. Skipping.")
             return {}
 
-        proxy_url = settings.get_proxy_url() or "http://127.0.0.1:8080"
+        proxy_url = settings.get_proxy_url()
         
         # ツール初期化
         katana = KatanaTool()
@@ -4747,7 +4750,7 @@ class ReconPipeline:
         # 0. Proxy Gatekeeper Check (Phase 1 Requirement)
         # settings.scan.proxy が設定されている場合、Caido等の接続が必須。
         # 接続できない場合はスキャンを中断し、ユーザーに警告を出す。
-        proxy_url = getattr(settings, "scan", {}).get("proxy") or settings.get_proxy_url()
+        proxy_url = settings.get_proxy_url()
         if proxy_url:
             from src.core.infra.network_client import AsyncNetworkClient
             # TCP接続チェック (2秒タイムアウト)

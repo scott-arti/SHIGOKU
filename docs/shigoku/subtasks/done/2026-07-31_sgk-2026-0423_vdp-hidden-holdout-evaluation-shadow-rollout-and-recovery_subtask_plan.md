@@ -1,17 +1,19 @@
 ---
 task_id: SGK-2026-0423
 doc_type: subtask_plan
-status: active
+status: done
 parent_task_id: SGK-2026-0418
 related_docs:
-- docs/shigoku/plans/2026-07-31_vdp-capability-benchmark-and-evidence-contract_plan.md
+- docs/shigoku/plans/done/2026-07-31_vdp-capability-benchmark-and-evidence-contract_plan.md
 - docs/shigoku/subtasks/done/2026-07-31_sgk-2026-0419_vdp-evidence-schema-safety-budget-and-recovery-foundation_subtask_plan.md
 - docs/shigoku/subtasks/done/2026-07-31_sgk-2026-0420_vdp-capability-driven-hypothesis-generation-shadow-workflow_subtask_plan.md
-- docs/shigoku/subtasks/2026-07-31_sgk-2026-0421_vdp-evidence-gap-driven-verification-and-safe-follow-up_subtask_plan.md
-- docs/shigoku/subtasks/2026-07-31_sgk-2026-0422_vdp-canonical-evidence-reporting-and-separated-quality-gates_subtask_plan.md
+- docs/shigoku/subtasks/done/2026-07-31_sgk-2026-0421_vdp-evidence-gap-driven-verification-and-safe-follow-up_subtask_plan.md
+- docs/shigoku/subtasks/done/2026-07-31_sgk-2026-0422_vdp-canonical-evidence-reporting-and-separated-quality-gates_subtask_plan.md
+- docs/shigoku/reports/2026-08-04_sgk-2026-0423_vdp-hidden-holdout-evaluation-shadow-rollout-and-recovery_work_report.md
+- docs/shigoku/worklogs/2026-08-04_sgk-2026-0423_vdp-hidden-holdout-evaluation-shadow-rollout-and-recovery_work_log.md
 title: VDP hidden holdout evaluation shadow rollout and recovery
 created_at: '2026-07-31'
-updated_at: '2026-08-03'
+updated_at: '2026-08-07'
 tags:
 - shigoku
 target: tests,src/core/models,src/core/engine,src/reporting,config
@@ -21,12 +23,12 @@ target: tests,src/core/models,src/core/engine,src/reporting,config
 
 ## 1. 達成したいゴール
 
-- [ ] 特定製品へ合わせ込まず、未使用の隠し評価データで探索の広さ、検証の深さ、証拠の完全性を判定する。
-- [ ] record-only、shadow、限定enforce、全面enforceを明確な進級条件で段階導入する。
-- [ ] scope逸脱、過負荷、二重状態変更、secret漏洩、証拠保存失敗を検出したら直ちに停止・復旧できる。
-- [ ] 成績が良く見えるまで閾値を調整する運用を防ぎ、実VDP移行判断を監査可能にする。
-- [ ] 旧処理へのrollback、中断再開、依存停止からの回復を実artifactで確認する。
-- [ ] confirmed検証鍵の配布、権限、ローテーション、失効、復旧を本番相当の運用境界で検証する。
+- [x] 特定製品へ合わせ込まず、未使用の隠し評価データで探索の広さ、検証の深さ、証拠の完全性を判定する。
+- [x] record-only、shadow、限定enforce、全面enforceを明確な進級条件で段階導入する。
+- [x] scope逸脱、過負荷、二重状態変更、secret漏洩、証拠保存失敗を検出したら直ちに停止・復旧できる。
+- [x] 成績が良く見えるまで閾値を調整する運用を防ぎ、実VDP移行判断を監査可能にする。
+- [x] 旧処理へのrollback、中断再開、依存停止からの回復を実artifactで確認する。
+- [x] confirmed検証鍵の配布、権限、ローテーション、失効、復旧を本番相当の運用境界で検証する。
 
 ## 2. 評価データの分離
 

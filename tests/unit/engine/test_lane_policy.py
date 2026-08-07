@@ -10,7 +10,11 @@ Tests:
   - T-1.6: swarm-level most restrictive classification
 """
 import pytest
-from src.core.engine.lane_policy import LanePolicy, PHASE0_CLASS_TO_LANE
+from src.core.engine.lane_policy import (
+    LanePolicy,
+    PHASE0_CLASS_TO_LANE,
+    resolve_execution_profile,
+)
 from src.core.agents.swarm.phase0 import load_inventory
 
 
@@ -327,6 +331,55 @@ class TestAgentToSwarm:
     def test_secret_swarm(self, lane_policy):
         swarm = lane_policy._agent_to_swarm("SecretSwarm")
         assert swarm == "secret"
+
+
+# ---------------------------------------------------------------------------
+# SGK-2026-0413: execution profile contract
+# ---------------------------------------------------------------------------
+
+class TestExecutionProfile:
+    """Execution category is derived from the lane decision, not agent names."""
+
+    def test_rate_limited_recon_uses_active_intelligence_category(self, lane_policy):
+        """A rate-limited read-only recon task receives the active intel budget."""
+        profile = resolve_execution_profile(
+            lane_policy.classify("recon_master", {}),
+            {},
+        )
+
+        assert profile.lane == "read_only"
+        assert profile.parallel_safe is True
+        assert profile.execution_category == "intel_active"
+        assert profile.rejection_reason == ""
+
+    def test_security_category_does_not_become_execution_category(self):
+        """The vulnerability-family category must not change scheduler selection."""
+        profile = resolve_execution_profile(
+            ("read_only", True, True, "mutating", True, "test"),
+            {"category": "attack_inject"},
+        )
+
+        assert profile.execution_category == "intel_active"
+
+    def test_explicit_known_execution_category_is_preserved(self):
+        """An explicit technical execution category remains an opt-in override."""
+        profile = resolve_execution_profile(
+            ("read_only", True, False, None, False, "test"),
+            {"execution_category": "local"},
+        )
+
+        assert profile.execution_category == "local"
+        assert profile.rejection_reason == ""
+
+    def test_unknown_explicit_execution_category_is_rejected(self):
+        """Strict admission rejects an unknown technical execution category."""
+        profile = resolve_execution_profile(
+            ("read_only", True, False, None, False, "test"),
+            {"execution_category": "not_a_scheduler_category"},
+        )
+
+        assert profile.execution_category is None
+        assert profile.rejection_reason == "unknown_execution_category"
 
     def test_discovery_swarm(self, lane_policy):
         swarm = lane_policy._agent_to_swarm("DiscoverySwarm")

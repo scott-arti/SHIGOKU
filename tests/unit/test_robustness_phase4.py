@@ -16,6 +16,15 @@ async def test_tool_runner_not_found():
     assert "Tool not found" in str(excinfo.value)
     assert "non_existent_tool_xyz_12345" in str(excinfo.value)
 
+
+@pytest.mark.asyncio
+async def test_tool_runner_rejects_empty_command_before_subprocess_launch():
+    """Production mode must report an empty command as configuration error."""
+    runner = ToolRunner(dev_mode=False)
+
+    with pytest.raises(ToolNotFoundError, match="Tool command is empty"):
+        await runner.run([""], timeout=1)
+
 def test_pipeline_null_mc_safety():
     """Verify ReconPipeline handles missing MasterConductor gracefully"""
     # Initialize with MasterConductor=None

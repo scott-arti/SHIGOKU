@@ -15,11 +15,9 @@ from __future__ import annotations
 
 import copy
 import hashlib
-import hmac
 import json
 import os
 import re
-import secrets
 import tempfile
 from dataclasses import dataclass, field
 import dataclasses as _dc
@@ -33,112 +31,271 @@ from typing import Any, Dict, List, Optional, Tuple
 VDP_CONTRACT_SCHEMA_VERSION = 1
 
 # ---------------------------------------------------------------------------
-# Confirmation proof — tamper-evident validation token for confirmed verdicts
+# Confirmation proof — canonical v2 (Ed25519) verification
 # ---------------------------------------------------------------------------
-# EvidenceVerdictV1.confirmed verdicts carry a `validation_proof` field: an
-# HMAC-SHA256 tag over (verdict_id, hypothesis_id, evidence_ids,
-# validator_version) keyed with a STABLE key so proofs survive process
-# restarts. The key comes from (in priority order):
-#   1. SHIGOKU_VDP_CONFIRMATION_KEY environment variable (hex, 64 chars)
-#   2. ~/.shigoku/vdp_confirmation.key file (hex, 64 chars)
-# If neither is available, key resolution returns None → fail-closed:
-# confirmed verdicts cannot be created or restored.
+# EvidenceVerdictV1.confirmed verdicts carry a `validation_proof` field.
+# SGK-2026-0422 fixes the canonical proof format:
 #
-# The proof detects file tampering (integrity) and is bound to the key held
-# by the Evidence Validator boundary. Signing/verifying functions are
-# module-private; a structural test enforces that no other module imports
-# them. The Evidence Validator (haddix_evidence_quality.py) is the only
-# authorized consumer and its runtime integration lands in SGK-2026-0422.
-_CONFIRMATION_KEY_ENV = "SHIGOKU_VDP_CONFIRMATION_KEY"
-_CONFIRMATION_KEY_FILE = Path.home() / ".shigoku" / "vdp_confirmation.key"
+#   ed25519:v2:<key_id>:<base64url-signature>
+#
+# - `proof_schema_version` is "v2" and is ALSO embedded in the signed payload.
+# - The signature is an Ed25519 signature over the canonical JSON bytes of a
+#   deterministic payload (see build_confirmation_payload_dict).
+# - The payload binds verdict_id, hypothesis_id, status="confirmed",
+#   reason_codes, validator_version and per-EvidenceRecord content hashes
+#   (sha256 of the canonical JSON of the full EvidenceRecordV1.to_dict(),
+#   including redacted_excerpt, truncation metadata and normalization
+#   version). Changing any signed field invalidates the proof.
+# - This module is VERIFICATION-ONLY. It never holds a private key and
+#   exposes no signing function. The signer boundary lives in
+#   src/core/engine/vdp_evidence_validator.py (the engine Ed25519 signer),
+#   which is the only production caller allowed to produce confirmed
+#   verdicts. Legacy HMAC proofs (hmac-sha256:...) are verified only via
+#   src/core/engine/vdp_legacy_proof_verifier.py and are never generated.
+PROOF_SCHEMA_VERSION = "v2"
+PROOF_ALGORITHM_ED25519 = "ed25519"
+LEGACY_HMAC_PREFIX = "hmac-sha256"
 
 
-def _resolve_confirmation_key() -> Optional[bytes]:
-    """Resolve the stable HMAC key. Returns None if unavailable (fail-closed)."""
-    env_val = os.environ.get(_CONFIRMATION_KEY_ENV)
-    if env_val:
+def canonical_evidence_content_hash(evidence_dict: dict) -> str:
+    """sha256 of the canonical JSON of the evidence record's canonical form.
+
+    The canonical form is ``EvidenceRecordV1.from_dict(d).to_dict()`` so the
+    hash covers every stored field (raw_hash, redacted_excerpt, truncation
+    metadata, normalization/auth-context versions, ...). Unknown fields are
+    dropped by the additive reader — the signed form is exactly the stored
+    to_dict() shape.
+    """
+    record = EvidenceRecordV1.from_dict(evidence_dict)
+    return "sha256:" + hashlib.sha256(canonical_json_bytes(record.to_dict())).hexdigest()
+
+
+def build_confirmation_payload_dict(
+    proof_schema_version: str,
+    algorithm: str,
+    key_id: str,
+    verdict_id: str,
+    hypothesis_id: str,
+    status: str,
+    reason_codes: List[str],
+    validator_version: str,
+    evidence_records: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Build the deterministic canonical payload that is signed / verified.
+
+    Field names, types, UTF-8 encoding, missing-value handling and array
+    ordering are fixed here:
+    - ``reason_codes`` sorted ascending (string compare).
+    - ``evidence`` sorted by ``evidence_id``; each entry carries the
+      evidence's canonical content hash.
+    - Duplicate ``evidence_id`` values are rejected.
+    """
+    if not evidence_records:
+        raise ValueError("confirmation payload requires at least one EvidenceRecord")
+    seen: set[str] = set()
+    evidence_entries: List[Dict[str, Any]] = []
+    for raw in evidence_records:
+        record = EvidenceRecordV1.from_dict(raw)
+        if record.evidence_id in seen:
+            raise ValueError(f"duplicate evidence_id in confirmation payload: {record.evidence_id}")
+        seen.add(record.evidence_id)
+        evidence_entries.append(
+            {
+                "schema_version": record.schema_version,
+                "evidence_id": record.evidence_id,
+                "attempt_id": record.attempt_id,
+                "evidence_type": record.evidence_type,
+                "raw_hash": record.raw_hash,
+                "content_hash": canonical_evidence_content_hash(raw),
+                "normalization_rule_version": record.normalization_rule_version,
+                "auth_context_version": record.auth_context_version,
+                "original_size": record.original_size,
+                "truncated": record.truncated,
+                "truncation_reason": record.truncation_reason,
+            }
+        )
+    evidence_entries.sort(key=lambda entry: str(entry["evidence_id"]))
+    return {
+        "proof_schema_version": str(proof_schema_version),
+        "algorithm": str(algorithm),
+        "key_id": str(key_id),
+        "verdict_id": str(verdict_id),
+        "hypothesis_id": str(hypothesis_id),
+        "status": str(status),
+        "reason_codes": sorted({str(code) for code in (reason_codes or [])}),
+        "validator_version": str(validator_version),
+        "evidence": evidence_entries,
+    }
+
+
+@dataclass(frozen=True)
+class VerificationResult:
+    """Result of canonical proof verification (v2)."""
+
+    verified: bool
+    reason_code: str
+    detail: str = ""
+
+
+def _resolve_public_key(key_id: str, public_key_provider: Any) -> Optional[bytes]:
+    """Resolve a raw 32-byte Ed25519 public key for ``key_id``.
+
+    ``public_key_provider`` may be:
+    - a dict mapping key_id -> raw public key bytes
+    - a callable ``(key_id) -> bytes | None``
+    - None → fail-closed (no keys available)
+    """
+    if public_key_provider is None:
+        return None
+    if isinstance(public_key_provider, dict):
+        raw = public_key_provider.get(key_id)
+        return bytes(raw) if isinstance(raw, (bytes, bytearray)) else None
+    if callable(public_key_provider):
         try:
-            raw = env_val.strip()
-            if len(raw) != 64:
-                return None
-            return bytes.fromhex(raw)
-        except ValueError:
-            return None  # malformed env value → fail-closed
+            raw = public_key_provider(key_id)
+        except Exception:
+            return None
+        return bytes(raw) if isinstance(raw, (bytes, bytearray)) else None
+    return None
+
+
+def verify_confirmed_verdict(
+    verdict_dict: Dict[str, Any],
+    evidence_record_dicts: List[Dict[str, Any]],
+    *,
+    public_key_provider: Any,
+) -> VerificationResult:
+    """Verify a serialized confirmed verdict (proof schema v2, Ed25519).
+
+    Fail-closed checks, in order:
+    1. proof present and well-formed ``ed25519:<key_id>:<b64url>`` (3 parts,
+       as fixed by the SGK-2026-0422 plan)
+    2. verdict ``proof_schema_version`` equals the supported version
+    3. verdict ``proof_key_id`` equals the key_id inside the proof token
+    4. key_id resolves to a public key (unknown key / key unavailable → fail)
+    5. evaluated_evidence_ids == evidence_content_sha256 keys (exact set)
+    6. every referenced EvidenceRecord is supplied (missing/extra → fail)
+    7. recomputed content hashes match evidence_content_sha256 (tamper → fail)
+    8. Ed25519 signature over the canonical payload verifies
+
+    Returns a VerificationResult — this function NEVER produces a new proof.
+    """
+    proof = str(verdict_dict.get("validation_proof") or "")
+    if not proof:
+        return VerificationResult(False, "proof_missing", "validation_proof is empty")
+
+    parts = proof.split(":")
+    if parts and parts[0] == LEGACY_HMAC_PREFIX:
+        return VerificationResult(
+            False,
+            "legacy_proof_not_verifiable_here",
+            "legacy HMAC proofs are handled by the engine-side legacy verifier",
+        )
+    # Canonical format is fixed as ed25519:<key_id>:<signature> (plan §4.4.1).
+    if len(parts) != 3 or parts[0] != PROOF_ALGORITHM_ED25519:
+        return VerificationResult(False, "unknown_proof_version", proof)
+
+    key_id = parts[1]
+    signature_b64 = parts[2]
+
+    # Verdict metadata must match the proof token (fail-closed on tamper).
+    verdict_schema_version = str(verdict_dict.get("proof_schema_version") or "")
+    if verdict_schema_version != PROOF_SCHEMA_VERSION:
+        return VerificationResult(
+            False,
+            "proof_schema_version_mismatch",
+            f"verdict proof_schema_version={verdict_schema_version!r} "
+            f"!= expected {PROOF_SCHEMA_VERSION!r}",
+        )
+    verdict_key_id = str(verdict_dict.get("proof_key_id") or "")
+    if verdict_key_id != key_id:
+        return VerificationResult(
+            False,
+            "proof_key_id_mismatch",
+            f"verdict proof_key_id={verdict_key_id!r} != token key_id={key_id!r}",
+        )
 
     try:
-        if _CONFIRMATION_KEY_FILE.exists():
-            raw = _CONFIRMATION_KEY_FILE.read_text(encoding="utf-8").strip()
-            if len(raw) != 64:
-                return None
-            return bytes.fromhex(raw)
-    except (OSError, ValueError):
-        return None  # unreadable/corrupt key file → fail-closed
+        import base64 as _base64
+        signature = _base64.urlsafe_b64decode(signature_b64 + "=" * (-len(signature_b64) % 4))
+    except Exception:
+        return VerificationResult(False, "malformed_signature", "base64url decode failed")
+    if len(signature) != 64:
+        return VerificationResult(False, "malformed_signature", f"signature length {len(signature)} != 64")
 
-    return None  # no stable key source → fail-closed
+    public_key = _resolve_public_key(key_id, public_key_provider)
+    if public_key is None:
+        if public_key_provider is None:
+            return VerificationResult(False, "key_unavailable", "no public key provider")
+        return VerificationResult(False, "unknown_key_id", f"key_id={key_id}")
 
+    status = str(verdict_dict.get("status") or "")
+    if status != "confirmed":
+        return VerificationResult(False, "status_not_confirmed", status)
 
-def _current_key_id() -> str:
-    """Short identifier of the current key for rotation detection."""
-    key = _resolve_confirmation_key()
-    if key is None:
-        return "unavailable"
-    return hashlib.sha256(key).hexdigest()[:8]
-
-
-def _compute_validation_proof(
-    verdict_id: str,
-    hypothesis_id: str,
-    evidence_ids: List[str],
-    validator_version: str,
-) -> str:
-    """Compute an HMAC-SHA256 proof tag over the verdict's confirming fields.
-
-    Raises ValueError if no stable key is available (fail-closed).
-    """
-    key = _resolve_confirmation_key()
-    if key is None:
-        raise ValueError(
-            "confirmation key unavailable: set SHIGOKU_VDP_CONFIRMATION_KEY "
-            "or create ~/.shigoku/vdp_confirmation.key to enable confirmed verdicts"
+    evaluated = [str(e) for e in (verdict_dict.get("evaluated_evidence_ids") or [])]
+    hash_map = verdict_dict.get("evidence_content_sha256") or {}
+    if not isinstance(hash_map, dict):
+        return VerificationResult(False, "evidence_set_mismatch", "evidence_content_sha256 is not a dict")
+    hash_keys = sorted(str(k) for k in hash_map.keys())
+    if not evaluated or sorted(evaluated) != hash_keys:
+        return VerificationResult(
+            False,
+            "evidence_set_mismatch",
+            f"evaluated={sorted(evaluated)} hash_keys={hash_keys}",
         )
-    payload = "|".join(
-        [
-            verdict_id,
-            hypothesis_id,
-            ",".join(sorted(evidence_ids)),
-            validator_version,
-        ]
+
+    supplied_ids = {
+        str(rec.get("evidence_id") or "") for rec in evidence_record_dicts if isinstance(rec, dict)
+    }
+    if supplied_ids != set(evaluated):
+        missing = sorted(set(evaluated) - supplied_ids)
+        extra = sorted(supplied_ids - set(evaluated))
+        return VerificationResult(
+            False,
+            "evidence_set_mismatch",
+            f"missing={missing} extra={extra}",
+        )
+
+    recomputed = {}
+    for rec in evidence_record_dicts:
+        if not isinstance(rec, dict):
+            continue
+        eid = str(rec.get("evidence_id") or "")
+        if eid in evaluated:
+            recomputed[eid] = canonical_evidence_content_hash(rec)
+    for eid in evaluated:
+        stored = str(hash_map.get(eid) or "")
+        if not stored or stored != recomputed.get(eid):
+            return VerificationResult(
+                False,
+                "evidence_content_hash_mismatch",
+                f"evidence_id={eid} stored={stored} recomputed={recomputed.get(eid)}",
+            )
+
+    payload = build_confirmation_payload_dict(
+        proof_schema_version=PROOF_SCHEMA_VERSION,
+        algorithm=PROOF_ALGORITHM_ED25519,
+        key_id=key_id,
+        verdict_id=str(verdict_dict.get("verdict_id") or ""),
+        hypothesis_id=str(verdict_dict.get("hypothesis_id") or ""),
+        status="confirmed",
+        reason_codes=list(verdict_dict.get("reason_codes") or []),
+        validator_version=str(verdict_dict.get("validator_version") or ""),
+        evidence_records=evidence_record_dicts,
     )
-    tag = hmac.new(key, payload.encode("utf-8"), hashlib.sha256).hexdigest()
-    return f"hmac-sha256:{_current_key_id()}:{tag}"
+    try:
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-
-def _verify_validation_proof(
-    verdict_id: str,
-    hypothesis_id: str,
-    evidence_ids: List[str],
-    validator_version: str,
-    proof: str,
-) -> bool:
-    """Return True if the proof tag matches the given fields (tamper-evident).
-
-    Returns False when: proof missing, key unavailable, key_id mismatch
-    (key rotated/changed), or tag mismatch.
-    """
-    if not proof:
-        return False
-    parts = proof.split(":")
-    if len(parts) != 3 or parts[0] != "hmac-sha256":
-        return False
-    key = _resolve_confirmation_key()
-    if key is None:
-        return False  # key unavailable → fail-closed
-    if parts[1] != _current_key_id():
-        return False  # key changed → fail-closed (no silent old-key fallback at M0)
-    expected = _compute_validation_proof(
-        verdict_id, hypothesis_id, evidence_ids, validator_version
-    )
-    return hmac.compare_digest(expected, proof)
+        Ed25519PublicKey.from_public_bytes(public_key).verify(
+            signature, canonical_json_bytes(payload)
+        )
+    except Exception as exc:
+        exc_name = type(exc).__name__
+        if exc_name in {"InvalidSignature", "ValueError"}:
+            return VerificationResult(False, "signature_invalid", f"Ed25519 verify failed: {exc_name}")
+        return VerificationResult(False, "public_key_invalid", f"{exc_name}: {exc}")
+    return VerificationResult(True, "verified")
 
 
 # ---------------------------------------------------------------------------
@@ -231,7 +388,7 @@ class AdmissionReasonCode:
 _SECRET_KEY_PATTERNS_LOWER: set[str] = {
     "authorization", "cookie", "set-cookie", "set_cookie", "token", "api_key", "apikey",
     "secret", "password", "passwd", "access_token", "refresh_token",
-    "auth_token", "bearer", "jwt",
+    "auth_token", "session_token", "bearer", "jwt",
     "x-api-key", "x-auth-token", "x_api_key", "x_auth_token",
     "proxy-authorization", "proxy_authorization",
     "credential", "credentials",
@@ -455,6 +612,10 @@ class IdempotencyGuard:
     def is_registered(self, id_: str) -> bool:
         return id_ in self._registered
 
+    def unregister(self, id_: str) -> None:
+        """Release a provisional registration after admission rollback."""
+        self._registered.discard(id_)
+
     def clear(self) -> None:
         self._registered.clear()
 
@@ -596,8 +757,11 @@ def check_admission(
 # ---------------------------------------------------------------------------
 
 _VALID_HYPOTHESIS_STATES = {"hypothesized", "admitted", "attempted", "candidate", "confirmed", "refuted", "untested"}
-_VALID_ATTEMPT_STATES = {"attempted", "failed", "retried"}
-_VALID_EVIDENCE_TYPES = {"real_http_response", "timing_measurement", "browser_execution", "dns_lookup", "tls_observation", "api_observation"}
+# SGK-2026-0421 (constraint I): attempt execution phases are tracked
+# additively so queued / sending / sent / evidence-saved are distinguishable
+# during checkpoint and resume. Additive — old records stay valid.
+_VALID_ATTEMPT_STATES = {"attempted", "failed", "retried", "queued", "sending", "sent", "evidence_saved"}
+_VALID_EVIDENCE_TYPES = {"real_http_response", "timing_measurement", "browser_execution", "dns_lookup", "tls_observation", "api_observation", "out_of_band_callback"}
 _VALID_VERDICT_STATUSES = {"candidate", "confirmed", "refuted", "untested"}
 _VALID_ACTION_CLASSES = {"follow_up_probe", "re_evaluate", "manual_review", "terminal"}
 _VALID_RISK_CLASSES = {"read_only", "state_changing", "out_of_band"}
@@ -873,7 +1037,9 @@ class HypothesisRecord:
     def _set_confirmed_by_verdict(self) -> None:
         """Internal: transition hypothesis to 'confirmed'.
 
-        Only callable from within this module's _create_confirmed_verdict() factory.
+        Only callable from the Evidence Validator signer boundary
+        (src/core/engine/vdp_evidence_validator.py) when a confirmed
+        EvidenceVerdictV1 with a valid canonical proof is created.
         """
         valid_next = _VALID_HYPOTHESIS_TRANSITIONS.get(self.state, set())
         if "confirmed" not in valid_next:
@@ -960,6 +1126,10 @@ class AttemptRecord:
     execution_result: Dict[str, Any] = field(default_factory=dict)
     state: str = "attempted"
     schema_version: int = VDP_CONTRACT_SCHEMA_VERSION
+    # SGK-2026-0422 additive: originating NextAction for the ID series
+    # NextAction -> Attempt -> Evidence -> Verdict. Set by the follow-up
+    # dispatch from spec["next_action_id"]. Old sessions default to "".
+    trigger_next_action_id: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -974,6 +1144,8 @@ class AttemptRecord:
             "ended_at": self.ended_at,
             "execution_result": dict(self.execution_result),
             "state": self.state,
+            # SGK-2026-0422 additive field
+            "trigger_next_action_id": self.trigger_next_action_id,
         }
 
     @classmethod
@@ -990,6 +1162,7 @@ class AttemptRecord:
             ended_at=d.get("ended_at", ""),
             execution_result=dict(d.get("execution_result", {})),
             state=d.get("state", "attempted"),
+            trigger_next_action_id=d.get("trigger_next_action_id", ""),
         )
 
 
@@ -1011,6 +1184,11 @@ class EvidenceRecordV1:
     truncated: bool = False
     truncation_reason: str = ""
     schema_version: int = VDP_CONTRACT_SCHEMA_VERSION
+    # SGK-2026-0422 additive: structured evaluation markers produced by the
+    # canonical Evidence Validator (e.g. falsification_met=true when an
+    # explicit refutation condition was demonstrated). Old sessions default
+    # to an empty dict.
+    execution_result: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -1026,6 +1204,8 @@ class EvidenceRecordV1:
             "original_size": self.original_size,
             "truncated": self.truncated,
             "truncation_reason": self.truncation_reason,
+            # SGK-2026-0422 additive field
+            "execution_result": dict(self.execution_result),
         }
 
     @classmethod
@@ -1043,6 +1223,7 @@ class EvidenceRecordV1:
             original_size=d.get("original_size", 0),
             truncated=d.get("truncated", False),
             truncation_reason=d.get("truncation_reason", ""),
+            execution_result=dict(d.get("execution_result", {})),
         )
 
 
@@ -1053,11 +1234,15 @@ class EvidenceVerdictV1:
     ID series: hypothesis_id -> verdict_id (this record, via hypothesis_id)
 
     This dataclass is **frozen** — no attribute assignment after construction.
-    The only path to ``status == "confirmed"`` is the module-level
-    ``_create_confirmed_verdict()`` factory function, which uses
-    ``object.__setattr__`` to bypass the frozen restriction internally.
-    All external callers (detectors, reporters) must use ``untested``,
-    ``candidate``, or ``refuted`` via normal construction or ``from_dict``.
+    The only path to ``status == "confirmed"`` is the engine-side Evidence
+    Validator signer (``src/core/engine/vdp_evidence_validator.py``), which
+    constructs the verdict with proof fields and uses ``object.__setattr__``
+    to bypass the frozen restriction internally. This module is
+    verification-only: confirmed verdicts are restored from serialized data
+    exclusively via ``restore_confirmed_from_dict()`` after public-key proof
+    verification. All external callers (detectors, reporters) must use
+    ``untested``, ``candidate``, or ``refuted`` via normal construction or
+    ``from_dict``.
     """
     verdict_id: str
     hypothesis_id: str
@@ -1068,6 +1253,14 @@ class EvidenceVerdictV1:
     validation_proof: str = ""
     schema_version: int = VDP_CONTRACT_SCHEMA_VERSION
     notes: List[str] = field(default_factory=list)
+    # SGK-2026-0422 additive proof fields (canonical v2 / Ed25519).
+    # proof_schema_version: "v2" (canonical) | "" (legacy/absent).
+    # proof_key_id: key identifier embedded in the proof token.
+    # evidence_content_sha256: evidence_id -> sha256 of the canonical JSON of
+    # the full EvidenceRecordV1.to_dict() (binds the evidence body).
+    proof_schema_version: str = ""
+    proof_key_id: str = ""
+    evidence_content_sha256: Dict[str, str] = field(default_factory=dict)
 
     @property
     def status(self) -> str:
@@ -1079,7 +1272,9 @@ class EvidenceVerdictV1:
         if self._status == "confirmed":
             raise ValueError(
                 "confirmed status cannot be set via constructor. "
-                "Use _create_confirmed_verdict() factory function. "
+                "Confirmed verdicts are produced only by the Evidence Validator "
+                "signer (src/core/engine/vdp_evidence_validator.py) and restored "
+                "only via restore_confirmed_from_dict(). "
                 "Initialize with 'candidate' or 'untested' instead."
             )
 
@@ -1109,22 +1304,27 @@ class EvidenceVerdictV1:
             "validator_version": self.validator_version,
             "validation_proof": self.validation_proof,
             "notes": list(self.notes),
+            # SGK-2026-0422 additive proof fields
+            "proof_schema_version": self.proof_schema_version,
+            "proof_key_id": self.proof_key_id,
+            "evidence_content_sha256": dict(self.evidence_content_sha256),
         }
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "EvidenceVerdictV1":
         """Load verdict from dict. REJECTS confirmed unconditionally.
 
-        Confirmed verdicts can only be restored via the internal
-        ``_restore_confirmed_from_dict()`` which verifies the tamper-evident
-        validation proof. There is no public ``trusted`` parameter.
+        Confirmed verdicts can only be restored via
+        ``restore_confirmed_from_dict()`` which verifies the canonical v2
+        validation proof (Ed25519) with a public verification key. There is
+        no public ``trusted`` parameter.
         """
         raw_status = d.get("status", "untested")
         if raw_status == "confirmed":
             raise ValueError(
                 "Cannot load confirmed verdict from serialized data. "
-                "Confirmed verdicts require proof verification via the internal "
-                "restore path. Use _restore_confirmed_from_dict()."
+                "Confirmed verdicts require proof verification via "
+                "restore_confirmed_from_dict()."
             )
         return cls(
             schema_version=d.get("schema_version", 0),
@@ -1136,62 +1336,79 @@ class EvidenceVerdictV1:
             validator_version=d.get("validator_version", ""),
             validation_proof=d.get("validation_proof", ""),
             notes=list(d.get("notes", [])),
+            proof_schema_version=d.get("proof_schema_version", ""),
+            proof_key_id=d.get("proof_key_id", ""),
+            evidence_content_sha256=dict(d.get("evidence_content_sha256", {})),
         )
 
 
-def _restore_confirmed_from_dict(d: Dict[str, Any]) -> EvidenceVerdictV1:
-    """Internal: restore a confirmed verdict from persisted data.
+def default_public_key_provider() -> Optional[Dict[str, bytes]]:
+    """Resolve dev/test Ed25519 public verification keys (verification only).
 
-    Verifies the tamper-evident ``validation_proof`` (HMAC-SHA256 over
-    verdict_id, hypothesis_id, evidence_ids, validator_version keyed with the
-    module-private key). Raises ValueError if the proof is missing, malformed,
-    or does not match the verdict fields — i.e., if the data was not produced
-    by ``_create_confirmed_verdict()`` (the Evidence Validator path).
+    Keys come from (in priority order):
+      1. SHIGOKU_VDP_VERIFICATION_PUBLIC_KEY env (hex, 64 chars)
+      2. ~/.shigoku/vdp_verification.pub file (hex, 64 chars)
 
-    This is the ONLY path that may produce a verdict with
-    ``status == "confirmed"`` from serialized data.
+    Returns a dict ``{key_id: raw_public_key_bytes}`` or ``None`` when no
+    public key is available (fail-closed). This holds PUBLIC key material
+    only — never a private/secret key. Production key management
+    (distribution, rotation, revocation, secret store) is SGK-2026-0423.
+    """
+    raw_hex: Optional[str] = None
+    env_val = os.environ.get("SHIGOKU_VDP_VERIFICATION_PUBLIC_KEY")
+    if env_val:
+        raw_hex = env_val.strip()
+    else:
+        pub_file = Path.home() / ".shigoku" / "vdp_verification.pub"
+        try:
+            if pub_file.exists():
+                raw_hex = pub_file.read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeDecodeError):
+            return None
+    if not raw_hex or len(raw_hex) != 64:
+        return None
+    try:
+        public_key = bytes.fromhex(raw_hex)
+    except ValueError:
+        return None
+    key_id = hashlib.sha256(public_key).hexdigest()[:16]
+    return {key_id: public_key}
+
+
+def restore_confirmed_from_dict(
+    d: Dict[str, Any],
+    evidence_record_dicts: List[Dict[str, Any]],
+    *,
+    public_key_provider: Any,
+) -> EvidenceVerdictV1:
+    """Restore a confirmed verdict from serialized data (verification-only).
+
+    Verifies the canonical v2 ``validation_proof`` (Ed25519 over the
+    deterministic payload described in ``build_confirmation_payload_dict``,
+    keyed by a public verification key resolved via ``public_key_provider``).
+    Raises ValueError when the proof is missing, malformed, of an unknown
+    version, the key is unavailable/unknown, the evidence set or content
+    hashes do not match, or the signature is invalid — fail-closed with a
+    reason. This is the ONLY path that may produce a verdict with
+    ``status == "confirmed"`` from serialized data, and it never signs.
+
+    Legacy HMAC proofs (``hmac-sha256:...``) are not handled here; they are
+    routed to the engine-side legacy verifier which reports
+    ``legacy_proof_unverifiable`` when no verification key is available.
     """
     raw_status = d.get("status", "untested")
     if raw_status != "confirmed":
         return EvidenceVerdictV1.from_dict(d)
 
-    evidence_ids = list(d.get("evaluated_evidence_ids", []))
-    validator_version = d.get("validator_version", "")
-    proof = d.get("validation_proof", "")
-
-    if not evidence_ids:
-        raise ValueError("confirmed verdict requires non-empty evaluated_evidence_ids")
-    if not validator_version or not validator_version.strip():
-        raise ValueError("confirmed verdict requires non-empty validator_version")
-
-    key = _resolve_confirmation_key()
-    if key is None:
+    result = verify_confirmed_verdict(
+        d,
+        evidence_record_dicts,
+        public_key_provider=public_key_provider,
+    )
+    if not result.verified:
         raise ValueError(
             f"confirmed verdict {d.get('verdict_id', 'unknown')} cannot be restored: "
-            "confirmation key unavailable (set SHIGOKU_VDP_CONFIRMATION_KEY or "
-            "create ~/.shigoku/vdp_confirmation.key)"
-        )
-    parts = proof.split(":") if proof else []
-    if len(parts) != 3 or parts[0] != "hmac-sha256":
-        raise ValueError(
-            f"confirmed verdict {d.get('verdict_id', 'unknown')} has malformed validation_proof"
-        )
-    if parts[1] != _current_key_id():
-        raise ValueError(
-            f"confirmed verdict {d.get('verdict_id', 'unknown')} validation_proof "
-            "key_id mismatch: confirmation key changed since signing"
-        )
-    expected = _compute_validation_proof(
-        d.get("verdict_id", ""),
-        d.get("hypothesis_id", ""),
-        evidence_ids,
-        validator_version,
-    )
-    if not hmac.compare_digest(expected, proof):
-        raise ValueError(
-            f"validation_proof verification failed for confirmed verdict "
-            f"{d.get('verdict_id', 'unknown')} — data was not produced by "
-            "the Evidence Validator path."
+            f"{result.reason_code}: {result.detail}"
         )
 
     instance = EvidenceVerdictV1(
@@ -1200,71 +1417,16 @@ def _restore_confirmed_from_dict(d: Dict[str, Any]) -> EvidenceVerdictV1:
         hypothesis_id=d.get("hypothesis_id", ""),
         _status="candidate",
         reason_codes=list(d.get("reason_codes", [])),
-        evaluated_evidence_ids=evidence_ids,
-        validator_version=validator_version,
-        validation_proof=proof,
+        evaluated_evidence_ids=list(d.get("evaluated_evidence_ids", [])),
+        validator_version=d.get("validator_version", ""),
+        validation_proof=d.get("validation_proof", ""),
         notes=list(d.get("notes", [])),
+        proof_schema_version=d.get("proof_schema_version", PROOF_SCHEMA_VERSION),
+        proof_key_id=d.get("proof_key_id", ""),
+        evidence_content_sha256=dict(d.get("evidence_content_sha256", {})),
     )
     object.__setattr__(instance, '_status', 'confirmed')
     return instance
-
-
-def _create_confirmed_verdict(
-    verdict_id: str,
-    hypothesis_id: str,
-    evidence_ids: List[str],
-    validator_version: str,
-    reason_codes: List[str] | None = None,
-    hypothesis: "HypothesisRecord | None" = None,
-    **kwargs,
-) -> EvidenceVerdictV1:
-    """Factory: create a confirmed verdict. The ONLY function that can produce
-    verdicts with ``status == "confirmed"``.
-
-    Uses ``object.__setattr__`` to bypass the frozen-dataclass restriction.
-    This function is intentionally NOT exported — callers outside this module
-    must go through the EvidenceValidator (haddix_evidence_quality.py) which
-    imports and calls this function explicitly.
-
-    Args:
-        verdict_id: Unique verdict identifier.
-        hypothesis_id: Parent hypothesis ID.
-        evidence_ids: Non-empty list of evidence IDs that justify confirmation.
-        validator_version: Non-empty validator version string.
-        reason_codes: Optional reason codes.
-        hypothesis: Optional hypothesis to transition to confirmed state.
-        **kwargs: Additional fields passed to the verdict constructor.
-
-    Returns:
-        A frozen EvidenceVerdictV1 with status='confirmed'.
-
-    Raises:
-        ValueError: If evidence_ids is empty or validator_version is blank.
-    """
-    if not evidence_ids:
-        raise ValueError("evidence_ids must be non-empty for confirmed status")
-    if not validator_version or not validator_version.strip():
-        raise ValueError("validator_version must be non-empty for confirmed status")
-
-    verdict = EvidenceVerdictV1(
-        verdict_id=verdict_id,
-        hypothesis_id=hypothesis_id,
-        _status="candidate",  # start as candidate, bypass post_init
-        reason_codes=list(reason_codes or []),
-        **kwargs,
-    )
-    proof = _compute_validation_proof(
-        verdict_id, hypothesis_id, list(evidence_ids), validator_version
-    )
-    object.__setattr__(verdict, '_status', 'confirmed')
-    object.__setattr__(verdict, 'evaluated_evidence_ids', list(evidence_ids))
-    object.__setattr__(verdict, 'validator_version', validator_version)
-    object.__setattr__(verdict, 'validation_proof', proof)
-
-    if hypothesis is not None:
-        hypothesis._set_confirmed_by_verdict()
-
-    return verdict
 
 
 @dataclass

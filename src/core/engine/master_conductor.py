@@ -3950,6 +3950,18 @@ class MasterConductor:
                 }
             session_data = inject_vdp_section_to_session_payload(session_data, vdp_state)
 
+            # --- Inject additive vdp_diagnostics_v1 section (SGK-2026-0425) ---
+            # The collector is the lowest writer and deep-redacts; a second
+            # whole-section redaction pass is applied for defense in depth.
+            diag_collector = getattr(self, '_vdp_diagnostics', None)
+            if diag_collector is not None:
+                from src.core.models.vdp_contract import redact_secrets_deep
+                diag_section = diag_collector.to_section()
+                if diag_section is not None:
+                    session_data['vdp_diagnostics_v1'] = redact_secrets_deep(
+                        diag_section
+                    )
+
             # --- M0 gate validation before save (SGK-2026-0419) ---
             # The M0 gate itself validates vdp_active consistency (inactive + data
             # → reject). MasterConductor does not duplicate the condition.
@@ -3961,7 +3973,12 @@ class MasterConductor:
                 )
             ) or any(vdp_state.get(k) for k in ("budget_snapshot", "run_health")):
                 from src.core.engine.vdp_m0_gate import VdpM0ContractGate
-                m0_result = VdpM0ContractGate().validate(session_data)
+                m0_result = VdpM0ContractGate().validate(
+                    session_data,
+                    public_key_provider=(
+                        self._vdp_evidence_validator().public_key_provider()
+                    ),
+                )
                 if not m0_result.passed:
                     logger.error(
                         "M0 gate FAILED: %s — reason_codes=%s — ABORTING save",
@@ -3971,6 +3988,26 @@ class MasterConductor:
                     raise RuntimeError(
                         f"M0 contract gate failed: {m0_result.detail}. "
                         f"Reason codes: {m0_result.reason_codes}"
+                    )
+
+            # --- SGK-2026-0425 M0: vdp_diagnostics_v1 fail-closed gate ---
+            # Validated SEPARATELY from the vdp_contract gate (plan §5.1);
+            # the existing vdp_active semantics are untouched.
+            diag_section = session_data.get('vdp_diagnostics_v1')
+            if diag_section is not None:
+                from src.core.engine.vdp_diagnostic_trace import (
+                    validate_diagnostic_section,
+                )
+                diag_result = validate_diagnostic_section(diag_section)
+                if not diag_result.passed:
+                    logger.error(
+                        "Diagnostic section gate FAILED: %s — reason_codes=%s — ABORTING save",
+                        diag_result.detail,
+                        diag_result.reason_codes,
+                    )
+                    raise RuntimeError(
+                        f"Diagnostic section gate failed: {diag_result.detail}. "
+                        f"Reason codes: {diag_result.reason_codes}"
                     )
 
             if self.project_manager:
@@ -6657,7 +6694,12 @@ class MasterConductor:
 
         Must be called after execute_parallel returns and before
         the next batch starts.
+
+        SGK-2026-0426 W2: the VDP follow-up injection drain runs here first —
+        this phase executes on the main thread (see
+        test_mc_vdp_drain_main_thread.py), satisfying PCR-P1.
         """
+        self._drain_vdp_pending_follow_up_injections()
         if not batch_tasks:
             return
 
@@ -7620,6 +7662,9 @@ class MasterConductor:
                 
             result = self._dispatch_with_timeout_retry(task, timeout_override=timeout_override)
             task.result = result
+            # SGK-2026-0426 W2: drain deferred VDP follow-up injections on
+            # the main thread after the task body completes.
+            self._drain_vdp_pending_follow_up_injections()
             logger.info(f"📥 Received result from {task.agent_type} (task {task.id})")
 
             # Phase 4 (SGK-2026-0313): Emit DECISION_MADE event for shadow decision
@@ -9417,6 +9462,10 @@ class MasterConductor:
 
         if task.agent_type == "scope_parser" and getattr(task, "action", "") == "verify_scope":
             return self._dispatch_scope_verification_fast_path(task)
+
+        # SGK-2026-0421 M3a: VDP follow-up tasks (read-only enforced)
+        if task.agent_type == "vdp_follow_up":
+            return await self._dispatch_vdp_follow_up(task)
         
         current_mode = self._resolve_current_mode_name()
 
@@ -9847,7 +9896,11 @@ class MasterConductor:
                         # --- SGK-2026-0420: VDP hypothesis generation (record-only / shadow) ---
                         # Additive hook: does NOT modify task_queue, existing tasks,
                         # findings, or priority.  Reads vdp.mode from config.
-                        self._generate_vdp_hypotheses(merged_results)
+                        self._generate_vdp_hypotheses(
+                            merged_results,
+                            scope_definition=self._build_vdp_scope_snapshot(),
+                            checkpoint_path=self._vdp_checkpoint_path_for_current_session(),
+                        )
 
                         # Attack タスクを生成(サブエージェント生成)
                         attack_tasks = self._create_attack_tasks_from_recon(merged_results)
@@ -10908,7 +10961,13 @@ class MasterConductor:
     # SGK-2026-0420: VDP hypothesis generation (record-only / shadow)
     # ==================================================================
 
-    def _generate_vdp_hypotheses(self, merged_results: dict) -> None:
+    def _generate_vdp_hypotheses(
+        self,
+        merged_results: dict,
+        *,
+        scope_definition=None,
+        checkpoint_path=None,
+    ) -> None:
         """Additive VDP hypothesis generation hook.
 
         Called AFTER recon result integration and BEFORE existing attack
@@ -10922,6 +10981,12 @@ class MasterConductor:
           set ``vdp_active=True`` only when >= 1 valid hypothesis.
         - ``shadow``: same as record_only + build candidate verdicts
           and NextAction proposals (still no queue injection).
+        - ``readonly_enforce`` (SGK-2026-0421 M3a): same as shadow + queue
+          read-only follow-up tasks via ``_queue_vdp_follow_ups``.
+
+        ``scope_definition`` and ``checkpoint_path`` are optional explicit
+        M3a inputs; without an explicit scope, follow-ups are NOT queued
+        (fail-closed).
 
         When 0 hypotheses are generated (all rejected, suppressed, or no
         observations), ``vdp_active`` stays ``False`` and a degraded
@@ -10937,6 +11002,28 @@ class MasterConductor:
         if mode == 'off':
             return
 
+        # --- SGK-2026-0423 Lane C: staged rollout gate (M0-M4 ladder) ---
+        # The rollout ladder caps capability below the mode: an explicit
+        # stage cap, a disabled stage flag, or a rolled-back state store can
+        # only LOWER the effective stage. The effective stage may RAISE
+        # beyond the mode vocabulary only through verified progression
+        # evidence artifacts (never config alone); a corrupt rollout state
+        # store fails closed to M0 (communication-disabled). Below M1 the
+        # hook degrades and produces nothing (contract only).
+        from src.core.config.settings import VDP_STAGE_RANKS
+
+        gate = self._vdp_rollout_gate()
+        effective = gate.effective_stage()
+        if VDP_STAGE_RANKS.get(effective, 0) < 1:
+            self._record_vdp_degraded(None, {'reason': 'rollout_stage_below_m1'})
+            return
+        if gate.cap_reasons():
+            self._ensure_shadow_decisions().append({
+                'scope': 'vdp_rollout',
+                'stage': effective,
+                'reasons': gate.cap_reasons(),
+            })
+
         # --- Replace VDP state on every non-off run (I-03) ---
         # Success, empty input, all-rejected, and exception paths all leave a
         # fresh, consistent state: active only when >= 1 hypothesis survives.
@@ -10947,6 +11034,13 @@ class MasterConductor:
         self._vdp_state['budget_snapshot'] = {}
         self._vdp_state['run_health'] = {}
 
+        # --- SGK-2026-0425: S00 execution-contract prep reached ---
+        self._vdp_diagnostic_emit(
+            stage_id='S00', outcome='reached',
+            producer_id='master_conductor',
+            source_refs=['master_conductor:_generate_vdp_hypotheses'],
+        )
+
         # --- extract signal bundle ---
         signal_bundle = (
             merged_results.get('_signal_bundle', {})
@@ -10955,6 +11049,13 @@ class MasterConductor:
         if not isinstance(signal_bundle, dict) or not signal_bundle:
             self._record_vdp_degraded(None, {'reason': 'no_signal_bundle'})
             self._record_vdp_observation_status(None, None)
+            # SGK-2026-0425: raw producer artifact absent (S01)
+            self._vdp_diagnostic_emit(
+                stage_id='S01', outcome='blocked',
+                reason_codes=['source_not_connected'],
+                producer_id='master_conductor',
+                source_refs=['no_signal_bundle'],
+            )
             return
 
         try:
@@ -10963,10 +11064,31 @@ class MasterConductor:
             adapter = ObservationAdapter()
             adapter_result = adapter.adapt_signal_bundle(signal_bundle)
 
+            # SGK-2026-0425: raw producer artifact exists (S01 reached)
+            self._vdp_diagnostic_emit(
+                stage_id='S01', outcome='reached',
+                producer_id='vdp_observation_adapter',
+                source_refs=['adapt_signal_bundle'],
+            )
+
             if not adapter_result.has_observations:
                 self._record_vdp_degraded(adapter_result, {'reason': 'no_observations'})
                 self._record_vdp_observation_status(adapter_result, None)
+                # SGK-2026-0425: normalization produced nothing (S02)
+                self._vdp_diagnostic_emit(
+                    stage_id='S02', outcome='blocked',
+                    reason_codes=['parse_rejected'],
+                    producer_id='vdp_observation_adapter',
+                    source_refs=['no_observations'],
+                )
                 return
+
+            # SGK-2026-0425: typed observations generated (S02 reached)
+            self._vdp_diagnostic_emit(
+                stage_id='S02', outcome='reached',
+                producer_id='vdp_observation_adapter',
+                source_refs=[f'observations={len(adapter_result.observations)}'],
+            )
 
             # --- generate hypotheses ---
             from src.core.engine.vdp_hypothesis_generator import generate_hypotheses
@@ -10974,7 +11096,9 @@ class MasterConductor:
             from src.core.models.vdp_contract import ExecutionBudgetV1, ScopeRevalidationResult
 
             def _scope_provider(url: str) -> ScopeRevalidationResult:
-                return revalidate_scope_for_request(url)
+                return revalidate_scope_for_request(
+                    url, scope_definition=scope_definition
+                )
 
             leakage_denylist = (
                 getattr(self._vdp_mode, 'label_leakage_denylist', None) or []
@@ -10987,6 +11111,40 @@ class MasterConductor:
                 leakage_denylist=leakage_denylist,
             )
 
+            # --- SGK-2026-0425: S03 hypothesis-generation boundary ---
+            if result.has_hypotheses:
+                self._vdp_diagnostic_emit(
+                    stage_id='S03', outcome='reached',
+                    producer_id='vdp_hypothesis_generator',
+                    source_refs=[f'hypotheses={len(result.hypotheses)}'],
+                )
+            elif result.suppressed:
+                supp_reasons = sorted({
+                    str(r.get('reason', ''))
+                    for r in result.suppressed
+                    if isinstance(r, dict)
+                })
+                self._vdp_diagnostic_emit(
+                    stage_id='S03', outcome='skipped',
+                    reason_codes=(
+                        ['exploration_slot_missing']
+                        if any('diversity' in r for r in supp_reasons)
+                        else []
+                    ),
+                    producer_id='vdp_hypothesis_generator',
+                    source_refs=[
+                        f'suppressed_reasons={",".join(supp_reasons) or "unknown"}'
+                    ],
+                )
+            else:
+                self._vdp_diagnostic_emit(
+                    stage_id='S03', outcome='blocked',
+                    producer_id='vdp_hypothesis_generator',
+                    source_refs=[
+                        str((result.degraded or {}).get('reason', 'no_hypotheses'))
+                    ],
+                )
+
             # --- record observation source status ---
             self._record_vdp_observation_status(adapter_result, result)
 
@@ -10995,11 +11153,17 @@ class MasterConductor:
                 self._vdp_state['vdp_active'] = True
                 self._vdp_state['hypotheses'] = [h.to_dict() for h in result.hypotheses]
 
-                if mode == 'shadow':
+                if VDP_STAGE_RANKS.get(effective, 0) >= 2:
                     from src.core.engine.vdp_hypothesis_generator import build_shadow_proposals
                     proposals = build_shadow_proposals(result.hypotheses)
                     self._vdp_state['verdicts'] = [p.verdict.to_dict() for p in proposals]
                     self._vdp_state['next_actions'] = [p.next_action.to_dict() for p in proposals]
+                    if VDP_STAGE_RANKS.get(effective, 0) >= 3:
+                        self._queue_vdp_follow_ups(
+                            scope_definition,
+                            checkpoint_path,
+                            observations=adapter_result.observations,
+                        )
             else:
                 # 0 hypotheses — keep vdp_active=False (M0 gate passes)
                 self._vdp_state['vdp_active'] = False
@@ -11028,6 +11192,12 @@ class MasterConductor:
                     'reason': 'generator_exception',
                     'detail': repr(exc),
                 },
+            )
+            # SGK-2026-0425: S03 blocked by generator exception
+            self._vdp_diagnostic_emit(
+                stage_id='S03', outcome='blocked',
+                producer_id='vdp_hypothesis_generator',
+                source_refs=['generator_exception'],
             )
 
     # ------------------------------------------------------------------
@@ -11110,6 +11280,1525 @@ class MasterConductor:
             'reason': suppressed_info.get('reason', 'unknown'),
             'phase': suppressed_info.get('phase', 'unknown'),
         })
+
+    # ------------------------------------------------------------------
+    # SGK-2026-0421 M3a: follow-up queue hook + dispatch + lazy runtime deps
+    # ------------------------------------------------------------------
+
+    def _build_vdp_scope_snapshot(self):
+        """Build an explicit, isolated scope snapshot from verified context.
+
+        The VDP path never reads or mutates the process-global EthicsGuard.
+        Missing verified ``in_scope_domains`` returns ``None`` so M3a remains
+        fail-closed.
+        """
+        from src.core.security.ethics_guard import ScopeDefinition
+
+        context = getattr(self, 'context', None)
+        target_info = getattr(context, 'target_info', {}) if context is not None else {}
+        if not isinstance(target_info, dict):
+            return None
+        in_scope = [
+            str(item).strip()
+            for item in (target_info.get('in_scope_domains') or [])
+            if str(item).strip()
+        ]
+        if not in_scope:
+            return None
+        out_of_scope = [
+            str(item).strip()
+            for item in (target_info.get('out_of_scope_domains') or [])
+            if str(item).strip()
+        ]
+        return ScopeDefinition(
+            program_name=str(
+                target_info.get('program_name') or 'vdp-explicit-scope'
+            ),
+            in_scope_domains=in_scope,
+            out_of_scope_domains=out_of_scope,
+            max_requests_per_minute=int(
+                target_info.get('max_requests_per_minute') or 0
+            ),
+        )
+
+    # ------------------------------------------------------------------
+    # SGK-2026-0425: VDP diagnostic telemetry (additive, flag-guarded)
+    # ------------------------------------------------------------------
+
+    def _ensure_vdp_diagnostics(self):
+        """Lazy-init the diagnostic collector (SGK-2026-0425, additive).
+
+        Returns None when ``diagnostics.enabled`` is False (default) — the
+        collector is then a no-op and existing behavior is bit-identical
+        (characterization contract). Fail-closed on config errors.
+        """
+        if not hasattr(self, '_vdp_diagnostics'):
+            self._vdp_diagnostics = None
+        if self._vdp_diagnostics is not None:
+            return self._vdp_diagnostics
+        try:
+            from src.core.config.settings import get_settings
+            from src.core.engine.vdp_diagnostic_trace import DiagnosticCollector
+            settings = get_settings()
+            cfg = getattr(settings, 'diagnostics', None)
+        except Exception:
+            cfg = None
+        if cfg is None or not getattr(cfg, 'enabled', False):
+            self._vdp_diagnostics = None
+            return None
+        run_id = str(getattr(self.run_ledger_recorder, 'run_id', '') or '')
+        self._vdp_diagnostics = DiagnosticCollector(
+            enabled=True,
+            required=bool(getattr(cfg, 'required', False)),
+            max_events=int(getattr(cfg, 'max_events', 2000) or 2000),
+            event_queue_capacity=int(
+                getattr(cfg, 'event_queue_capacity', 5000) or 5000
+            ),
+            run_id=run_id,
+        )
+        return self._vdp_diagnostics
+
+    def _vdp_diagnostic_emit(self, **kwargs):
+        """Emit a diagnostic event at a VDP boundary (SGK-2026-0425, additive).
+
+        Flag-off / disabled collector -> no-op. Hook exceptions NEVER break
+        the existing path: recorded as a degraded decision-trace note; when
+        ``diagnostics.required`` the collector is marked hook-failed so the
+        kill switch stops the next network communication (plan §8 M1 / §10).
+        """
+        collector = self._ensure_vdp_diagnostics()
+        if collector is None:
+            return None
+        try:
+            return collector.emit(**kwargs)
+        except Exception as exc:  # noqa: BLE001 — boundary hook must not break the run
+            self._record_vdp_degraded(
+                None, {'reason': 'diagnostic_hook_error', 'detail': repr(exc)}
+            )
+            collector.mark_hook_failed(f'{type(exc).__name__}: {exc}'[:200])
+            return None
+
+    def _vdp_diagnostic_kill_switch_blocked(self) -> bool:
+        """True when a required diagnostic run has a hook failure — the next
+        network communication must be stopped (checkpoint + Hold)."""
+        collector = self._ensure_vdp_diagnostics()
+        if collector is None:
+            return False
+        return bool(getattr(collector, 'required', False)) and bool(
+            getattr(collector, 'hook_failed', False)
+        )
+
+    def _queue_vdp_follow_ups(
+        self,
+        scope_definition=None,
+        checkpoint_path=None,
+        *,
+        observations=None,
+    ) -> None:
+        """M3a: enqueue read-only follow-up tasks for pending NextActions.
+
+        - Only in ``readonly_enforce`` mode; otherwise no-op.
+        - An explicit ``scope_definition`` is required — without it the hook
+          degrades and queues NOTHING (fail-closed).
+        - Pending NextActions are checkpointed BEFORE enqueue (constraint H:
+          queue投入前にpending NextActionを保存).
+        - Only executable plans (follow_up + execute/oob-gated policy) become
+          tasks; manual_review / terminal / m3b-gated plans stay pending.
+        - SGK-2026-0423 Lane F / Lane J-2: at an m3b effective stage, a
+          state-changing (m3b_gated) plan is ALSO queued when the REAL HITL
+          ledger holds an APPROVED ticket targeting its next_action_id
+          (``_vdp_hitl_tickets_from_ledger``) — the spec is marked
+          ``m3b_authorized`` with ``capability_level=confirmation_required``
+          and the state-change preconditions supplied. No ledger ticket →
+          m3b plans stay pending (config alone can never authorize a state
+          change).
+        - Enqueue failure → ``follow_up_enqueue_failed`` recorded in
+          ``_vdp_state`` and decision trace; NextActions are never lost.
+        - Task IDs are deterministic (NextAction/Attempt lineage).
+        """
+        from src.core.config.settings import VDP_STAGE_RANKS
+        from src.core.engine.vdp_rollout import ShadowDiffRecorder
+        from src.core.engine.vdp_follow_up_executor import STATE_CHANGING_POLICY
+
+        gate = self._vdp_rollout_gate()
+        if VDP_STAGE_RANKS.get(gate.effective_stage(), 0) < 3:
+            # SGK-2026-0425: S05 skipped by the staged rollout policy
+            self._vdp_diagnostic_emit(
+                stage_id='S05', outcome='skipped',
+                reason_codes=['scope_block_expected'],
+                producer_id='master_conductor',
+                source_refs=['rollout_stage_below_m3'],
+            )
+            return
+        # M3b rung granted only through verified progression evidence —
+        # ``effective_stage()`` already applied that rule.
+        m3b_enabled = (
+            VDP_STAGE_RANKS.get(gate.effective_stage(), 0)
+            >= VDP_STAGE_RANKS["m3b"]
+        )
+        # SGK-2026-0423 Lane J-2: production never threads tickets — the
+        # APPROVED HITL ledger is the only authorization source.
+        hitl_tickets = self._vdp_hitl_tickets_from_ledger() if m3b_enabled else {}
+        if getattr(self._vdp_mode, 'kill_switch', False):
+            # Kill switch stops queue injection BEFORE enqueue (constraint H)
+            self._record_vdp_degraded(None, {'reason': 'kill_switch_active'})
+            # SGK-2026-0425: S05 skipped by the safety kill switch
+            self._vdp_diagnostic_emit(
+                stage_id='S05', outcome='skipped',
+                reason_codes=['scope_block_expected'],
+                producer_id='master_conductor',
+                source_refs=['kill_switch_active'],
+            )
+            return
+        if scope_definition is None:
+            self._record_vdp_degraded(None, {'reason': 'scope_definition_not_provided'})
+            # SGK-2026-0425: S05 skipped — fail-closed missing scope contract
+            self._vdp_diagnostic_emit(
+                stage_id='S05', outcome='skipped',
+                reason_codes=['scope_block_expected'],
+                producer_id='master_conductor',
+                source_refs=['scope_definition_not_provided'],
+            )
+            return
+
+        from src.core.domain.model.task import Task
+        from src.core.engine.vdp_follow_up import (
+            classify_reason_code,
+            is_follow_up_executable,
+        )
+        from src.core.engine.vdp_follow_up_executor import (
+            _COMPARISON_GAPS,
+            build_follow_up_spec,
+            is_m3a_executor_supported_gap,
+        )
+        from src.core.models.vdp_contract import (
+            HypothesisRecord,
+        )
+
+        if checkpoint_path and not self._restore_vdp_runtime_checkpoint(
+            checkpoint_path
+        ):
+            return
+
+        hypotheses = {
+            h.get('hypothesis_id', ''): h
+            for h in self._vdp_state.get('hypotheses', [])
+        }
+        observations_by_id = {
+            observation.observation_id: observation
+            for observation in (observations or [])
+        }
+        # NextActionRecord carries verdict_id (not hypothesis_id) — resolve
+        # the hypothesis through the verdict lineage.
+        verdict_hypothesis = {
+            v.get('verdict_id', ''): v.get('hypothesis_id', '')
+            for v in self._vdp_state.get('verdicts', [])
+        }
+        already = {
+            s.get('task_id')
+            for s in self._vdp_state.get('follow_up_pending', [])
+            if isinstance(s, dict)
+        }
+        # Preconditions satisfiable in M3a (0421): scope/budget/read probes.
+        # authA_authB / browser / OOB / state-change permissions are NOT
+        # available here → such gaps stay at manual review (never queued);
+        # the authorized m3b branch below supplies the state-change
+        # preconditions per spec (SGK-2026-0423 Lane F).
+        available_preconditions = {
+            'scope': True,
+            'budget': True,
+            'request_budget': True,
+            'action_permission': True,
+            'protected_resource': True,
+        }
+        pending: list = []
+
+        for na in self._vdp_state.get('next_actions', []):
+            if not isinstance(na, dict):
+                continue
+            gap = str(na.get('evidence_gap', '') or '')
+            plan = classify_reason_code(gap)
+            # SGK-2026-0423 Lane F: at an m3b effective stage, a
+            # state-changing (m3b_gated) plan with a HITL ticket for THIS
+            # NextAction is authorized and queued; everything else keeps the
+            # M3a executability contract (manual_review / terminal /
+            # m3b_gated / oob stay pending).
+            ticket = str((hitl_tickets or {}).get(
+                str(na.get('next_action_id', '') or ''), ''
+            ) or '')
+            m3b_branch = (
+                m3b_enabled
+                and plan.m3a_policy == STATE_CHANGING_POLICY
+                and bool(ticket)
+            )
+            if not is_follow_up_executable(plan) and not m3b_branch:
+                continue  # manual_review / terminal / m3b_gated / oob stay pending
+            if not m3b_branch and not is_m3a_executor_supported_gap(gap):
+                continue  # no truthful evidence adapter for this gap in M3a
+            # Preconditions per spec: the authorized m3b branch supplies the
+            # state-change preconditions; read-only plans never require them
+            # (and never receive them as satisfiable).
+            spec_preconditions = dict(available_preconditions)
+            if m3b_branch:
+                spec_preconditions['state_change_permission'] = True
+                spec_preconditions['hitl'] = True
+            if not all(
+                spec_preconditions.get(key, False)
+                for key in plan.required_preconditions
+            ):
+                continue  # unsatisfiable preconditions → manual review
+            hypothesis_id = verdict_hypothesis.get(
+                str(na.get('verdict_id', '') or ''), ''
+            ) or str(na.get('hypothesis_id', '') or '')
+            hyp_dict = hypotheses.get(hypothesis_id, {}) or {}
+            if not hyp_dict:
+                continue  # lineage broken — never queue without the hypothesis
+            actor = str((hyp_dict.get('actors') or ['unauth'])[0] or 'unauth')
+            observation = observations_by_id.get(
+                str(hyp_dict.get('observation_id', '') or '')
+            )
+            if observation is None:
+                continue  # exact request metadata unavailable; remain pending
+            if (
+                observation.param_names
+                or observation.param_locations
+                or observation.has_auth_header
+                or observation.has_cookie
+            ):
+                continue  # values/auth were discarded; exact replay is impossible
+            spec = build_follow_up_spec(
+                str(na.get('next_action_id', '') or ''),
+                HypothesisRecord.from_dict(hyp_dict) if hyp_dict else HypothesisRecord(
+                    hypothesis_id=str(na.get('hypothesis_id', '') or 'hyp-unknown'),
+                    observation_id='obs-followup',
+                    asset='',
+                    capability='follow_up_probe',
+                    hypothesis_text='follow-up',
+                    trust_boundary='unauthenticated',
+                    actors=[actor],
+                ),
+                url=str(hyp_dict.get('asset', '') or ''),
+                method=str(observation.method or ''),
+                param_names=tuple(observation.param_names),
+                param_locations=tuple(observation.param_locations),
+                actor=actor,
+                plan=plan,
+            )
+            if spec['task_id'] in already:
+                continue
+            # SGK-2026-0423 Lane F: the authorized m3b branch marks the spec
+            # so the dispatch pre-communication gate and the executor's M3b
+            # authorization gate admit the single state-changing send.
+            if m3b_branch:
+                spec['m3b_authorized'] = True
+                spec['hitl_ticket'] = ticket
+                spec['capability_level'] = 'confirmation_required'
+            # SGK-2026-0423 Lane P-2: comparison-capable gaps carry the
+            # account ids from the MC account config (env VDP_ACCOUNT_*)
+            # so the executor can run the authenticated A/B comparison.
+            # Secrets NEVER enter the spec — only the ids.
+            if gap in _COMPARISON_GAPS:
+                import os
+
+                spec['auth_a_id'] = str(os.environ.get('VDP_ACCOUNT_A_ID', '') or '')
+                spec['auth_b_id'] = str(os.environ.get('VDP_ACCOUNT_B_ID', '') or '')
+            # Explicit scope snapshot travels with the spec (no singleton use)
+            spec['scope_domains'] = list(
+                getattr(scope_definition, 'in_scope_domains', []) or []
+            )
+            spec['scope_out_domains'] = list(
+                getattr(scope_definition, 'out_of_scope_domains', []) or []
+            )
+            spec['scope_rate_limit'] = int(
+                getattr(scope_definition, 'max_requests_per_minute', 0) or 0
+            )
+            pending.append(spec)
+
+        if not pending:
+            return
+
+        # SGK-2026-0423 Lane C: shadow/enforce diff trace — every NextAction
+        # that will be enforced is recorded as matched_shadow; everything
+        # that stays pending is recorded as shadow_only (append-only, no
+        # secrets). Recorded BEFORE follow_up_pending is persisted.
+        effective = gate.effective_stage()
+        queued_by_next_action = {
+            str(spec.get('next_action_id', '') or ''): str(spec.get('task_id', '') or '')
+            for spec in pending
+        }
+        for na in self._vdp_state.get('next_actions', []):
+            if not isinstance(na, dict):
+                continue
+            na_id = str(na.get('next_action_id', '') or '')
+            verdict_id = str(na.get('verdict_id', '') or '')
+            if na_id in queued_by_next_action:
+                ShadowDiffRecorder.record(
+                    self._vdp_state,
+                    next_action_id=na_id,
+                    verdict_id=verdict_id,
+                    hypothesis_id=verdict_hypothesis.get(verdict_id, ''),
+                    reason_code=str(na.get('evidence_gap', '') or ''),
+                    stage=effective,
+                    decision='enforced',
+                    diff_type='matched_shadow',
+                )
+            else:
+                ShadowDiffRecorder.record(
+                    self._vdp_state,
+                    next_action_id=na_id,
+                    verdict_id=verdict_id,
+                    hypothesis_id=verdict_hypothesis.get(verdict_id, ''),
+                    reason_code=str(na.get('evidence_gap', '') or ''),
+                    stage=effective,
+                    decision='shadow_only',
+                    diff_type='pending',
+                )
+
+        self._vdp_state['follow_up_pending'] = list(
+            self._vdp_state.get('follow_up_pending', [])
+        ) + pending
+
+        # Checkpoint pending NextActions BEFORE queue injection (constraint H)
+        if checkpoint_path and not self._save_vdp_runtime_checkpoint(
+            checkpoint_path
+        ):
+            return
+
+        tasks = [
+            Task(
+                id=spec['task_id'],
+                name=f"vdp_follow_up:{spec['evidence_gap']}",
+                agent_type='vdp_follow_up',
+                action='run',
+                params={'vdp_follow_up_spec': spec},
+            )
+            for spec in pending
+        ]
+        # SGK-2026-0426 W2: deferred injection buffer + main-thread drain.
+        # This code runs on the SharedLoopManager background thread (the
+        # MC task body); the task_queue mutation must NOT happen here
+        # (PCR-P1 main-thread invariant, task_queue.py). We only buffer the
+        # prepared (tasks, pending) batch; the main-thread drain performs
+        # the queue mutation + S04/S05 diagnostics + bookkeeping.
+        buffer = self._ensure_vdp_follow_up_inject_buffer()
+        with buffer['lock']:
+            buffer['items'].append({'tasks': tasks, 'pending': pending})
+        if threading.current_thread() is threading.main_thread():
+            # Main-thread callers (unit tests / direct calls) keep the
+            # pre-W2 synchronous behavior.
+            self._drain_vdp_pending_follow_up_injections()
+
+    def _ensure_vdp_follow_up_inject_buffer(self) -> dict:
+        """Lazy-init the deferred VDP follow-up injection buffer (W2).
+
+        Worker-thread callers append (tasks, pending) batches here WITHOUT
+        touching the task_queue; the main-thread drain performs the actual
+        task_queue mutation so the PCR-P1 main-thread invariant holds.
+        hasattr-guarded for __new__-minimal test instances.
+        """
+        if not hasattr(self, '_vdp_follow_up_inject_lock'):
+            self._vdp_follow_up_inject_lock = threading.Lock()
+        if not hasattr(self, '_vdp_pending_follow_up_injections'):
+            self._vdp_pending_follow_up_injections = []
+        return {
+            'lock': self._vdp_follow_up_inject_lock,
+            'items': self._vdp_pending_follow_up_injections,
+        }
+
+    def _drain_vdp_pending_follow_up_injections(self) -> int:
+        """SGK-2026-0426 W2: main-thread drain of deferred VDP follow-up
+        injections.
+
+        Called from main-thread phases (``_apply_post_batch_feedback`` /
+        ``execute_single_task`` / resume path). Fail-closed: the drain
+        asserts the main thread — a drain executed off-main must never
+        mutate the queue silently (task_queue.py PCR-P1 asserts stay
+        untouched). Returns the number of drained tasks.
+        """
+        assert threading.current_thread() is threading.main_thread(), (
+            "PCR-P1: VDP follow-up drain (task_queue mutation) must be on main thread"
+        )
+        buffer = self._ensure_vdp_follow_up_inject_buffer()
+        with buffer['lock']:
+            batches = list(buffer['items'])
+            buffer['items'].clear()
+        if not batches:
+            return 0
+        drained = 0
+        for batch in batches:
+            tasks = batch.get('tasks') or []
+            pending = batch.get('pending') or []
+            try:
+                self._add_tasks(tasks, source='vdp_follow_up')
+                # SGK-2026-0425: S04 prioritization + S05 admission reached
+                self._vdp_diagnostic_emit(
+                    stage_id='S04', outcome='reached',
+                    producer_id='master_conductor',
+                    source_refs=[f'queued_tasks={len(tasks)}'],
+                )
+                self._vdp_diagnostic_emit(
+                    stage_id='S05', outcome='reached',
+                    producer_id='master_conductor',
+                    source_refs=[f'queued_tasks={len(tasks)}'],
+                )
+            except Exception as exc:
+                self._record_vdp_follow_up_enqueue_failure(tasks, pending, exc)
+                continue
+
+            enqueue_failed = False
+            for spec in pending:
+                queued = self.task_queue.get_by_id(spec['task_id']) is not None
+                if queued:
+                    spec['queued'] = True
+                    self._vdp_state.setdefault('follow_up_queued', []).append(spec['task_id'])
+                    continue
+                self._vdp_state.setdefault('follow_up_failures', []).append({
+                    'task_id': spec['task_id'],
+                    'reason': 'follow_up_enqueue_failed',
+                    'detail': 'task_not_present_after_add',
+                })
+                enqueue_failed = True
+                self._ensure_shadow_decisions().append({
+                    'scope': 'vdp_follow_up',
+                    'status': 'degraded',
+                    'task_id': spec['task_id'],
+                    'reason': 'follow_up_enqueue_failed',
+                })
+            if enqueue_failed:
+                self._set_vdp_run_health_degraded('follow_up_enqueue_failed')
+            drained += len(tasks)
+        return drained
+
+    def _record_vdp_follow_up_enqueue_failure(self, tasks, pending, exc) -> None:
+        """SGK-2026-0426 W2/W3: fail-closed handling of a follow-up enqueue
+        failure (queue injection exception) at the main-thread drain.
+
+        - records degraded run health + per-spec failure entries + shadow
+          decisions (pre-existing 0425 behavior, moved here with the drain)
+        - S05 failed diagnostic event carries the W1 mechanism reason code
+        - W3: the run is marked ``run_outcome=follow_up_stage_failed`` with
+          non-finalized verdicts so it is never presented as a normal
+          completion (report degradation + consistency guard)
+        - ``diagnostics.required`` runs record a Hold marker in the decision
+          trace (no process kill; MC task-failure handling is untouched)
+        """
+        logger.error(
+            "VDP follow-up queue injection failed — NextActions preserved: %s",
+            exc,
+        )
+        self._set_vdp_run_health_degraded('follow_up_enqueue_failed')
+        for spec in pending:
+            self._vdp_state.setdefault('follow_up_failures', []).append({
+                'task_id': spec['task_id'],
+                'reason': 'follow_up_enqueue_failed',
+                'detail': repr(exc),
+            })
+            self._ensure_shadow_decisions().append({
+                'scope': 'vdp_follow_up',
+                'status': 'degraded',
+                'task_id': spec['task_id'],
+                'reason': 'follow_up_enqueue_failed',
+            })
+        # SGK-2026-0425: S05 failed — queue injection failed
+        # SGK-2026-0426 W1: mechanism reason code (taxonomy v2). The failure
+        # is the task_queue PCR-P1 thread-confinement violation (queue
+        # mutation off the main thread) surfaced as follow_up_enqueue_failed;
+        # redaction-safe (no exception text).
+        self._vdp_diagnostic_emit(
+            stage_id='S05', outcome='failed',
+            reason_codes=['queue_mutation_off_main_thread'],
+            producer_id='master_conductor',
+            source_refs=['follow_up_enqueue_failed'],
+        )
+        # SGK-2026-0426 W3: fail-closed — never present as a normal completion.
+        self._vdp_state['run_outcome'] = 'follow_up_stage_failed'
+        self._vdp_state['verdicts_finalized'] = False
+        collector = self._ensure_vdp_diagnostics()
+        if collector is not None and getattr(collector, 'required', False):
+            self._ensure_shadow_decisions().append({
+                'scope': 'vdp_diagnostics',
+                'status': 'hold',
+                'reason': 'follow_up_enqueue_failed',
+            })
+
+    # ------------------------------------------------------------------
+    # SGK-2026-0423 Lane J-2: HITL ledger + write-ahead journal wiring
+    # ------------------------------------------------------------------
+
+    def _vdp_hitl_tickets_from_ledger(self) -> dict:
+        """Resolve APPROVED HITL ledger tickets for VDP state-changing
+        follow-ups (``next_action_id -> ticket_id``).
+
+        Only consulted at an m3b effective stage. A ticket qualifies when:
+        - status is ``approved``;
+        - its task snapshot params carry ``vdp_follow_up_spec.next_action_id``
+          (the VDP state-change ticket convention — the ticket is created
+          from a follow-up task whose params hold the spec);
+        - it is within validity: the VDP ticket builder stores NO expiry
+          field, so an approved ticket without ``expires_at`` is valid;
+          when ``expires_at`` IS present it must be in the future.
+
+        Tickets without a resolvable VDP next_action_id are ignored for VDP
+        purposes. The last approved ticket per next_action_id wins (the
+        ledger is sorted by created_at).
+        """
+        from src.core.config.settings import VDP_STAGE_RANKS
+
+        if (
+            VDP_STAGE_RANKS.get(self._vdp_rollout_gate().effective_stage(), 0)
+            < VDP_STAGE_RANKS["m3b"]
+        ):
+            return {}
+        tickets = self.list_pending_hitl_tickets(statuses={"approved"})
+        now = time.time()
+        result: dict = {}
+        for ticket in tickets:
+            if not isinstance(ticket, dict):
+                continue
+            snapshot = ticket.get("task")
+            if not isinstance(snapshot, dict):
+                continue
+            params = snapshot.get("params")
+            if not isinstance(params, dict):
+                continue
+            vdp_spec = params.get("vdp_follow_up_spec")
+            if not isinstance(vdp_spec, dict):
+                continue
+            next_action_id = str(vdp_spec.get("next_action_id", "") or "")
+            if not next_action_id:
+                continue
+            expires_at = ticket.get("expires_at")
+            if expires_at is not None:
+                try:
+                    if now > float(expires_at):
+                        continue  # expired ticket → not valid
+                except (TypeError, ValueError):
+                    continue  # malformed expiry fails closed (skip)
+            result[next_action_id] = str(ticket.get("ticket_id", "") or "")
+        return result
+
+    def _vdp_state_change_journal(self):
+        """Resolve the write-ahead journal for state-changing sends.
+
+        The journal path is derived from the ACTIVE checkpoint path
+        (``_vdp_checkpoint_path``, set by queue-restore/checkpoint-save,
+        falling back to the deterministic per-session path). Returns None
+        when NO checkpoint path is configured — a WAL is mandatory before
+        any state-changing send, so dispatch then blocks with
+        ``state_change_journal_unavailable``.
+        """
+        from src.core.engine.vdp_state_change_journal import StateChangeJournal
+
+        path = getattr(self, '_vdp_checkpoint_path', None)
+        if path is None:
+            path = self._vdp_checkpoint_path_for_current_session()
+        if path is None:
+            return None
+        return StateChangeJournal.for_checkpoint(path)
+
+    def _vdp_account_credentials(self) -> dict:
+        """Resolve the cross-account credential store from the environment
+        (SGK-2026-0423 Lane P-2): ``VDP_ACCOUNT_A_ID`` /
+        ``VDP_ACCOUNT_A_SECRET`` / ``VDP_ACCOUNT_B_ID`` /
+        ``VDP_ACCOUNT_B_SECRET``.
+
+        Returns ``{account_id: secret}`` (an account is included only when
+        BOTH its id and secret env vars are set) and {} when unset —
+        existing behavior unchanged. The store feeds the follow-up
+        executor's cross-account comparison at send time; secrets never
+        enter specs, sessions, or evidence.
+        """
+        import os
+
+        credentials = {}
+        for id_var, secret_var in (
+            ("VDP_ACCOUNT_A_ID", "VDP_ACCOUNT_A_SECRET"),
+            ("VDP_ACCOUNT_B_ID", "VDP_ACCOUNT_B_SECRET"),
+        ):
+            account_id = str(os.environ.get(id_var, "") or "").strip()
+            secret = str(os.environ.get(secret_var, "") or "").strip()
+            if account_id and secret:
+                credentials[account_id] = secret
+        return credentials
+
+    def _make_vdp_hitl_ticket_validator(self, spec) -> Callable[[str], bool]:
+        """Build the HITL ticket validator closure for one state-changing
+        spec: given a ticket_id it checks the REAL ledger — the ticket must
+        exist, be ``approved``, target THIS spec's next_action_id, and be
+        within validity (no expiry field → valid; ``expires_at`` present →
+        must be in the future). Any ledger failure returns False
+        (fail-closed)."""
+        next_action_id = str(spec.get('next_action_id', '') or '')
+
+        def _validate(ticket_id: str) -> bool:
+            ticket_id = str(ticket_id or '').strip()
+            if not ticket_id:
+                return False
+            try:
+                tickets = self.list_pending_hitl_tickets(statuses={'approved'})
+            except Exception:
+                return False  # no ledger access at dispatch time → fail-closed
+            now = time.time()
+            for ticket in tickets:
+                if not isinstance(ticket, dict):
+                    continue
+                if str(ticket.get('ticket_id', '') or '') != ticket_id:
+                    continue
+                snapshot = ticket.get('task')
+                if not isinstance(snapshot, dict):
+                    return False
+                params = snapshot.get('params')
+                if not isinstance(params, dict):
+                    return False
+                vdp_spec = params.get('vdp_follow_up_spec')
+                target = (
+                    str((vdp_spec or {}).get('next_action_id', '') or '')
+                    if isinstance(vdp_spec, dict)
+                    else ''
+                )
+                if target != next_action_id:
+                    return False  # ticket targets a different VDP action
+                expires_at = ticket.get('expires_at')
+                if expires_at is not None:
+                    try:
+                        if now > float(expires_at):
+                            return False  # expired
+                    except (TypeError, ValueError):
+                        return False  # malformed expiry fails closed
+                return True
+            return False
+
+        return _validate
+
+    def _journal_transition_after_dispatch(
+        self,
+        journal,
+        attempt_id: str,
+        result,
+        gate,
+    ) -> str:
+        """Decide the WAL post-send transition for one state-changing
+        dispatch (SGK-2026-0423 Lane L-2 / Lane L-3).
+
+        The transition keys off the SEND FACT (``result.state_change_sent``
+        — True exactly when the executor called ``StateChangeGuard.
+        mark_sent`` after a successful HTTP send), NEVER off the status
+        alone. Decision table::
+
+            state_change_sent == True                              -> mark_sent
+            False + status in {blocked, manual_review}             -> mark_failed
+            False + anything else (including reason ==
+                   "network_error", degraded-other, unexpected
+                   status, missing/None flag, duck-typed result)   -> leave in_flight
+                                                                     (return hold reason)
+
+        ``mark_failed`` is reserved for results PROVABLY produced BEFORE
+        any communication started (kill switch, executability, readonly
+        guard, preconditions, scope, fingerprint, admission, idempotency,
+        budget/concurrency, prevent_double_send — all return with
+        ``state_change_sent=False`` and status blocked/manual_review).
+        ``reason == "network_error"`` is NOT such a case: the transport
+        failure is indistinguishable from a response timeout AFTER the
+        remote applied the mutation (the executor cannot prove
+        non-delivery), so the outcome is unknown and the entry stays
+        ``in_flight`` — recovery blocks with
+        ``state_change_outcome_unknown`` and the state change is NEVER
+        auto-resent (plan §5 timeout drill / 送信後保存前停止 /
+        状態変更非再送 / 二重状態変更0件).
+
+        The ``evidence_write_backpressure`` DEGRADED path carries
+        ``state_change_sent=True`` (send happened, mark_sent called) and is
+        therefore recorded as "sent" — the audit case that a status-based
+        transition got wrong.
+
+        Returns the hold-reason string (``state_change_outcome_unknown``)
+        when the entry is deliberately left ``in_flight`` — the caller
+        records the Hold audit trail; recovery on a new process then blocks
+        with ``state_change_outcome_unknown`` (an outcome-unknown state
+        change is NEVER auto-resent, plan §5/§10). Returns "" after a
+        definitive transition. ``gate`` is the dispatch-time rollout gate
+        (used for diagnostic context); ``StateChangeJournalError``
+        propagates to the caller (the entry then stays in_flight,
+        fail-closed).
+        """
+        sent = getattr(result, "state_change_sent", None)
+        status = str(getattr(result, "status", "") or "")
+        reason = str(getattr(result, "reason", "") or "")
+        if sent is True:
+            journal.mark_sent(attempt_id)
+            return ""
+        if sent is False and status in ("blocked", "manual_review"):
+            # provably pre-send: the executor returned before any network
+            # call, so nothing was transmitted
+            journal.mark_failed(attempt_id)
+            return ""
+        logger.warning(
+            "VDP state-changing outcome unknown (status=%s reason=%s stage=%s) — "
+            "leaving WAL in_flight; recovery will Hold",
+            status,
+            reason,
+            gate.effective_stage(),
+        )
+        return "state_change_outcome_unknown"
+
+    def _vdp_blocked_result(self, task, reason: str) -> dict:
+        """Uniform blocked dispatch result for pre-executor denials: the
+        pending entry records the stop position and a shadow decision is
+        appended (zero communication)."""
+        for pending in self._vdp_state.get('follow_up_pending', []):
+            if isinstance(pending, dict) and pending.get('task_id') == task.id:
+                pending['execution_status'] = 'blocked'
+                pending['execution_reason'] = reason
+        self._ensure_shadow_decisions().append({
+            'scope': 'vdp_rollout',
+            'task_id': task.id,
+            'status': 'blocked',
+            'reason': reason,
+        })
+        return {
+            'success': True,
+            'task_id': task.id,
+            'agent': 'vdp_follow_up',
+            'error': '',
+            'data': {
+                'status': 'blocked',
+                'reason': reason,
+                'attempt_id': None,
+                'evidence_id': None,
+                'requests_made': 0,
+                'verdict_status': None,
+            },
+        }
+
+    def _record_vdp_state_change_hold(self, task, reason: str) -> None:
+        """Hold audit trail for an unresolved state-changing outcome.
+
+        Mirrors the ``state_change_sent_but_checkpoint_failed`` pattern: a
+        durable ``RolloutDecisionRecord`` (decision=hold) is written next to
+        the configured rollout state file; when no ``rollout_state_path`` is
+        configured the file write is skipped but the in-memory shadow
+        decision is still appended.
+        """
+        from pathlib import Path
+
+        from src.core.engine.vdp_rollout import (
+            RolloutDecisionRecord,
+            write_decision_record,
+        )
+
+        rollout_state_path = str(
+            getattr(self._vdp_mode, 'rollout_state_path', '') or ''
+        )
+        if rollout_state_path:
+            decision_path = Path(rollout_state_path).parent / 'decision_records.json'
+            try:
+                write_decision_record(
+                    decision_path,
+                    RolloutDecisionRecord(
+                        stage=self._vdp_rollout_gate().effective_stage(),
+                        decision='hold',
+                        reasons=[reason],
+                    ),
+                )
+            except OSError as exc:
+                logger.error(
+                    "VDP state-change hold decision record write failed: %s", exc
+                )
+        self._ensure_shadow_decisions().append({
+            'scope': 'vdp_rollout',
+            'task_id': task.id,
+            'status': 'hold',
+            'reason': reason,
+        })
+
+    async def _dispatch_vdp_follow_up(self, task) -> dict:
+        """Dispatch a vdp_follow_up task through the M3a executor.
+
+        The executor re-runs the full pre-communication admission
+        (scope / capability / HITL / budget / idempotency / read-only guard)
+        even though the task was already admitted at queue time
+        (constraint H: queue後も、実際の通信直前に再度admissionする).
+        """
+        spec = dict(((task.params or {}).get('vdp_follow_up_spec') or {}))
+        if not spec:
+            return {
+                'success': False,
+                'task_id': task.id,
+                'agent': 'vdp_follow_up',
+                'error': 'missing_vdp_follow_up_spec',
+            }
+
+        from src.core.engine.vdp_follow_up_executor import VdpFollowUpExecutor
+        from src.core.security.ethics_guard import ScopeDefinition
+
+        # --- SGK-2026-0423 Lane C: pre-communication rollout gate ---
+        # State-changing communication requires M3b+ (progression-proven)
+        # with a HITL ticket and an ACTIVE signing key; read-only probes
+        # stay on the existing executor admission path. A deny blocks with
+        # ZERO communication (the executor is not constructed).
+        from src.core.engine.vdp_rollout import ShadowDiffRecorder
+
+        gate = self._vdp_rollout_gate()
+        effective = gate.effective_stage()
+        risk_class = str(spec.get('risk_class', '') or '')
+        capability_level = str(spec.get('capability_level', '') or '')
+        if not capability_level:
+            capability_level = self._vdp_capability_matrix().get_level(
+                'follow_up_probe'
+            ).value
+        verdict = gate.pre_communication_check(
+            risk_class=risk_class,
+            capability_level=capability_level,
+            hitl_ticket=str(spec.get('hitl_ticket', '') or ''),
+            key_active=self._vdp_evidence_signer() is not None,
+        )
+        if not verdict.allow:
+            return self._vdp_blocked_result(task, verdict.reason)
+
+        # --- SGK-2026-0423 Lane J-2: write-ahead journal (durability) ---
+        # A durable WAL is mandatory BEFORE any state-changing send: the
+        # in-memory StateChangeGuard.mark_sent would be lost on a crash
+        # between send and checkpoint save. Recovery treats "in_flight" as
+        # outcome-unknown → Hold, never auto-resend.
+        from src.core.engine.vdp_follow_up_executor import build_attempt_id
+        from src.core.engine.vdp_state_change_journal import StateChangeJournalError
+
+        journal = None
+        if str(spec.get('risk_class', '') or '') == 'state_changing':
+            journal = self._vdp_state_change_journal()
+            if journal is None:
+                return self._vdp_blocked_result(
+                    task, 'state_change_journal_unavailable'
+                )
+            attempt_id = build_attempt_id(
+                str(spec.get('hypothesis_id', '') or ''),
+                str(spec.get('evidence_gap', '') or ''),
+                str(spec.get('actor', '') or 'unauth'),
+            )
+            try:
+                journal_state = journal.state(attempt_id)
+                if journal_state == 'in_flight':
+                    # crash between begin and mark: outcome unknown → Hold
+                    self._record_vdp_state_change_hold(
+                        task, 'state_change_outcome_unknown'
+                    )
+                    return self._vdp_blocked_result(
+                        task, 'state_change_outcome_unknown'
+                    )
+                if journal_state == 'sent':
+                    return self._vdp_blocked_result(
+                        task, 'state_change_already_sent'
+                    )
+                # durable begin BEFORE the executor is constructed — the
+                # send may only happen after this write lands
+                journal.begin(
+                    attempt_id,
+                    next_action_id=str(spec.get('next_action_id', '') or ''),
+                    hypothesis_id=str(spec.get('hypothesis_id', '') or ''),
+                    task_id=task.id,
+                )
+            except StateChangeJournalError:
+                # unreadable/malformed/conflicting journal → fail-closed
+                return self._vdp_blocked_result(
+                    task, 'state_change_journal_unavailable'
+                )
+
+        scope = ScopeDefinition(
+            program_name='vdp-follow-up',
+            in_scope_domains=list(spec.get('scope_domains') or []),
+            out_of_scope_domains=list(spec.get('scope_out_domains') or []),
+            max_requests_per_minute=int(spec.get('scope_rate_limit') or 0),
+        )
+        # SGK-2026-0423 Lane F: the state-change preconditions are
+        # satisfiable ONLY for an authorized m3b spec (the queue marked it
+        # with m3b_authorized + a HITL ticket); read-only plans never
+        # require them and keep their existing behavior.
+        m3b_spec = bool(spec.get("m3b_authorized")) and bool(
+            str(spec.get("hitl_ticket") or "").strip()
+        )
+        # --- SGK-2026-0425 M1: required-diagnostics kill switch ---
+        # A telemetry hook failure in a required run stops BEFORE the
+        # executor is constructed (the network client is never called):
+        # Hold + degraded note; the checkpoint is persisted by the caller.
+        if self._vdp_diagnostic_kill_switch_blocked():
+            self._ensure_shadow_decisions().append({
+                'scope': 'vdp_diagnostics',
+                'task_id': task.id,
+                'status': 'hold',
+                'reason': 'diagnostic_telemetry_hook_failure',
+            })
+            self._vdp_diagnostic_emit(
+                stage_id='S08', outcome='blocked',
+                reason_codes=['c13_unclassified_hold'],
+                producer_id='master_conductor',
+                source_refs=['diagnostic_hook_failure:required_kill_switch'],
+            )
+            return self._vdp_blocked_result(
+                task, 'diagnostic_telemetry_hook_failure'
+            )
+
+        executor = VdpFollowUpExecutor(
+            scope_definition=scope,
+            capability_matrix=self._vdp_capability_matrix(),
+            budget=self._vdp_exec_budget(),
+            network_client=getattr(self, 'network_client', None),
+            evidence_writer=self._vdp_evidence_writer(),
+            idempotency_guard=self._vdp_idem_guard(),
+            state_change_guard=self._vdp_state_change_guard(),
+            kill_switch_provider=lambda: bool(
+                getattr(self._vdp_mode, 'kill_switch', False)
+            ),
+            # SGK-2026-0423 Lane J-2: the executor validates the ticket
+            # against the REAL ledger (approved + target-matching + valid);
+            # an arbitrary string is never approval.
+            hitl_ticket_validator=self._make_vdp_hitl_ticket_validator(spec),
+            # SGK-2026-0423 Lane P-2: the cross-account credential store
+            # (env VDP_ACCOUNT_*) enables the comparison send; secrets are
+            # resolved at send time and never recorded.
+            account_credentials=self._vdp_account_credentials(),
+            available_preconditions={
+                'scope': True,
+                'budget': True,
+                'request_budget': True,
+                'action_permission': True,
+                'protected_resource': True,
+                'state_change_permission': m3b_spec,
+                'hitl': m3b_spec,
+            },
+            # SGK-2026-0425 M1: inject the diagnostic collector (None when
+            # diagnostics disabled → executor emissions are no-ops).
+            diagnostic_collector=self._ensure_vdp_diagnostics(),
+        )
+        # SGK-2026-0425: S06 routing reached (executor dispatch)
+        self._vdp_diagnostic_emit(
+            stage_id='S06', outcome='reached',
+            producer_id='master_conductor',
+            source_refs=['_dispatch_vdp_follow_up'],
+        )
+        result = await executor.execute(spec)
+
+        # SGK-2026-0423 Lane J-2 / Lane L-2: WAL post-send transition keyed
+        # off the SEND FACT (``result.state_change_sent``), never off the
+        # status alone — the evidence-writer failure path is DEGRADED after
+        # the HTTP send and mark_sent were already performed, so it must
+        # record "sent"; a status-based transition would record "not_sent"
+        # and let a new process resend a state change that was already sent
+        # (plan §5/§10 violation).
+        if journal is not None:
+            hold_reason = ""
+            try:
+                hold_reason = self._journal_transition_after_dispatch(
+                    journal, attempt_id, result, gate
+                )
+            except StateChangeJournalError as exc:
+                # The transition could not be persisted: the entry stays
+                # in_flight (fail-closed — a resend is still blocked).
+                self._set_vdp_run_health_degraded('state_change_journal_write_failed')
+                self._ensure_shadow_decisions().append({
+                    'scope': 'vdp_rollout',
+                    'task_id': task.id,
+                    'status': 'degraded',
+                    'reason': f'state_change_journal_write_failed:{exc}',
+                })
+                hold_reason = 'state_change_outcome_unknown'
+            if hold_reason:
+                self._record_vdp_state_change_hold(task, hold_reason)
+
+        # Persist returned records even when the bounded writer reports
+        # backpressure.  The in-memory record is then checkpointed instead of
+        # being silently discarded.
+        if result.attempt is not None:
+            attempts = self._vdp_state.setdefault('attempts', [])
+            if not any(
+                item.get('attempt_id') == result.attempt.get('attempt_id')
+                for item in attempts if isinstance(item, dict)
+            ):
+                attempts.append(result.attempt)
+        if result.evidence is not None:
+            evidence_records = self._vdp_state.setdefault('evidence_records', [])
+            if not any(
+                item.get('evidence_id') == result.evidence.get('evidence_id')
+                for item in evidence_records if isinstance(item, dict)
+            ):
+                evidence_records.append(result.evidence)
+        self._vdp_state['budget_snapshot'] = dict(result.budget_snapshot or {})
+
+        for pending in self._vdp_state.get('follow_up_pending', []):
+            if isinstance(pending, dict) and pending.get('task_id') == task.id:
+                pending['execution_status'] = result.status
+                pending['execution_reason'] = result.reason
+
+        if result.status == 'degraded':
+            self._set_vdp_run_health_degraded(result.reason)
+
+        # SGK-2026-0422 (T3): canonical Evidence Validator — SINGLE call point.
+        # Only after a successful follow-up execution with persisted
+        # Attempt/Evidence records; degraded/backpressure paths never sign.
+        if result.status == 'executed' and result.attempt is not None and result.evidence is not None:
+            self._run_canonical_evidence_validator_for_task(task)
+
+        # SGK-2026-0423 Lane C: enforced-communication shadow diff record.
+        # diff_type 'new' when no shadow proposal existed for the verdict.
+        if result.status == 'executed':
+            na_dict = next(
+                (
+                    na
+                    for na in self._vdp_state.get('next_actions', [])
+                    if isinstance(na, dict)
+                    and na.get('next_action_id') == spec.get('next_action_id', '')
+                ),
+                None,
+            ) or {}
+            verdict_id = (
+                str(na_dict.get('verdict_id', '') or '')
+                or str(spec.get('verdict_id', '') or '')
+            )
+            hypothesis_id = (
+                str(na_dict.get('hypothesis_id', '') or '')
+                or str(spec.get('hypothesis_id', '') or '')
+            )
+            diff_type = (
+                'new'
+                if not any(
+                    isinstance(na, dict)
+                    and na.get('verdict_id') == verdict_id
+                    for na in self._vdp_state.get('next_actions', [])
+                )
+                else 'matched_shadow'
+            )
+            ShadowDiffRecorder.record(
+                self._vdp_state,
+                next_action_id=str(spec.get('next_action_id', '') or ''),
+                verdict_id=verdict_id,
+                hypothesis_id=hypothesis_id,
+                attempt_id=str(result.attempt_id or ''),
+                reason_code=str(spec.get('evidence_gap', '') or ''),
+                stage=effective,
+                decision='enforced',
+                diff_type=diff_type,
+            )
+
+        checkpoint_ok = True
+        checkpoint_path = getattr(self, '_vdp_checkpoint_path', None)
+        if checkpoint_path is not None:
+            checkpoint_ok = self._save_vdp_runtime_checkpoint(checkpoint_path)
+
+        # SGK-2026-0423 Lane F / Lane J-2: audit trail for "sent but not
+        # persisted" — a state-changing send completed but the checkpoint
+        # save failed. The automatic resend stays blocked by idempotency +
+        # the executor's StateChangeGuard.mark_sent + the WAL journal
+        # (no-auto-resend property), so this is a Hold decision record,
+        # never a retry trigger (complementary to the journal).
+        if (
+            result.status == 'executed'
+            and str(spec.get('risk_class', '') or '') == 'state_changing'
+            and checkpoint_ok is False
+        ):
+            self._record_vdp_state_change_hold(
+                task, 'state_change_sent_but_checkpoint_failed'
+            )
+
+        return {
+            'success': checkpoint_ok,
+            'task_id': task.id,
+            'agent': 'vdp_follow_up',
+            'error': '' if checkpoint_ok else 'checkpoint_write_failed',
+            'data': {
+                'status': result.status,
+                'reason': result.reason,
+                'attempt_id': result.attempt_id,
+                'evidence_id': result.evidence_id,
+                'requests_made': result.requests_made,
+                'verdict_status': result.verdict_status,
+            },
+        }
+
+    # ------------------------------------------------------------------
+    # SGK-2026-0422 canonical Evidence Validator wiring
+    # ------------------------------------------------------------------
+
+    def _vdp_evidence_signer(self):
+        """Lazy-initialized Ed25519 signer for the canonical validator.
+
+        SGK-2026-0423: key resolution comes from the configured key registry
+        (Lane A ``configured_signer``) instead of the implicit dev/home
+        fallback. Returns None when no signing key is configured → confirmed
+        is never produced (fail-closed: candidate/untested + operational
+        Hold). A configuration failure degrades to None rather than raising
+        into the dispatch path.
+        """
+        if not hasattr(self, '_vdp_evidence_signer_cache'):
+            from src.core.engine.vdp_key_registry import configured_signer
+
+            try:
+                signer = configured_signer(getattr(self, '_vdp_mode', None))
+            except Exception:
+                self._record_vdp_degraded(None, {'reason': 'signer_config_failed'})
+                signer = None
+            self._vdp_evidence_signer_cache = signer
+        return self._vdp_evidence_signer_cache
+
+    def _vdp_evidence_validator(self):
+        """Lazy-initialized canonical Evidence Validator (upsert boundary)."""
+        if not hasattr(self, '_vdp_evidence_validator_cache'):
+            from src.core.engine.vdp_evidence_validator import (
+                VdpEvidenceValidator,
+            )
+
+            self._vdp_evidence_validator_cache = VdpEvidenceValidator(
+                signer=self._vdp_evidence_signer(),
+                # SGK-2026-0425 M1: inject the diagnostic collector (None
+                # when diagnostics disabled → emissions are no-ops).
+                diagnostic_collector=self._ensure_vdp_diagnostics(),
+            )
+        return self._vdp_evidence_validator_cache
+
+    def _run_canonical_evidence_validator_for_task(self, task) -> None:
+        """Evaluate the task's hypothesis against its saved records and
+        UPSERT the resulting verdict into ``_vdp_state['verdicts']``.
+
+        - verdict_id is deterministic (``ver-<hypothesis_id>``) so repeated
+          dispatches never append duplicates.
+        - candidate -> confirmed replacement is explicit: a newer confirmed
+          verdict replaces an older candidate verdict for the same
+          hypothesis.
+        - signer unavailable → verdict stays candidate/untested and an
+          operational Hold reason is recorded (no confirmed, no proof).
+        """
+        from src.core.models.vdp_contract import (
+            AttemptRecord,
+            EvidenceRecordV1,
+            HypothesisRecord,
+        )
+
+        spec = dict(((task.params or {}).get('vdp_follow_up_spec') or {}))
+        hypothesis_id = str(spec.get('hypothesis_id', '') or '')
+        if not hypothesis_id:
+            return
+
+        hyp_dict = next(
+            (
+                h
+                for h in self._vdp_state.get('hypotheses', [])
+                if isinstance(h, dict) and h.get('hypothesis_id') == hypothesis_id
+            ),
+            None,
+        )
+        if hyp_dict is None:
+            return  # lineage broken — never evaluate without the hypothesis
+
+        hypothesis = HypothesisRecord.from_dict(hyp_dict)
+        attempts = [
+            AttemptRecord.from_dict(a)
+            for a in self._vdp_state.get('attempts', [])
+            if isinstance(a, dict) and a.get('hypothesis_id') == hypothesis_id
+        ]
+        evidence_records = [
+            EvidenceRecordV1.from_dict(e)
+            for e in self._vdp_state.get('evidence_records', [])
+            if isinstance(e, dict)
+        ]
+
+        validator = self._vdp_evidence_validator()
+
+        # Reuse an existing verdict_id (e.g. the 0420 shadow candidate ID)
+        # so NextAction back-references and the ID series stay intact when a
+        # candidate verdict is replaced by a confirmed one.
+        existing_verdict_id = next(
+            (
+                v.get('verdict_id')
+                for v in self._vdp_state.get('verdicts', [])
+                if isinstance(v, dict)
+                and v.get('hypothesis_id') == hypothesis_id
+                and v.get('verdict_id')
+            ),
+            None,
+        )
+        verdict = validator.evaluate(
+            hypothesis,
+            attempts,
+            evidence_records,
+            verdict_id=existing_verdict_id,
+        )
+
+        # Persist the hypothesis state change (e.g. -> confirmed) made by the
+        # canonical validator back into _vdp_state so the session reflects it.
+        self._vdp_state['hypotheses'] = [
+            (h if not (isinstance(h, dict) and h.get('hypothesis_id') == hypothesis.hypothesis_id)
+             else hypothesis.to_dict())
+            for h in self._vdp_state.get('hypotheses', [])
+        ]
+
+        self._upsert_vdp_verdict(verdict.to_dict(), validator)
+
+    def _upsert_vdp_verdict(self, verdict_dict: dict, validator) -> None:
+        """Upsert one verdict: exactly ONE verdict per hypothesis.
+
+        - Same verdict_id → replaced.
+        - Any existing verdict for the same hypothesis → replaced (the
+          canonical validator is the single authority per hypothesis; this
+          prevents duplicate verdicts and makes candidate → confirmed an
+          explicit replacement).
+        """
+        verdicts = self._vdp_state.setdefault('verdicts', [])
+        if not isinstance(verdicts, list):
+            verdicts = []
+            self._vdp_state['verdicts'] = verdicts
+
+        verdict_id = str(verdict_dict.get('verdict_id', '') or '')
+        hypothesis_id = str(verdict_dict.get('hypothesis_id', '') or '')
+        new_status = str(verdict_dict.get('status', '') or '')
+
+        kept = []
+        replaced = False
+        for existing in verdicts:
+            if not isinstance(existing, dict):
+                continue
+            existing_id = str(existing.get('verdict_id', '') or '')
+            existing_hyp = str(existing.get('hypothesis_id', '') or '')
+            if existing_id == verdict_id or existing_hyp == hypothesis_id:
+                replaced = True  # same verdict or same hypothesis → replace
+                continue
+            kept.append(existing)
+        kept.append(verdict_dict)
+        self._vdp_state['verdicts'] = kept
+
+        if new_status == 'candidate' and verdict_dict.get('reason_codes'):
+            hold_codes = [
+                c
+                for c in verdict_dict.get('reason_codes', [])
+                if 'unavailable' in str(c) or 'hold' in str(c)
+            ]
+            if hold_codes:
+                self._ensure_shadow_decisions().append({
+                    'scope': 'vdp_evidence_validator',
+                    'status': 'hold',
+                    'hypothesis_id': hypothesis_id,
+                    'reason': hold_codes[0],
+                })
+        if replaced:
+            self._ensure_shadow_decisions().append({
+                'scope': 'vdp_evidence_validator',
+                'status': 'upserted',
+                'verdict_id': verdict_id,
+                'hypothesis_id': hypothesis_id,
+                'new_status': new_status,
+            })
+
+    def _vdp_rollout_gate(self):
+        """Single VDP rollout gate construction point (SGK-2026-0423 Lane C).
+
+        All rollout decisions (hypothesis hook, queue injection, and
+        pre-communication dispatch) share one gate built from the live
+        ``_vdp_mode`` settings, the persisted rollout store, and the
+        fail-closed state-error flag: when the rollout state file is corrupt
+        or unreadable, ``_vdp_rollout_store`` sets
+        ``_vdp_rollout_state_error`` and the gate reports effective M0
+        (communication-disabled).
+        """
+        from src.core.engine.vdp_rollout import VdpRolloutGate
+
+        return VdpRolloutGate(
+            getattr(self, '_vdp_mode', None),
+            state_store=self._vdp_rollout_store(),
+            state_error=bool(getattr(self, '_vdp_rollout_state_error', False)),
+        )
+
+    def _vdp_rollout_store(self):
+        """Lazy-loaded rollout state store (SGK-2026-0423 Lane C).
+
+        Reads ``rollout_state_path`` from the VDP mode settings; a missing
+        file yields None (no store cap) with no state error. ANY unreadable
+        or corrupt state file (``RolloutStateError`` / ``OSError`` / JSON
+        decode failure) fails CLOSED: the store is treated as None AND
+        ``_vdp_rollout_state_error`` is set so the rollout gate runs at
+        effective M0 (communication-disabled) — a corrupt state file must
+        never be treated as "no cap". A successful load clears the flag.
+        """
+        if not hasattr(self, '_vdp_rollout_store_cache'):
+            from src.core.engine.vdp_rollout import (
+                RolloutStateError,
+                RolloutStateStore,
+            )
+
+            path = (
+                getattr(getattr(self, '_vdp_mode', None), 'rollout_state_path', '')
+                or ''
+            )
+            store = None
+            if path:
+                try:
+                    store = RolloutStateStore.load(path)
+                    self._vdp_rollout_state_error = False
+                except (RolloutStateError, OSError, ValueError):
+                    self._record_vdp_degraded(
+                        None, {'reason': 'rollout_state_unreadable'}
+                    )
+                    self._vdp_rollout_state_error = True
+                    store = None
+            else:
+                self._vdp_rollout_state_error = False
+            self._vdp_rollout_store_cache = store
+        return self._vdp_rollout_store_cache
+
+    def _vdp_checkpoint_path_for_current_session(self):
+        """Return the deterministic per-session VDP checkpoint path."""
+        from pathlib import Path
+
+        project_manager = getattr(self, 'project_manager', None)
+        project_dir = getattr(project_manager, 'project_dir', None)
+        session_id = getattr(
+            getattr(self, '_current_session', None), 'session_id', None
+        )
+        if not project_dir or not session_id:
+            return None
+        safe_session_id = ''.join(
+            ch for ch in str(session_id) if ch.isalnum() or ch in ('-', '_')
+        )
+        if not safe_session_id:
+            return None
+        return Path(project_dir) / 'sessions' / f'vdp_checkpoint_{safe_session_id}.json'
+
+    def _restore_vdp_runtime_checkpoint(self, checkpoint_path) -> bool:
+        """Restore budget and replay guards before any follow-up is queued."""
+        from pathlib import Path
+        from src.core.models.vdp_contract import read_checkpoint
+        from src.core.engine.vdp_session_reader import (
+            restore_pending_next_actions,
+            restore_vdp_checkpoint_payload,
+        )
+
+        path = Path(checkpoint_path)
+        self._vdp_checkpoint_path = path
+        if not path.exists():
+            return True
+        data = read_checkpoint(path)
+        if data is None:
+            self._record_vdp_degraded(None, {'reason': 'checkpoint_restore_failed'})
+            self._set_vdp_run_health_degraded('checkpoint_restore_failed')
+            return False
+        budget, idempotency_guard, state_change_guard = (
+            restore_vdp_checkpoint_payload(data)
+        )
+        if budget is None:
+            self._record_vdp_degraded(None, {'reason': 'checkpoint_budget_restore_failed'})
+            self._set_vdp_run_health_degraded('checkpoint_budget_restore_failed')
+            return False
+        self._vdp_budget = budget
+        self._vdp_idem = idempotency_guard
+        self._vdp_state_guard = state_change_guard
+        # SGK-2026-0425: resume the diagnostic collector from its checkpoint
+        # (dedupe prevents double-counted events on resume).
+        diag_checkpoint = Path(str(path) + '.diag')
+        collector = self._ensure_vdp_diagnostics()
+        if collector is not None and diag_checkpoint.exists():
+            collector.resume(str(diag_checkpoint))
+        if not self._vdp_state.get('next_actions'):
+            self._vdp_state['next_actions'] = restore_pending_next_actions(data)
+        return True
+
+    def _save_vdp_runtime_checkpoint(self, checkpoint_path) -> bool:
+        """Atomically persist the live budget, guards, and pending actions."""
+        from pathlib import Path
+        from src.core.engine.vdp_session_reader import build_vdp_checkpoint_payload
+        from src.core.models.vdp_contract import atomic_write_checkpoint
+
+        path = Path(checkpoint_path)
+        try:
+            hypotheses = self._vdp_state.get('hypotheses', [])
+            first_hypothesis_id = (
+                str(hypotheses[0].get('hypothesis_id', '') or '')
+                if hypotheses and isinstance(hypotheses[0], dict) else ''
+            )
+            payload = build_vdp_checkpoint_payload(
+                first_hypothesis_id,
+                self._vdp_exec_budget(),
+                self._vdp_idem_guard(),
+                self._vdp_state_change_guard(),
+                pending_next_actions=self._vdp_state.get('next_actions', []),
+            )
+            payload['follow_up_pending'] = self._vdp_state.get(
+                'follow_up_pending', []
+            )
+            atomic_write_checkpoint(payload, path)
+            # SGK-2026-0425: persist the diagnostic collector checkpoint
+            # (atomic, deep-redacted) alongside the VDP runtime checkpoint.
+            collector = getattr(self, '_vdp_diagnostics', None)
+            if collector is not None:
+                collector.checkpoint(str(path) + '.diag')
+        except Exception as exc:
+            self._record_vdp_degraded(
+                None,
+                {'reason': 'checkpoint_write_failed', 'detail': repr(exc)},
+            )
+            self._set_vdp_run_health_degraded('checkpoint_write_failed')
+            return False
+        self._vdp_checkpoint_path = path
+        return True
+
+    def _set_vdp_run_health_degraded(self, reason: str) -> None:
+        """Reflect a durable-write/dependency failure in the VDP run state."""
+        from src.core.models.vdp_contract import (
+            RunHealthRecord,
+            RunTerminationState,
+            deterministic_id,
+        )
+
+        normalized = str(reason or 'vdp_degraded')
+        self._vdp_state['run_health'] = RunHealthRecord(
+            health_id=deterministic_id('health', {'reason': normalized}),
+            run_state=RunTerminationState.DEGRADED,
+            reason=normalized,
+            dependency_failures=[normalized],
+        ).to_dict()
+
+    def _vdp_capability_matrix(self):
+        if not hasattr(self, '_vdp_matrix'):
+            self._vdp_matrix = None
+        if self._vdp_matrix is None:
+            from src.core.models.vdp_contract import ProgramCapabilityMatrix
+
+            rules = dict(
+                getattr(self._vdp_mode, 'capability_rules', {}) or {}
+            )
+            self._vdp_matrix = ProgramCapabilityMatrix.from_dict(
+                {
+                    'program_name': 'vdp-m3a',
+                    'rules': rules,
+                }
+            )
+        return self._vdp_matrix
+
+    def _vdp_exec_budget(self):
+        if not hasattr(self, '_vdp_budget'):
+            from src.core.engine.vdp_budget import VdpExecutionBudget
+            from src.core.models.vdp_contract import ExecutionBudgetV1
+
+            self._vdp_budget = VdpExecutionBudget.from_model(
+                ExecutionBudgetV1()
+            )
+        return self._vdp_budget
+
+    def _vdp_evidence_writer(self):
+        if not hasattr(self, '_vdp_writer'):
+            from src.core.engine.vdp_session_reader import EvidenceWriter
+
+            self._vdp_writer = EvidenceWriter()
+        return self._vdp_writer
+
+    def _vdp_idem_guard(self):
+        if not hasattr(self, '_vdp_idem'):
+            from src.core.models.vdp_contract import IdempotencyGuard
+
+            self._vdp_idem = IdempotencyGuard()
+        return self._vdp_idem
+
+    def _vdp_state_change_guard(self):
+        if not hasattr(self, '_vdp_state_guard'):
+            from src.core.models.vdp_contract import StateChangeGuard
+
+            self._vdp_state_guard = StateChangeGuard()
+        return self._vdp_state_guard
 
     def _merge_imported_recon_results(self, fresh_results: dict) -> dict:
         """Merge imported recon results into fresh results.
@@ -13609,6 +15298,9 @@ class MasterConductor:
             
             # _dispatch は async 関数なので直接 await する
             result = await self._dispatch(original_task)
+            # SGK-2026-0426 W2: drain deferred VDP follow-up injections on
+            # the main thread after the resumed task body completes.
+            self._drain_vdp_pending_follow_up_injections()
             
             if result.get("success"):
                 self.context.update_success_rate(True)

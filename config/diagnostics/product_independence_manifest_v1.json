@@ -1,0 +1,558 @@
+{
+  "schema_version": 1,
+  "manifest_version": "v1",
+  "content_hash": "sha256:b40a689960e265c4161d97ae3e4c13d0c0156fbdca95beaed07921322a45c787",
+  "created_at": "2026-08-06",
+  "generated_for_task": "SGK-2026-0425",
+  "summary": {
+    "vdp_runtime_closure_clean": true,
+    "vdp_runtime_llm_calls": 0,
+    "reachable_from_clean_diagnostic_profile": 0,
+    "total_hits_classified": 32,
+    "product_token_hits": 24,
+    "reviewed_generic_entries": 8
+  },
+  "clean_profile_definition": {
+    "modules": [
+      "src/core/engine/vdp_observation_adapter.py",
+      "src/core/engine/vdp_hypothesis_generator.py",
+      "src/core/engine/vdp_follow_up_executor.py",
+      "src/core/engine/vdp_evidence_validator.py",
+      "src/core/engine/vdp_m0_gate.py",
+      "src/core/engine/vdp_budget.py",
+      "src/core/engine/vdp_admission.py",
+      "src/core/engine/vdp_readonly_guard.py",
+      "src/core/engine/vdp_rollout.py",
+      "src/core/engine/master_conductor_session_service.py",
+      "src/core/models/vdp_contract.py",
+      "src/reporting/vdp_canonical.py",
+      "src/reporting/vdp_report_projection.py",
+      "src/reporting/report_session_consistency.py",
+      "src/reporting/vdp_dataset.py",
+      "src/reporting/vdp_holdout_runner.py",
+      "src/core/engine/vdp_diagnostic_trace.py"
+    ],
+    "rule": "新規・変更code/config/prompt/recipe/runtime driverに製品名・既知URL・既知parameter・challenge名・payload・expected finding countを入れない。clean profileの依存closure・model-facing context・execution traceに既存製品固有hitが1件でもあればM5/M6を開始しない（計画書§6.2）",
+    "llm_context": "VDP runtimeはLLMを呼ばない（vdp_hypothesis_generator.py は'NO runtime LLM'で決定論的キーワード生成。vdp_*.py / reporting/vdp_*.py に LLMClient 呼出しなし。master_conductor の LLMClient は :4271 generate_dynamic_questions と :8630 _observe_and_rethink のみでVDPメソッドではない）"
+  },
+  "hits": [
+    {
+      "file": "src/reporting/expected_detection_matrix.py",
+      "lines": [
+        110,
+        115,
+        125,
+        135,
+        145,
+        155,
+        165,
+        175,
+        185,
+        196,
+        207,
+        218,
+        229,
+        240,
+        251,
+        262,
+        272,
+        283,
+        294,
+        277,
+        288,
+        299,
+        310,
+        334,
+        580,
+        591
+      ],
+      "product": "DVWA",
+      "kind": "known_paths_and_expected_detections",
+      "purpose": "DVWA low baselineの期待検出matrix・regression profile・security= cookie解析",
+      "reachability": "GENERAL_RUNTIME_ONLY",
+      "importer_chain": "src/reporting/initial_release_gate.py:11 -> src/main.py:129,3268,3754; scripts/shigoku_ops_cli.py:30",
+      "tests": [
+        "tests/unit/reporting/test_expected_detection_matrix.py",
+        "tests/unit/scripts/test_shigoku_ops_expected_detection_cli.py:89",
+        "tests/unit/reporting/test_vdp_gates.py:257-260 (VDP gateからimportしない構造テスト)"
+      ],
+      "note": "VDPモジュールからはimportされない（構造テストで保証）"
+    },
+    {
+      "file": "src/core/agents/swarm/injection/smart_xss.py",
+      "lines": [
+        86,
+        92,
+        248,
+        1519,
+        1616,
+        1617,
+        1618,
+        1625
+      ],
+      "product": "DVWA / Juice Shop",
+      "kind": "path_sniffing_and_known_params",
+      "purpose": "xss_s/xss_r/xss_dルート検出・txtName/mtxMessage等DVWA form param・juice/localhost:3000 -> /#/search分岐",
+      "reachability": "GENERAL_RUNTIME_ONLY",
+      "importer_chain": "src/core/agents/swarm/injection pkg -> src/core/engine/swarm_dispatcher.py:34; dispatch: master_conductor.py:12777 (一般task生成。VDPメソッド外)",
+      "tests": [
+        "tests/unit/core/agents/swarm/injection/test_specialist_mode.py:101-106",
+        "tests/integration/test_smart_xss_hunter_integration.py:105-364",
+        "tests/unit/core/agents/swarm/injection/test_specialist_parameter_hints.py:24-53",
+        "tests/unit/core/agents/swarm/injection/test_form_harvester.py:18-309"
+      ],
+      "note": "VDP実行経路（vdp_* メソッド）からは到達不能"
+    },
+    {
+      "file": "src/core/validation/url_classifier.py",
+      "lines": [
+        2,
+        15,
+        118
+      ],
+      "product": "Juice Shop",
+      "kind": "endpoint_taxonomy",
+      "purpose": "Juice Shop API経路分類（/rest/user/login、/api/Challenges、/ftp/.* 等）",
+      "reachability": "GENERAL_RUNTIME_ONLY",
+      "importer_chain": "src/recon/pipeline.py:31,2398（recon flow。master_conductor.py:9718のlazy import経路。VDP closure外）",
+      "tests": [
+        "tests/core/validation/test_url_classifier.py:8",
+        "tests/core/validation/test_integration.py:10-102"
+      ],
+      "note": "VDP closureには含まれない"
+    },
+    {
+      "file": "src/core/validation/metrics_exporter.py",
+      "lines": [
+        4,
+        46,
+        64
+      ],
+      "product": "Juice Shop",
+      "kind": "metrics_names",
+      "purpose": "juice_shop_test_latency_ms/status/findings のPrometheus metrics",
+      "reachability": "SCRIPT_ONLY",
+      "importer_chain": "scripts/phase_c_coverage_executor.py:24; scripts/phase_c_cto_recommendations_test.py:18",
+      "tests": [
+        "tests/core/validation/test_integration.py"
+      ],
+      "note": "src/からimportされない"
+    },
+    {
+      "file": "src/core/validation/finding_validator.py",
+      "lines": [
+        19,
+        93
+      ],
+      "product": "none",
+      "kind": "generic_gate",
+      "purpose": "思考のみの発見拒否の汎用evidence品質gate（製品固有なし）",
+      "reachability": "GENERAL_RUNTIME_ONLY",
+      "importer_chain": "src/core/agents/swarm/injection/manager.py:12,193,3744,3772",
+      "tests": [
+        "tests/core/validation/test_finding_validator.py:10"
+      ],
+      "note": "製品固有token 0件（棚卸し対象として記録）"
+    },
+    {
+      "file": "src/core/domain/model/target.py",
+      "lines": [
+        14,
+        84
+      ],
+      "product": "DVWA",
+      "kind": "internal_host_classification",
+      "purpose": "dvwa.local の内部ホスト分類",
+      "reachability": "GENERAL_RUNTIME_ONLY",
+      "importer_chain": "src/core/recon/orchestrator.py:4-5; src/main.py:4086",
+      "tests": []
+    },
+    {
+      "file": "src/core/recon/recipes.py",
+      "lines": [
+        19,
+        142
+      ],
+      "product": "DVWA",
+      "kind": "comment",
+      "purpose": "SINGLE_URL_TEST 等の説明コメント（DVWA等テスト環境）",
+      "reachability": "GENERAL_RUNTIME_ONLY",
+      "importer_chain": "recon flow",
+      "tests": []
+    },
+    {
+      "file": "src/core/recon/factory.py",
+      "lines": [
+        59
+      ],
+      "product": "DVWA",
+      "kind": "comment",
+      "purpose": "テスト環境コメント",
+      "reachability": "GENERAL_RUNTIME_ONLY",
+      "importer_chain": "recon flow",
+      "tests": []
+    },
+    {
+      "file": "src/core/attack/session_tester.py",
+      "lines": [
+        67
+      ],
+      "product": "DVWA",
+      "kind": "comment",
+      "purpose": "コメントのみ",
+      "reachability": "GENERAL_RUNTIME_ONLY",
+      "importer_chain": "general attack flow",
+      "tests": []
+    },
+    {
+      "file": "src/core/attack/file_upload_tester.py",
+      "lines": [
+        178
+      ],
+      "product": "DVWA",
+      "kind": "comment",
+      "purpose": "コメントのみ",
+      "reachability": "GENERAL_RUNTIME_ONLY",
+      "importer_chain": "general attack flow",
+      "tests": []
+    },
+    {
+      "file": "src/core/engine/master_conductor.py",
+      "lines": [
+        12943,
+        12944,
+        13000,
+        13105
+      ],
+      "product": "DVWA",
+      "kind": "comment",
+      "purpose": "authz token routingのコメント（VDPメソッド外。VDP hook _generate_vdp_hypotheses :10924+ は決定論的で製品固有なし）",
+      "reachability": "GENERAL_RUNTIME_ONLY",
+      "importer_chain": "master_conductor（VDPメソッド外の一般分岐）",
+      "tests": []
+    },
+    {
+      "file": "src/prompts/agents/security_agent.md",
+      "lines": [
+        38
+      ],
+      "product": "DVWA",
+      "kind": "prompt_worked_example",
+      "purpose": "実行例：DVWAブルートフォース（default/fallback agent prompt）",
+      "reachability": "PROMPT_CONTEXT_GENERAL_RUNTIME_ONLY",
+      "importer_chain": "src/prompts/__init__.py:105 -> src/core/factory.py:42,77。VDP runtimeはLLMを呼ばないためVDPのmodel-facing contextには到達しない",
+      "tests": []
+    },
+    {
+      "file": "src/legacy_prompts.py",
+      "lines": [
+        254
+      ],
+      "product": "DVWA",
+      "kind": "prompt_worked_example",
+      "purpose": "実行例：DVWAブルートフォース（legacy fallback prompt）",
+      "reachability": "PROMPT_CONTEXT_FALLBACK_ONLY",
+      "importer_chain": "src/prompts/__init__.py:127,151,181 legacy fallback",
+      "tests": []
+    },
+    {
+      "file": "scripts/get_dvwa_cookie.py",
+      "lines": [
+        7,
+        21,
+        108,
+        109,
+        116
+      ],
+      "product": "DVWA",
+      "kind": "auth_cookie_fetcher",
+      "purpose": "DVWA認証cookie取得（既定 localhost:4280）",
+      "reachability": "SCRIPT_ONLY",
+      "importer_chain": "standalone（src/からimportなし）",
+      "tests": []
+    },
+    {
+      "file": "scripts/attack_dvwa.py",
+      "lines": [
+        3,
+        27,
+        102
+      ],
+      "product": "DVWA",
+      "kind": "attack_scenario",
+      "purpose": "DVWA攻撃シナリオ",
+      "reachability": "SCRIPT_ONLY",
+      "importer_chain": "standalone",
+      "tests": []
+    },
+    {
+      "file": "scripts/dvwa_security_matrix.py",
+      "lines": [
+        2,
+        77,
+        79,
+        114,
+        118,
+        143
+      ],
+      "product": "DVWA",
+      "kind": "regression_runner",
+      "purpose": "DVWA low/med/high regression runner",
+      "reachability": "SCRIPT_ONLY",
+      "importer_chain": "standalone",
+      "tests": []
+    },
+    {
+      "file": "scripts/smoke_test_juice_shop.py",
+      "lines": [
+        3,
+        5,
+        36,
+        37,
+        147,
+        261,
+        265
+      ],
+      "product": "Juice Shop",
+      "kind": "smoke_test",
+      "purpose": "Juice Shop smoke test（localhost:3000）",
+      "reachability": "SCRIPT_ONLY",
+      "importer_chain": "standalone",
+      "tests": []
+    },
+    {
+      "file": "scripts/phase_b_admin_test.py",
+      "lines": [
+        5,
+        26,
+        28,
+        29,
+        71
+      ],
+      "product": "Juice Shop",
+      "kind": "admin_endpoint_test",
+      "purpose": "localhost:3000/rest/admin/* 検証",
+      "reachability": "SCRIPT_ONLY",
+      "importer_chain": "standalone",
+      "tests": []
+    },
+    {
+      "file": "scripts/phase_b_tagging.py",
+      "lines": [
+        5,
+        42,
+        114,
+        117,
+        131,
+        141
+      ],
+      "product": "Juice Shop",
+      "kind": "tagging",
+      "purpose": "Juice Shop base（localhost:3000）・/api/Challenges タグ付け",
+      "reachability": "SCRIPT_ONLY",
+      "importer_chain": "standalone",
+      "tests": []
+    },
+    {
+      "file": "scripts/phase_c_coverage_executor.py",
+      "lines": [
+        5,
+        53,
+        76,
+        77,
+        118,
+        340
+      ],
+      "product": "Juice Shop",
+      "kind": "coverage_executor",
+      "purpose": "16カテゴリ定義（OWASP Juice Shop準拠）・JUICE_SHOP_ENDPOINTS",
+      "reachability": "SCRIPT_ONLY",
+      "importer_chain": "standalone",
+      "tests": []
+    },
+    {
+      "file": "scripts/phase_c_cto_recommendations_test.py",
+      "lines": [
+        5,
+        108,
+        132
+      ],
+      "product": "Juice Shop",
+      "kind": "smoke",
+      "purpose": "Juice Shop container smoke",
+      "reachability": "SCRIPT_ONLY",
+      "importer_chain": "standalone",
+      "tests": []
+    },
+    {
+      "file": "scripts/verify_upload.py",
+      "lines": [
+        17
+      ],
+      "product": "DVWA",
+      "kind": "known_url",
+      "purpose": "http://localhost:4280/vulnerabilities/upload/",
+      "reachability": "SCRIPT_ONLY",
+      "importer_chain": "standalone",
+      "tests": []
+    },
+    {
+      "file": "scripts/shigoku_ops_cli.py",
+      "lines": [
+        2334,
+        2335
+      ],
+      "product": "DVWA",
+      "kind": "profile_choice",
+      "purpose": "--profile choices=(\"generic\",\"dvwa-low-regression\")（expected detection CLIの引数面）",
+      "reachability": "GENERAL_RUNTIME_ONLY",
+      "importer_chain": "CLI（VDP closure外）",
+      "tests": [
+        "tests/unit/scripts/test_shigoku_ops_expected_detection_cli.py"
+      ],
+      "note": "vdp diagnoseサブコマンドには製品profileを持たせない"
+    },
+    {
+      "file": "config/vulnerabilities.yaml",
+      "lines": [
+        5,
+        43
+      ],
+      "product": "none",
+      "kind": "generic_vuln_text",
+      "purpose": "JWT_ALG_NONE等の汎用JWT脆弱性説明（製品tokenなし）",
+      "reachability": "VDP_RUNTIME_REACHABLE_GENERIC",
+      "importer_chain": "src/core/config/settings.py:680 -> vdp_key_registry.py:39, vdp_rollout.py:48",
+      "tests": [],
+      "note": "内容は汎用で製品固有token 0件。棚卸し対象として記録"
+    },
+    {
+      "file": "config/shigoku.yaml",
+      "lines": [
+        63,
+        182,
+        185
+      ],
+      "product": "none",
+      "kind": "comment_and_role",
+      "purpose": ":63 コメント済みlabel_leakage_denylist例、:182-185 sqli_specialist role定義（製品tokenなし）",
+      "reachability": "VDP_RUNTIME_REACHABLE_GENERIC",
+      "importer_chain": "settings経由",
+      "tests": [],
+      "note": "製品固有token 0件"
+    },
+    {
+      "file": "src/core/agents/swarm/injection/manager.py",
+      "product": "DVWA",
+      "kind": "path_sniffing_and_cookie",
+      "purpose": "security= cookie 抽出・/vulnerabilities/api・/vulnerabilities/sqli/ の一般runtime injection分岐",
+      "reachability": "GENERAL_RUNTIME_ONLY",
+      "importer_chain": "swarm injection pkg -> swarm_dispatcher（一般task生成。VDPメソッド外）",
+      "tests": [],
+      "note": "clean-diagnostic import closureに含まれない（import_closure token scan=0で実証）",
+      "lines": [
+        471,
+        1077,
+        2300
+      ]
+    },
+    {
+      "file": "src/recon/pipeline.py",
+      "product": "DVWA",
+      "kind": "recon_known_paths",
+      "purpose": "recon flow内の dvwa / localhost:4280 / /vulnerabilities/ 参照",
+      "reachability": "GENERAL_RUNTIME_ONLY",
+      "importer_chain": "recon flow（VDP closure外）",
+      "tests": [],
+      "note": "clean-diagnostic import closureに含まれない（import_closure token scan=0で実証）",
+      "lines": [
+        1526,
+        3726,
+        3728,
+        3730,
+        4590,
+        4616
+      ]
+    },
+    {
+      "file": "src/tools/custom/nuclei.py",
+      "product": "none",
+      "kind": "nuclei_template_taxonomy",
+      "purpose": "nucleiテンプレ分類 'http/vulnerabilities/*'（DVWAパスではなくnuclei汎用カテゴリ。製品token 0）",
+      "reachability": "GENERAL_RUNTIME_ONLY",
+      "importer_chain": "custom tool runner（VDP closure外）",
+      "tests": [],
+      "note": "汎用nucleiカテゴリ名。/vulnerabilities/ tokenの誤検出。製品固有なし。棚卸し記録",
+      "lines": [
+        133,
+        134,
+        135,
+        136,
+        137,
+        138,
+        139,
+        140,
+        141
+      ]
+    },
+    {
+      "file": "src/reporting/haddix_formatter.py",
+      "product": "none",
+      "kind": "generic_owasp_reference",
+      "purpose": "'OWASP Top 10' / owasp.org 参照リンク（汎用。特定製品ではない）",
+      "reachability": "GENERAL_RUNTIME_ONLY",
+      "importer_chain": "report生成（VDP report projectionのclosure外。import_closure token scan=0で実証）",
+      "tests": [],
+      "note": "owasp tokenの汎用参照誤検出。製品固有なし",
+      "lines": [
+        1753,
+        1760
+      ]
+    },
+    {
+      "file": "src/reporting/haddix_ja_en_formatter.py",
+      "product": "none",
+      "kind": "generic_owasp_reference",
+      "purpose": "'OWASP guidelines' 汎用ガイダンス文言",
+      "reachability": "GENERAL_RUNTIME_ONLY",
+      "importer_chain": "report生成（VDP closure外）",
+      "tests": [],
+      "note": "owasp tokenの汎用参照誤検出。製品固有なし",
+      "lines": [
+        512
+      ]
+    },
+    {
+      "file": "src/reporting/haddix_submission_internal_formatter.py",
+      "product": "none",
+      "kind": "generic_owasp_reference",
+      "purpose": "'follow OWASP guidance' 汎用ガイダンス文言",
+      "reachability": "GENERAL_RUNTIME_ONLY",
+      "importer_chain": "report生成（VDP closure外）",
+      "tests": [],
+      "note": "owasp tokenの汎用参照誤検出。製品固有なし",
+      "lines": [
+        1899
+      ]
+    },
+    {
+      "file": "src/main.py",
+      "product": "none",
+      "kind": "generic_owasp_reference",
+      "purpose": "'OWASP Testing Guide: https://owasp.org/...' 汎用参照リンク",
+      "reachability": "GENERAL_RUNTIME_ONLY",
+      "importer_chain": "CLI entrypoint（VDP closure外）",
+      "tests": [],
+      "note": "owasp tokenの汎用参照誤検出。製品固有なし",
+      "lines": [
+        1226
+      ]
+    }
+  ],
+  "evaluator_only_artifacts": [
+    "config/diagnostics/taxonomy_v1.json",
+    "config/diagnostics/product_independence_manifest_v1.json",
+    "sealed product denylist（M5。runtime image/mountへ渡さない）"
+  ],
+  "enforcement": "M5 preflight（scripts/check_vdp_product_independence.py）がimport closure・model-facing context・token scanを検査。clean profileから到達可能な未分類hitが1件でもあればM5/M6を開始しない。token scanは 本manifest hits[] に列挙された既存legacyファイルの製品hitを deferred_classified（SGK-2026-0426/D03へ委譲、計画書§15）として扱うが、config/diagnostics/** とclean-profile modulesは抑止対象外（新規artifactの漏洩は常にFAIL）。本manifest自体はruntimeへmountしない"
+}

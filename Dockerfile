@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y \
     # Core tools
     python3 \
     python3-pip \
+    tzdata \
     git \
     vim \
     # Security tools
@@ -85,7 +86,7 @@ RUN git clone --depth 1 https://github.com/arthaud/git-dumper /opt/git-dumper \
     && pip3 install --no-cache-dir --break-system-packages -r /opt/git-dumper/requirements.txt
 
 RUN git clone --depth 1 https://github.com/initstring/cloud_enum /opt/cloud_enum \
-    && pip3 install --no-cache-dir --break-system-packages -r /opt/cloud_enum/requirements.txt
+    && pip3 install --no-cache-dir --break-system-packages /opt/cloud_enum
 
 RUN git clone --depth 1 https://github.com/nccgroup/ScoutSuite /opt/ScoutSuite \
     && pip3 install --no-cache-dir --break-system-packages --ignore-installed -r /opt/ScoutSuite/requirements.txt || true
@@ -99,7 +100,7 @@ RUN git clone --depth 1 https://github.com/enjoiz/XXEinjector /opt/xxeinjector
 # Install Python dependencies
 WORKDIR /app
 COPY pyproject.toml ./
-RUN pip3 install --no-cache-dir --break-system-packages \
+RUN pip3 install --no-cache-dir --break-system-packages --ignore-installed \
     litellm==1.81.9 \
     pydantic==2.12.5 \
     pydantic-core==2.41.5 \
@@ -128,6 +129,11 @@ WORKDIR /workspace
 # Set environment variables
 ENV CAI_GUARDRAILS=true
 ENV CAI_TRACING=false
+ENV TZ=Asia/Tokyo
+
+# Use Japan Standard Time for logs and application-local timestamps.
+RUN ln -snf /usr/share/zoneinfo/${TZ} /etc/localtime \
+    && echo "${TZ}" > /etc/timezone
 
 # Default command
 CMD ["cai"]

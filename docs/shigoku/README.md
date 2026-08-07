@@ -5,7 +5,7 @@ status: active
 parent_task_id: null
 related_docs: []
 created_at: '2026-05-19'
-updated_at: '2026-07-02'
+updated_at: '2026-08-07'
 ---
 
 # SHIGOKU Documentation Hub
@@ -13,9 +13,9 @@ updated_at: '2026-07-02'
 このディレクトリは SHIGOKU ドキュメントの正本です。新規作成・更新は原則ここで行います。
 
 ## Current Operator References
-- ユーザーマニュアル現行版: [`manuals/2026-07-02_sgk-2026-0338_operator-user-manual.md`](manuals/2026-07-02_sgk-2026-0338_operator-user-manual.md)
+- ユーザーマニュアル現行版: [`manuals/manual_legacy/2026-07-02_sgk-2026-0338_operator-user-manual.md`](manuals/manual_legacy/2026-07-02_sgk-2026-0338_operator-user-manual.md)
 - 内部仕様書現行版: [`specs/2026-07-02_sgk-2026-0338_internal-architecture-and-dataflow-spec.md`](specs/2026-07-02_sgk-2026-0338_internal-architecture-and-dataflow-spec.md)
-- 詳細コマンドリファレンス: [`manuals/2026-07-02_sgk-2026-0337_detailed-command-reference.md`](manuals/2026-07-02_sgk-2026-0337_detailed-command-reference.md)
+- 詳細コマンドリファレンス: [`manuals/manual_legacy/2026-07-02_sgk-2026-0337_detailed-command-reference.md`](manuals/manual_legacy/2026-07-02_sgk-2026-0337_detailed-command-reference.md)
 
 ## Structure
 - `specs/`: 全体仕様・機能仕様

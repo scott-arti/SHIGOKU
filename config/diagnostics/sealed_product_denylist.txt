@@ -1,0 +1,14 @@
+juice
+dvwa
+owasp
+localhost:3000
+localhost:4280
+localhost:8080
+/vulnerabilities/
+/rest/admin
+/api/challenges
+score-board
+txtname
+mtxmessage
+/#/search
+security=

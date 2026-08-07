@@ -400,9 +400,21 @@ def _load_session_scenario_coverage(session_path: Path | None) -> dict[str, Any]
 
 
 def _build_session_findings_summary(session_path: Path | None) -> dict[str, Any]:
+    display_metadata = {
+        # These counts classify only the session's native candidate flags.  They
+        # do not run the submission evidence-quality validator, so they must
+        # never be presented as submission confirmation.
+        "classification_scope": "pre_evidence_quality_session_metadata",
+        "confirmed_count_label": (
+            "Raw findings without candidate flags (not submission-confirmed)"
+        ),
+        "candidate_count_label": "Raw findings marked candidate before evidence-quality review",
+        "authoritative_confirmation_source": "report_findings_summary",
+    }
     if session_path is None:
         return {
             "source": "session_raw_unique",
+            **display_metadata,
             "available": False,
             "confirmed_count": None,
             "candidate_count": None,
@@ -414,6 +426,7 @@ def _build_session_findings_summary(session_path: Path | None) -> dict[str, Any]
     except Exception:
         return {
             "source": "session_raw_unique",
+            **display_metadata,
             "available": False,
             "confirmed_count": None,
             "candidate_count": None,
@@ -425,6 +438,7 @@ def _build_session_findings_summary(session_path: Path | None) -> dict[str, Any]
     if not isinstance(findings, list) or not findings:
         return {
             "source": "session_raw_unique",
+            **display_metadata,
             "available": False,
             "confirmed_count": None,
             "candidate_count": None,
@@ -453,6 +467,7 @@ def _build_session_findings_summary(session_path: Path | None) -> dict[str, Any]
     if not deduped_by_signature:
         return {
             "source": "session_raw_unique",
+            **display_metadata,
             "available": False,
             "confirmed_count": None,
             "candidate_count": None,
@@ -464,6 +479,7 @@ def _build_session_findings_summary(session_path: Path | None) -> dict[str, Any]
     confirmed_count = len(deduped_by_signature) - candidate_count
     return {
         "source": "session_raw_unique",
+        **display_metadata,
         "available": True,
         "confirmed_count": int(confirmed_count),
         "candidate_count": int(candidate_count),

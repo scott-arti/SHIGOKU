@@ -6,6 +6,10 @@ import re
 from typing import Any
 
 from src.core.utils.json_utils import safe_json_loads
+from src.reporting.vdp_report_projection import (
+    extract_vdp_canonical_index_from_report,
+    extract_vdp_diagnostic_index_from_report,
+)
 
 
 _REPORT_FILENAME_RE = re.compile(r"haddix_report_(\d{8})_(\d{6})\.md$", re.IGNORECASE)
@@ -340,11 +344,159 @@ def _build_comparison(report_cov: dict[str, Any], session_cov: dict[str, Any]) -
     return comparison, reason_codes
 
 
+def _build_vdp_canonical_comparison(
+    report_index: dict[str, Any] | None,
+    session_data: dict[str, Any],
+    *,
+    public_key_provider: Any = None,
+) -> tuple[dict[str, Any], list[str]]:
+    """Compare the report's embedded vdp_canonical_index_v1 with the session.
+
+    Machine-readable comparison (SGK-2026-0422 / plan §9): verdict ID sets,
+    status counts, evidence IDs/hashes and summary digest. Falls back to
+    legacy (no comparison) when either side lacks the canonical block.
+    """
+    from src.reporting.vdp_canonical import (
+        build_vdp_canonical_index,
+        extract_vdp_canonical,
+    )
+
+    reason_codes: list[str] = []
+    session_index = None
+    session_summary = extract_vdp_canonical(
+        session_data, public_key_provider=public_key_provider
+    )
+    if session_summary.source_kind == "canonical_vdp":
+        session_index = build_vdp_canonical_index(session_summary)
+
+    if report_index is None and session_index is None:
+        return {"vdp_mode": "legacy", "compared": False}, []
+    if report_index is None:
+        # A canonical session MUST have a machine-readable index in the
+        # report (completion D9 / audit I-04). A missing index means the
+        # consistency check cannot compare — fail-closed inconsistent,
+        # NOT a silent legacy compatibility note.
+        return {
+            "vdp_mode": "canonical",
+            "compared": False,
+            "compatibility_reasons": ["vdp_report_index_missing"],
+        }, ["vdp_report_index_missing"]
+    if session_index is None:
+        reason_codes.append("session_canonical_index_missing")
+        return {"vdp_mode": "canonical", "compared": False}, reason_codes
+
+    report_verdicts = report_index.get("verdict_ids") or {}
+    session_verdicts = session_index.get("verdict_ids") or {}
+    for status in ("confirmed", "candidate", "refuted", "untested"):
+        report_ids = sorted(str(v) for v in (report_verdicts.get(status) or []))
+        session_ids = sorted(str(v) for v in (session_verdicts.get(status) or []))
+        if report_ids != session_ids:
+            reason_codes.append(f"vdp_verdict_id_set_mismatch:{status}")
+
+    report_counts = report_index.get("verdict_counts") or {}
+    session_counts = session_index.get("verdict_counts") or {}
+    for status in ("confirmed", "candidate", "refuted", "untested"):
+        if int(report_counts.get(status, 0) or 0) != int(session_counts.get(status, 0) or 0):
+            reason_codes.append(f"vdp_verdict_count_mismatch:{status}")
+
+    report_evidence_ids = sorted(str(v) for v in (report_index.get("evidence_ids") or []))
+    session_evidence_ids = sorted(str(v) for v in (session_index.get("evidence_ids") or []))
+    if report_evidence_ids != session_evidence_ids:
+        reason_codes.append("vdp_evidence_id_set_mismatch")
+
+    report_hashes = report_index.get("evidence_hashes") or {}
+    session_hashes = session_index.get("evidence_hashes") or {}
+    for eid in report_evidence_ids:
+        if str(report_hashes.get(eid) or "") != str(session_hashes.get(eid) or ""):
+            reason_codes.append(f"vdp_evidence_hash_mismatch:{eid}")
+
+    report_digest = str(report_index.get("summary_digest") or "")
+    session_digest = str(session_index.get("summary_digest") or "")
+    if report_digest and session_digest and report_digest != session_digest:
+        reason_codes.append("vdp_summary_digest_mismatch")
+
+    return {
+        "vdp_mode": "canonical",
+        "compared": not reason_codes,
+        "report_index": report_index,
+        "session_index": session_index,
+        "reason_codes": sorted(set(reason_codes)),
+    }, reason_codes
+
+
+def _build_vdp_diagnostic_comparison(
+    report_index: dict[str, Any] | None,
+    session_data: dict[str, Any],
+    *,
+    public_key_provider: Any = None,
+) -> tuple[dict[str, Any], list[str]]:
+    """Compare the report's embedded ``vdp_diagnostic_index_v1`` with the
+    session's ``vdp_diagnostics_v1`` section (SGK-2026-0425 M2, plan §5.2).
+
+    Additive to the canonical comparison: a pair in which NEITHER side has
+    any diagnostic telemetry/index is ``absent`` with no reason codes (old
+    sessions/reports behave exactly as before). A session WITH telemetry
+    MUST have the machine-readable index in the report — a missing index is
+    fail-closed inconsistent (mirrors the canonical report_index_missing
+    rule).
+    """
+    from src.reporting.vdp_report_projection import build_vdp_diagnostic_index
+
+    reason_codes: list[str] = []
+    diag_section = (
+        session_data.get("vdp_diagnostics_v1")
+        if isinstance(session_data, dict)
+        else None
+    )
+    session_index = build_vdp_diagnostic_index(
+        diag_section if isinstance(diag_section, dict) else None
+    )
+
+    if report_index is None and session_index is None:
+        return {"vdp_diagnostic_mode": "absent", "compared": False}, []
+    if report_index is None:
+        # A session carrying diagnostic telemetry MUST have the machine-
+        # readable diagnostic index in the report (plan §5.2). Missing index
+        # -> fail-closed inconsistent, never a silent absent note.
+        return {
+            "vdp_diagnostic_mode": "diagnostic",
+            "compared": False,
+            "compatibility_reasons": ["vdp_diagnostic_report_index_missing"],
+        }, ["vdp_diagnostic_report_index_missing"]
+    if session_index is None:
+        reason_codes.append("vdp_diagnostic_session_index_missing")
+        return {"vdp_diagnostic_mode": "diagnostic", "compared": False}, reason_codes
+
+    if str(report_index.get("event_hash") or "") != str(
+        session_index.get("event_hash") or ""
+    ):
+        reason_codes.append("vdp_diagnostic_event_hash_mismatch")
+    if report_index.get("stage_sets") != session_index.get("stage_sets"):
+        reason_codes.append("vdp_diagnostic_stage_set_mismatch")
+    if str(report_index.get("summary_digest") or "") != str(
+        session_index.get("summary_digest") or ""
+    ):
+        reason_codes.append("vdp_diagnostic_summary_digest_mismatch")
+    if str(report_index.get("run_id") or "") != str(
+        session_index.get("run_id") or ""
+    ):
+        reason_codes.append("vdp_diagnostic_run_id_mismatch")
+
+    return {
+        "vdp_diagnostic_mode": "diagnostic",
+        "compared": not reason_codes,
+        "report_index": report_index,
+        "session_index": session_index,
+        "reason_codes": sorted(set(reason_codes)),
+    }, reason_codes
+
+
 def verify_report_session_consistency(
     report_path: Path | str,
     *,
     session_path: Path | str | None = None,
     sessions_dir: Path | str | None = None,
+    public_key_provider: Any = None,
 ) -> dict[str, Any]:
     reason_codes: list[str] = []
 
@@ -483,9 +635,76 @@ def verify_report_session_consistency(
     )
     reason_codes.extend(compare_reasons)
 
+    # SGK-2026-0422: machine-readable canonical VDP index comparison.
+    try:
+        report_index = extract_vdp_canonical_index_from_report(report_file.read_text(encoding="utf-8"))
+    except OSError:
+        report_index = None
+    vdp_comparison, vdp_reasons = _build_vdp_canonical_comparison(
+        report_index,
+        session_data,
+        public_key_provider=public_key_provider,
+    )
+    comparison["vdp_canonical"] = vdp_comparison
+    reason_codes.extend(vdp_reasons)
+
+    # SGK-2026-0425 M2: additive vdp_diagnostic_index_v1 comparison (plan
+    # §5.2). Additive-absent when neither side has diagnostic telemetry.
+    try:
+        report_diag_index = extract_vdp_diagnostic_index_from_report(
+            report_file.read_text(encoding="utf-8")
+        )
+    except OSError:
+        report_diag_index = None
+    vdp_diag_comparison, vdp_diag_reasons = _build_vdp_diagnostic_comparison(
+        report_diag_index,
+        session_data,
+        public_key_provider=public_key_provider,
+    )
+    comparison["vdp_diagnostic"] = vdp_diag_comparison
+    reason_codes.extend(vdp_diag_reasons)
+
+    # SGK-2026-0426 W3: fail-closed run-outcome marker comparison. A session
+    # whose VDP follow-up stage failed (attempts=0) must NOT pass consistency
+    # as if it were a normal completion: the report must carry the
+    # ``vdp_run_failed_v1`` marker. Additive-absent for healthy/legacy pairs.
+    from src.reporting.vdp_report_projection import (
+        extract_vdp_run_failed_marker_from_report,
+    )
+
+    try:
+        report_run_failed = extract_vdp_run_failed_marker_from_report(
+            report_file.read_text(encoding="utf-8")
+        )
+    except OSError:
+        report_run_failed = None
+    session_vdp = session_data.get("vdp_contract")
+    session_run_outcome = (
+        session_vdp.get("run_outcome")
+        if isinstance(session_vdp, dict)
+        else None
+    )
+    if session_run_outcome:
+        run_failed_reasons: list[str] = []
+        if report_run_failed is None:
+            run_failed_reasons.append("vdp_run_failed_not_reflected")
+        elif report_run_failed.get("run_outcome") != session_run_outcome:
+            run_failed_reasons.append("vdp_run_failed_mismatch")
+        comparison["vdp_run_failed"] = {
+            "session_run_outcome": session_run_outcome,
+            "report_marker": report_run_failed,
+            "compared": not run_failed_reasons,
+        }
+        reason_codes.extend(run_failed_reasons)
+    else:
+        comparison["vdp_run_failed"] = {
+            "session_run_outcome": None,
+            "compared": False,
+        }
+
     status = "consistent"
     rerun_required = False
-    if compare_reasons:
+    if reason_codes:
         status = "inconsistent"
         rerun_required = True
 
@@ -501,6 +720,7 @@ def verify_report_session_consistency(
             "coverage_gate_missing_families": session_missing_families,
         },
         "comparison": comparison,
+        "diagnostic_comparison": vdp_diag_comparison,
         "suggested_next_step": (
             "Rerun report generation from the intended session and compare again."
             if rerun_required

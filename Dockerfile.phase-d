@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # For general utilities
     curl \
     ca-certificates \
+    tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
@@ -33,6 +34,11 @@ COPY config/ ./config/
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 ENV SHIGOKU_ENV=production
+ENV TZ=Asia/Tokyo
+
+# Use Japan Standard Time for logs and application-local timestamps.
+RUN ln -snf /usr/share/zoneinfo/${TZ} /etc/localtime \
+    && echo "${TZ}" > /etc/timezone
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \

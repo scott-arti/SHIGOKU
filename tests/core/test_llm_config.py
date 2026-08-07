@@ -39,7 +39,6 @@ from src.core.config.llm_resolver import LLMRoleResolver, LLMResolutionError
 def clean_env():
     """Remove LLM-related env vars before/after each test."""
     llm_vars = [
-        "SHIGOKU_MODEL", "SHIGOKU_MODEL_OUTPUT", "SHIGOKU_MODEL_LIGHTWEIGHT",
         "SHIGOKU_LLM__DEFAULT_ROLE", "SHIGOKU_LLM__SCHEMA_VERSION",
         "DEEPSEEK_API_KEY", "OPENAI_API_KEY", "ANY_LLM_API_KEY",
         "TEST_KEY", "EXISTING_API_KEY_VAR", "NONEXISTENT_API_KEY_VAR",
@@ -63,7 +62,7 @@ def minimal_llm_yaml():
             "providers": {
                 "deepseek": {
                     "api_key_env": "DEEPSEEK_API_KEY",
-                    "base_url": None,
+                    "base_url": "https://api.deepseek.com/v1",
                 },
             },
             "profiles": {
@@ -91,11 +90,11 @@ def full_llm_yaml():
             "providers": {
                 "deepseek": {
                     "api_key_env": "DEEPSEEK_API_KEY",
-                    "base_url": None,
+                    "base_url": "https://api.deepseek.com/v1",
                 },
                 "openai": {
                     "api_key_env": "OPENAI_API_KEY",
-                    "base_url": None,
+                    "base_url": "https://api.openai.com/v1",
                 },
                 "any_llm": {
                     "api_key_env": "ANY_LLM_API_KEY",
@@ -121,8 +120,7 @@ def full_llm_yaml():
                     "rate_limit_per_minute": 30,
                     "temperature": 0.0,
                     "extra": {
-                        "thinking": {"type": "enabled"},
-                        "reasoning_effort": "high",
+                        "thinking": {"type": "enabled", "reasoning_effort": "high"},
                     },
                 },
                 "vision_api": {
@@ -186,10 +184,17 @@ def temp_yaml_file(full_llm_yaml):
 # ============================================================
 
 class TestLLMProviderSettings:
-    def test_provider_defaults(self):
-        p = LLMProviderSettings(api_key_env="DEEPSEEK_API_KEY")
+    def test_provider_rejects_non_http_endpoint(self):
+        with pytest.raises(ValidationError, match="base_url"):
+            LLMProviderSettings(api_key_env="DEEPSEEK_API_KEY", base_url="api.deepseek.com")
+
+    def test_provider_with_endpoint(self):
+        p = LLMProviderSettings(
+            api_key_env="DEEPSEEK_API_KEY",
+            base_url="https://api.deepseek.com/v1",
+        )
         assert p.api_key_env == "DEEPSEEK_API_KEY"
-        assert p.base_url is None
+        assert p.base_url == "https://api.deepseek.com/v1"
 
     def test_provider_with_base_url(self):
         p = LLMProviderSettings(api_key_env="ANY_LLM_API_KEY", base_url="http://localhost:8000/v1")
@@ -197,7 +202,7 @@ class TestLLMProviderSettings:
 
     def test_provider_requires_api_key_env(self):
         with pytest.raises(ValidationError):
-            LLMProviderSettings()
+            LLMProviderSettings(base_url="https://api.deepseek.com/v1")
 
 
 # ============================================================
@@ -217,9 +222,25 @@ class TestLLMProfileSettings:
         assert p.extra == {}
 
     def test_profile_extra_stores_arbitrary(self):
-        extra = {"thinking": {"type": "enabled"}, "reasoning_effort": "high"}
+        extra = {"thinking": {"type": "enabled", "reasoning_effort": "high"}}
         p = LLMProfileSettings(provider="deepseek", model="deepseek/pro", extra=extra)
         assert p.extra == extra
+
+    def test_profile_rejects_ambiguous_thinking_effort_location(self):
+        with pytest.raises(ValidationError, match="extra.thinking.reasoning_effort"):
+            LLMProfileSettings(
+                provider="deepseek",
+                model="deepseek/pro",
+                extra={"thinking": {"type": "enabled"}, "reasoning_effort": "high"},
+            )
+
+    def test_profile_preserves_any_nested_thinking_effort(self):
+        profile = LLMProfileSettings(
+            provider="deepseek",
+            model="deepseek/pro",
+            extra={"thinking": {"type": "enabled", "reasoning_effort": "low"}},
+        )
+        assert profile.extra["thinking"]["reasoning_effort"] == "low"
 
     def test_profile_requires_provider_and_model(self):
         with pytest.raises(ValidationError):
@@ -582,29 +603,6 @@ class TestDefaultRoleFallback:
             os.environ.pop("DEEPSEEK_API_KEY", None)
 
 
-# ============================================================
-# Legacy Env Var Compatibility
-# ============================================================
-
-class TestLegacyEnvCompatibility:
-    def test_shigoku_model_to_role_mapping(self, clean_env):
-        """SHIGOKU_MODEL should be map-able for compatibility."""
-        os.environ["SHIGOKU_MODEL"] = "deepseek/deepseek-v4-pro"
-        os.environ["DEEPSEEK_API_KEY"] = "test-key"
-
-        llm = LLMSettings(
-            schema_version=1,
-            providers={"deepseek": {"api_key_env": "DEEPSEEK_API_KEY"}},
-            profiles={
-                "legacy_model": {"provider": "deepseek", "model": "deepseek/deepseek-v4-flash"},
-            },
-            roles={
-                "specialist_light": {"profile": "legacy_model"},
-            },
-        )
-        # Legacy env vars are read separately; the model just validates ok
-        assert llm.schema_version == 1
-        del os.environ["DEEPSEEK_API_KEY"]
 
 
 
@@ -691,8 +689,8 @@ class TestLLMRoleResolverBasic:
                 schema_version=1,
                 default_role="specialist_light",
                 providers={
-                    "deepseek": {"api_key_env": "DEEPSEEK_API_KEY"},
-                    "openai": {"api_key_env": "OPENAI_API_KEY"},
+                    "deepseek": {"api_key_env": "DEEPSEEK_API_KEY", "base_url": "https://api.deepseek.com/v1"},
+                    "openai": {"api_key_env": "OPENAI_API_KEY", "base_url": "https://api.openai.com/v1"},
                 },
                 profiles={
                     "cheap": {"provider": "deepseek", "model": "ds/flash",
@@ -761,8 +759,8 @@ class TestLLMRoleResolverFallback:
                 schema_version=1,
                 default_role="specialist_light",
                 providers={
-                    "ds": {"api_key_env": "DEEPSEEK_API_KEY"},
-                    "oai": {"api_key_env": "OPENAI_API_KEY"},
+                    "ds": {"api_key_env": "DEEPSEEK_API_KEY", "base_url": "https://api.deepseek.com/v1"},
+                    "oai": {"api_key_env": "OPENAI_API_KEY", "base_url": "https://api.openai.com/v1"},
                 },
                 profiles={
                     "primary": {"provider": "ds", "model": "ds/primary", "temperature": 0.1},
@@ -802,7 +800,7 @@ class TestLLMRoleResolverFallback:
             llm = LLMSettings(
                 schema_version=1,
                 default_role="lonely",
-                providers={"ds": {"api_key_env": "DEEPSEEK_API_KEY"}},
+                providers={"ds": {"api_key_env": "DEEPSEEK_API_KEY", "base_url": "https://api.deepseek.com/v1"}},
                 profiles={"only": {"provider": "ds", "model": "ds/only"}},
                 roles={"lonely": {"profile": "only"}},
             )
@@ -824,7 +822,7 @@ class TestLLMRoleResolverSafety:
         try:
             llm = LLMSettings(
                 schema_version=1,
-                providers={"ds": {"api_key_env": "DEEPSEEK_API_KEY"}},
+                providers={"ds": {"api_key_env": "DEEPSEEK_API_KEY", "base_url": "https://api.deepseek.com/v1"}},
                 profiles={"a": {"provider": "ds", "model": "ds/model"}},
                 roles={"specialist_light": {"profile": "a"}},
             )
@@ -847,7 +845,7 @@ class TestLLMRoleResolverSafety:
             llm = LLMSettings(
                 schema_version=1,
                 default_role="specialist_light",
-                providers={"ds": {"api_key_env": "DEEPSEEK_API_KEY"}},
+                providers={"ds": {"api_key_env": "DEEPSEEK_API_KEY", "base_url": "https://api.deepseek.com/v1"}},
                 profiles={"a": {"provider": "ds", "model": "ds/model"}},
                 roles={"specialist_light": {"profile": "a"}},
             )
@@ -880,5 +878,3 @@ class TestLLMRoleResolverSafety:
                 os.environ["DEEPSEEK_API_KEY"] = saved
             else:
                 os.environ.pop("DEEPSEEK_API_KEY", None)
-
-

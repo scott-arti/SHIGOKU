@@ -1,28 +1,36 @@
 """
-VDP Admission Gate — SGK-2026-0419 Step 3.
+VDP Admission Gate — SGK-2026-0419 Step 3 (amended by SGK-2026-0421).
 
 Pre-execution admission gate that checks:
   - Scope revalidation (fail-closed for unknown)
-  - Budget exhaustion
+  - Budget exhaustion (peek first — admission rejection never consumes)
   - Capability matrix (allowed/confirmation_required/prohibited/unavailable)
+  - HITL ticket verification (SGK-2026-0421, design constraint G):
+    a ticket ID alone is never approval — the ticket must exist in the
+    pending store, be ``approved``, and bind the same action / hypothesis /
+    actor / risk_class.
 
-Integrates with ProgramCapabilityMatrix, VdpExecutionBudget, and ScopeRevalidationResult.
-Delegates capability/HITL checks to check_admission().
+Order (preserving 0419 budget-priority semantics):
+  1. Scope verdict routing (out_of_scope / redirect_out_of_scope /
+     scope_revalidation_blocked).
+  2. Budget PEEK (non-consuming) — exhausted → BUDGET_EXHAUSTED.
+  3. Capability / HITL verification (no budget consumed on rejection).
+  4. Budget CONSUME (atomic commit; may reject on a concurrent race).
 
-Design principles (from parent plan SGK-2026-0418):
-  - Fail-closed for unknown scope, missing HITL, budget exhaustion.
-  - Budget check happens before capability check.
-  - Scope verdicts are routed to specific AdmissionReasonCode values.
+The gate never mutates its own capability_matrix/budget for a call
+(SGK-2026-0421: shared gate state must not be temporarily swapped).
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, List, Optional
 
 from src.core.engine.vdp_budget import VdpExecutionBudget
+from src.core.engine.vdp_hitl_guard import verify_hitl_ticket
 from src.core.models.vdp_contract import (
     AdmissionReasonCode,
     AdmissionResult,
     AttemptRecord,
+    CapabilityLevel,
     HypothesisRecord,
     ProgramCapabilityMatrix,
     check_admission,
@@ -32,40 +40,13 @@ from src.core.models.vdp_contract import (
 
 
 class VdpAdmissionGate:
-    """Pre-execution admission gate for VDP hypothesis evaluation.
-
-    Checks in order:
-    1. Scope verdict must be "allowed" — distinguishes out_of_scope,
-       redirect_out_of_scope, and scope_revalidation_blocked with specific reason codes.
-    2. Execution budget is not exhausted (when budget is configured).
-    3. Capability is permitted via ProgramCapabilityMatrix and check_admission().
-
-    Fail-closed: any unknown scope verdict, exhausted budget, missing HITL
-    ticket, prohibited/unavailable capability all block admission.
-
-    Usage::
-
-        matrix = ProgramCapabilityMatrix(rules={"read_asset": CapabilityLevel.ALLOWED})
-        budget = VdpExecutionBudget(max_requests=100, per_asset_burst=10)
-        gate = VdpAdmissionGate(capability_matrix=matrix, budget=budget)
-        result = gate.evaluate(hypothesis, scope_verdict="allowed")
-        if result.admitted:
-            # proceed with execution
-    """
+    """Pre-execution admission gate for VDP hypothesis evaluation."""
 
     def __init__(
         self,
         capability_matrix: ProgramCapabilityMatrix,
         budget: Optional[VdpExecutionBudget] = None,
     ):
-        """Initialize the admission gate.
-
-        Args:
-            capability_matrix: Program capability matrix defining what capabilities
-                are permitted and at what level.
-            budget: Optional execution budget. When provided, each admission check
-                consumes from the budget. Budget exhaustion blocks admission.
-        """
         self.capability_matrix = capability_matrix
         self.budget = budget
 
@@ -74,22 +55,37 @@ class VdpAdmissionGate:
         hypothesis: HypothesisRecord,
         scope_verdict: str,
         hitl_ticket_id: Optional[str] = None,
+        hitl_tickets: Optional[List[Any]] = None,
+        *,
+        capability_matrix: Optional[ProgramCapabilityMatrix] = None,
+        budget: Optional[VdpExecutionBudget] = None,
+        action: str = "",
     ) -> AdmissionResult:
         """Evaluate whether a hypothesis can be admitted for execution.
 
         Args:
-            hypothesis: The HypothesisRecord containing capability, asset,
-                actor, and hypothesis identification.
+            hypothesis: The HypothesisRecord to admit.
             scope_verdict: Pre-communication scope revalidation verdict.
-                Must be "allowed" to proceed. Other values are routed to
-                specific reason codes (out_of_scope, redirect_out_of_scope,
-                scope_revalidation_blocked).
-            hitl_ticket_id: Optional HITL approval ticket ID. Required when
-                the request's capability is at CONFIRMATION_REQUIRED level.
+                Must be "allowed".
+            hitl_ticket_id: Claimed HITL ticket ID (presence is NOT approval;
+                the ticket must verify against ``hitl_tickets``).
+            hitl_tickets: The pending HITL store entries used for
+                verification of confirmation_required capabilities.
+            capability_matrix: Optional per-call matrix override (the shared
+                instance is never mutated).
+            budget: Optional per-call budget override.
+            action: Expected follow-up action class for HITL binding.
 
         Returns:
             AdmissionResult with admitted=True/False and structured reason code.
         """
+        matrix = (
+            capability_matrix
+            if capability_matrix is not None
+            else self.capability_matrix
+        )
+        effective_budget = budget if budget is not None else self.budget
+
         # 1. Scope verdict check — routing to specific reason codes
         if scope_verdict == "out_of_scope":
             return AdmissionResult(
@@ -110,13 +106,64 @@ class VdpAdmissionGate:
                 detail=f"Scope verdict is '{scope_verdict}', not 'allowed'",
             )
 
-        # 2. Budget check — before capability check
-        if self.budget is not None:
-            asset = hypothesis.asset or ""
-            actor = hypothesis.actors[0] if hypothesis.actors else ""
-            hyp_id = hypothesis.hypothesis_id or ""
+        asset = hypothesis.asset or ""
+        actor = hypothesis.actors[0] if hypothesis.actors else ""
+        hyp_id = hypothesis.hypothesis_id or ""
 
-            budget_decision = self.budget.consume(
+        # 2. Budget PEEK — exhausted budget blocks before capability checks
+        #    (0419 priority semantics) WITHOUT consuming anything.
+        if effective_budget is not None:
+            peek = effective_budget.peek(
+                asset_key=asset,
+                actor_key=actor,
+                hypothesis_key=hyp_id,
+            )
+            if not peek.allowed:
+                return AdmissionResult(
+                    admitted=False,
+                    reason_code=AdmissionReasonCode.BUDGET_EXHAUSTED,
+                    detail=f"Budget exhausted: {peek.reason_code}",
+                )
+
+        # 3. Capability / HITL check — delegate to check_admission, but
+        #    confirmation_required needs a VERIFIED ticket first.
+        level = matrix.get_level(hypothesis.capability)
+        if level == CapabilityLevel.CONFIRMATION_REQUIRED:
+            if not hitl_ticket_id:
+                return AdmissionResult(
+                    admitted=False,
+                    reason_code=AdmissionReasonCode.HITL_REQUIRED,
+                    detail=f"Capability '{hypothesis.capability}' requires HITL approval ticket",
+                )
+            verification = verify_hitl_ticket(
+                hitl_ticket_id,
+                tickets=hitl_tickets,
+                action=action,
+                hypothesis_id=hyp_id,
+                actor=actor,
+                risk_class=hypothesis.risk_class,
+            )
+            if not verification.verified:
+                return AdmissionResult(
+                    admitted=False,
+                    reason_code=verification.reason_code
+                    or AdmissionReasonCode.HITL_REQUIRED,
+                    detail=verification.detail,
+                )
+
+        capability_result = check_admission(
+            capability=hypothesis.capability,
+            capability_matrix=matrix,
+            scope_verdict="allowed",
+            hitl_ticket_id=hitl_ticket_id,
+        )
+        if not capability_result.admitted:
+            return capability_result
+
+        # 4. Budget CONSUME — atomic commit. Nothing was consumed on any
+        #    rejection path above (design constraint G).
+        if effective_budget is not None:
+            budget_decision = effective_budget.consume(
                 asset_key=asset,
                 actor_key=actor,
                 hypothesis_key=hyp_id,
@@ -128,13 +175,10 @@ class VdpAdmissionGate:
                     detail=f"Budget exhausted: {budget_decision.reason_code}",
                 )
 
-        # 3. Capability/HITL check — delegate to check_admission
-        #    Scope already passed above, so pass "allowed" to avoid double-check.
-        return check_admission(
-            capability=hypothesis.capability,
-            capability_matrix=self.capability_matrix,
-            scope_verdict="allowed",
-            hitl_ticket_id=hitl_ticket_id,
+        return AdmissionResult(
+            admitted=True,
+            reason_code="admitted",
+            detail="Admission granted",
         )
 
     def validate_and_admit(
@@ -143,23 +187,14 @@ class VdpAdmissionGate:
         capability_matrix: ProgramCapabilityMatrix,
         scope_verdict: str,
         hitl_ticket_id: Optional[str] = None,
+        hitl_tickets: Optional[List[Any]] = None,
         budget: Optional[VdpExecutionBudget] = None,
+        action: str = "",
     ) -> AdmissionResult:
         """Validate hypothesis record, then evaluate admission.
 
-        First runs ``validate_hypothesis_record(hypothesis)``. If validation
-        errors exist, returns AdmissionResult with reason "validation_failed".
-        Only after validation passes does it call ``evaluate()``.
-
-        Args:
-            hypothesis: The HypothesisRecord to validate and admit.
-            capability_matrix: ProgramCapabilityMatrix for capability checks.
-            scope_verdict: Pre-communication scope revalidation verdict.
-            hitl_ticket_id: Optional HITL approval ticket ID.
-            budget: Optional execution budget to consume from.
-
-        Returns:
-            AdmissionResult with admitted=True/False and structured reason code.
+        The shared gate instance is never mutated: matrix/budget are passed
+        as per-call overrides (SGK-2026-0421 design constraint G).
         """
         validation_errors = validate_hypothesis_record(hypothesis)
         if validation_errors:
@@ -169,16 +204,15 @@ class VdpAdmissionGate:
                 detail=f"Hypothesis validation failed: {'; '.join(validation_errors)}",
             )
 
-        # Temporarily swap budget and capability_matrix for evaluate()
-        saved_matrix = self.capability_matrix
-        saved_budget = self.budget
-        try:
-            self.capability_matrix = capability_matrix
-            self.budget = budget
-            return self.evaluate(hypothesis, scope_verdict, hitl_ticket_id)
-        finally:
-            self.capability_matrix = saved_matrix
-            self.budget = saved_budget
+        return self.evaluate(
+            hypothesis,
+            scope_verdict,
+            hitl_ticket_id,
+            hitl_tickets,
+            capability_matrix=capability_matrix,
+            budget=budget,
+            action=action,
+        )
 
     def admit_attempt(
         self,
@@ -187,18 +221,16 @@ class VdpAdmissionGate:
         budget: Optional[VdpExecutionBudget] = None,
         idempotency_guard=None,
     ) -> AdmissionResult:
-        """Validate attempt_record, check idempotency, consume budget.
+        """Validate attempt_record, check idempotency (without registering on
+        rejection), consume budget, then register the attempt ID.
 
-        Args:
-            attempt_record: The AttemptRecord to validate and admit.
-            hypothesis: The parent HypothesisRecord for capability lookup.
-            budget: Optional execution budget to consume from.
-            idempotency_guard: Optional IdempotencyGuard to check for duplicates.
-
-        Returns:
-            AdmissionResult with admitted=True/False.
+        Order (design constraint G):
+        1. attempt validation
+        2. idempotency duplicate check (read-only)
+        3. budget consume (atomic)
+        4. idempotency register — only after budget success, so a budget
+           rejection never fixes the ID as registered.
         """
-        # Validate attempt record
         attempt_errors = validate_attempt_record(attempt_record)
         if attempt_errors:
             return AdmissionResult(
@@ -207,16 +239,14 @@ class VdpAdmissionGate:
                 detail=f"Attempt validation failed: {'; '.join(attempt_errors)}",
             )
 
-        # Check idempotency guard
         if idempotency_guard is not None:
-            if not idempotency_guard.register(attempt_record.attempt_id):
+            if idempotency_guard.is_registered(attempt_record.attempt_id):
                 return AdmissionResult(
                     admitted=False,
                     reason_code="idempotency_duplicate",
                     detail=f"Attempt {attempt_record.attempt_id} already registered",
                 )
 
-        # Consume budget
         effective_budget = budget or self.budget
         if effective_budget is not None:
             asset = hypothesis.asset or ""
@@ -233,6 +263,9 @@ class VdpAdmissionGate:
                     reason_code=AdmissionReasonCode.BUDGET_EXHAUSTED,
                     detail=f"Budget exhausted: {budget_decision.reason_code}",
                 )
+
+        if idempotency_guard is not None:
+            idempotency_guard.register(attempt_record.attempt_id)
 
         return AdmissionResult(
             admitted=True,

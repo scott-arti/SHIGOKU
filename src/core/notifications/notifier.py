@@ -12,7 +12,7 @@ from typing import Optional, Dict, List
 
 from src.core.models.finding import Finding, Severity
 from src.core.config.settings import Settings, get_settings
-from src.config import settings
+from src.core.config.settings import settings
 
 logger = logging.getLogger(__name__)
 

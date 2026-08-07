@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import logging
 import asyncio
-import os
 import re
 from typing import Dict, Any, Tuple, Optional, List
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse, unquote_plus
@@ -140,19 +139,6 @@ INPUT: [Input]
         Specialist.__init__(self, config)
         ThoughtLoop.__init__(self, max_turns=8)
 
-        model = os.getenv("SHIGOKU_MODEL") or "deepseek/deepseek-chat"
-        try:
-            from src.core.config.settings import get_settings
-            settings = get_settings()
-            rejudge_model = getattr(settings, "llm_xss_rejudge_model", "openai/gpt-4o-mini")
-            final_model = getattr(settings, "llm_xss_final_model", "openai/gpt-4o")
-        except Exception:
-            rejudge_model = "openai/gpt-4o-mini"
-            final_model = "openai/gpt-4o"
-        if config and isinstance(config, dict):
-            model = config.get("model", model) if isinstance(config, dict) else getattr(config, "model", model)
-            rejudge_model = config.get("llm_xss_rejudge_model", config.get("xss_rejudge_model", rejudge_model))
-            final_model = config.get("llm_xss_final_model", config.get("xss_final_model", final_model))
         # Resolve run mode: config["mode"] (truthy) > global settings.mode >
         # "bugbounty". Prevents Guard fail-close on vulntest/ctf runs.
         from src.core.config.settings import resolve_run_mode
@@ -160,10 +146,12 @@ INPUT: [Input]
             config.get("mode") if (config and isinstance(config, dict)) else None
         )
 
-        self.primary_model = model
-        self.rejudge_model = rejudge_model
-        self.final_model = final_model
         self.llm = LLMClient(role="xss_specialist")
+        self._decision_clients = {
+            "primary": self.llm,
+            "rejudge": LLMClient(role="xss_rejudge"),
+            "final": LLMClient(role="xss_final"),
+        }
 
         # Network Setup
         proxy_manager = None
@@ -223,20 +211,23 @@ INPUT: [Input]
         ]
         return any(marker in body_lower for marker in suspicious_markers)
 
-    def _choose_decision_model(self) -> Tuple[str, str]:
+    def _choose_decision_client(self) -> Tuple[LLMClient, str]:
         if self._suspicious_signal_observed and not self._used_rejudge_model:
-            if self.rejudge_model and self.rejudge_model != self.primary_model:
+            if self._decision_clients["rejudge"].model != self.llm.model:
                 self._used_rejudge_model = True
-                return self.rejudge_model, "rejudge"
+                return self._decision_clients["rejudge"], "rejudge"
             self._used_rejudge_model = True
 
         if self._suspicious_signal_observed and self._used_rejudge_model and not self._used_final_model:
-            if self.final_model and self.final_model not in {self.primary_model, self.rejudge_model}:
+            if self._decision_clients["final"].model not in {
+                self.llm.model,
+                self._decision_clients["rejudge"].model,
+            }:
                 self._used_final_model = True
-                return self.final_model, "final"
+                return self._decision_clients["final"], "final"
             self._used_final_model = True
 
-        return self.primary_model, "primary"
+        return self.llm, "primary"
 
     @staticmethod
     def _detect_xss_variant(target: str) -> str:
@@ -1051,25 +1042,20 @@ History:
 
 Decide next step for XSS testing. Focus on reflection context and escaping mechanisms.
 """
-        decision_model, decision_stage = self._choose_decision_model()
+        decision_client, decision_stage = self._choose_decision_client()
         if decision_stage != "primary":
             logger.info(
                 "[%s] XSS %s rejudge model selected for param '%s': %s",
                 self.name,
                 decision_stage,
                 self.context.get("param"),
-                decision_model,
+                decision_client.model,
             )
 
-        original_model = self.llm.model
-        self.llm.model = decision_model
-        try:
-            response = await self.llm.agenerate([
-                {"role": "system", "content": self.SYSTEM_PROMPT},
-                {"role": "user", "content": prompt}
-            ])
-        finally:
-            self.llm.model = original_model
+        response = await decision_client.agenerate([
+            {"role": "system", "content": self.SYSTEM_PROMPT},
+            {"role": "user", "content": prompt}
+        ])
 
         content = response.choices[0].message.content if response and response.choices else ""
 

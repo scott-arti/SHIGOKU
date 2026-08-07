@@ -4,10 +4,29 @@ Common finding extraction helper shared across formatters.
 Extracts findings from session data using the canonical extraction order
 defined in main.py:2975-3048, ensuring consistent behaviour in all reporting
 paths.
+
+SGK-2026-0422: adds the canonical VDP extractor entry point. For sessions
+carrying a ``vdp_contract`` section, callers MUST use
+``extract_vdp_canonical()`` (read-only, proof-verified, source_kind-aware)
+instead of raw finding labels. For legacy sessions without a VDP contract
+section, the existing ``extract_all_findings()`` path is preserved.
 """
 from __future__ import annotations
 
 from typing import Any, Dict, List
+
+from src.reporting.vdp_canonical import (
+    VdpCanonicalSummary,
+    build_vdp_canonical_index,
+    extract_vdp_canonical,
+)
+
+__all__ = [
+    "extract_all_findings",
+    "extract_vdp_canonical",
+    "build_vdp_canonical_index",
+    "VdpCanonicalSummary",
+]
 
 
 def extract_all_findings(session_data: dict) -> List[Dict[str, Any]]:

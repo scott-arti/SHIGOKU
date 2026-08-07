@@ -155,6 +155,26 @@ async def test_step3b_uses_proxy_from_config(pipeline, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_step3b_does_not_force_default_proxy_when_unconfigured(pipeline):
+    """An unconfigured proxy must stay absent for URL discovery tools."""
+    class StopAfterKatana(RuntimeError):
+        pass
+
+    pipeline.state.dead_subs = []
+    mock_katana = MagicMock()
+    mock_katana.run.side_effect = ["", StopAfterKatana()]
+
+    with patch("src.recon.pipeline.settings") as mock_settings:
+        mock_settings.get_proxy_url.return_value = None
+        mock_settings.max_httpx_urls = 500
+        with patch("src.recon.pipeline.KatanaTool", return_value=mock_katana):
+            with pytest.raises(StopAfterKatana):
+                await pipeline.step3b_hybrid_url_discovery(["www.example.com"])
+
+    assert mock_katana.run.call_args_list[0].kwargs.get("proxy") is None
+
+
+@pytest.mark.asyncio
 async def test_step3b_empty_live_subs_returns_empty(pipeline):
     """Step 3b: live_subs が空の場合は空の統計を返す"""
     

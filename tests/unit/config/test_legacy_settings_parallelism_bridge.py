@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from src.config import Settings
+from src.core.config.settings import Settings
 
 
-def test_legacy_settings_exposes_parallelism_safe_defaults() -> None:
+def test_canonical_settings_loads_parallelism_from_yaml() -> None:
     settings = Settings(dev_mode=True)
 
-    assert settings.parallelism.enabled is False
+    assert settings.parallelism.enabled is True
     assert settings.parallelism.kill_switch is False
 
 

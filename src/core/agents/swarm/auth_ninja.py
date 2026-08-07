@@ -50,7 +50,7 @@ class BaseAuthAgent(BaseAgent):  # Inherit BaseAgent
             config = AgentConfig(
                 name="AuthAgent",
                 description="Base authentication bypass agent",
-                model="default",
+                model="",
                 instructions="Execute authentication bypass"
             )
             
@@ -176,7 +176,7 @@ class JWTInspector(BaseAuthAgent):
             config = AgentConfig(
                 name="JWT-Inspector",
                 description="JWT authentication bypass specialist agent",
-                model="default",
+                model="",
                 instructions="Execute JWT bypass attacks"
             )
         super().__init__(config, workspace_root=workspace_root)
@@ -660,7 +660,7 @@ class OAuthDancer(BaseAuthAgent):
             config = AgentConfig(
                 name="OAuth-Dancer",
                 description="OAuth/OIDC authentication bypass specialist agent",
-                model="default",
+                model="",
                 instructions="Execute OAuth bypass attacks"
             )
         super().__init__(config, workspace_root=workspace_root)
@@ -1105,7 +1105,7 @@ class MFABypasser(BaseAuthAgent):
             config = AgentConfig(
                 name="MFA-Bypasser",
                 description="Multi-factor authentication bypass specialist agent",
-                model="default",
+                model="",
                 instructions="Execute MFA bypass attacks"
             )
         super().__init__(config, workspace_root=workspace_root)
@@ -1594,7 +1594,7 @@ class SessionHijacker(BaseAuthAgent):
             config = AgentConfig(
                 name="Session-Hijacker",
                 description="Session management vulnerability detection agent",
-                model="default",
+                model="",
                 instructions="Detect session vulnerabilities"
             )
         super().__init__(config, workspace_root=workspace_root)

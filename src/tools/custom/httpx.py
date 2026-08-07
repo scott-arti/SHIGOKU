@@ -1,13 +1,13 @@
 """
 Custom Httpx Tool - Web Probe and Tech Detect.
-Path: Controlled by src.config.settings.tool_httpx_path (default 'httpx')
+Path: Controlled by config/shigoku.yaml -> tool_httpx_path
 """
 from typing import Dict, Any, Optional, List, Union
 import shlex
 import logging
 from src.tools.base import BaseTool
 from src.tools import ToolRegistry
-from src.config import settings
+from src.core.config.settings import settings
 from src.core.utils.batch_utils import create_batch_file
 from src.core.security.safe_subprocess import safe_run, SecurityViolationError
 
@@ -74,7 +74,7 @@ class HttpxTool(BaseTool):
 
     def _run_httpx(self, target: str, mode: str, proxy: Optional[str], headers: Optional[List[str]], extra_args: Optional[str], is_batch: bool) -> str:
         """実際の実行ロジック"""
-        cmd = [settings.tool_httpx_path, "-json", "-silent"]
+        cmd = [settings.resolve_tool_command("httpx"), "-json", "-silent"]
         
         if is_batch:
             cmd += ["-l", target]

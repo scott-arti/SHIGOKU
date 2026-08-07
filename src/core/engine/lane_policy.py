@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 """Phase 4 shadow mode lane policy.
 
 Reads the Phase 0 concurrency inventory to classify specialists and swarms.
@@ -16,6 +18,70 @@ PHASE0_CLASS_TO_LANE: dict[str, tuple[str, bool, bool, str]] = {
     "sequential_required": ("sequential_required",   False, False, "class_sequential_required"),
     "unknown":             ("sequential_required",   False, False, "unclassified_safety_default"),
 }
+
+
+@dataclass(frozen=True)
+class ExecutionProfile:
+    """Resolved execution controls for a task.
+
+    ``agent_type`` identifies the worker to run.  ``execution_category``
+    identifies only the technical budget/concurrency bucket.  Keeping these
+    contracts separate avoids treating a worker name as a scheduler category.
+    """
+
+    lane: str
+    parallel_safe: bool
+    rate_limited: bool
+    execution_category: str | None = None
+    rejection_reason: str = ""
+    reason_code: str = ""
+
+
+def resolve_execution_profile(
+    lane_decision: tuple[str, bool, bool, str | None, bool, str],
+    task_metadata: dict | None = None,
+) -> ExecutionProfile:
+    """Resolve a technical execution category from an authoritative lane decision.
+
+    Vulnerability-family metadata (``category``) is intentionally not read
+    here: it describes what is being tested, not how the scheduler should
+    allocate workers or rate limits.  A caller may opt into a known
+    ``execution_category`` explicitly; unknown values fail admission closed.
+    """
+    lane, parallel_safe, rate_limited, _, _, reason_code = lane_decision
+    profile = ExecutionProfile(
+        lane=lane,
+        parallel_safe=parallel_safe,
+        rate_limited=rate_limited,
+        reason_code=reason_code,
+    )
+    if lane != "read_only" or not parallel_safe:
+        return profile
+
+    metadata = task_metadata if isinstance(task_metadata, dict) else {}
+    explicit_category = metadata.get("execution_category")
+    if explicit_category is not None:
+        execution_category = str(explicit_category).strip()
+        from src.core.engine.parallel_orchestrator import CATEGORY_TO_LANE
+
+        if execution_category not in CATEGORY_TO_LANE:
+            return ExecutionProfile(
+                lane=lane,
+                parallel_safe=parallel_safe,
+                rate_limited=rate_limited,
+                rejection_reason="unknown_execution_category",
+                reason_code=reason_code,
+            )
+    else:
+        execution_category = "intel_active" if rate_limited else "intel_passive"
+
+    return ExecutionProfile(
+        lane=lane,
+        parallel_safe=parallel_safe,
+        rate_limited=rate_limited,
+        execution_category=execution_category,
+        reason_code=reason_code,
+    )
 
 
 class LanePolicy:

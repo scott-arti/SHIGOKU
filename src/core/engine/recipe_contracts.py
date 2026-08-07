@@ -229,6 +229,40 @@ VDP_REASON_CODES = {
     "generated_candidate",
 }
 
+# SGK-2026-0421: evidence-gap reason codes (subtask plan §3, set A).
+# Public source of truth for follow-up mapping. Additive only.
+VDP_EVIDENCE_GAP_CODES = {
+    "payload_request_mismatch",
+    "untested_no_second_account",
+    "authz_impact_not_proven",
+    "semantic_diff_owner_permission_sensitive_field",
+    "state_change_not_verified",
+    "state_change_readback",
+    "browser_execution_missing",
+    "stored_revisit_missing",
+    "insufficient_timing_validation",
+    "command_execution_not_verified",
+    "ssrf_proof_missing",
+    "unique_oob_callback",
+    "insufficient_response_difference",
+    "weak_session_not_statistically_verified",
+    "file_upload_impact_not_proven",
+    "public_documentation_not_authorization_impact",
+    "session_takeover_not_verified",
+    "redirect_target_not_external",
+    "synthetic_response_evidence",
+    "evidence_channel_lost",
+    "scope_revalidation_blocked",
+}
+
+# SGK-2026-0421: infrastructure reason codes (subtask plan §3, set E).
+VDP_INFRA_REASON_CODES = {
+    "follow_up_enqueue_failed",
+    "evidence_channel_lost",
+    "dependency_unavailable",
+    "unknown_reason_code",
+}
+
 
 def validate_vdp_action_class(action: str) -> dict:
     """Validate a VDP action class against the public vocabulary.

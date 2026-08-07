@@ -84,7 +84,12 @@ class VdpM0ContractGate:
     SCOPE_VERDICT_MISSING = "m0_scope_verdict_missing"
     MISSING_CONTRACT_SECTION = "m0_missing_contract_section"
 
-    def validate(self, session_payload: Any) -> M0GateResult:
+    def validate(
+        self,
+        session_payload: Any,
+        *,
+        public_key_provider: Any = None,
+    ) -> M0GateResult:
         """Validate all VDP contract records in a session payload (fail-closed).
 
         Performs strict validation:
@@ -98,9 +103,10 @@ class VdpM0ContractGate:
 
         Args:
             session_payload: The session payload (must be a dict).
-
-        Returns:
-            ``M0GateResult`` with pass/fail and structured errors.
+            public_key_provider: Optional Ed25519 public-key provider dict or
+                callable for restoring confirmed verdicts (SGK-2026-0422
+                canonical v2 proofs). When None, the default dev/test
+                provider is used; fail-closed when no key is available.
         """
         # 0. Input type check
         if not isinstance(session_payload, dict):
@@ -196,9 +202,18 @@ class VdpM0ContractGate:
         hypotheses = self._parse_strict(raw_hypotheses, HypothesisRecord, parse_errors, "hypotheses")
         attempts = self._parse_strict(raw_attempts, AttemptRecord, parse_errors, "attempts")
         evidence_records = self._parse_strict(raw_evidence, EvidenceRecordV1, parse_errors, "evidence_records")
-        # Verdicts parsed with trusted=True to allow confirmed status from factory,
-        # then validated against actual evidence records in _validate_confirmations.
-        verdicts = self._parse_strict_verdicts(raw_verdicts, parse_errors, "verdicts")
+        # Verdicts parsed with public-key proof verification: confirmed
+        # verdicts are restored ONLY via the canonical v2 restore path
+        # (or the engine-side legacy verifier for hmac-sha256 proofs),
+        # then validated against actual evidence records in
+        # _validate_confirmations.
+        verdicts = self._parse_strict_verdicts(
+            raw_verdicts,
+            parse_errors,
+            "verdicts",
+            evidence_dicts=raw_evidence if isinstance(raw_evidence, list) else [],
+            public_key_provider=public_key_provider,
+        )
         next_actions = self._parse_strict(raw_next_actions, NextActionRecord, parse_errors, "next_actions")
 
         if parse_errors:
@@ -328,10 +343,15 @@ class VdpM0ContractGate:
         raw_list: list,
         errors: List[str],
         section_name: str,
+        *,
+        evidence_dicts: Optional[list] = None,
+        public_key_provider: Any = None,
     ) -> list:
-        """Parse verdicts. Confirmed verdicts are restored ONLY via
-        _restore_confirmed_from_dict() which verifies the tamper-evident
-        validation proof. All other statuses use the public from_dict()."""
+        """Parse verdicts. Confirmed verdicts are restored ONLY via the
+        canonical v2 restore path (Ed25519 public-key proof verification)
+        or, for legacy ``hmac-sha256`` proofs, via the engine-side legacy
+        verifier (fail-closed when the legacy key is unavailable).
+        All other statuses use the public from_dict()."""
         results = []
         for i, item in enumerate(raw_list):
             if not isinstance(item, dict):
@@ -341,8 +361,31 @@ class VdpM0ContractGate:
                 continue
             try:
                 if item.get("status") == "confirmed":
-                    from src.core.models.vdp_contract import _restore_confirmed_from_dict
-                    results.append(_restore_confirmed_from_dict(item))
+                    proof = str(item.get("validation_proof") or "")
+                    if proof.startswith("hmac-sha256"):
+                        from src.core.engine.vdp_legacy_proof_verifier import (
+                            restore_legacy_confirmed_verdict,
+                        )
+
+                        results.append(restore_legacy_confirmed_verdict(item))
+                    else:
+                        from src.core.models.vdp_contract import (
+                            default_public_key_provider,
+                            restore_confirmed_from_dict,
+                        )
+
+                        provider = (
+                            public_key_provider
+                            if public_key_provider is not None
+                            else default_public_key_provider()
+                        )
+                        results.append(
+                            restore_confirmed_from_dict(
+                                item,
+                                list(evidence_dicts) if evidence_dicts else [],
+                                public_key_provider=provider,
+                            )
+                        )
                 else:
                     results.append(EvidenceVerdictV1.from_dict(item))
             except (TypeError, ValueError, KeyError) as e:

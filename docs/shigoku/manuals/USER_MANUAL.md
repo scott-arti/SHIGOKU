@@ -5,13 +5,13 @@ status: active
 parent_task_id: null
 related_docs: []
 created_at: '2026-05-19'
-updated_at: '2026-07-02'
+updated_at: '2026-08-07'
 ---
 
 # 📘 SHIGOKU ユーザーマニュアル
 
 > 現行の運用者向けマニュアルは
-> [`2026-07-02_sgk-2026-0338_operator-user-manual.md`](2026-07-02_sgk-2026-0338_operator-user-manual.md)
+> [`2026-07-02_sgk-2026-0338_operator-user-manual.md`](manual_legacy/2026-07-02_sgk-2026-0338_operator-user-manual.md)
 > です。本ファイルは過去の包括マニュアルとして残し、最新の初期設定、Docker、モード、出力ファイル、ユースケース別コマンドは現行版を優先します。
 
 **SHIGOKU** を「最強の相棒」として使いこなすための包括的なガイドです。
@@ -38,14 +38,14 @@ updated_at: '2026-07-02'
 ## 1. CLI リファレンス
 
 最新の詳細版は
-[`2026-07-02_sgk-2026-0337_detailed-command-reference.md`](2026-07-02_sgk-2026-0337_detailed-command-reference.md)
+[`2026-07-02_sgk-2026-0337_detailed-command-reference.md`](manual_legacy/2026-07-02_sgk-2026-0337_detailed-command-reference.md)
 を参照してください。この節は実行イメージの把握用に残し、現行の `shigoku-ops`
 サブコマンド体系は詳細版を正本とします。
 
 ### 基本構文
 
 ```bash
-python -m src.main [OPTIONS]
+shigoku [OPTIONS]
 ```
 
 ### オプション一覧
@@ -57,8 +57,11 @@ python -m src.main [OPTIONS]
 | `--watch`        | OWNER/REPO | センチネル：GitHub リポジトリ監視    |
 | `--scope`        | FILE       | スコープ定義 YAML ファイル           |
 | `--demo`         | (なし)     | デモモード実行                       |
-| `--full-refresh` | (なし)     | RAG インデックスの完全再構築         |
-| `--vault`        | PATH       | Obsidian Vault のパス                |
+| `--target`       | URL        | 対象を指定して総合スキャン           |
+| `--interactive`  | (なし)     | 対話モードを開始                     |
+| `--report`       | (なし)     | 前回セッションのレポートを表示       |
+| `--rag-ingest`   | PATH       | RAG ナレッジベースへファイルを追加   |
+| `--rag-query`    | QUESTION   | RAG ナレッジベースを検索             |
 | `--help`         | (なし)     | ヘルプ表示                           |
 
 ### 使用例
@@ -73,8 +76,8 @@ python -m src.main --log traffic.har --scope scopes/target.yaml
 # GitHub監視
 python -m src.main --watch facebook/react
 
-# RAGを別のVaultで初期化
-python -m src.main --vault ~/Obsidian/Security --demo
+# 対象を指定してスキャン
+shigoku --mode bugbounty --target https://example.com
 ```
 
 ---
@@ -295,18 +298,21 @@ in_scope:
 
 ## 4. RAG ナレッジエンジニアリング
 
-### Obsidian 連携
+### ナレッジベースへの取り込み
 
-SHIGOKU は Obsidian Vault からナレッジを取得し、攻撃に活用します。
+SHIGOKU は指定したディレクトリまたは PDF からナレッジを取り込み、検索に利用します。
 
 #### 設定
 
 ```bash
-# 環境変数で設定
-export OBSIDIAN_VAULT_PATH=~/Obsidian/Security
+# ディレクトリを取り込む
+shigoku --rag-ingest ./knowledge
 
-# またはCLIで指定
-python -m src.main --vault ~/Obsidian/Security --demo
+# 取り込んだ内容を検索する
+shigoku --rag-query "JWT bypass" --num-results 10
+
+# PDF だけを取り込む
+shigoku --rag-ingest ./knowledge --pdf-only
 ```
 
 ### メモの書き方ガイド

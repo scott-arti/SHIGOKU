@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from enum import Enum
 
-from src.config import settings
+from src.core.config.settings import settings
 
 logger = logging.getLogger(__name__)
 

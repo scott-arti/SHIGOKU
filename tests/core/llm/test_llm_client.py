@@ -31,12 +31,15 @@ class TestLLMClientRoleAware:
             schema_version=1,
             default_role="specialist_light",
             providers={
-                "deepseek": {"api_key_env": "DEEPSEEK_API_KEY"},
+                "deepseek": {
+                    "api_key_env": "DEEPSEEK_API_KEY",
+                    "base_url": "https://api.deepseek.com/v1",
+                },
             },
             profiles={
                 "cheap": {"provider": "deepseek", "model": "ds/flash", "temperature": 0.0},
                 "reasoning": {"provider": "deepseek", "model": "ds/pro", "temperature": 0.0,
-                              "extra": {"thinking": {"type": "enabled"}}},
+                              "extra": {"thinking": {"type": "enabled", "reasoning_effort": "max"}}},
             },
             roles={
                 "specialist_light": {"profile": "cheap"},
@@ -78,12 +81,16 @@ class TestLLMClientRoleAware:
     def test_role_sets_extra_for_thinking(self, role_llm_config):
         """Profile extra fields should be accessible."""
         client = LLMClient(role="planner", _llm_config=role_llm_config)
-        assert client.model_extra == {"thinking": {"type": "enabled"}}
+        assert client.model_extra == {"thinking": {"type": "enabled", "reasoning_effort": "max"}}
 
     def test_role_default_model_construction_works(self, role_llm_config):
         """Default construction without role should work with explicit model."""
         client = LLMClient(model="test", _llm_config=role_llm_config)
         assert client.model == "test"
+
+    def test_no_role_or_model_uses_the_configured_default_role(self, role_llm_config):
+        client = LLMClient(_llm_config=role_llm_config)
+        assert client.model == "ds/flash"
 
     def test_role_api_key_env_propagated(self, role_llm_config):
         """LLMClient(role='planner') should store api_key_env from resolution."""
@@ -94,7 +101,37 @@ class TestLLMClientRoleAware:
     def test_role_base_url_propagated(self, role_llm_config):
         """LLMClient(role='planner') should store base_url from resolution."""
         client = LLMClient(role="planner", _llm_config=role_llm_config)
-        assert client._role_result.base_url is None  # deepseek provider has no base_url
+        assert client._role_result.base_url == "https://api.deepseek.com/v1"
+
+    def test_thinking_effort_is_taken_from_the_thinking_block_without_remapping(self, role_llm_config):
+        client = LLMClient(role="planner", _llm_config=role_llm_config)
+        client.model_extra["thinking"]["reasoning_effort"] = "low"
+        prepared = client._prepare_request_kwargs(
+            model_name="deepseek/deepseek-v4-pro",
+            request_kwargs={},
+        )
+        assert prepared["extra_body"]["thinking"]["type"] == "enabled"
+        assert prepared["reasoning_effort"] == "low"
+
+    def test_null_thinking_sends_no_thinking_parameter(self, role_llm_config):
+        client = LLMClient(role="specialist_light", _llm_config=role_llm_config)
+        client.model_extra = {"thinking": None}
+        prepared = client._prepare_request_kwargs(
+            model_name="openai/gpt-4o",
+            request_kwargs={},
+        )
+        assert "extra_body" not in prepared
+        assert "reasoning_effort" not in prepared
+
+    def test_disabled_thinking_sends_an_explicit_disable(self, role_llm_config):
+        client = LLMClient(role="specialist_light", _llm_config=role_llm_config)
+        client.model_extra = {"thinking": {"type": "disabled", "reasoning_effort": None}}
+        prepared = client._prepare_request_kwargs(
+            model_name="openai/gpt-4o",
+            request_kwargs={},
+        )
+        assert prepared["extra_body"]["thinking"]["type"] == "disabled"
+        assert "reasoning_effort" not in prepared
 
     def test_role_timeout_propagated(self, role_llm_config):
         """LLMClient(role='planner') should store timeout from resolution."""
@@ -158,4 +195,3 @@ async def test_llm_retry_on_ratelimit(llm_client):
         
         assert res["choices"][0]["message"]["content"] == "Success after retry"
         assert mock_completion.call_count == 2
-

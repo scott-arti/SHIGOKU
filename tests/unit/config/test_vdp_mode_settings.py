@@ -9,7 +9,14 @@ Tests:
 """
 import os
 import pytest
-from src.core.config.settings import VdpModeSettings, Settings
+from src.core.config.settings import (
+    VdpModeSettings,
+    Settings,
+    VDP_STAGES,
+    derive_stage_from_mode,
+    is_enforce_stage,
+    min_stage,
+)
 
 
 class TestVdpModeConfigDefaultSafe:
@@ -108,3 +115,129 @@ class TestVdpModeSettingsFromYaml:
         os.environ.setdefault("DEEPSEEK_API_KEY", "test-key")
         settings = Settings(vdp={"mode": "enforce"})
         assert settings.vdp.mode == "off"
+
+
+class TestVdpMode0421M3a:
+    """SGK-2026-0421: readonly_enforce mode + kill switch + M3b/M3c never
+    activatable without an explicit gate."""
+
+    def test_readonly_enforce_is_valid(self):
+        s = VdpModeSettings(mode="readonly_enforce")
+        assert s.mode == "readonly_enforce"
+
+    def test_kill_switch_defaults_off(self):
+        s = VdpModeSettings()
+        assert s.kill_switch is False
+
+    def test_capability_rules_default_fail_closed(self):
+        s = VdpModeSettings(mode="readonly_enforce")
+        assert s.capability_rules == {}
+
+    def test_capability_rules_allow_explicit_readonly_follow_up(self):
+        s = VdpModeSettings(
+            mode="readonly_enforce",
+            capability_rules={"follow_up_probe": "allowed"},
+        )
+        assert s.capability_rules == {"follow_up_probe": "allowed"}
+
+    def test_unknown_capability_level_fails_closed(self):
+        s = VdpModeSettings(
+            mode="readonly_enforce",
+            capability_rules={"follow_up_probe": "not-a-level"},
+        )
+        assert s.capability_rules == {"follow_up_probe": "prohibited"}
+
+    def test_kill_switch_parses(self):
+        s = VdpModeSettings(mode="readonly_enforce", kill_switch=True)
+        assert s.kill_switch is True
+
+    def test_m3b_mode_value_fails_safe_to_off(self):
+        # M3b (state-change enforce) has NO mode value in 0421 — any attempt
+        # to set one fails closed to off.
+        s = VdpModeSettings(mode="m3b")
+        assert s.mode == "off"
+
+    def test_m3c_mode_value_fails_safe_to_off(self):
+        s = VdpModeSettings(mode="m3c")
+        assert s.mode == "off"
+
+    def test_chain_mode_value_fails_safe_to_off(self):
+        s = VdpModeSettings(mode="chain_enforce")
+        assert s.mode == "off"
+
+    def test_m3b_cannot_be_activated_without_gate(self):
+        # The only enforce mode available is readonly_enforce (M3a); there is
+        # no configuration surface for M3b/M3c state-changing enforcement.
+        allowed = {VdpModeSettings(mode=m).mode for m in
+                   ("off", "record_only", "shadow", "readonly_enforce",
+                    "m3b", "m3c", "chain_enforce", "enforce")}
+        assert allowed == {"off", "record_only", "shadow", "readonly_enforce"}
+
+    def test_yaml_mode_readonly_enforce_supported(self):
+        from pydantic import ValidationError
+        # Settings-level YAML integration for the new mode
+        settings = Settings(vdp=VdpModeSettings(mode="readonly_enforce", kill_switch=False))
+        assert settings.vdp.mode == "readonly_enforce"
+
+
+class TestVdpMode0423StagedRollout:
+    """SGK-2026-0423: stage ladder, flags, key provider config (additive,
+    backward compatible with 0420/0421 mode vocabulary)."""
+
+    def test_stage_defaults_empty(self):
+        s = VdpModeSettings()
+        assert s.stage == ""
+
+    def test_stage_valid_values_pass_through(self):
+        for stage in ("m0", "m1", "m2", "m3a", "m3b", "m3c", "m4"):
+            s = VdpModeSettings(stage=stage)
+            assert s.stage == stage
+
+    def test_stage_invalid_fails_closed_to_empty(self):
+        s = VdpModeSettings(stage="m9")
+        assert s.stage == ""  # derive from mode → safe
+
+    def test_stage_flags_unknown_keys_dropped(self):
+        s = VdpModeSettings(stage_flags={"m3b": False, "m9": True})
+        assert s.stage_flags == {"m3b": False}
+
+    def test_stage_flags_default_empty(self):
+        assert VdpModeSettings().stage_flags == {}
+
+    def test_key_provider_default_env(self):
+        assert VdpModeSettings().key_provider == "env"
+
+    def test_key_provider_invalid_fails_closed_to_env(self):
+        s = VdpModeSettings(key_provider="kms")
+        assert s.key_provider == "env"
+
+    def test_key_paths_default_empty(self):
+        s = VdpModeSettings()
+        assert s.key_file_path == ""
+        assert s.key_registry_path == ""
+        assert s.progression_records_path == ""
+        assert s.thresholds_path == ""
+        assert s.rollout_state_path == ""
+
+    def test_derive_stage_from_mode(self):
+        assert derive_stage_from_mode("off") == "m0"
+        assert derive_stage_from_mode("record_only") == "m1"
+        assert derive_stage_from_mode("shadow") == "m2"
+        assert derive_stage_from_mode("readonly_enforce") == "m3a"
+        assert derive_stage_from_mode("invalid") == "m0"
+
+    def test_is_enforce_stage(self):
+        for stage in ("m0", "m1", "m2"):
+            assert is_enforce_stage(stage) is False
+        for stage in ("m3a", "m3b", "m3c", "m4"):
+            assert is_enforce_stage(stage) is True
+        assert is_enforce_stage("bogus") is False
+
+    def test_min_stage(self):
+        assert min_stage("m2", "m3a") == "m2"
+        assert min_stage("m3a", "m2") == "m2"
+        assert min_stage("m4", "m4") == "m4"
+        assert min_stage("bogus", "m3a") == "bogus"  # unknown → rank 0 (fail-closed)
+
+    def test_stage_vocabulary_order(self):
+        assert VDP_STAGES == ("m0", "m1", "m2", "m3a", "m3b", "m3c", "m4")

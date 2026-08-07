@@ -118,12 +118,18 @@ class ToolRunner:
         Returns:
             stdout の出力文字列
         """
-        cmd_str = " ".join(cmd)
-        
         demo_provider = self.get_demo_provider()
         if demo_provider is not None:
+            cmd_str = " ".join(cmd)
             logger.info("DEV_MODE: Mocking command: %s", cmd_str)
             return demo_provider.get_command_output(cmd, mock_output)
+
+        if not cmd or not isinstance(cmd[0], str) or not cmd[0].strip():
+            raise ToolNotFoundError(
+                "Tool command is empty. Configure the tool executable path or use the standard command name."
+            )
+
+        cmd_str = " ".join(cmd)
         
         logger.info("Executing: %s (timeout=%ds)", cmd_str, timeout)
         

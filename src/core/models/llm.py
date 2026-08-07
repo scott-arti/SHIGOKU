@@ -84,8 +84,14 @@ and deepseek thinking configuration.
         elif role and not model:
             self._resolve_from_role(role, _llm_config)
         else:
-            # No role, no model: fallback to env or default
-            self.model = os.getenv("SHIGOKU_MODEL") or "deepseek/deepseek-chat"
+            # No role or model: use the configured default role. Never infer a
+            # provider or model from an environment variable.
+            if _llm_config is not None:
+                default_role = _llm_config.default_role
+            else:
+                from src.core.config.settings import get_settings
+                default_role = get_settings().llm.default_role
+            self._resolve_from_role(default_role, _llm_config)
 
     def _actor_name(self) -> str:
         """Return the actor name for run ledger recording."""
@@ -210,42 +216,28 @@ and deepseek thinking configuration.
 
     @staticmethod
     def _normalize_reasoning_effort(raw: Any) -> str:
-        value = str(raw or "").strip().lower()
-        if value in {"max", "xhigh"}:
-            return "max"
-        # DeepSeek docs: low/medium are compatibility-mapped to high.
-        return "high"
+        """Pass the configured provider value through without remapping it."""
+        return str(raw).strip()
 
-    def _prepare_deepseek_request_kwargs(
+    def _prepare_request_kwargs(
         self,
         *,
         model_name: str,
         request_kwargs: Dict[str, Any],
     ) -> Dict[str, Any]:
         """
-        DeepSeek v4 向けに thinking / reasoning_effort を安全に補完する。
+        YAMLのthinking設定を、変換せずOpenAI互換リクエストへ反映する。
         """
         prepared = dict(request_kwargs)
-        if not self._is_deepseek_model(model_name):
-            return prepared
-
         try:
-            # Extract thinking config from role profile's extra (config/shigoku.yaml)
-            thinking_config = self.model_extra.get("thinking", {})
-            if isinstance(thinking_config, dict):
-                thinking_type = thinking_config.get("type", "disabled")
-                thinking_enabled = thinking_type == "enabled"
-                effort = thinking_config.get("reasoning_effort", "high")
-            else:
-                thinking_enabled = False
-                effort = "high"
+            thinking_config = self.model_extra.get("thinking")
+            if thinking_config is None:
+                return prepared
+            if not isinstance(thinking_config, dict):
+                raise ValueError("thinking must be null or a mapping")
 
-            # compatibility alias の明示補正
-            lowered = model_name.strip().lower()
-            if lowered.endswith("deepseek-chat"):
-                thinking_enabled = False
-            elif lowered.endswith("deepseek-reasoner"):
-                thinking_enabled = True
+            thinking_type = thinking_config.get("type")
+            effort = thinking_config.get("reasoning_effort")
 
             extra_body = prepared.get("extra_body")
             if not isinstance(extra_body, dict):
@@ -253,16 +245,13 @@ and deepseek thinking configuration.
             thinking_payload = extra_body.get("thinking")
             if not isinstance(thinking_payload, dict):
                 thinking_payload = {}
-            thinking_payload.setdefault("type", "enabled" if thinking_enabled else "disabled")
+            if thinking_type is not None:
+                thinking_payload.setdefault("type", thinking_type)
             extra_body["thinking"] = thinking_payload
             prepared["extra_body"] = extra_body
 
-            if thinking_enabled and "reasoning_effort" not in prepared:
+            if effort is not None and "reasoning_effort" not in prepared:
                 prepared["reasoning_effort"] = self._normalize_reasoning_effort(effort)
-
-            # non-thinking では余計な effort 指定を消して provider 側の解釈ぶれを防ぐ
-            if not thinking_enabled and "reasoning_effort" in prepared:
-                prepared.pop("reasoning_effort", None)
         except Exception as exc:
             logger.debug("DeepSeek request preparation skipped: %s", exc)
 
@@ -363,11 +352,6 @@ and deepseek thinking configuration.
 
         # 2. クラウドLLM
         try:
-            from src.core.config.settings import get_settings
-            settings = get_settings()
-            # Note: src.core.config.Settings doesn't have llm_request_timeout directly, 
-            # it might be in a sub-config or we use a default. 
-            # Checking src/config.py, it was 300.
             timeout = kwargs.pop("timeout", 300)
 
             # Phase 2: use role-resolved timeout if available
@@ -379,13 +363,7 @@ and deepseek thinking configuration.
                 role_api_key = os.getenv(self._role_result.api_key_env, "")
                 if role_api_key:
                     kwargs["api_key"] = role_api_key
-                if self._role_result.base_url:
-                    kwargs["api_base"] = self._role_result.base_url
-
-            # Any-LLM Proxy Injection
-            if settings.llm_use_any_llm_proxy:
-                kwargs["api_base"] = settings.any_llm_base_url
-                kwargs["api_key"] = settings.any_llm_api_key
+                kwargs["api_base"] = self._role_result.base_url
 
             # Provider Safety Settings (Security Tool requirements)
 
@@ -402,7 +380,7 @@ and deepseek thinking configuration.
             
             for round_num in range(max_tool_call_rounds):
                 request_messages = self._normalize_messages_for_provider(current_messages)
-                cloud_kwargs = self._prepare_deepseek_request_kwargs(
+                cloud_kwargs = self._prepare_request_kwargs(
                     model_name=str(self.model or ""),
                     request_kwargs={
                         "model": self.model,
@@ -494,20 +472,6 @@ and deepseek thinking configuration.
                     logger.error("Role fallback also failed: %s", fallback_err)
                     raise
 
-            # Legacy fallback (non-role clients)
-            fallback_model = os.getenv("SHIGOKU_MODEL") or "deepseek/deepseek-v4-flash"
-            logger.error("LLM Authentication Error: %s. Attempting fallback to %s...", e, fallback_model)
-            if self.model != fallback_model:
-                original_model = self.model
-                self.model = fallback_model
-                try_record_provider_fallback(
-                    from_model=original_model, to_model=fallback_model,
-                    actor=self._actor_name(), reason=str(e)[:200],
-                )
-                try:
-                    return self.generate(messages, tools, force_cloud=True, mask_pii=mask_pii, **kwargs)
-                finally:
-                    self.model = original_model
             raise
         except Exception as e:
             logger.error("Error generating response: %s", e)
@@ -570,8 +534,6 @@ and deepseek thinking configuration.
 
         # 2. クラウドLLM
         try:
-            from src.core.config.settings import get_settings
-            settings = get_settings()
             timeout = kwargs.pop("timeout", 300)
 
             # Phase 2: use role-resolved timeout if available
@@ -583,13 +545,7 @@ and deepseek thinking configuration.
                 role_api_key = os.getenv(self._role_result.api_key_env, "")
                 if role_api_key:
                     kwargs["api_key"] = role_api_key
-                if self._role_result.base_url:
-                    kwargs["api_base"] = self._role_result.base_url
-            
-            # Any-LLM Proxy Injection
-            if settings.llm_use_any_llm_proxy:
-                kwargs["api_base"] = settings.any_llm_base_url
-                kwargs["api_key"] = settings.any_llm_api_key
+                kwargs["api_base"] = self._role_result.base_url
 
             # Provider Safety Settings (Security Tool requirements)
             
@@ -606,7 +562,7 @@ and deepseek thinking configuration.
             
             for round_num in range(max_tool_call_rounds):
                 request_messages = self._normalize_messages_for_provider(current_messages)
-                cloud_kwargs = self._prepare_deepseek_request_kwargs(
+                cloud_kwargs = self._prepare_request_kwargs(
                     model_name=str(self.model or ""),
                     request_kwargs={
                         "model": self.model,
@@ -697,20 +653,6 @@ and deepseek thinking configuration.
                     logger.error("Async role fallback also failed: %s", fallback_err)
                     raise
 
-            # 非同期版認証エラーフォールバック (legacy)
-            fallback_model = os.getenv("SHIGOKU_MODEL") or "deepseek/deepseek-v4-flash"
-            logger.error("LLM Authentication Error (Async): %s. Attempting fallback to %s...", e, fallback_model)
-            if self.model != fallback_model:
-                original_model = self.model
-                self.model = fallback_model
-                try_record_provider_fallback(
-                    from_model=original_model, to_model=fallback_model,
-                    actor=self._actor_name(), reason=str(e)[:200],
-                )
-                try:
-                    return await self.agenerate(messages, tools, force_cloud=True, mask_pii=mask_pii, **kwargs)
-                finally:
-                    self.model = original_model
             raise
         except Exception as e:
             logger.error("Error generating async response: %s", e)

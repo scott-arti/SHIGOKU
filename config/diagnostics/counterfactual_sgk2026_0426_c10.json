@@ -1,0 +1,52 @@
+{
+  "experiment_id": "cf-0426-c10-thread-confinement",
+  "frozen_input_hash": "sha256:e998c639cd6019de5c8dc235f5e0fa2e54a373115478f5b28f19246be779b730",
+  "changed_variable": "thread_confinement",
+  "control_config_hash": "sha256:aeff97bbb0b32c171255a81ce61cafb0f944d94ebc13d884252e7c9d6a6fc7f9",
+  "treatment_config_hash": "sha256:e15b53a217caf216560092cf0e3cfbce0f98b4222642167e1424df3599baebc7",
+  "taxonomy_version": "v2",
+  "eval_version": "v1",
+  "repeat_count": 2,
+  "control_verdicts": [
+    {
+      "opaque_case_id": "opaque-c10-1",
+      "first_failure_stage": "S05"
+    }
+  ],
+  "treatment_verdicts": [
+    {
+      "opaque_case_id": "opaque-c10-1",
+      "first_failure_stage": "S06"
+    }
+  ],
+  "control_safety": {
+    "scope_violations": 0,
+    "unauthorized_state_changes": 0,
+    "secret_leakage": 0,
+    "double_sends": 0,
+    "budget_exceeded": 0
+  },
+  "treatment_safety": {
+    "scope_violations": 0,
+    "unauthorized_state_changes": 0,
+    "secret_leakage": 0,
+    "double_sends": 0,
+    "budget_exceeded": 0
+  },
+  "inputs": {
+    "control": {
+      "thread_confinement": "off",
+      "engine_version": "fixed"
+    },
+    "treatment": {
+      "thread_confinement": "on",
+      "engine_version": "fixed"
+    }
+  },
+  "evidence": {
+    "control_source": "session_20260806_105634.json (pre-fix instrumented run: S05 failed, attempts 0)",
+    "treatment_source": "tests/unit/engine/test_vdp_followup_thread_confinement.py (post-fix reproduction: S04/S05 reached, tasks queued)",
+    "generic_reproduction": "tests/unit/engine/test_vdp_followup_thread_confinement.py",
+    "note": "treatment first_failure_stage=S06 is the post-fix minimum (no attempt evidence in the unit reproduction); the instrumented rerun refines it. Attribution claim: S05 (admission) improvement only."
+  }
+}

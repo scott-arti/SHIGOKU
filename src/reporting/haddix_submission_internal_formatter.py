@@ -455,7 +455,17 @@ class HaddixSubmissionInternalFormatter(HaddixFormatter):
         if lines and lines[-1] != "":
             lines.append("")
         lines.extend(self._format_english_submission_section())
+        # SGK-2026-0422: canonical VDP funnel/verdicts (shared projection).
+        if self._vdp_canonical_summary is not None:
+            from src.reporting.vdp_report_projection import render_vdp_section_markdown
+            if lines and lines[-1] != "":
+                lines.append("")
+            lines.extend(render_vdp_section_markdown(self._vdp_canonical_summary))
         return "\n".join(lines)
+
+    def _required_report_sections(self) -> Optional[List[str]]:
+        """Atomic promotion re-verification markers for this formatter."""
+        return ["# 提出用レポート / Submission Report", "# 内部評価（私用） / Internal Review Notes"]
 
     def _report_generated_at(self) -> datetime:
         generated_at = getattr(self, "_cached_report_generated_at", None)
@@ -471,14 +481,25 @@ class HaddixSubmissionInternalFormatter(HaddixFormatter):
     def _get_enforced_split(
         self,
     ) -> tuple[List[HaddixFinding], List[HaddixFinding], List[EvidenceVerdict]]:
-        """Return (enforced_confirmed, enforced_candidates, verdicts) using the
-        enforcement-mode evidence quality validator. Results are cached on the
-        instance so both submission and internal sections consume the same
-        classification."""
+        """Return (enforced_confirmed, enforced_candidates, verdicts).
+
+        SGK-2026-0422: for canonical VDP sessions (summary attached) the
+        split comes ONLY from canonical verdicts — no enforcement-mode
+        re-judgement, no promotion from raw labels. Legacy sessions keep the
+        existing enforcement-mode evidence quality validator path.
+        Results are cached on the instance so both submission and internal
+        sections consume the same classification."""
         cached = getattr(self, "_cached_enforced_split", None)
         if cached is not None:
             return cached
         sorted_findings = self._sorted_findings()
+        if self._vdp_canonical_summary is not None:
+            # SGK-2026-0422: canonical VDP sessions use ONLY canonical
+            # verdicts. No enforcement-mode re-judgement.
+            confirmed, candidates = self._canonical_split(sorted_findings)
+            result = (confirmed, candidates, [])
+            self._cached_enforced_split = result
+            return result
         confirmed, candidates = self._split_findings_by_confirmation(sorted_findings)
         result = self._enforced_split(
             confirmed_findings=confirmed,
@@ -486,6 +507,38 @@ class HaddixSubmissionInternalFormatter(HaddixFormatter):
         )
         self._cached_enforced_split = result
         return result
+
+    def _canonical_status_for_finding(self, finding: HaddixFinding) -> Optional[str]:
+        """Canonical verdict status for a finding, or None (never confirmed)."""
+        if getattr(self._vdp_canonical_summary, "source_kind", "") != "canonical_vdp":
+            return None
+        info = finding.additional_info if isinstance(finding.additional_info, dict) else {}
+        hypothesis_id = str(info.get("hypothesis_id") or "").strip()
+        verdict_id = str(info.get("verdict_id") or "").strip()
+        for verdict in self._vdp_canonical_summary.verdicts:
+            if verdict_id and verdict.verdict_id == verdict_id:
+                return verdict.status
+            if hypothesis_id and verdict.hypothesis_id == hypothesis_id:
+                return verdict.status
+        return None
+
+    def _canonical_split(
+        self,
+        sorted_findings: List[HaddixFinding],
+    ) -> tuple[List[HaddixFinding], List[HaddixFinding]]:
+        """Split findings by canonical verdict status only."""
+        confirmed: List[HaddixFinding] = []
+        candidates: List[HaddixFinding] = []
+        for finding in sorted_findings:
+            status = self._canonical_status_for_finding(finding)
+            if status == "confirmed":
+                confirmed.append(finding)
+            else:
+                candidates.append(finding)
+        return (
+            self._deduplicate_confirmed_findings(confirmed),
+            self._deduplicate_candidate_findings(candidates),
+        )
 
     def _enforced_split(
         self,
@@ -1861,11 +1914,19 @@ def generate_haddix_submission_internal_report(
     vulnerability_family_coverage: Optional[Dict[str, Any]] = None,
     initial_release_gate: Optional[Dict[str, Any]] = None,
     source_session: str = "",
+    vdp_canonical_summary: Any = None,
+    vdp_diagnostics_section: Any = None,
+    vdp_run_outcome: Any = None,
 ) -> None:
     """Generate a submission/internal split Haddix report from findings.
 
     Mirrors :func:`generate_haddix_report` so callers can switch formatters
-    with a single import change.
+    with a single import change. ``vdp_canonical_summary`` (SGK-2026-0422)
+    switches the confirmed/candidate split to canonical verdicts and embeds
+    the machine-readable canonical index. ``vdp_diagnostics_section``
+    (SGK-2026-0425 M5, additive) embeds the diagnostic index when present.
+    ``vdp_run_outcome`` (SGK-2026-0426 W3, additive) embeds the fail-closed
+    run-failed marker when the follow-up stage failed.
     """
     formatter = HaddixSubmissionInternalFormatter()
     formatter.set_target(target, program_name)
@@ -1874,6 +1935,12 @@ def generate_haddix_submission_internal_report(
     formatter.set_scenario_coverage(scenario_coverage or {})
     formatter.set_vulnerability_family_coverage(vulnerability_family_coverage or {})
     formatter.set_initial_release_gate(initial_release_gate or {})
+    if vdp_canonical_summary is not None:
+        formatter.set_vdp_canonical_summary(vdp_canonical_summary)
+    if vdp_diagnostics_section is not None:
+        formatter.set_vdp_diagnostics_section(vdp_diagnostics_section)
+    if vdp_run_outcome is not None:
+        formatter.set_vdp_run_outcome(vdp_run_outcome)
 
     for raw_finding in findings:
         formatter.add_finding_from_dict(raw_finding)
@@ -1891,6 +1958,7 @@ def generate_separated_report_files(
     vulnerability_family_coverage: Optional[Dict[str, Any]] = None,
     initial_release_gate: Optional[Dict[str, Any]] = None,
     source_session: str = "",
+    vdp_canonical_summary: Any = None,
 ) -> Dict[str, Path]:
     """Generate three separated output files:
 
@@ -1898,10 +1966,23 @@ def generate_separated_report_files(
     - *_internal.md: Internal QA, coverage, gate, candidate details
     - *_internal.json: Machine-readable data (execution, evidence, reason codes, gate results)
 
-    Returns: {"submission": Path, "internal_md": Path, "internal_json": Path}
+    SGK-2026-0422: all three files are generated to TEMP files, fully
+    re-verified (non-empty / required sections / secret scan), promoted with
+    ``os.replace`` only after ALL succeed, and a completion manifest is
+    written LAST. A file group without a manifest is never an official
+    artifact (consumers must call ``verify_manifest``).
+
+    Returns: {"submission": Path, "internal_md": Path, "internal_json": Path,
+              "manifest": Path}
     """
     import json
     from datetime import datetime
+
+    from src.reporting.vdp_report_projection import (
+        atomic_write_report,
+        verify_manifest,
+        write_manifest_json,
+    )
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1913,6 +1994,8 @@ def generate_separated_report_files(
     formatter.set_scenario_coverage(scenario_coverage or {})
     formatter.set_vulnerability_family_coverage(vulnerability_family_coverage or {})
     formatter.set_initial_release_gate(initial_release_gate or {})
+    if vdp_canonical_summary is not None:
+        formatter.set_vdp_canonical_summary(vdp_canonical_summary)
 
     for raw_finding in findings:
         formatter.add_finding_from_dict(raw_finding)
@@ -1980,10 +2063,12 @@ def generate_separated_report_files(
         submission_lines.append("")
 
     submission_path = output_dir / f"{stem}_submission.md"
-    submission_path.write_text("\n".join(submission_lines), encoding="utf-8")
 
     # ---- Internal file (full split report, serves as internal.md) ----
     full_md = formatter.format_markdown()
+    if vdp_canonical_summary is not None:
+        from src.reporting.vdp_report_projection import embed_vdp_canonical_index
+        full_md = embed_vdp_canonical_index(full_md, vdp_canonical_summary)
     # Extract the internal section (everything after "# 内部評価（私用） / Internal Review Notes")
     internal_lines: List[str] = []
     header_added = False
@@ -1996,7 +2081,6 @@ def generate_separated_report_files(
             internal_lines.append(line)
 
     internal_md_path = output_dir / f"{stem}_internal.md"
-    internal_md_path.write_text("\n".join(internal_lines), encoding="utf-8")
 
     # ---- Internal JSON (machine-readable data) ----
     memo_maps = [build_finding_memo_map(f) for f in all_findings]
@@ -2027,11 +2111,90 @@ def generate_separated_report_files(
             for mm in memo_maps
         ],
     }
+    if vdp_canonical_summary is not None:
+        from src.reporting.vdp_canonical import build_vdp_canonical_index
+        internal_json_data["vdp_canonical_index_v1"] = build_vdp_canonical_index(
+            vdp_canonical_summary
+        )
     internal_json_path = output_dir / f"{stem}_internal.json"
-    internal_json_path.write_text(json.dumps(internal_json_data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    # ---- SGK-2026-0422 (audit I-06): ALL temp -> verify ALL -> os.replace ----
+    # Generate every artifact to a temp file in the same directory, verify
+    # ALL temps (non-empty / required sections / secret scan), then promote
+    # them with os.replace; the completion manifest is the LAST commit
+    # marker. If ANY step fails, no manifest is written and the partial file
+    # group is NOT an official artifact (consumers verify via manifest).
+    import os as _os
+    import tempfile as _tempfile
+
+    contents: Dict[str, str] = {
+        "submission": "\n".join(submission_lines),
+        "internal_md": "\n".join(internal_lines),
+        "internal_json": json.dumps(internal_json_data, indent=2, ensure_ascii=False),
+    }
+    required_sections: Dict[str, List[str]] = {
+        "submission": ["# 提出用レポート / Submission Report"],
+        "internal_md": ["# 内部評価（私用） / Internal Review Notes"],
+        "internal_json": [],
+    }
+    files: Dict[str, Path] = {
+        "submission": submission_path,
+        "internal_md": internal_md_path,
+        "internal_json": internal_json_path,
+    }
+    manifest_path = output_dir / f"{stem}_manifest.json"
+
+    temps: Dict[str, Path] = {}
+    try:
+        # 1) Write ALL temps + verify ALL before any promotion.
+        for key in ("submission", "internal_md", "internal_json"):
+            content = contents[key]
+            if not content.strip():
+                raise ValueError(f"{key}: refusing to promote an empty report")
+            sections = required_sections[key]
+            if sections and any(s not in content for s in sections):
+                raise ValueError(f"{key}: missing required sections {sections}")
+            from src.reporting.vdp_report_projection import scan_report_secrets
+            matches = scan_report_secrets(content)
+            if matches:
+                raise ValueError(
+                    f"{key}: refusing to promote report containing secret patterns"
+                )
+            fd, tmp_name = _tempfile.mkstemp(
+                prefix=f".{stem}_{key}.tmp_",
+                suffix=".md",
+                dir=str(output_dir),
+            )
+            tmp_path = Path(tmp_name)
+            with _os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(content)
+            temps[key] = tmp_path
+
+        # 2) Promote ALL via os.replace (atomic, same-dir).
+        for key, tmp_path in temps.items():
+            _os.replace(str(tmp_path), str(files[key]))
+
+        # 3) Completion manifest LAST — commit marker for the whole group.
+        write_manifest_json(
+            manifest_path, files, extra={"stem": stem, "target": target}
+        )
+    except Exception:
+        # Clean up any remaining temp files; never leave partial official files
+        # under the manifest-less group.
+        for tmp_path in temps.values():
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise
+
+    check = verify_manifest(manifest_path, files)
+    if not check["ok"]:
+        raise RuntimeError(f"separated report manifest verification failed: {check['reason']}")
 
     return {
         "submission": submission_path,
         "internal_md": internal_md_path,
         "internal_json": internal_json_path,
+        "manifest": manifest_path,
     }

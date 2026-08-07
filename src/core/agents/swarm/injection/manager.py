@@ -116,7 +116,7 @@ from src.core.agents.swarm.injection.manager_internal.unknown_hypotheses import 
     build_unknown_hypotheses,
     build_unknown_idor_candidate_finding,
 )
-from src.config import settings
+from src.core.config.settings import settings
 
 logger = logging.getLogger(__name__)
 

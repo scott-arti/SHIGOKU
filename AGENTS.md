@@ -186,6 +186,19 @@ LLMの利用に関する設定は `config/shigoku.yaml` の `llm` セクショ�
 - `LocalLLMProvider` / `TaskComplexityClassifier` は [DEPRECATED]。
 - 新規機能はすべてクラウド API 経由で role ベースに実装する。
 
+## 19) 完了判定のスコープ固定（強制実行）
+
+- 実装開始時点で承認された計画書の「対象」「完了条件」「必須テスト」「NOT in scope」を、そのタスクの完了契約として固定する。
+- 完了監査では、指摘を次のいずれかに必ず分類する。
+  - `in_scope_blocker`: 完了条件の未達、必須テスト失敗、当該変更による回帰、または現在有効な機能における安全境界違反。
+  - `deferred_followup`: 将来段階のhardening、現在無効な機能の運用課題、計画外の設計改善。既存または新規の追跡タスクへ紐付ける。
+  - `non_blocking_observation`: 根拠が不足する仮説、好みの差、今回の成果を無効にしない改善案。
+- 次の重大事象を示す具体的証拠がある場合だけ、計画外でも例外的に完了を止めてよい: scope逸脱、secret漏洩、未承認の状態変更、回復不能なデータ損失、通常経路の利用不能、または完了根拠そのものの偽装・無効化。
+- 後続段階で初めて有効になる機能のリスクは、現在のタスクの完了阻害に戻さない。追跡タスクの計画書の実装手順・必須テスト・完了条件へ記載する。
+- 固定済み完了契約を広げる場合は、完了判定の前にユーザーの明示承認を得て計画書を更新する。監査中に暗黙に条件を追加してはならない。
+- 固定済み完了条件がすべてPASSし、`in_scope_blocker`が0件なら、追跡可能な`deferred_followup`が残っていても当該タスクを`done`にする。
+- 最終報告では各阻害事項を計画書のどの完了条件に違反するか対応付ける。対応付けられない事項は阻害事項にしない。
+
 ## graphify
 
 This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.

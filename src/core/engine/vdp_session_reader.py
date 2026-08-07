@@ -213,6 +213,7 @@ def build_vdp_checkpoint_payload(
     budget: Any,
     idempotency_guard: IdempotencyGuard,
     state_change_guard: StateChangeGuard,
+    pending_next_actions: Optional[list] = None,
 ) -> Dict[str, Any]:
     """Build a complete checkpoint payload containing all VDP state.
 
@@ -221,6 +222,9 @@ def build_vdp_checkpoint_payload(
         budget: A ``VdpExecutionBudget`` instance (must have ``to_checkpoint_dict()``).
         idempotency_guard: The ``IdempotencyGuard`` for this hypothesis run.
         state_change_guard: The ``StateChangeGuard`` for this hypothesis run.
+        pending_next_actions: Optional pending NextAction dicts (SGK-2026-0421,
+            constraint I: checkpoint includes pending NextAction so a queue
+            failure or interruption never loses the follow-up plan).
 
     Returns:
         Dict suitable for ``atomic_write_checkpoint()`` / ``json.dump()``.
@@ -231,13 +235,26 @@ def build_vdp_checkpoint_payload(
     else:
         budget_dict = getattr(budget, "snapshot", lambda: {})()  # type: ignore[union-attr]
 
-    return {
+    data: Dict[str, Any] = {
         "hypothesis_id": hypothesis_id,
         "vdp_contract_version": VDP_CONTRACT_SCHEMA_VERSION,
         "budget": budget_dict,
         "idempotency_guard": idempotency_guard.to_dict(),
         "state_change_guard": state_change_guard.to_dict(),
     }
+    if pending_next_actions is not None:
+        data["pending_next_actions"] = list(pending_next_actions)
+    return data
+
+
+def restore_pending_next_actions(data: Dict[str, Any]) -> list:
+    """Restore the pending NextAction list from a checkpoint dict.
+
+    Returns an empty list when the checkpoint predates SGK-2026-0421 or the
+    field is absent (additive read — old checkpoints stay compatible).
+    """
+    raw = data.get("pending_next_actions")
+    return list(raw) if isinstance(raw, list) else []
 
 
 def restore_vdp_checkpoint_payload(
