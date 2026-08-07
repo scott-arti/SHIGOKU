@@ -21,6 +21,18 @@ deferred_tasks:
     impact: medium
     tracking_task_id: SGK-2026-0424
     recommended_next_action: "0424着手時にreadiness_sgk2026_0426.jsonのhash整合を確認し、実VDP許可・scope・予算・kill switch固定と合わせてgo/holdを判断"
+  - deferred_id: SGK-2026-0428
+    title: "bug-bounty bundle preflight のテスト baseline 失敗（7件）の解消"
+    reason: "0426裏取りの広域回帰で観測した既存baseline失敗。active_bundle_missing/_preflight_failed（テストfixture不足）で、0426由来ではない。ガードは正しくfail-closed"
+    impact: low
+    tracking_task_id: SGK-2026-0428
+    recommended_next_action: "7件のnode idを確定しfixture追加でgreen化（製品ガードは緩めない）"
+  - deferred_id: SGK-2026-0429
+    title: "LLM APIキー依存テストの隔離（20件）"
+    reason: "0426裏取りの広域回帰で観測した既存baseline失敗。テストenvにLLMキー未設定で認証失敗。0426由来ではなく環境依存"
+    impact: low
+    tracking_task_id: SGK-2026-0429
+    recommended_next_action: "本来mock可能なものはstub化、実API必須はrequires_llmでskip化しfail 0に"
 ---
 
 # 作業完了報告: SGK-2026-0426（VDP improvement loop — W1〜W4＋FO＋Readiness）

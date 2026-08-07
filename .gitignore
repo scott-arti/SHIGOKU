@@ -45,3 +45,7 @@ sessions*.json
 tmp/
 logs/
 md/
+
+# Runtime state / scratch (stray, SGK checkpoint cleanup)
+recon_state.json
+至極メモ
