@@ -11316,8 +11316,14 @@ class MasterConductor:
             ),
             in_scope_domains=in_scope,
             out_of_scope_domains=out_of_scope,
+            # SGK-2026-0430 F2: the fast-path scope contract fixes 60 req/min
+            # (master_conductor fast path); the snapshot must not drop it to 0
+            # (0 means "rate limit exceeded" in EthicsGuard -> every follow-up
+            # is falsely blocked at S07). Explicit target_info values are
+            # respected; only the missing case falls back to the contract
+            # default.
             max_requests_per_minute=int(
-                target_info.get('max_requests_per_minute') or 0
+                target_info.get('max_requests_per_minute') or 60
             ),
         )
 
@@ -15298,10 +15304,7 @@ class MasterConductor:
             
             # _dispatch は async 関数なので直接 await する
             result = await self._dispatch(original_task)
-            # SGK-2026-0426 W2: drain deferred VDP follow-up injections on
-            # the main thread after the resumed task body completes.
-            self._drain_vdp_pending_follow_up_injections()
-            
+
             if result.get("success"):
                 self.context.update_success_rate(True)
                 if result.get("new_assets"):

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import re
-from typing import Any
+from typing import Any, Optional
 
 from src.core.utils.json_utils import safe_json_loads
 from src.reporting.vdp_report_projection import (
@@ -424,6 +424,33 @@ def _build_vdp_canonical_comparison(
     }, reason_codes
 
 
+def _session_fail_open(session_vdp: Any) -> Optional[str]:
+    """Detect the VDP fail-open run state from the session's own evidence.
+
+    Returns the run outcome when the session demonstrably failed at the
+    follow-up stage with zero attempts — either via the W3-written
+    ``run_outcome`` field or via the pre-W3 engine signature (run_health
+    degraded with ``follow_up_enqueue_failed`` + empty attempts, the exact
+    0427 fail-open shape). None for healthy/legacy sessions (additive-absent).
+    """
+    if not isinstance(session_vdp, dict):
+        return None
+    run_outcome = session_vdp.get("run_outcome")
+    if run_outcome:
+        return str(run_outcome)
+    attempts = session_vdp.get("attempts")
+    if isinstance(attempts, (list, tuple)) and len(attempts) == 0:
+        run_health = session_vdp.get("run_health")
+        if isinstance(run_health, dict):
+            reasons = [run_health.get("reason", "")]
+            reasons.extend(run_health.get("dependency_failures") or [])
+            if any(
+                "follow_up_enqueue_failed" in str(r) for r in reasons
+            ):
+                return "follow_up_stage_failed"
+    return None
+
+
 def _build_vdp_diagnostic_comparison(
     report_index: dict[str, Any] | None,
     session_data: dict[str, Any],
@@ -664,10 +691,14 @@ def verify_report_session_consistency(
     comparison["vdp_diagnostic"] = vdp_diag_comparison
     reason_codes.extend(vdp_diag_reasons)
 
-    # SGK-2026-0426 W3: fail-closed run-outcome marker comparison. A session
-    # whose VDP follow-up stage failed (attempts=0) must NOT pass consistency
-    # as if it were a normal completion: the report must carry the
-    # ``vdp_run_failed_v1`` marker. Additive-absent for healthy/legacy pairs.
+    # SGK-2026-0426 W3 / 0430 Q2b: fail-closed run-outcome marker comparison.
+    # A session whose VDP follow-up stage failed (attempts=0) must NOT pass
+    # consistency as if it were a normal completion: the report must carry
+    # the ``vdp_run_failed_v1`` marker. The fail-open state is detected from
+    # the session's own evidence: the explicit ``run_outcome`` (W3-written)
+    # OR the pre-W3 engine signature (run_health degraded with
+    # follow_up_enqueue_failed + zero attempts — the 0427 fail-open shape).
+    # Additive-absent for healthy/legacy pairs.
     from src.reporting.vdp_report_projection import (
         extract_vdp_run_failed_marker_from_report,
     )
@@ -678,12 +709,7 @@ def verify_report_session_consistency(
         )
     except OSError:
         report_run_failed = None
-    session_vdp = session_data.get("vdp_contract")
-    session_run_outcome = (
-        session_vdp.get("run_outcome")
-        if isinstance(session_vdp, dict)
-        else None
-    )
+    session_run_outcome = _session_fail_open(session_data.get("vdp_contract"))
     if session_run_outcome:
         run_failed_reasons: list[str] = []
         if report_run_failed is None:

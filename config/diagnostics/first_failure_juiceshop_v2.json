@@ -1,0 +1,168 @@
+{
+  "analyzer_version": "v1",
+  "cases": [
+    {
+      "capability_family": "auth_bypass_injection",
+      "confidence": "not_applicable",
+      "denominator_included": true,
+      "downstream_not_reached": [],
+      "evidence_refs": [],
+      "ineligible_stages": [
+        {
+          "reason": "state_changing_not_allowed_m3a_readonly",
+          "stage": "S05"
+        }
+      ],
+      "missing_artifacts": [],
+      "not_applicable_stages": [],
+      "note": "legitimate capability-gate denial under an m3a read-only run; recorded with denominator and reason, not counted as a detection defect",
+      "opaque_case_id": "OPAQUE-AUTH-01",
+      "reason": "state_changing_not_allowed_m3a_readonly",
+      "stage": "S05",
+      "verdict": "ineligible"
+    },
+    {
+      "capability_family": "object_level_authz",
+      "confidence": "not_applicable",
+      "denominator_included": true,
+      "downstream_not_reached": [],
+      "evidence_refs": [],
+      "ineligible_stages": [
+        {
+          "reason": "state_changing_not_allowed_m3a_readonly",
+          "stage": "S05"
+        }
+      ],
+      "missing_artifacts": [],
+      "not_applicable_stages": [],
+      "note": "legitimate capability-gate denial under an m3a read-only run; recorded with denominator and reason, not counted as a detection defect",
+      "opaque_case_id": "OPAQUE-IDOR-01",
+      "reason": "state_changing_not_allowed_m3a_readonly",
+      "stage": "S05",
+      "verdict": "ineligible"
+    },
+    {
+      "analyzer_version": "v1",
+      "capability_family": "client_side_injection",
+      "cause_candidates": [
+        "C10",
+        "C11"
+      ],
+      "confidence": "supported",
+      "denominator_included": true,
+      "downstream_not_reached": [
+        "S08",
+        "S09",
+        "S10",
+        "S11",
+        "S12"
+      ],
+      "evidence_refs": [
+        "dgev-2c6d6ac331688aab"
+      ],
+      "first_failure_stage": "S07",
+      "ineligible_stages": [],
+      "missing_artifacts": [],
+      "not_applicable_stages": [],
+      "opaque_case_id": "OPAQUE-XSS-01",
+      "outcome": "blocked",
+      "reason_codes": [
+        "scope_block_incorrect"
+      ],
+      "verdict": "first_failure"
+    },
+    {
+      "analyzer_version": "v1",
+      "capability_family": "sensitive_data_exposure",
+      "cause_candidates": [
+        "C10",
+        "C11"
+      ],
+      "confidence": "supported",
+      "denominator_included": true,
+      "downstream_not_reached": [
+        "S08",
+        "S09",
+        "S11",
+        "S12"
+      ],
+      "evidence_refs": [
+        "dgev-2c6d6ac331688aab"
+      ],
+      "first_failure_stage": "S07",
+      "ineligible_stages": [],
+      "missing_artifacts": [],
+      "not_applicable_stages": [
+        {
+          "reason": "optional",
+          "stage": "S10"
+        }
+      ],
+      "opaque_case_id": "OPAQUE-DATA-01",
+      "outcome": "blocked",
+      "reason_codes": [
+        "scope_block_incorrect"
+      ],
+      "verdict": "first_failure"
+    },
+    {
+      "analyzer_version": "v1",
+      "capability_family": "token_trust_boundary",
+      "cause_candidates": [
+        "C10",
+        "C11"
+      ],
+      "confidence": "supported",
+      "denominator_included": true,
+      "downstream_not_reached": [
+        "S08",
+        "S09",
+        "S10",
+        "S11",
+        "S12"
+      ],
+      "evidence_refs": [
+        "dgev-2c6d6ac331688aab"
+      ],
+      "first_failure_stage": "S07",
+      "ineligible_stages": [],
+      "missing_artifacts": [],
+      "not_applicable_stages": [],
+      "opaque_case_id": "OPAQUE-AUTH-02",
+      "outcome": "blocked",
+      "reason_codes": [
+        "scope_block_incorrect"
+      ],
+      "verdict": "first_failure"
+    },
+    {
+      "capability_family": "access_control_escalation",
+      "confidence": "not_applicable",
+      "denominator_included": true,
+      "downstream_not_reached": [],
+      "evidence_refs": [],
+      "ineligible_stages": [
+        {
+          "reason": "state_changing_not_allowed_m3a_readonly",
+          "stage": "S05"
+        }
+      ],
+      "missing_artifacts": [],
+      "not_applicable_stages": [],
+      "note": "legitimate capability-gate denial under an m3a read-only run; recorded with denominator and reason, not counted as a detection defect",
+      "opaque_case_id": "OPAQUE-PRIV-01",
+      "reason": "state_changing_not_allowed_m3a_readonly",
+      "stage": "S05",
+      "verdict": "ineligible"
+    }
+  ],
+  "eval_version": "v2",
+  "generated_at": "2026-08-08",
+  "run_id": "fa1dbed6",
+  "run_mode": "m3a-readonly",
+  "trace_coverage": {
+    "excluded": 0,
+    "total": 6,
+    "with_verdict": 6
+  }
+}

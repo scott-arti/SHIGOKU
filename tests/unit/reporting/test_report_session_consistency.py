@@ -361,3 +361,82 @@ def test_verify_healthy_session_marker_absent_is_consistent(tmp_path: Path) -> N
     verdict = verify_report_session_consistency(report_file)
     assert verdict["status"] == "consistent"
     assert verdict["comparison"]["vdp_run_failed"]["compared"] is False
+
+
+# --- SGK-2026-0430 Q2b: pre-W3 fail-open session shape (run_health-based) -----
+
+
+def _write_run_health_failopen_session(path: Path) -> None:
+    """The exact 0427 fail-open shape: zero attempts, degraded run_health
+    with follow_up_enqueue_failed, NO run_outcome field (pre-W3 session)."""
+    payload = {
+        "completed_tasks": [],
+        "task_queue": [],
+        "scenario_coverage": {
+            "covered_count": 9,
+            "required_count": 12,
+            "missing_scenarios": ["scn_01_idor_bola_object_access"],
+        },
+        "context": {"coverage_gate": {"missing_families": []}},
+        "vdp_contract": {
+            "vdp_active": True,
+            "vdp_contract_version": 1,
+            "hypotheses": [{"hypothesis_id": "hyp-1"}],
+            "attempts": [],
+            "evidence_records": [],
+            "verdicts": [{"verdict_id": "vrd-1", "status": "candidate"}],
+            "next_actions": [{"next_action_id": "nxt-1"}],
+            "budget_snapshot": {},
+            "run_health": {
+                "schema_version": 1,
+                "run_state": "degraded",
+                "reason": "follow_up_enqueue_failed",
+                "budget_exhaustions": [],
+                "scope_blocks": [],
+                "dependency_failures": ["follow_up_enqueue_failed"],
+                "circuit_breaker_events": [],
+            },
+        },
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+
+def test_pre_w3_failopen_session_without_marker_is_inconsistent(tmp_path: Path) -> None:
+    """Q2b: the RAW 0427-shaped fail-open session (attempts=0 + degraded
+    run_health, no run_outcome field) must fail closed under the fixed
+    checker when the report lacks the marker — before: consistent []."""
+    project_dir = tmp_path / "projects" / "127.0.0.1:8888"
+    sessions_dir = project_dir / "sessions"
+    reports_dir = project_dir / "reports"
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+    reports_dir.mkdir(parents=True, exist_ok=True)
+
+    session_file = sessions_dir / "session_20260412_135804.json"
+    _write_run_health_failopen_session(session_file)
+
+    report_file = reports_dir / "haddix_report_20260412_135807.md"
+    _run_outcome_report(report_file, session_file=session_file, with_marker=False)
+
+    verdict = verify_report_session_consistency(report_file)
+    assert verdict["status"] == "inconsistent"
+    assert "vdp_run_failed_not_reflected" in verdict["reason_codes"]
+
+
+def test_pre_w3_failopen_session_with_marker_is_consistent(tmp_path: Path) -> None:
+    """Q2b: with the run-failed marker the same session is consistent — the
+    failure is surfaced, never hidden."""
+    project_dir = tmp_path / "projects" / "127.0.0.1:8888"
+    sessions_dir = project_dir / "sessions"
+    reports_dir = project_dir / "reports"
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+    reports_dir.mkdir(parents=True, exist_ok=True)
+
+    session_file = sessions_dir / "session_20260412_135804.json"
+    _write_run_health_failopen_session(session_file)
+
+    report_file = reports_dir / "haddix_report_20260412_135807.md"
+    _run_outcome_report(report_file, session_file=session_file, with_marker=True)
+
+    verdict = verify_report_session_consistency(report_file)
+    assert verdict["status"] == "consistent"
+    assert "vdp_run_failed_not_reflected" not in verdict["reason_codes"]
