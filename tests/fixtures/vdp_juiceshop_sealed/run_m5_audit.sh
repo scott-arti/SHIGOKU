@@ -21,9 +21,21 @@
 #   DEEPSEEK_API_KEY=...
 # Optional (forwarded from host env when set): OPENAI_API_KEY
 #
+# VDP cross-account auth-setup (SGK-2026-0433, pre-run provisioning phase):
+#   VDP_ACCOUNT_A_ID/VDP_ACCOUNT_A_SECRET and VDP_ACCOUNT_B_ID/
+#   VDP_ACCOUNT_B_SECRET may be provided via the env file or the host
+#   environment. When provided, auth-setup tries login and falls back to
+#   register; when absent, random account ids + secrets are generated. The
+#   phase sends A/B register/login POSTs ONLY against the sealed target and
+#   aborts the harness on any failure (fail-closed). Session tokens are
+#   written ONLY to $M5_OUT/session_env.txt (chmod 600, never echoed) and are
+#   injected into the run via --env-file so the engine sees the four
+#   VDP_ACCOUNT_* vars. The m3a run itself stays 100% GET-only.
+#
 # Outputs (M5_OUT, default /tmp/opencode/m5-out):
 #   run_stdout.log  target_access.log  proxy_access.log  hashes.start/end
 #   config.backup.yaml  first_failure_juiceshop_v1.json  external_audit_v2.json
+#   session_env.txt (0600)  auth_setup_stdout.log
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -209,12 +221,51 @@ echo "$RUNNER_SMOKE" | grep -q "venv-ok" || die "runner smoke: venv broken"
 echo "$RUNNER_SMOKE" | grep -q "dns-gate-ok" || die "runner smoke: external DNS reachable (isolation broken)"
 log "6c: runner venv + DNS gate verified"
 
+# --- phase 6d: auth-setup provisioning (A/B register/login ONLY, pre-run) --------
+log "phase 6d: auth-setup provisioning (VDP_ACCOUNT_A/B register/login POSTs only)"
+VDP_FWD=()
+for v in VDP_ACCOUNT_A_ID VDP_ACCOUNT_A_SECRET VDP_ACCOUNT_B_ID VDP_ACCOUNT_B_SECRET; do
+    if [ -n "${!v:-}" ]; then
+        VDP_FWD+=(-e "$v")
+    fi
+done
+set +e
+timeout 180 docker run --rm --name m5-authsetup \
+    --network "container:$TARGET_CONTAINER" \
+    --user "$(id -u):$(id -g)" \
+    -v "$SCRIPT_DIR:/authsetup:ro" \
+    -v "$M5_OUT:/m5out" \
+    --env-file "$M5_ENV_FILE" \
+    "${VDP_FWD[@]}" \
+    -e "HTTPS_PROXY=http://m5-proxy:3128" \
+    -e "HTTP_PROXY=http://m5-proxy:3128" \
+    -e "NO_PROXY=localhost,127.0.0.1" \
+    "$RUNNER_IMAGE" \
+    python /authsetup/auth_setup.py \
+        --config /authsetup/auth_setup_config.json \
+        --out /m5out/session_env.txt \
+        --target "$TARGET_URL" \
+    > "$M5_OUT/auth_setup_stdout.log" 2>&1
+AUTH_SETUP_EXIT=$?
+set -e
+if [ "$AUTH_SETUP_EXIT" -ne 0 ]; then
+    die "auth-setup failed (exit=$AUTH_SETUP_EXIT) — aborting before the m5 run (fail-closed)"
+fi
+chmod 600 "$M5_OUT/session_env.txt"
+log "phase 6d: auth-setup ok — session env at $M5_OUT/session_env.txt (0600)"
+
 # --- phase 7: THE SINGLE INSTRUMENTED RUN ---------------------------------------
 log "phase 7: instrumented run starting (single, timeout ${M5_TIMEOUT}s)"
 cp "$SCRIPT_DIR/caido_stub.py" "$M5_OUT/caido_stub.py"
 OPENAI_FWD=()
 if [ -n "${OPENAI_API_KEY:-}" ]; then
     OPENAI_FWD=(-e OPENAI_API_KEY)
+fi
+RUN_ENV_FILES=(--env-file "$M5_ENV_FILE")
+if [ -f "$M5_OUT/session_env.txt" ]; then
+    RUN_ENV_FILES+=(--env-file "$M5_OUT/session_env.txt")
+else
+    die "session env missing: $M5_OUT/session_env.txt — VDP_ACCOUNT_* unavailable (fail-closed, aborting before the run)"
 fi
 set +e
 timeout "$M5_TIMEOUT" docker run --rm --name m5-runner \
@@ -227,7 +278,7 @@ timeout "$M5_TIMEOUT" docker run --rm --name m5-runner \
     -v "/home/bbb/nuclei-templates:/root/nuclei-templates:ro" \
     -v "/home/linuxbrew:/home/linuxbrew:ro" \
     -v "$M5_OUT:/m5out" \
-    --env-file "$M5_ENV_FILE" \
+    "${RUN_ENV_FILES[@]}" \
     "${OPENAI_FWD[@]}" \
     -e "SHIGOKU_SKIP_ENTRY_GATE=1" \
     -e "HTTPS_PROXY=http://m5-proxy:3128" \
@@ -268,7 +319,12 @@ else
 fi
 
 # --- phase 9: evaluator post-binding ----------------------------------------------
-SESSION="$(find "$REPO_ROOT/workspace/projects" -name 'session_*.json' -newer "$MARKER" -type f 2>/dev/null | head -1)"
+# Pick the NEWEST instrumented session deterministically. `find | head -1` is
+# SIGPIPE-unsafe under `set -euo pipefail` (head closes the pipe, find dies) and
+# not deterministic — the engine writes an intermediate save + a final save per
+# run, both newer than the marker. sort -n | tail -1 reads all input (no early
+# pipe close) and selects by mtime.
+SESSION="$(find "$REPO_ROOT/workspace/projects" -name 'session_*.json' -newer "$MARKER" -type f -printf '%T@ %p\n' 2>/dev/null | sort -n | tail -1 | cut -d' ' -f2-)"
 if [ -n "$SESSION" ]; then
     log "session: $SESSION"
     "$PYTHON_BIN" "$SCRIPT_DIR/evaluate_m5.py" \

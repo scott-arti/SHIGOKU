@@ -282,29 +282,37 @@ class TestExactReplayAndFingerprint:
         assert evidence["evidence_type"] == "real_http_response"
 
     def test_timing_evidence_type(self):
+        """SGK-2026-0433: the timing gap is now M3a-executable and records a
+        timing_measurement evidence record with honest markers."""
         spec = _spec(gap="insufficient_timing_validation")
         (ex, net, writer, budget) = _executor()
         result = _run(ex.execute(spec))
-        assert result.status == MANUAL_REVIEW
-        assert result.reason == "executor_contract_unavailable:insufficient_timing_validation"
-        assert len(net.calls) == 0
-        assert writer.evidence == []
+        assert result.status == EXECUTED
+        assert result.requests_made == 8
+        assert len(net.calls) == 8
+        evidence = writer.evidence[0]
+        assert evidence["evidence_type"] == "timing_measurement"
+        er = evidence["execution_result"]
+        assert len(er["timing_baseline_samples"]) == 3
+        assert len(er["positive_control_samples"]) == 3
+        assert len(er["negative_control_samples"]) == 2
+        assert er["timing_measurement_valid"] == "true"
+        # no alternate condition in read-only scope → honest default
+        assert er["timing_difference_observed"] == "false"
+        assert er["reason"] == "no_alternate_condition_in_readonly_scope"
 
     def test_failed_negative_control_never_confirms(self):
-        spec = _spec(
-            gap="insufficient_timing_validation",
-            control_results={
-                "baseline": [0.1],
-                "attack": [4.8],
-                "inverse": [4.7],
-            },
-        )
+        """The timing path never produces confirmed verdicts — the executor
+        stays at candidate; the canonical Evidence Validator judges the
+        markers."""
+        spec = _spec(gap="insufficient_timing_validation")
         (ex, net, writer, budget) = _executor()
         result = _run(ex.execute(spec))
-        assert result.status == MANUAL_REVIEW
+        assert result.status == EXECUTED
+        assert result.verdict_status == "candidate"
         assert result.verdict_status != "confirmed"
-        assert len(net.calls) == 0
-        assert writer.evidence == []
+        er = _evidence_of(result)["execution_result"]
+        assert er["timing_difference_observed"] == "false"
 
 
 class TestM3aBlocking:

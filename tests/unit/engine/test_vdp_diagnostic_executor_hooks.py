@@ -229,15 +229,17 @@ class TestEarlyReturnHooks:
     def test_unsupported_gap_emits_s07_skipped(self):
         col = _collector()
         (ex, net, _w, _b) = _ex(diagnostic_collector=col)
-        result = _run(ex.execute(_spec(gap="insufficient_timing_validation")))
+        # SGK-2026-0433: insufficient_timing_validation is now M3a-executable;
+        # weak-session stays a still-unsupported repeated-control gap.
+        result = _run(ex.execute(_spec(gap="weak_session_not_statistically_verified")))
         assert result.status == MANUAL_REVIEW
-        assert result.reason == "executor_contract_unavailable:insufficient_timing_validation"
+        assert result.reason == "executor_contract_unavailable:weak_session_not_statistically_verified"
         assert net.count == 0
         _assert_event(
             col,
             "S07",
             "skipped",
-            source_refs=["unsupported_gap:insufficient_timing_validation"],
+            source_refs=["unsupported_gap:weak_session_not_statistically_verified"],
         )
 
     def test_exact_request_material_unavailable_emits_s07_blocked(self):

@@ -42,8 +42,11 @@ Safety contract:
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
+import statistics
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 from urllib.parse import urlparse
@@ -109,11 +112,61 @@ _COMPARISON_GAPS = frozenset({
     "semantic_diff_owner_permission_sensitive_field",
     "untested_no_second_account",
 })
-_SUPPORTED_M3A_GAPS = frozenset({"payload_request_mismatch"}) | _COMPARISON_GAPS
+_SUPPORTED_M3A_GAPS = (
+    frozenset({"payload_request_mismatch", "insufficient_timing_validation"})
+    | _COMPARISON_GAPS
+)
 
 
 def is_m3a_executor_supported_gap(evidence_gap: str) -> bool:
     return str(evidence_gap or "") in _SUPPORTED_M3A_GAPS
+
+
+# ---------------------------------------------------------------------------
+# SGK-2026-0433 timing foundation (m3a read-only, GET only)
+# ---------------------------------------------------------------------------
+
+# Sample counts of the timing control sequence. The positive control is a
+# CLIENT-SIDE calibration: a short sleep before each positive request, inside
+# the measured wall-clock window, proving the pipeline can detect a latency
+# offset of the magnitude a delay-based condition would produce. It is NOT a
+# server-side condition delta — ``timing_difference_observed`` never derives
+# from it (the record labels it as client-side control).
+_TIMING_BASELINE_SAMPLES = 3
+_TIMING_POSITIVE_SAMPLES = 3
+_TIMING_NEGATIVE_SAMPLES = 2
+_TIMING_VARIANT_SAMPLES = 3
+_TIMING_METHOD = "GET"
+_TIMING_POSITIVE_CONTROL_SLEEP_SECONDS = 0.2  # 200ms client-side hold
+# Detection threshold for the calibration: 100ms or 50% of the inserted
+# client-side delay, whichever is smaller (deliberately NOT relaxed).
+_TIMING_DETECTION_THRESHOLD_MS = 100.0
+# Delta-vs-jitter criteria for a REAL read-only condition delta: the median
+# delta must be >= 50ms AND >= 3x the baseline median absolute deviation,
+# with non-overlapping [Q1, Q3] intervals.
+_TIMING_MIN_DELTA_MS = 50.0
+_TIMING_JITTER_MULTIPLIER = 3.0
+# Honest reason vocabulary for the timing record.
+_TIMING_REASON_INSENSITIVE = "timing_pipeline_insensitive"
+_TIMING_REASON_NO_VARIANT = "no_alternate_condition_in_readonly_scope"
+_TIMING_REASON_NO_DELTA = "no_timing_difference_beyond_jitter"
+_TIMING_REASON_DELTA = "variant_timing_difference_observed"
+
+
+def _timing_median_or_zero(values: List[float]) -> float:
+    """Median of a latency sample group; 0.0 for an empty group."""
+    return statistics.median(values) if values else 0.0
+
+
+def _quantile_bounds(values: List[float]) -> Tuple[float, float]:
+    """(Q1, Q3) bounds of a latency sample group (deterministic)."""
+    if not values:
+        return 0.0, 0.0
+    if len(values) == 1:
+        sample = float(values[0])
+        return sample, sample
+    quartiles = statistics.quantiles(values, n=4)
+    return float(quartiles[0]), float(quartiles[2])
 
 
 def build_follow_up_task_id(
@@ -318,6 +371,10 @@ class VdpFollowUpExecutor:
             capability_matrix=capability_matrix, budget=None
         )
         self.diagnostic_collector = diagnostic_collector
+        # SGK-2026-0433 followup: exception class name of the last transport
+        # failure ("" when the last send succeeded) so the timing sequence can
+        # distinguish real TimeoutError from other transport errors.
+        self._last_transport_error_type = ""
 
     # ------------------------------------------------------------------
     # Diagnostic telemetry (SGK-2026-0425 M1, additive)
@@ -685,6 +742,19 @@ class VdpFollowUpExecutor:
             )
         )  # comparison = A then B; state changes = SINGLE mutation; A/B/A = read-only controls
 
+        # SGK-2026-0433 timing foundation: the timing gap runs the full
+        # baseline / positive-control / negative-control sequence (plus an
+        # optional in-scope read-only input variant) instead of the A/B/A
+        # triple. Every request goes through the same guards and budget
+        # accounting as the other gaps; the optional variant URL is
+        # re-guarded (read-only + scope) BEFORE the first network send.
+        timing_plan: Optional[List[Dict[str, Any]]] = None
+        if gap == "insufficient_timing_validation":
+            timing_plan = self._build_timing_plan(spec)
+            blocked = self._timing_variant_block_result(spec)
+            if blocked is not None:
+                return blocked
+
         # SGK-2026-0425 M1: required-run kill switch — a diagnostic hook
         # failure stops BEFORE the first network send (fail-closed
         # telemetry). The provisional idempotency registration and the
@@ -705,64 +775,109 @@ class VdpFollowUpExecutor:
         statuses: List[int] = []
         request_fingerprints: List[str] = []
         comparison_facts: Optional[Dict[str, Any]] = None
+        timing_result: Optional[Dict[str, Any]] = None
+        timing_transport_failed = False
         try:
             attempt.state = "sending"
-            for i in range(request_count):
-                # The first request was atomically reserved together with the
-                # follow-up token above.  Any repeated control request must
-                # independently consume budget before transmission.
-                if self.budget is not None and i > 0:
-                    decision = self.budget.consume(
-                        asset_key=url,
-                        actor_key=actor,
-                        hypothesis_key=hypothesis.hypothesis_id,
+            if timing_plan is not None:
+                # SGK-2026-0433: timing control sequence (baseline /
+                # positive-control / negative-control / optional variant).
+                timing_result = await self._run_timing_sequence(
+                    timing_plan,
+                    actor=actor,
+                    hypothesis=hypothesis,
+                )
+                if timing_result.get("blocked_reason"):
+                    return FollowUpExecutionResult(
+                        BLOCKED, timing_result["blocked_reason"]
                     )
-                    if not decision.allowed:
-                        return FollowUpExecutionResult(
-                            BLOCKED, f"budget:{decision.reason_code}"
-                        )
-                if comparison_ready:
-                    # authenticated GET for the i-th account (A then B)
-                    body, status = await self._send_with_auth(
-                        method, url, (auth_a_id, auth_b_id)[i]
-                    )
-                else:
-                    body, status = await self._send_read_request(method, url)
-                if body is None:
+                bodies = list(timing_result.get("bodies") or [])
+                statuses = list(timing_result.get("statuses") or [])
+                request_fingerprints = [fp] * len(bodies)
+                timing_transport_failed = bool(
+                    timing_result.get("transport_failed")
+                )
+                if timing_transport_failed:
                     attempt.state = "failed"
                     attempt.execution_result = {
                         "status": "dependency_failure",
                         "reason": "network_error",
-                        "requests_attempted": i + 1,
+                        "requests_attempted": int(
+                            timing_result.get("requests_attempted", len(bodies))
+                        ),
                     }
                     attempt.budget_snapshot = (
                         self.budget.snapshot() if self.budget is not None else {}
                     )
-                    # SGK-2026-0425: transport failure recorded as a fact
-                    # after the attempt state was persisted.
+                    # SGK-2026-0433: the transport failure is recorded as a
+                    # fact; the honest timing evidence (``<group>_timeout`` /
+                    # ``<group>_transport_error:<ExceptionClass>`` reason,
+                    # ``timing_measurement_valid`` "false") is still
+                    # built and enqueued below — the failure is never
+                    # swallowed and the gap stays open.
                     self._diag_emit(
                         stage_id="S08", outcome="failed",
                         reason_codes=("transport_timeout",),
                         source_refs=("network_error",),
                     )
-                    return FollowUpExecutionResult(
-                        DEGRADED,
-                        "network_error",
-                        attempt_id=attempt_id,
-                        requests_made=i + 1,
-                        budget_snapshot=dict(attempt.budget_snapshot),
-                        attempt=attempt.to_dict(),
+            else:
+                for i in range(request_count):
+                    # The first request was atomically reserved together with the
+                    # follow-up token above.  Any repeated control request must
+                    # independently consume budget before transmission.
+                    if self.budget is not None and i > 0:
+                        decision = self.budget.consume(
+                            asset_key=url,
+                            actor_key=actor,
+                            hypothesis_key=hypothesis.hypothesis_id,
+                        )
+                        if not decision.allowed:
+                            return FollowUpExecutionResult(
+                                BLOCKED, f"budget:{decision.reason_code}"
+                            )
+                    if comparison_ready:
+                        # authenticated GET for the i-th account (A then B)
+                        body, status = await self._send_with_auth(
+                            method, url, (auth_a_id, auth_b_id)[i]
+                        )
+                    else:
+                        body, status = await self._send_read_request(method, url)
+                    if body is None:
+                        attempt.state = "failed"
+                        attempt.execution_result = {
+                            "status": "dependency_failure",
+                            "reason": "network_error",
+                            "requests_attempted": i + 1,
+                        }
+                        attempt.budget_snapshot = (
+                            self.budget.snapshot() if self.budget is not None else {}
+                        )
+                        # SGK-2026-0425: transport failure recorded as a fact
+                        # after the attempt state was persisted.
+                        self._diag_emit(
+                            stage_id="S08", outcome="failed",
+                            reason_codes=("transport_timeout",),
+                            source_refs=("network_error",),
+                        )
+                        return FollowUpExecutionResult(
+                            DEGRADED,
+                            "network_error",
+                            attempt_id=attempt_id,
+                            requests_made=i + 1,
+                            budget_snapshot=dict(attempt.budget_snapshot),
+                            attempt=attempt.to_dict(),
+                        )
+                    bodies.append(body)
+                    statuses.append(status)
+                    request_fingerprints.append(fp)
+                if comparison_ready:
+                    # Truthful observation: evaluate the A/B comparison AFTER
+                    # both authenticated responses were received.
+                    comparison_facts = self._evaluate_cross_account_comparison(
+                        bodies, statuses
                     )
-                bodies.append(body)
-                statuses.append(status)
-                request_fingerprints.append(fp)
-            if comparison_ready:
-                # Truthful observation: evaluate the A/B comparison AFTER
-                # both authenticated responses were received.
-                comparison_facts = self._evaluate_cross_account_comparison(
-                    bodies, statuses
-                )
-            attempt.state = "sent"
+            if not timing_transport_failed:
+                attempt.state = "sent"
             # M3b production send boundary (SGK-2026-0423 Lane F): persist
             # the sent fact in the StateChangeGuard IMMEDIATELY after the
             # send loop completes, BEFORE evidence build/writer — the
@@ -802,6 +917,8 @@ class VdpFollowUpExecutor:
         # facts + markers (owner attribution / comparison completed).
         if comparison_facts is not None:
             execution_result = dict(comparison_facts)
+        elif timing_result is not None:
+            execution_result = dict(timing_result["execution_result"])
         elif (is_state_changing and m3b_authorized):
             execution_result = {
                 "state_change_sent": True,
@@ -837,7 +954,8 @@ class VdpFollowUpExecutor:
             stage_id="S10", outcome="reached",
             source_refs=("evidence_built",),
         )
-        attempt.state = "evidence_saved"
+        if not timing_transport_failed:
+            attempt.state = "evidence_saved"
         try:
             if self.evidence_writer is not None:
                 await self.evidence_writer.enqueue_evidence(evidence.to_dict())
@@ -864,6 +982,28 @@ class VdpFollowUpExecutor:
                 state_change_sent=(is_state_changing and m3b_authorized),
             )
 
+        if timing_transport_failed:
+            # SGK-2026-0433: transport failure stays DEGRADED (same as the
+            # A/B/A path) but the honest timing evidence record is attached
+            # (``timing_measurement_valid`` "false" + the explicit timeout /
+            # transport-error reason); the failure is recorded, never
+            # swallowed.
+            return FollowUpExecutionResult(
+                DEGRADED,
+                "network_error",
+                attempt_id=attempt_id,
+                evidence_id=evidence.evidence_id,
+                requests_made=int(
+                    timing_result.get("requests_attempted", len(bodies))
+                    if timing_result is not None
+                    else len(bodies)
+                ),
+                verdict_status="candidate",  # never confirmed in 0421
+                budget_snapshot=self.budget.snapshot() if self.budget is not None else {},
+                attempt=attempt.to_dict(),
+                evidence=evidence.to_dict(),
+                state_change_sent=False,
+            )
         return FollowUpExecutionResult(
             EXECUTED,
             "executed",
@@ -914,6 +1054,7 @@ class VdpFollowUpExecutor:
         if self.network_client is None:
             return None, 0
         try:
+            self._last_transport_error_type = ""
             request_kwargs: Dict[str, Any] = dict(
                 use_cache=False,
                 retries=0,
@@ -933,7 +1074,11 @@ class VdpFollowUpExecutor:
             if isinstance(body, bytes):
                 body = body.decode("utf-8", errors="replace")
             return str(body), status
-        except Exception:
+        except Exception as exc:
+            # SGK-2026-0433 followup: keep the exception class name so the
+            # timing sequence can label the honest failure reason (a
+            # connection-refused/DNS/TLS error is NOT a timeout).
+            self._last_transport_error_type = type(exc).__name__
             if self.budget is not None:
                 self.budget.record_timeout(url)
             return None, 0
@@ -1001,6 +1146,330 @@ class VdpFollowUpExecutor:
         if a_status > 0 and b_status in (200, 403):
             facts["second_account_compared"] = "true"
         return facts
+
+    # ------------------------------------------------------------------
+    # SGK-2026-0433 timing foundation (read-only, GET-only)
+    # ------------------------------------------------------------------
+
+    def _build_timing_plan(self, spec: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Build the timing control sequence for the timing gap.
+
+        All requests are read-only GETs (``_TIMING_METHOD``). Baseline /
+        positive-control / negative-control target the spec URL; the
+        positive control adds a short CLIENT-SIDE sleep inside the measured
+        wall-clock window (calibration only — it never drives
+        ``timing_difference_observed``). When the spec carries an optional
+        in-scope ``timing_variant_url``, a variant group samples that URL —
+        the only real read-only condition delta the executor can observe
+        (parameter values are deliberately discarded elsewhere). The account
+        A session is used when ``auth_a_id`` resolves from the credential
+        store, else anonymous.
+        """
+        url = str(spec.get("url", "") or "")
+        auth_a_id = str(spec.get("auth_a_id", "") or "").strip()
+        auth_a_id = auth_a_id if auth_a_id in self.account_credentials else ""
+        variant_url = str(spec.get("timing_variant_url", "") or "").strip()
+        plan: List[Dict[str, Any]] = []
+        for _ in range(_TIMING_BASELINE_SAMPLES):
+            plan.append({
+                "group": "baseline", "url": url,
+                "sleep_seconds": 0.0, "auth_id": auth_a_id,
+            })
+        for _ in range(_TIMING_POSITIVE_SAMPLES):
+            plan.append({
+                "group": "positive", "url": url,
+                "sleep_seconds": _TIMING_POSITIVE_CONTROL_SLEEP_SECONDS,
+                "auth_id": auth_a_id,
+            })
+        for _ in range(_TIMING_NEGATIVE_SAMPLES):
+            plan.append({
+                "group": "negative", "url": url,
+                "sleep_seconds": 0.0, "auth_id": auth_a_id,
+            })
+        if variant_url:
+            for _ in range(_TIMING_VARIANT_SAMPLES):
+                plan.append({
+                    "group": "variant", "url": variant_url,
+                    "sleep_seconds": 0.0, "auth_id": auth_a_id,
+                })
+        return plan
+
+    def _timing_variant_block_result(
+        self, spec: Dict[str, Any]
+    ) -> Optional[FollowUpExecutionResult]:
+        """Fail-closed guard checks for the optional timing variant URL.
+
+        The variant is a read-only GET only: it must pass the read-only
+        guard (state-changing semantics rejected) and scope revalidation
+        (explicit snapshot, same as the main request). Any violation blocks
+        BEFORE the first network send.
+        """
+        variant_url = str(spec.get("timing_variant_url", "") or "").strip()
+        if not variant_url:
+            return None
+        readonly = evaluate_readonly_request(
+            _TIMING_METHOD,
+            action_semantics="",
+            body=None,
+            url=variant_url,
+        )
+        if not readonly.allowed:
+            self._diag_emit(
+                stage_id="S07", outcome="blocked",
+                source_refs=("readonly_enforce_guard",),
+            )
+            return FollowUpExecutionResult(
+                MANUAL_REVIEW, f"readonly_guard:{readonly.reason}"
+            )
+        scope_result = revalidate_scope_for_request(
+            variant_url, scope_definition=self.scope_definition
+        )
+        if not scope_result.allowed:
+            self._diag_emit(
+                stage_id="S07", outcome="blocked",
+                reason_codes=("scope_block_incorrect",),
+                source_refs=(f"scope:{scope_result.verdict}",),
+            )
+            return FollowUpExecutionResult(BLOCKED, f"scope:{scope_result.verdict}")
+        return None
+
+    async def _run_timing_sequence(
+        self,
+        plan: List[Dict[str, Any]],
+        *,
+        actor: str,
+        hypothesis: HypothesisRecord,
+    ) -> Dict[str, Any]:
+        """Run the timing control sequence and build the honest timing result.
+
+        Budget accounting mirrors the A/B/A path exactly: the first request
+        was atomically reserved by ``consume_follow_up_request``; every
+        subsequent request consumes budget independently before transmission.
+        Every response is recorded via ``budget.record_response`` inside the
+        shared send helper (the existing send pattern).
+
+        Latency for the record is measured as wall-clock around the whole
+        step (including the client-side control sleep for positive controls;
+        the record labels that explicitly). Failures are NEVER swallowed: a
+        non-2xx or transport failure stops the sequence and is recorded as
+        ``failed_requests`` plus an explicit ``reason`` —
+        ``<group>_failed_status_<status>`` for non-2xx, ``<group>_timeout``
+        for TimeoutError/asyncio timeouts, and
+        ``<group>_transport_error:<ExceptionClass>`` for other transport
+        exceptions (connection-refused/DNS/TLS are never labeled as
+        timeouts) — with ``timing_measurement_valid`` "false", keeping the
+        gap open.
+        """
+        samples: Dict[str, List[float]] = {
+            "baseline": [], "positive": [], "negative": [], "variant": [],
+        }
+        bodies: List[str] = []
+        statuses: List[int] = []
+        failed_requests: List[Dict[str, Any]] = []
+        failure_reason = ""
+        transport_failed = False
+        variant_present = any(
+            str(step.get("group") or "") == "variant" for step in plan
+        )
+        for i, step in enumerate(plan):
+            step_url = str(step.get("url") or "")
+            if self.budget is not None and i > 0:
+                decision = self.budget.consume(
+                    asset_key=step_url,
+                    actor_key=actor,
+                    hypothesis_key=hypothesis.hypothesis_id,
+                )
+                if not decision.allowed:
+                    return {"blocked_reason": f"budget:{decision.reason_code}"}
+            group = str(step.get("group") or "baseline")
+            sleep_seconds = float(step.get("sleep_seconds") or 0.0)
+            auth_id = str(step.get("auth_id") or "")
+            t0 = time.monotonic()
+            if sleep_seconds > 0.0:
+                await asyncio.sleep(sleep_seconds)
+            if auth_id:
+                body, status = await self._send_with_auth(
+                    _TIMING_METHOD, step_url, auth_id
+                )
+            else:
+                body, status = await self._send_read_request(
+                    _TIMING_METHOD, step_url
+                )
+            latency_ms = (time.monotonic() - t0) * 1000.0
+            if body is None:
+                transport_failed = True
+                error_type = str(
+                    getattr(self, "_last_transport_error_type", "") or ""
+                )
+                if error_type in ("", "TimeoutError"):
+                    # actual TimeoutError / asyncio timeout (or unknown):
+                    # keep the existing ``<group>_timeout`` label
+                    failure_reason = f"{group}_timeout"
+                    failed_requests.append(
+                        {"group": group, "status": 0, "timeout": True}
+                    )
+                else:
+                    # connection-refused / DNS / TLS / ... — record the
+                    # exception class name honestly (never a fake timeout)
+                    failure_reason = f"{group}_transport_error:{error_type}"
+                    failed_requests.append(
+                        {
+                            "group": group,
+                            "status": 0,
+                            "timeout": False,
+                            "error": error_type,
+                        }
+                    )
+                break
+            bodies.append(body)
+            statuses.append(status)
+            if 200 <= status < 300:
+                samples[group].append(latency_ms)
+            else:
+                failure_reason = f"{group}_failed_status_{status}"
+                failed_requests.append(
+                    {"group": group, "status": status, "timeout": False}
+                )
+                break
+        execution_result = self._build_timing_execution_result(
+            samples=samples,
+            statuses=statuses,
+            failed_requests=failed_requests,
+            failure_reason=failure_reason,
+            variant_present=variant_present,
+        )
+        return {
+            "blocked_reason": "",
+            "bodies": bodies,
+            "statuses": statuses,
+            "execution_result": execution_result,
+            "transport_failed": transport_failed,
+            "requests_attempted": len(bodies) + len(failed_requests),
+        }
+
+    def _build_timing_execution_result(
+        self,
+        *,
+        samples: Dict[str, List[float]],
+        statuses: List[int],
+        failed_requests: List[Dict[str, Any]],
+        failure_reason: str,
+        variant_present: bool,
+    ) -> Dict[str, Any]:
+        """Compute medians + the honest marker vocabulary for the record.
+
+        - ``timing_measurement_valid`` "true" only when the calibration
+          offset (median(positive) - median(baseline)) is at least the
+          detection threshold (100ms or 50% of the inserted client-side
+          delay, whichever is smaller); otherwise "false" with
+          ``timing_pipeline_insensitive``.
+        - ``timing_difference_observed`` "true" ONLY for a REAL read-only
+          condition delta: the optional variant group's median differs from
+          baseline beyond jitter (delta >= max(3x baseline MAD, 50ms) with
+          non-overlapping [Q1, Q3] intervals). Without a variant condition
+          the honest default is "false" with
+          ``no_alternate_condition_in_readonly_scope``.
+        - Any group failure (non-2xx or transport) → "false" with the
+          explicit failure reason; the gap stays open.
+        """
+        baseline = list(samples.get("baseline") or [])
+        positive = list(samples.get("positive") or [])
+        negative = list(samples.get("negative") or [])
+        variant = list(samples.get("variant") or [])
+        base_median = _timing_median_or_zero(baseline)
+        pos_median = _timing_median_or_zero(positive)
+        neg_median = _timing_median_or_zero(negative)
+        var_median = _timing_median_or_zero(variant) if variant else None
+        medians: Dict[str, float] = {
+            "baseline": base_median,
+            "positive": pos_median,
+            "negative": neg_median,
+        }
+        if var_median is not None:
+            medians["variant"] = var_median
+
+        valid = "true"
+        observed = "false"
+        reason = ""
+        if failure_reason:
+            valid = "false"
+            reason = failure_reason
+        else:
+            inserted_delay_ms = _TIMING_POSITIVE_CONTROL_SLEEP_SECONDS * 1000.0
+            detection_threshold = min(
+                _TIMING_DETECTION_THRESHOLD_MS, inserted_delay_ms * 0.5
+            )
+            calibration_delta = pos_median - base_median
+            if calibration_delta < detection_threshold:
+                valid = "false"
+                reason = _TIMING_REASON_INSENSITIVE
+            elif not variant_present:
+                reason = _TIMING_REASON_NO_VARIANT
+            else:
+                observed, reason = self._evaluate_timing_variant_delta(
+                    baseline, variant, base_median
+                )
+
+        execution_result: Dict[str, Any] = {
+            "timing_baseline_samples": baseline,
+            "timing_positive_samples": positive,
+            "timing_negative_control_samples": negative,
+            "positive_control_samples": positive,
+            "negative_control_samples": negative,
+            "medians": medians,
+            "timing_baseline_median": base_median,
+            "timing_positive_median": pos_median,
+            "timing_negative_control_median": neg_median,
+            "timing_measurement_valid": valid,
+            "timing_difference_observed": observed,
+            "reason": reason,
+            "positive_control_is_client_side": True,
+            "positive_control_client_side_sleep_ms": round(
+                _TIMING_POSITIVE_CONTROL_SLEEP_SECONDS * 1000.0, 3
+            ),
+            "positive_control_latency_includes_client_sleep": True,
+            "timing_method": _TIMING_METHOD,
+            "timing_variant_condition_present": bool(variant_present),
+            "response_received": True,
+            "http_status": statuses[-1] if statuses else 0,
+            # SGK-2026-0433 followup: each request is counted exactly once.
+            # A failed-status response is in ``statuses`` (received) and its
+            # failure detail lives in ``failed_requests`` (informational) —
+            # never summed together.
+            "request_count": len(statuses),
+            "failed_requests": failed_requests,
+        }
+        if var_median is not None:
+            execution_result["timing_variant_median"] = var_median
+        return execution_result
+
+    @staticmethod
+    def _evaluate_timing_variant_delta(
+        baseline: List[float],
+        variant: List[float],
+        base_median: float,
+    ) -> Tuple[str, str]:
+        """Delta-vs-jitter check for the real read-only variant condition.
+
+        Observed "true" only when the variant median differs from the
+        baseline median beyond jitter: absolute delta >= 50ms AND >= 3x the
+        baseline median absolute deviation, with non-overlapping [Q1, Q3]
+        intervals. Returns (marker, reason).
+        """
+        var_median = statistics.median(variant)
+        delta = abs(var_median - base_median)
+        mad = (
+            statistics.median([abs(sample - base_median) for sample in baseline])
+            if baseline
+            else 0.0
+        )
+        if delta < max(_TIMING_JITTER_MULTIPLIER * mad, _TIMING_MIN_DELTA_MS):
+            return "false", _TIMING_REASON_NO_DELTA
+        base_q1, base_q3 = _quantile_bounds(baseline)
+        var_q1, var_q3 = _quantile_bounds(variant)
+        if not (var_q1 > base_q3 or var_q3 < base_q1):
+            return "false", _TIMING_REASON_NO_DELTA
+        return "true", _TIMING_REASON_DELTA
 
     @staticmethod
     def _owner_record_granted(a_body: str, b_body: str, b_status: int) -> bool:
