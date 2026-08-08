@@ -1,0 +1,53 @@
+{
+  "experiment_id": "cf-0434-attempt-funnel-truth",
+  "frozen_input_hash": "sha256:d59d258ebc8b9b1c2900f9f08eabe1145c3e9c5c67916407be2efc7c1ef8022e",
+  "changed_variable": "attempt",
+  "control_config_hash": "sha256:3f785d0416fd4a536274d04490523b05b903e19c5c94053eebc72ed291ff68e7",
+  "treatment_config_hash": "sha256:2b1a1c59f1d806f119f7c226d2dd87afeabbf88eb0903e513eb0029146a675a6",
+  "taxonomy_version": "v2",
+  "eval_version": "v1",
+  "repeat_count": 2,
+  "inputs": {
+    "control": {
+      "attempt": "probe_sent",
+      "gap": "payload_request_mismatch",
+      "param_material": "destroyed"
+    },
+    "treatment": {
+      "attempt": "probe_blocked_s07",
+      "gap": "payload_request_mismatch",
+      "param_material": "destroyed"
+    }
+  },
+  "control_verdicts": [
+    {
+      "opaque_case_id": "OPAQUE-XSS-01",
+      "first_failure_stage": "S12"
+    }
+  ],
+  "treatment_verdicts": [
+    {
+      "opaque_case_id": "OPAQUE-XSS-01",
+      "first_failure_stage": "S07"
+    }
+  ],
+  "control_safety": {
+    "scope_violations": 0,
+    "unauthorized_state_changes": 0,
+    "secret_leakage": 0,
+    "double_sends": 0,
+    "budget_exceeded": 0
+  },
+  "treatment_safety": {
+    "scope_violations": 0,
+    "unauthorized_state_changes": 0,
+    "secret_leakage": 0,
+    "double_sends": 0,
+    "budget_exceeded": 0
+  },
+  "evidence": {
+    "control_source": "session_20260807_153606.json (0430 run: payload-less probe sent for hyp-305c4372, S08/S10/S11 misleadingly reached, first_failure S12)",
+    "treatment_source": "tests/unit/engine/test_vdp_follow_up_executor.py::TestFunnelTruthPayloadMismatch (post-0434: S07 exact_request_material_unavailable block, probe not sent) + tests/unit/reporting/test_vdp_sealed_cases.py::test_payload_mismatch_blocked_at_s07_is_first_failure",
+    "note": "single-variable change attempt: probe_sent -> probe_blocked_s07. The stage delta removes the misleading S08/S10/S11 reach (funnel honestification); attribution supported because the harness scores reach-reduction as regression, which here IS the desired honesty fix."
+  }
+}

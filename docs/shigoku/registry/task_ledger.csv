@@ -435,6 +435,6 @@ SGK-2026-0430,0426修正の封印ライブ実効確認（Juice Shop m3a rerun）
 SGK-2026-0431,並列 executor における VDP follow-up drain 合流点の再配線,deferred,plan,SGK-2026-0430,docs/shigoku/plans/2026-08-08_sgk-2026-0431_parallel-executor-vdp-followup-drain-rehoming_plan.md
 SGK-2026-0432,検出品質（深さ）の因果診断：candidate→confirmed gap-closure段,done,subtask_plan,SGK-2026-0418,docs/shigoku/subtasks/done/2026-08-08_sgk-2026-0432_gap-closure-causal-diagnosis_subtask_plan.md
 SGK-2026-0433,m3a gap-closure 能力拡張（第2アカウント authz 比較・タイミング基盤）,done,plan,SGK-2026-0432,docs/shigoku/plans/done/2026-08-08_sgk-2026-0433_m3a-gap-closure-capability_plan.md
-SGK-2026-0434,payload_request_mismatch probe の funnel-truth 改善,active,plan,SGK-2026-0432,docs/shigoku/plans/2026-08-08_sgk-2026-0434_payload-mismatch-funnel-truth_plan.md
+SGK-2026-0434,payload_request_mismatch probe の funnel-truth 改善,done,plan,SGK-2026-0432,docs/shigoku/plans/done/2026-08-08_sgk-2026-0434_payload-mismatch-funnel-truth_plan.md
 SGK-2026-0435,product-independence preflight の docs 成果物 token-scan 拡張,deferred,plan,SGK-2026-0432,docs/shigoku/plans/2026-08-08_sgk-2026-0435_preflight-docs-artifact-token-scan.md
 SGK-2026-0436,timing ライブ取得と封印harness成果物所有権の改善,deferred,plan,SGK-2026-0433,docs/shigoku/plans/2026-08-08_sgk-2026-0436_timing-live-acquisition-and-harness-ownership_plan.md

@@ -49,7 +49,6 @@ import statistics
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
-from urllib.parse import urlparse
 
 from src.core.engine.vdp_admission import VdpAdmissionGate
 from src.core.engine.vdp_diagnostic_trace import DiagnosticCollector
@@ -493,16 +492,18 @@ class VdpFollowUpExecutor:
                 f"executor_contract_unavailable:{plan.reason_code}",
             )
 
-        # Observation deliberately discards parameter values, request bodies,
-        # and credential material.  Exact replay is therefore truthful only
-        # for a request that needs none of them; all other shapes remain
-        # pending/manual instead of sending a fabricated generic request.
-        if plan.reason_code == "payload_request_mismatch" and (
-            spec.get("param_names")
-            or spec.get("param_locations")
-            or spec.get("header_positions")
-            or urlparse(str(spec.get("url", "") or "")).query
-        ):
+        # SGK-2026-0434: payload_request_mismatch can never be truthfully
+        # probed in m3a. The gap exists precisely because the hypothesis
+        # payload did not match the observed request — payload VALUES are
+        # deliberately discarded at the observation boundary (0425 §5.1),
+        # so the exact request material can NEVER be reconstructed for this
+        # gap. A payload-less probe would be a fabricated generic request
+        # and would misleadingly reach S08/S10/S11 (0430 row 3). This
+        # includes the param-empty case: the previous check only blocked
+        # when request material was PRESENT, letting param-empty specs
+        # slip through the hole. Block at S07 exact_request_material_unavailable
+        # for every payload_request_mismatch spec (material present or not).
+        if plan.reason_code == "payload_request_mismatch":
             self._diag_emit(
                 stage_id="S07", outcome="blocked",
                 source_refs=("exact_request_material_unavailable",),

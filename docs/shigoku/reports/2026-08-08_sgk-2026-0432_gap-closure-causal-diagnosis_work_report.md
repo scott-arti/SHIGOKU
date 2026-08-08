@@ -7,11 +7,11 @@ related_docs:
 - docs/shigoku/subtasks/done/2026-08-08_sgk-2026-0432_gap-closure-causal-diagnosis_subtask_plan.md
 - docs/shigoku/reports/2026-08-07_sgk-2026-0430_sealed-live-rerun-verification_work_report.md
 - docs/shigoku/plans/done/2026-08-08_sgk-2026-0433_m3a-gap-closure-capability_plan.md
-- docs/shigoku/plans/2026-08-08_sgk-2026-0434_payload-mismatch-funnel-truth_plan.md
+- docs/shigoku/plans/done/2026-08-08_sgk-2026-0434_payload-mismatch-funnel-truth_plan.md
 - docs/shigoku/worklogs/2026-08-08_sgk-2026-0432_gap-closure-causal-diagnosis_work_log.md
 title: candidate→confirmed gap-closure 因果診断 完了報告
 created_at: '2026-08-08'
-updated_at: '2026-08-08'
+updated_at: '2026-08-09'
 tags:
 - shigoku
 target: workspace/projects/localhost:3000

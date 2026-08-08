@@ -309,6 +309,48 @@ class TestM2ShadowProposals:
             # status property returns _status; confirmed creation blocked
             assert p.verdict.status == "candidate"
 
+    # --- SGK-2026-0434: destroyed-material payload_request_mismatch gap -----
+
+    def test_destroyed_material_render_gap_skips_payload_mismatch(self):
+        """A RENDER observation whose request material was destroyed (param
+        names survive, values discarded) must NOT get payload_request_mismatch
+        as the first m3a gap — the funnel label must advance to the next
+        required evidence."""
+        obs = _make_observation(
+            primary_label="search",
+            candidate_labels=("search", "template"),
+            param_names=("q",),
+            param_locations=("query",),
+        )
+        hyp = build_hypothesis(obs, scope_verdict="allowed")
+        assert hyp.capability == "render_store_search_template"
+        assert hyp.required_evidence[0] != "payload_request_mismatch"
+        proposals = build_shadow_proposals([hyp])
+        assert proposals[0].next_action.evidence_gap != "payload_request_mismatch"
+
+    def test_clean_render_observation_keeps_payload_mismatch_first_gap(self):
+        """A RENDER observation with NO destroyed material keeps
+        payload_request_mismatch as the first required evidence (the
+        executor blocks it at S07 exact_request_material_unavailable)."""
+        obs = _make_observation(
+            primary_label="search",
+            candidate_labels=("search", "template"),
+            param_names=(),
+            param_locations=(),
+        )
+        hyp = build_hypothesis(obs, scope_verdict="allowed")
+        assert hyp.capability == "render_store_search_template"
+        assert hyp.required_evidence[0] == "payload_request_mismatch"
+
+    def test_non_payload_first_gap_never_reordered(self):
+        """Capabilities whose first gap is NOT payload_request_mismatch are
+        untouched by the destroyed-material reorder (set unchanged)."""
+        obs = _make_observation(param_names=("id",))  # destroyed material
+        hyp = build_hypothesis(obs, scope_verdict="allowed")
+        base = ["authz_impact_not_proven", "semantic_diff_owner_permission_sensitive_field"]
+        assert hyp.required_evidence == base
+        assert hyp.required_evidence[0] == "authz_impact_not_proven"
+
 
 class TestIdempotency:
     def test_same_input_twice_same_output(self):

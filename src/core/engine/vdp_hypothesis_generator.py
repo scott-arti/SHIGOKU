@@ -519,6 +519,29 @@ def build_hypothesis(
     )
 
     required_evidence = _REQUIRED_EVIDENCE_BY_CAPABILITY.get(capability, ["payload_request_mismatch"])
+    # SGK-2026-0434: payload_request_mismatch can never be closed by an m3a
+    # probe (the payload VALUES were deliberately discarded at the
+    # observation boundary, 0425 §5.1). When the observation shows that
+    # request material was destroyed (param names / locations survive, but
+    # values and auth credentials are gone), do NOT issue it as the first
+    # m3a gap — advance to the next required evidence so the funnel labels
+    # the gap honestly instead of promising an impossible probe.
+    _observation_material_destroyed = bool(
+        observation.param_names
+        or observation.param_locations
+        or observation.has_auth_header
+        or observation.has_cookie
+    )
+    if (
+        _observation_material_destroyed
+        and required_evidence
+        and required_evidence[0] == "payload_request_mismatch"
+    ):
+        required_evidence = [
+            entry
+            for entry in required_evidence
+            if entry != "payload_request_mismatch"
+        ] + ["payload_request_mismatch"]
     risk_class = _RISK_BY_CAPABILITY.get(capability, "read_only")
     if budget_estimate is None:
         budget_estimate = dict(_BUDGET_ESTIMATE_BY_CAPABILITY.get(capability, {}))

@@ -311,6 +311,33 @@ def test_driver_without_diagnostic_section_yields_early_cut(cases_by_id, tmp_pat
         assert "C13" in verdict["cause_candidates"]
 
 
+# --- 7. SGK-2026-0434: payload_request_mismatch funnel honesty ----------------
+
+def test_payload_mismatch_blocked_at_s07_is_first_failure(cases_by_id):
+    """The funnel for a payload_request_mismatch case whose executor blocks
+    at S07 exact_request_material_unavailable must report first_failure S07
+    (NOT S08/S10/S11 — the old misleading reach of a payload-less probe)."""
+    case = cases_by_id["OPAQUE-XSS-01"]
+    events = _reach_chain("S06")
+    events.append(
+        _event(
+            "fail-S07-payload",
+            "S07",
+            outcome="blocked",
+            reason_codes=["exact_request_material_unavailable"],
+        )
+    )
+    verdict = DRIVER._evaluated_verdict(case, events, canonical_summary={})
+    assert verdict["verdict"] == "first_failure"
+    assert verdict["first_failure_stage"] == "S07"
+    assert "exact_request_material_unavailable" in verdict["reason_codes"]
+    # downstream stages must NOT be claimed as reached (funnel no longer lies)
+    assert verdict["downstream_not_reached"]
+    assert "S08" in verdict["downstream_not_reached"]
+    assert "S10" in verdict["downstream_not_reached"]
+    assert "S11" in verdict["downstream_not_reached"]
+
+
 # --- 6. Invalid DAG excluded from the denominator ----------------------------
 
 

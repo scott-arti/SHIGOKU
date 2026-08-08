@@ -245,7 +245,11 @@ class TestEarlyReturnHooks:
     def test_exact_request_material_unavailable_emits_s07_blocked(self):
         col = _collector()
         (ex, net, _w, _b) = _ex(diagnostic_collector=col)
-        result = _run(ex.execute(_spec(param_names=["id"], param_locations=["query"])))
+        result = _run(ex.execute(_spec(
+            gap="payload_request_mismatch",
+            param_names=["id"],
+            param_locations=["query"],
+        )))
         assert result.status == MANUAL_REVIEW
         assert result.reason == "exact_request_material_unavailable"
         assert net.count == 0
@@ -364,7 +368,7 @@ class TestSendPathHooks:
     def test_idempotency_duplicate_emits_s08_blocked(self):
         col = _collector()
         (ex, net, _w, _b) = _ex(diagnostic_collector=col)
-        attempt_id = build_attempt_id("hyp-res-1", "payload_request_mismatch", "unauth")
+        attempt_id = build_attempt_id("hyp-res-1", "authz_impact_not_proven", "unauth")
         assert ex.idempotency_guard.register(attempt_id)
         result = _run(ex.execute(_spec()))
         assert result.status == MANUAL_REVIEW

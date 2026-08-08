@@ -116,6 +116,15 @@ async def _run_enforce_session(tmp_path, monkeypatch):
     )
     tasks = [t for t in mc.task_queue if t.agent_type == "vdp_follow_up"]
     assert tasks
+    # SGK-2026-0434: the queued render `/search` spec carries the
+    # payload_request_mismatch gap (destroyed material) and is honestly
+    # blocked at S07; the real-path chain exercises the executor with a
+    # healthy executable gap on the SAME task (real hypothesis/verdict
+    # lineage preserved).
+    blocked = await mc._dispatch(tasks[0])
+    assert blocked["data"]["status"] == "manual_review"
+    assert blocked["data"]["reason"] == "exact_request_material_unavailable"
+    tasks[0].params["vdp_follow_up_spec"]["evidence_gap"] = "authz_impact_not_proven"
     for task in tasks:
         result = await mc._dispatch(task)
         assert result["success"] is True, result

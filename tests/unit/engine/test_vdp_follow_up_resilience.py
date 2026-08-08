@@ -88,7 +88,9 @@ class _W:
         self.evidence.append(evidence)
 
 
-def _spec(gap="payload_request_mismatch", **overrides) -> dict:
+def _spec(gap="authz_impact_not_proven", **overrides) -> dict:
+    # SGK-2026-0434: payload_request_mismatch is no longer an executable
+    # m3a gap; machinery tests default to a healthy executable gap.
     hyp = _hyp()
     na = build_next_action_record("vrd-r1", hyp, gap)
     spec = {

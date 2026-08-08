@@ -429,8 +429,22 @@ class TestQueueAndCheckpointDrills:
         def _boom(data, path):
             raise OSError(28, "No space left on device")
 
+        # SGK-2026-0434: the queued render `/search` spec carries the
+        # payload_request_mismatch gap (destroyed material) and is honestly
+        # blocked at S07; the checkpoint drill dispatches a healthy
+        # executable spec (authz comparison fallback) to exercise the
+        # post-send checkpoint failure path.
+        from tests.unit.engine.test_vdp_rollout_mc_integration import (
+            _read_only_spec,
+            _vdp_task,
+        )
+
+        blocked = await mc._dispatch(tasks[0])
+        assert blocked["data"]["status"] == "manual_review"
+        assert blocked["data"]["reason"] == "exact_request_material_unavailable"
+        healthy = _vdp_task(_read_only_spec("task-ro-ck6"))
         monkeypatch.setattr(vdp_contract_mod, "atomic_write_checkpoint", _boom)
-        for task in tasks:
+        for task in (healthy,):
             result = await mc._dispatch(task)
             assert result["data"]["status"] == "executed"  # send completed
             assert result["success"] is False, result
@@ -651,7 +665,19 @@ class TestQueueAndCheckpointDrills:
         )
         tasks = [t for t in mc1.task_queue if t.agent_type == "vdp_follow_up"]
         assert tasks
-        for task in tasks:
+        # SGK-2026-0434: the queued payload_request_mismatch spec is
+        # honestly blocked at S07; the resume drill exercises the
+        # checkpoint roundtrip with a healthy executable spec.
+        from tests.unit.engine.test_vdp_rollout_mc_integration import (
+            _read_only_spec,
+            _vdp_task,
+        )
+
+        healthy = _vdp_task(_read_only_spec("task-ro-ck10"))
+        blocked = await mc1._dispatch(tasks[0])
+        assert blocked["data"]["status"] == "manual_review"
+        assert blocked["data"]["reason"] == "exact_request_material_unavailable"
+        for task in (healthy,):
             result = await mc1._dispatch(task)
             assert result["data"]["status"] == "executed"
         registered = {item["attempt_id"] for item in mc1._vdp_state["attempts"]}
@@ -672,12 +698,12 @@ class TestQueueAndCheckpointDrills:
             assert mc2._vdp_idem_guard().is_registered(attempt_id)
 
         # re-dispatch the same tasks → not executed twice (net2 untouched)
-        for task in tasks:
+        for task in (healthy,):
             result = await mc2._dispatch(task)
             assert result["data"]["status"] != "executed"
             assert "idempotency_duplicate" in result["data"]["reason"]
         assert net2.count == 0
-        assert net.count == len(tasks)
+        assert net.count == 1
 
         drill = DrillSpec(
             drill_id="drill_checkpoint_recovery_resume",
@@ -838,6 +864,14 @@ class TestOperationalStopDrills:
         )
         tasks = [t for t in mc.task_queue if t.agent_type == "vdp_follow_up"]
         assert tasks
+        # SGK-2026-0434: the queued render `/search` spec carries the
+        # payload_request_mismatch gap (destroyed material) and is honestly
+        # blocked at S07; the kill-switch drill exercises the mid-flight
+        # switch with a healthy executable gap on the SAME task (real
+        # hypothesis/verdict lineage preserved).
+        tasks[0].params["vdp_follow_up_spec"]["evidence_gap"] = (
+            "authz_impact_not_proven"
+        )
 
         setattr(mc._vdp_mode, "kill_switch", True)  # flipped mid-flight
         result = await mc._dispatch(tasks[0])
@@ -923,6 +957,16 @@ class TestOperationalStopDrills:
         )
         tasks = [t for t in mc.task_queue if t.agent_type == "vdp_follow_up"]
         assert tasks
+        # SGK-2026-0434: the queued render `/search` spec is honestly
+        # blocked at S07 (exact material unavailable); the key-provider
+        # drill then exercises the signer path with a healthy executable gap
+        # on the SAME task (real hypothesis/verdict lineage preserved).
+        blocked = await mc._dispatch(tasks[0])
+        assert blocked["data"]["status"] == "manual_review"
+        assert blocked["data"]["reason"] == "exact_request_material_unavailable"
+        tasks[0].params["vdp_follow_up_spec"]["evidence_gap"] = (
+            "authz_impact_not_proven"
+        )
         # key provider stopped → no signer, fail-closed (real resolution)
         assert mc._vdp_evidence_signer() is None
         executed_hyp_ids = set()

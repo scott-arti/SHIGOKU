@@ -107,7 +107,11 @@ class _FakeWriter:
         self.evidence.append(evidence)
 
 
-def _spec(gap: str = "payload_request_mismatch", **overrides) -> dict:
+def _spec(gap: str = "authz_impact_not_proven", **overrides) -> dict:
+    # SGK-2026-0434: payload_request_mismatch is no longer an executable
+    # m3a gap (exact request material is always unavailable). Generic
+    # replay-machinery tests default to a healthy executable gap; payload
+    # semantics are covered by TestFunnelTruthPayloadMismatch.
     hyp = _hypothesis()
     na = build_next_action_record("vrd-1", hyp, gap)
     data = {
@@ -263,7 +267,7 @@ class TestExactReplayAndFingerprint:
         assert net.last["method"] == "HEAD"
 
     def test_exact_replay_without_discarded_parameter_values_only(self):
-        spec = _spec(param_names=["id"], param_locations=["query"])
+        spec = _spec(gap="payload_request_mismatch", param_names=["id"], param_locations=["query"])
         (ex, net, writer, budget) = _executor()
         result = _run(ex.execute(spec))
         assert result.status == MANUAL_REVIEW
@@ -315,6 +319,51 @@ class TestExactReplayAndFingerprint:
         assert er["timing_difference_observed"] == "false"
 
 
+class TestFunnelTruthPayloadMismatch:
+    """SGK-2026-0434: payload_request_mismatch probes must never run.
+
+    The gap exists precisely because the hypothesis payload did not match
+    the observed request; payload VALUES are always destroyed at the
+    observation boundary (0425 §5.1), so the exact request material can
+    never be reconstructed. The previous S07 check only blocked when
+    request material was PRESENT — the param-empty case (0430 row 3,
+    ``/rest/products/search``) slipped through and sent a payload-less
+    GET that misleadingly reached S08/S10/S11. Funnel truth requires the
+    probe NOT be sent and the funnel stop at S07
+    ``exact_request_material_unavailable``.
+    """
+
+    def test_param_empty_payload_mismatch_blocks_at_s07_no_probe(self):
+        # The 0430 destroyed-material shape: param_names == [] (values were
+        # discarded, exact request material is unavailable).
+        spec = _spec(gap="payload_request_mismatch")
+        (ex, net, writer, budget) = _executor()
+        result = _run(ex.execute(spec))
+        assert result.status == MANUAL_REVIEW
+        assert result.reason == "exact_request_material_unavailable"
+        assert len(net.calls) == 0  # probe NOT sent
+        assert len(writer.evidence) == 0
+        assert budget.snapshot()["requests_used"] == 0
+        assert budget.snapshot()["follow_ups_used"] == 0
+
+    def test_param_present_payload_mismatch_still_blocks_at_s07(self):
+        # Material present (names survive, values destroyed) stays blocked.
+        spec = _spec(gap="payload_request_mismatch", param_names=["q"], param_locations=["query"])
+        (ex, net, writer, budget) = _executor()
+        result = _run(ex.execute(spec))
+        assert result.status == MANUAL_REVIEW
+        assert result.reason == "exact_request_material_unavailable"
+        assert len(net.calls) == 0
+
+    def test_healthy_gap_still_probes(self):
+        # Regression 0: healthy gaps (no payload dependency) still probe.
+        spec = _spec(gap="authz_impact_not_proven")
+        (ex, net, writer, budget) = _executor()
+        result = _run(ex.execute(spec))
+        assert result.status == EXECUTED
+        assert len(net.calls) == 1
+
+
 class TestM3aBlocking:
     def test_state_changing_gap_is_manual_review(self):
         spec = _spec(gap="state_change_not_verified")
@@ -362,7 +411,7 @@ class TestM3aBlocking:
         assert "budget" in result.reason
         assert len(net.calls) == 0
         attempt_id = build_attempt_id(
-            "hyp-exec-1", "payload_request_mismatch", "unauth"
+            "hyp-exec-1", "authz_impact_not_proven", "unauth"
         )
         assert not ex.idempotency_guard.is_registered(attempt_id)
         assert budget.snapshot()["follow_ups_used"] == 0
@@ -398,7 +447,7 @@ class TestM3aBlocking:
         assert snapshot["requests_used"] == 0
         assert snapshot["follow_ups_used"] == 0
         attempt_id = build_attempt_id(
-            "hyp-exec-1", "payload_request_mismatch", "unauth"
+            "hyp-exec-1", "authz_impact_not_proven", "unauth"
         )
         assert not ex.idempotency_guard.is_registered(attempt_id)
 

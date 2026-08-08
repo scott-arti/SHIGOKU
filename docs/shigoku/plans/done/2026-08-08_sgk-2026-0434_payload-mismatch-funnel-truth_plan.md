@@ -1,13 +1,13 @@
 ---
 task_id: SGK-2026-0434
 doc_type: plan
-status: active
+status: done
 parent_task_id: SGK-2026-0432
 related_docs:
 - docs/shigoku/subtasks/2026-08-08_sgk-2026-0432_gap-closure-causal-diagnosis_subtask_plan.md
 title: payload_request_mismatch probe の funnel-truth 改善
 created_at: '2026-08-08'
-updated_at: '2026-08-08'
+updated_at: '2026-08-09'
 tags:
 - shigoku
 target: src/core/engine

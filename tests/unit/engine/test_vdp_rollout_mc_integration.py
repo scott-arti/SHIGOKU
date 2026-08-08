@@ -67,7 +67,7 @@ def _read_only_spec(
         "hypothesis_id": hypothesis_id,
         "verdict_id": verdict_id,
         "next_action_id": next_action_id,
-        "evidence_gap": "payload_request_mismatch",
+        "evidence_gap": "authz_impact_not_proven",
         "risk_class": "read_only",
         "action_class": "follow_up_probe",
         "url": "https://api.example.com/items",
@@ -265,9 +265,27 @@ class TestShadowDiffRecording:
         )
         tasks = [t for t in mc.task_queue if t.agent_type == "vdp_follow_up"]
         assert tasks
-        spec = tasks[0].params["vdp_follow_up_spec"]
-        result = await mc._dispatch(tasks[0])
+        # SGK-2026-0434: the queued payload_request_mismatch spec (render
+        # search endpoint, param-less observation = destroyed material) is
+        # now honestly blocked at S07 exact_request_material_unavailable
+        # instead of sending a payload-less probe.
+        queued_spec = tasks[0].params["vdp_follow_up_spec"]
+        assert queued_spec["evidence_gap"] == "payload_request_mismatch"
+        blocked = await mc._dispatch(tasks[0])
+        assert blocked["data"]["status"] == "manual_review"
+        assert blocked["data"]["reason"] == "exact_request_material_unavailable"
+        # Dispatch-phase record: a HEALTHY executable spec (authz comparison
+        # gap from the same generated NextAction set) records the enforced
+        # dispatch diff with attempt lineage.
+        healthy = _read_only_spec(
+            "task-ro-dispatch",
+            next_action_id="nxt-b11c7a49f4cd5ab1",
+            verdict_id="vrd-a89b08c1de820075",
+            hypothesis_id="hyp-ro-1",
+        )
+        result = await mc._dispatch(_vdp_task(healthy))
         assert result["data"]["status"] == "executed"
+        spec = healthy
         # dispatch-phase record carries the same next_action_id lineage + attempt
         dispatch_diffs = [
             d for d in mc._vdp_state.get("shadow_diff", [])

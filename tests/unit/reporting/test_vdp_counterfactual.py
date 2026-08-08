@@ -333,3 +333,55 @@ def test_thread_confinement_two_variables_rejected():
         },
     )
     assert "multiple_variables_changed" in validate_experiment(spec)
+
+
+# --- SGK-2026-0434: attempt counterfactual (payload funnel honestification) ---
+
+def test_attempt_changed_variable_allowed():
+    """'attempt' is a valid single counterfactual variable; the 0434
+    experiment changes ONLY the attempt (probe sent -> probe blocked)."""
+    import json
+    from pathlib import Path
+
+    artifact = json.loads(
+        Path("config/diagnostics/counterfactual_sgk2026_0434_attempt.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert artifact["changed_variable"] == "attempt"
+    errors = validate_experiment(artifact)
+    assert errors == [], f"artifact must validate: {errors}"
+
+
+def test_attempt_counterfactual_honestifies_payload_funnel():
+    """control = 0430 artifact (payload-less probe sent, misleading S08/S10/S11
+    reach, first_failure S12); treatment = post-0434 (S07 exact_request_material_
+    unavailable block, probe NOT sent, first_failure S07). The single-variable
+    change removes the fabricated reach: S07..S11 are no longer claimed."""
+    import json
+    from pathlib import Path
+
+    artifact = json.loads(
+        Path("config/diagnostics/counterfactual_sgk2026_0434_attempt.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    errors = validate_experiment(artifact)
+    assert errors == []
+    delta = compute_stage_delta(
+        artifact["control_verdicts"], artifact["treatment_verdicts"]
+    )
+    # The honest block stops the funnel at S07; S08/S10/S11 (fabricated reach
+    # of the payload-less probe) are no longer reached.
+    assert "S08" in delta["regressed_stages"]
+    assert "S10" in delta["regressed_stages"]
+    assert "S11" in delta["regressed_stages"]
+    assert delta["improved_stages"] == []
+    verdict = attribution_verdict(
+        spec=artifact, validation_errors=errors, stage_delta=delta
+    )
+    # Reach-reduction is scored as regression by the harness vocabulary; the
+    # removed stages are exactly the misleading ones (honestification, not a
+    # detection regression).
+    assert verdict["attribution"] == "supported"
+    assert verdict["attribution_reason"] == "regression_present"
