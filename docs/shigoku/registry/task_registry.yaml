@@ -5195,7 +5195,7 @@ tasks:
   doc_type: plan
   title: 並列 executor における VDP follow-up drain 合流点の再配線
   primary_doc: docs/shigoku/plans/2026-08-08_sgk-2026-0431_parallel-executor-vdp-followup-drain-rehoming_plan.md
-  status: deferred
+  status: active
   provisional: false
   task_summary: execute_parallel 経路の deferred VDP injection を main-thread drain へ再配線（またはVDP時serial強制）する追跡タスク
   parent_task_id: SGK-2026-0430
