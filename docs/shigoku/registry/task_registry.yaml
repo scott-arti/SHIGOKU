@@ -5271,6 +5271,22 @@ tasks:
   parent_task_id: SGK-2026-0432
   related_docs:
   - docs/shigoku/reports/2026-08-08_sgk-2026-0432_gap-closure-causal-diagnosis_work_report.md
+- provisional_id: DOC-0493
+  task_id: SGK-2026-0437
+  doc_type: plan
+  title: 封印ローカルターゲットでの authz gap-closure エンドツーエンド実証
+  primary_doc: docs/shigoku/plans/done/2026-08-10_sgk-2026-0437_authz-gap-closure-e2e-verification_plan.md
+  status: done
+  provisional: false
+  task_summary: "第2アカウント authz 比較能力の封印 m3a run での E2E 実証（判定 (II): 比較実行・越境なし・広さ不足を診断）"
+  parent_task_id: SGK-2026-0433
+  related_docs:
+  - docs/shigoku/plans/done/2026-08-08_sgk-2026-0433_m3a-gap-closure-capability_plan.md
+  - docs/shigoku/reports/2026-08-08_sgk-2026-0433_m3a-gap-closure-capability_work_report.md
+  - docs/shigoku/plans/2026-08-08_sgk-2026-0436_timing-live-acquisition-and-harness-ownership_plan.md
+  - docs/shigoku/plans/2026-08-08_sgk-2026-0435_preflight-docs-artifact-token-scan.md
+  - docs/shigoku/reports/2026-08-10_sgk-2026-0437_authz-gap-closure-e2e-verification_work_report.md
+  - docs/shigoku/worklogs/2026-08-10_sgk-2026-0437_authz-gap-closure-e2e-verification_work_log.md
 doc_type_allowed_values:
 - spec
 - roadmap

@@ -446,3 +446,4 @@
 | SGK-2026-0434 | payload_request_mismatch probe の funnel-truth 改善 | done | plan | SGK-2026-0432 | docs/shigoku/plans/done/2026-08-08_sgk-2026-0434_payload-mismatch-funnel-truth_plan.md |
 | SGK-2026-0435 | product-independence preflight の docs 成果物 token-scan 拡張 | deferred | plan | SGK-2026-0432 | docs/shigoku/plans/2026-08-08_sgk-2026-0435_preflight-docs-artifact-token-scan.md |
 | SGK-2026-0436 | timing ライブ取得と封印harness成果物所有権の改善 | deferred | plan | SGK-2026-0433 | docs/shigoku/plans/2026-08-08_sgk-2026-0436_timing-live-acquisition-and-harness-ownership_plan.md |
+| SGK-2026-0437 | 封印ローカルターゲットでの authz gap-closure エンドツーエンド実証 | done | plan | SGK-2026-0433 | docs/shigoku/plans/done/2026-08-10_sgk-2026-0437_authz-gap-closure-e2e-verification_plan.md |

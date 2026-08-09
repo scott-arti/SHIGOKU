@@ -306,6 +306,25 @@ fi
 cp "$M5_OUT/config.backup.yaml" "$CONFIG"
 snapshot_tree > "$M5_OUT/hashes.end"
 log "phase 8: config restored + target network restored"
+
+# 8b. harness artifact ownership (SGK-2026-0436): the docker runner writes the
+# instrumented session/report as root; chown the new artifacts to the host user
+# so bbb can read them for the §8 consistency gate. (The --user runner variant
+# is NOT used: the engine's FindingsRepository resolves Path.home()/.shigoku,
+# which is filesystem-root for a non-root container user and fails. A plain
+# `chown` in this script also cannot chown root-owned files — the docker
+# daemon runs as root, so the chown is executed through a throwaway container.)
+if [ -n "$(id -u)" ]; then
+    docker run --rm -v "$REPO_ROOT:/repo:rw" -v "$M5_OUT:/m5out:rw" \
+        alpine chown -R "$(id -u):$(id -g)" \
+        /repo/workspace/projects/localhost:3000/sessions \
+        /repo/workspace/projects/localhost:3000/reports \
+        /repo/workspace/projects/localhost:3000/tagged_urls \
+        /repo/workspace/projects/localhost:3000/scans \
+        /repo/workspace/projects/localhost:3000/recon_state.json \
+        /m5out >/dev/null 2>&1 || true
+    log "phase 8b: chowned workspace project artifacts to $(id -u):$(id -g)"
+fi
 if cmp -s <(sha256sum "$CONFIG") "$M5_OUT/config.sha256"; then
     log "config/shigoku.yaml byte-identical to pre-run snapshot"
 else
