@@ -5303,6 +5303,17 @@ tasks:
   - docs/shigoku/reports/2026-08-10_sgk-2026-0431_off-main-vdp-drain-main-threadization_work_report.md
   - docs/shigoku/reports/2026-08-10_sgk-2026-0438_followup-firing-breadth-admission-diagnosis_work_report.md
   - docs/shigoku/worklogs/2026-08-10_sgk-2026-0438_followup-firing-breadth-admission-diagnosis_work_log.md
+- provisional_id: DOC-0495
+  task_id: SGK-2026-0439
+  doc_type: plan
+  title: param 依存攻撃（注入系）を安全に撃てるようにする
+  primary_doc: docs/shigoku/plans/2026-08-11_sgk-2026-0439_param-dependent-attack-enablement-safe.md
+  status: active
+  provisional: false
+  task_summary: 秘密保護を弱めずに注入系 param 依存攻撃を撃てるようにする（診断先行・設計レビュー関門）
+  parent_task_id: SGK-2026-0418
+  related_docs:
+  - docs/shigoku/reports/2026-08-10_sgk-2026-0438_followup-firing-breadth-admission-diagnosis_work_report.md
 doc_type_allowed_values:
 - spec
 - roadmap
