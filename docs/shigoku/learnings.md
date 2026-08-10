@@ -11,7 +11,7 @@ related_docs:
   - AGENTS.md
 title: SHIGOKU Learnings
 created_at: '2026-06-26'
-updated_at: '2026-08-07'
+updated_at: '2026-08-11'
 ---
 
 # SHIGOKU Learnings
@@ -527,3 +527,9 @@ assert p is not None and p.bundle_id.startswith('bbp-'), f'unexpected: {p}'
 
 - [topic: lessons | when: confirmedを含むsessionを手動生成・保存する時] M0 gateはconfirmed verdictのevaluated_evidence_idsとsessionのevidence_recordsの一致を要求するため、confirmedの証拠チェーン（そのverdictが評価したevidence）をsessionへ必ず含めよ。全evidenceを落とす・他verdictのevidenceだけ載せるとM0がfailし、verdict件数が合っていても通らない。 verify: `.venv/bin/pytest tests/unit/engine/test_vdp_holdout_env.py -q`
   detail: SGK-2026-0423（P-2の実測）。confirmedを含むsessionでevidenceを検証対象外まで含めるとM0のexact-set契約に違反してfailした。runtimeドライバはconfirmed verdictのevaluated_evidence_idsに該当するevidenceだけをsessionへ載せる方式にした。
+
+- [topic: lessons | when: VDP/diagnostic で秘密・値の取り扱いを変更する時] 秘密取り扱いの正本は PIIMasker のマスク＆復元（`src/core/security/pii_masker.py`：`[PII:TYPE:TOKEN]`＋メモリ内 run スコープの token_map＋実行時 `unmask()` で元値復元）。`vdp_observation_adapter.py` の「値破棄」は逸脱であり仕様ではない（param 依存＝注入系を撃てなくする副作用）。token_map/元値は session/report/log/checkpoint へ絶対に永続化しない。 verify: 変更の根拠として pii_masker を参照し、secret-scan で永続化物に平文秘密0
+  detail: SGK-2026-0439。観測アダプタ1ファイルだけ見て「値破棄が仕様」と誤断した（PIIMasker は LLM/ログ経路にのみ配線され VDP 攻撃経路に未配線だったのを見落とし）。修正方向は「新設計を作る」ではなく「VDP 攻撃経路を PIIMasker に合わせる」。
+
+- [topic: lessons | when: 計画書やDeepSeek指示で「仕様/設計はこうだ」と述べる時・原因を述べる時] 単一ファイルの挙動を仕様と断定するな。概念を所有するモジュール＋仕様書（docs/shigoku/specs）＋他の呼び出し元を照合し、参照した正本を明記せよ。示せない時は「未確認・要確認」と書いて止まる。原因は根拠が出るまで「仮説」と明示し断定しない。 verify: 指示/計画に照合した正本の参照が明記され、原因が confirmed/仮説 で区別されている
+  detail: SGK-2026-0438/0439。admission・dedup を確認前に断定して後で却下され、値破棄を仕様と誤断した。事実と仮説を分離せず断定口調で提示したのが根因。
