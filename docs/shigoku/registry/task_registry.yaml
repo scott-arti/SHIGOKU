@@ -5290,6 +5290,17 @@ tasks:
   - docs/shigoku/plans/2026-08-08_sgk-2026-0435_preflight-docs-artifact-token-scan.md
   - docs/shigoku/reports/2026-08-10_sgk-2026-0437_authz-gap-closure-e2e-verification_work_report.md
   - docs/shigoku/worklogs/2026-08-10_sgk-2026-0437_authz-gap-closure-e2e-verification_work_log.md
+- provisional_id: DOC-0494
+  task_id: SGK-2026-0438
+  doc_type: plan
+  title: 発射される follow-up の広さ診断（5案中1発しか撃たない原因）
+  primary_doc: docs/shigoku/plans/2026-08-10_sgk-2026-0438_followup-firing-breadth-admission-diagnosis.md
+  status: active
+  provisional: false
+  task_summary: admission で保留される follow-up を診断し正当でない保留を解放して発射数を増やす
+  parent_task_id: SGK-2026-0418
+  related_docs:
+  - docs/shigoku/reports/2026-08-10_sgk-2026-0431_off-main-vdp-drain-main-threadization_work_report.md
 doc_type_allowed_values:
 - spec
 - roadmap
