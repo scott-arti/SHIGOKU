@@ -1,13 +1,13 @@
 ---
 task_id: SGK-2026-0438
 doc_type: plan
-status: active
+status: done
 parent_task_id: SGK-2026-0418
 related_docs:
 - docs/shigoku/reports/2026-08-10_sgk-2026-0431_off-main-vdp-drain-main-threadization_work_report.md
 - docs/shigoku/reports/2026-08-08_sgk-2026-0432_gap-closure-causal-diagnosis_work_report.md
 created_at: '2026-08-10'
-updated_at: '2026-08-10'
+updated_at: '2026-08-11'
 tags:
 - shigoku
 - vdp
@@ -20,10 +20,10 @@ target: src/core/engine/vdp_admission.py,src/core/engine/vdp_follow_up_executor.
 
 - 攻撃アイデア 5 / 実際に撃った 1 / confirmed 0。5案は**全て別対象・別 dedup key**（重複ではない）。
 - 内訳:
-  - #1 timing（/orders 系）: 測定基盤未完成で実行不可 → 既存 SGK-2026-0436。
-  - #3 injection（/rest/products 系）: 材料復元不能で正しく S07 block → SGK-2026-0434 の設計どおり（正当）。
+  - #1 timing（opaque-ep A：object-history query）: 測定基盤未完成で実行不可 → 既存 SGK-2026-0436。
+  - #3 injection（opaque-ep B：search template）: 材料復元不能で正しく S07 block → SGK-2026-0434 の設計どおり（正当）。
   - #4 authz object_read_write_delete（ルート /）: **唯一 admission を通過し発射**。
-  - **#2 authz object_read_write_delete（/api/Challenges 系）・#5 render/permission（/search 系）: admission(S05) 等で発射されていない。**
+  - **#2 authz object_read_write_delete（opaque-ep C：api list filter）・#5 render/permission（opaque-ep D：search query）: admission(S05) 等で発射されていない。**
 - 予算は能力ごと max_follow_ups 2〜3 で「上限1」ではない。絞っているのは **admission gate（vdp_admission.py）**の可能性が高い
   （capability matrix: allowed/confirmation_required/prohibited/unavailable、OUT_OF_SCOPE、HITL 要承認 等）。
 

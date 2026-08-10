@@ -11687,13 +11687,21 @@ class MasterConductor:
             )
             if observation is None:
                 continue  # exact request metadata unavailable; remain pending
+            # SGK-2026-0438 (D): comparison-type gaps may queue even when
+            # param VALUES were discarded — the cross-account A/B comparison
+            # sends the IDENTICAL (possibly redacted) URL for both accounts,
+            # so a response difference is still a truthful difference; exact
+            # param values are not needed. Non-comparison gaps keep the
+            # strict skip (payload fidelity required), and the auth-header /
+            # cookie skip stays fail-closed for EVERY gap (auth context
+            # discarded -> replay unsafe for all).
+            if observation.has_auth_header or observation.has_cookie:
+                continue  # auth context discarded; replay unsafe for every gap
             if (
-                observation.param_names
-                or observation.param_locations
-                or observation.has_auth_header
-                or observation.has_cookie
+                (observation.param_names or observation.param_locations)
+                and gap not in _COMPARISON_GAPS
             ):
-                continue  # values/auth were discarded; exact replay is impossible
+                continue  # values discarded; exact replay required for non-comparison gaps
             spec = build_follow_up_spec(
                 str(na.get('next_action_id', '') or ''),
                 HypothesisRecord.from_dict(hyp_dict) if hyp_dict else HypothesisRecord(
