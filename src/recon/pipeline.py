@@ -4578,8 +4578,11 @@ class ReconPipeline:
                 params=task_params,
                 priority=task_config["priority"]
             )
-            if hasattr(self.mc, "_add_tasks"):
-                self.mc._add_tasks([task], source=f"recon.tagged_{category}")
+            if hasattr(self.mc, "_add_tasks_main_safe"):
+                # SGK-2026-0431: pipeline.run() executes on an asyncio.to_thread
+                # worker (off-main) — the safe entry buffers and delegates the
+                # queue mutation to the main-thread confluence.
+                self.mc._add_tasks_main_safe([task], source=f"recon.tagged_{category}")
                 logger.info(f"✅ Added {task_config['name']} task with {len(urls)} targets")
 
                 # command injection 系 URL は InjectionManager を明示起動して
@@ -4610,7 +4613,7 @@ class ReconPipeline:
                         },
                         priority=max(task_config["priority"], 88),
                     )
-                    self.mc._add_tasks([cmd_task], source=f"recon.tagged_{category}.cmd_focus")
+                    self.mc._add_tasks_main_safe([cmd_task], source=f"recon.tagged_{category}.cmd_focus")
                     logger.info("✅ Added explicit command-injection focus task (%d targets)", len(command_targets))
 
                 # weak session id (DVWA weak_id 等) は SessionHijacker を明示起動
@@ -4651,7 +4654,7 @@ class ReconPipeline:
                         tags=["weak_session_id", "session"],
                         priority=max(task_config["priority"], 86),
                     )
-                    self.mc._add_tasks([session_task], source=f"recon.tagged_{category}.weak_session")
+                    self.mc._add_tasks_main_safe([session_task], source=f"recon.tagged_{category}.weak_session")
                     logger.info("✅ Added explicit SessionHijacker task for weak_id endpoint")
 
                 # authbypass / weak_id 系 URL は BizLogicHunter を明示的に起動して
@@ -4711,10 +4714,10 @@ class ReconPipeline:
                                 tags=["idor_candidate", "admin_endpoint", "admin_panel", "authz_differential"],
                                 priority=max(task_config["priority"] - 1, 1),
                             ))
-                        self.mc._add_tasks(extra_tasks, source=f"recon.tagged_{category}.bizlogic")
+                        self.mc._add_tasks_main_safe(extra_tasks, source=f"recon.tagged_{category}.bizlogic")
                         logger.info("✅ Added %d explicit BizLogicHunter task(s) for authbypass", len(extra_tasks))
             else:
-                logger.warning("MasterConductor does not support _add_tasks")
+                logger.warning("MasterConductor does not support _add_tasks_main_safe")
                 
         except Exception as e:
             logger.error(f"Failed to generate tasks for {category}: {e}")

@@ -18,6 +18,11 @@ class _DummyMC:
     def _add_tasks(self, tasks, source=None):  # pragma: no cover - callback shape only
         self.added_tasks.extend(tasks)
 
+    def _add_tasks_main_safe(self, tasks, source=None):  # pragma: no cover - callback shape only
+        # SGK-2026-0431: the pipeline routes all queue injections through the
+        # safe entry; the dummy runs synchronously (main-thread equivalent).
+        self.added_tasks.extend(tasks)
+
 
 def _write_jsonl(path: Path, rows: list[dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)

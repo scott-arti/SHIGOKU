@@ -1,7 +1,7 @@
 ---
 task_id: SGK-2026-0431
 doc_type: plan
-status: active
+status: done
 parent_task_id: SGK-2026-0430
 related_docs:
 - docs/shigoku/reports/2026-08-07_sgk-2026-0430_sealed-live-rerun-verification_work_report.md

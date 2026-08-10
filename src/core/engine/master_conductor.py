@@ -3643,6 +3643,88 @@ class MasterConductor:
         
         return added_count
 
+    def _add_tasks_main_safe(self, tasks: list[Task], source: str = "unknown") -> int:
+        """SGK-2026-0431: thread-safe task_queue injection entry (PCR-P1).
+
+        Main-thread callers (serial paths, the batch-feedback confluence, the
+        execute_with_replan loop) keep the pre-0431 behavior: direct
+        ``_add_tasks`` (regression 0) and the real added count.
+
+        Off-main callers (ShigokuSharedLoop background thread via
+        ``_run_async_safe`` — recon_master ``_dispatch`` block, recipe
+        execution — and the recon ``asyncio.to_thread`` workers) do NOT
+        mutate the task_queue; the batch is buffered via
+        ``_ensure_off_main_task_buffer`` and enqueued at the main-thread
+        confluence ``_apply_post_batch_feedback`` (L6702, runs after every
+        batch in execute_with_replan incl. the exception path). Returns the
+        immediately-added count (0 when buffered — the confluence drains and
+        logs the actual enqueue).
+        """
+        if not tasks:
+            return 0
+        if threading.current_thread() is threading.main_thread():
+            return self._add_tasks(tasks, source=source)
+        buffer = self._ensure_off_main_task_buffer()
+        with buffer['lock']:
+            buffer['items'].append({'tasks': list(tasks), 'source': source})
+        logger.debug(
+            "Buffered %d task(s) from off-main producer (source=%s) for the main-thread confluence",
+            len(tasks), source,
+        )
+        return 0
+
+    def _ensure_off_main_task_buffer(self) -> dict:
+        """Lazy-init the deferred off-main task batch buffer (SGK-2026-0431).
+
+        Off-main producers append (tasks, source) batches here WITHOUT
+        touching the task_queue; the main-thread confluence
+        (``_apply_post_batch_feedback`` / execute_with_replan exception
+        path) drains them so the PCR-P1 main-thread invariant holds.
+        hasattr-guarded for __new__-minimal test instances.
+        """
+        if not hasattr(self, '_off_main_task_buffer_lock'):
+            self._off_main_task_buffer_lock = threading.Lock()
+        if not hasattr(self, '_pending_off_main_task_batches'):
+            self._pending_off_main_task_batches = []
+        return {
+            'lock': self._off_main_task_buffer_lock,
+            'items': self._pending_off_main_task_batches,
+        }
+
+    def _drain_pending_off_main_tasks(self) -> int:
+        """SGK-2026-0431: main-thread drain of buffered off-main task batches.
+
+        Called from main-thread phases only (``_apply_post_batch_feedback``
+        and the execute_with_replan batch-exception path). Fail-closed: the
+        drain asserts the main thread — a drain executed off-main must never
+        mutate the queue silently (task_queue.py PCR-P1 asserts stay
+        untouched). Returns the number of drained tasks.
+        """
+        assert threading.current_thread() is threading.main_thread(), (
+            "PCR-P1: off-main task buffer drain (task_queue mutation) must be on main thread"
+        )
+        buffer = self._ensure_off_main_task_buffer()
+        with buffer['lock']:
+            batches = list(buffer['items'])
+            buffer['items'].clear()
+        if not batches:
+            return 0
+        drained = 0
+        for batch in batches:
+            try:
+                drained += self._add_tasks(batch.get('tasks') or [], source=batch.get('source') or 'unknown')
+            except Exception as exc:
+                logger.warning(
+                    "Buffered off-main task enqueue failed (source=%s): %s",
+                    batch.get('source'), exc,
+                )
+        if drained:
+            logger.info(
+                "Drained %d buffered off-main task(s) from %d batch(es) at the main-thread confluence",
+                drained, len(batches),
+            )
+        return drained
+
     def _should_count_against_derived_task_limit(self, task: Task, source: Optional[str] = None) -> bool:
         if source is not None:
             return task_pruning_policy_shared.should_apply_derived_task_limit(source)
@@ -6301,7 +6383,11 @@ class MasterConductor:
             )
             try:
                 if hasattr(self, "task_queue") and self.task_queue is not None:
-                    self.task_queue.add(follow_up_task)
+                    # SGK-2026-0431: this async method runs on the
+                    # ShigokuSharedLoop thread (off-main via _dispatch) —
+                    # route the queue mutation through the safe entry so it
+                    # is buffered and enqueued at the main-thread confluence.
+                    self._add_tasks_main_safe([follow_up_task], source="recipe_follow_up")
                     logger.info(
                         "[SGK-2026-0260] Created follow-up swarm task %s after recipe %s: %s",
                         follow_up_task.id, recipe_name, follow_up.get("reasons"),
@@ -6698,8 +6784,14 @@ class MasterConductor:
         SGK-2026-0426 W2: the VDP follow-up injection drain runs here first —
         this phase executes on the main thread (see
         test_mc_vdp_drain_main_thread.py), satisfying PCR-P1.
+
+        SGK-2026-0431: the off-main task batch buffer (recon chain /
+        recipe follow-ups produced off-main via _add_tasks_main_safe) is
+        drained here as well — the single main-thread confluence for every
+        buffered queue mutation.
         """
         self._drain_vdp_pending_follow_up_injections()
+        self._drain_pending_off_main_tasks()
         if not batch_tasks:
             return
 
@@ -7360,6 +7452,20 @@ class MasterConductor:
                             task.error = repr(batch_exc)
                             self._record_failure_context(task, "orchestrator_batch_execute", failure_reason)
                     self.completed_tasks.extend(batch_tasks)
+
+                # SGK-2026-0431 (plan completion condition 3): the exception
+                # path must STILL drain buffered VDP follow-up injections and
+                # off-main task batches on the main thread before `continue` —
+                # a non-timeout batch exception (or a timeout with empty
+                # recovery_results) would otherwise leave them buffered past
+                # loop end (injection 滞留・喪失を作らない). execute_with_replan
+                # is synchronous on the main thread, so this drain is
+                # PCR-P1-safe and confluences with _apply_post_batch_feedback
+                # (L6702/L7391).
+                with self._state_lock:
+                    self._drain_vdp_pending_follow_up_injections()
+                    self._drain_pending_off_main_tasks()
+
                 executed += len(batch_tasks)
                 continue
 
@@ -7662,9 +7768,17 @@ class MasterConductor:
                 
             result = self._dispatch_with_timeout_retry(task, timeout_override=timeout_override)
             task.result = result
-            # SGK-2026-0426 W2: drain deferred VDP follow-up injections on
-            # the main thread after the task body completes.
-            self._drain_vdp_pending_follow_up_injections()
+            # SGK-2026-0426 W2 / SGK-2026-0431: drain deferred VDP follow-up
+            # injections ONLY on the main thread (PCR-P1, task_queue.py).
+            # This flow also runs on parallel executor worker threads
+            # (create_parallel_task -> ThreadPoolExecutor); off-main the
+            # buffered injections stay in _vdp_pending_follow_up_injections
+            # and are delegated to the main-thread drain inside
+            # _apply_post_batch_feedback (execute_with_replan batch join,
+            # L6702). Serial/recovery callers on the main thread keep the
+            # pre-0431 synchronous behavior (regression 0).
+            if threading.current_thread() is threading.main_thread():
+                self._drain_vdp_pending_follow_up_injections()
             logger.info(f"📥 Received result from {task.agent_type} (task {task.id})")
 
             # Phase 4 (SGK-2026-0313): Emit DECISION_MADE event for shadow decision
@@ -9905,9 +10019,17 @@ class MasterConductor:
                         # Attack タスクを生成(サブエージェント生成)
                         attack_tasks = self._create_attack_tasks_from_recon(merged_results)
                         if attack_tasks:
-                            added_attack_tasks = self._add_tasks(attack_tasks, source="recon_result")
+                            # SGK-2026-0431: this block runs on the
+                            # ShigokuSharedLoop thread (off-main) — route the
+                            # queue mutation through the safe entry so it is
+                            # buffered and enqueued at the main-thread
+                            # confluence (_apply_post_batch_feedback).
+                            added_attack_tasks = self._add_tasks_main_safe(
+                                attack_tasks, source="recon_result"
+                            )
                             logger.info(
-                                "Queued %d of %d generated attack tasks from recon results",
+                                "Queued %d of %d generated attack tasks from recon results "
+                                "(off-main batches are deferred to the main-thread confluence)",
                                 added_attack_tasks,
                                 len(attack_tasks),
                             )

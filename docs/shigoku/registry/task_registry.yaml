@@ -5194,15 +5194,18 @@ tasks:
   task_id: SGK-2026-0431
   doc_type: plan
   title: 並列 executor における VDP follow-up drain 合流点の再配線
-  primary_doc: docs/shigoku/plans/2026-08-08_sgk-2026-0431_parallel-executor-vdp-followup-drain-rehoming_plan.md
-  status: active
+  primary_doc: docs/shigoku/plans/done/2026-08-08_sgk-2026-0431_parallel-executor-vdp-followup-drain-rehoming_plan.md
+  status: done
   provisional: false
-  task_summary: execute_parallel 経路の deferred VDP injection を main-thread drain へ再配線（またはVDP時serial強制）する追跡タスク
+  task_summary: "off-main の VDP drain / task_queue mutation を main-thread 合流点へ委譲（7667 ガード・例外経路 drain・_add_tasks_main_safe 一括委譲）。封印 run で PCR-P1 0・coverage 1/12→8/12 を実測"
   parent_task_id: SGK-2026-0430
   related_docs:
   - docs/shigoku/reports/2026-08-07_sgk-2026-0430_sealed-live-rerun-verification_work_report.md
   - docs/shigoku/worklogs/2026-08-07_sgk-2026-0430_sealed-live-rerun-verification_work_log.md
   - docs/shigoku/subtasks/done/2026-08-05_sgk-2026-0426_vdp-product-independent-improvement-and-hidden-reevaluation_subtask_plan.md
+  - docs/shigoku/reports/2026-08-10_sgk-2026-0437_authz-gap-closure-e2e-verification_work_report.md
+  - docs/shigoku/reports/2026-08-10_sgk-2026-0431_off-main-vdp-drain-main-threadization_work_report.md
+  - docs/shigoku/worklogs/2026-08-10_sgk-2026-0431_off-main-vdp-drain-main-threadization_work_log.md
 - provisional_id: DOC-0488
   task_id: SGK-2026-0432
   doc_type: subtask_plan

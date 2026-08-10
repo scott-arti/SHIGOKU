@@ -197,9 +197,11 @@ class ParallelTasks:
                     },
                     priority=60
                 )
-                # _add_tasks は internal だが現状の I/F ではこれを使う必要がある
-                if hasattr(self.mc, "_add_tasks"):
-                    self.mc._add_tasks([task], source="recon.full_port_scan")
+                # _add_tasks_main_safe は internal だが現状の I/F ではこれを使う必要がある
+                # (SGK-2026-0431: parallel task workers run off-main — the
+                # safe entry buffers and delegates to the main-thread confluence)
+                if hasattr(self.mc, "_add_tasks_main_safe"):
+                    self.mc._add_tasks_main_safe([task], source="recon.full_port_scan")
                     logger.info("Registered analysis task to MC")
             except Exception as e:
                 logger.error("Failed to register task to MC: %s", e)
@@ -551,7 +553,7 @@ class ParallelTasks:
             logger.warning("Failed to send notification: %s", e)
         
         # MC にタスク登録
-        if self.mc and len(new_subs) > 0 and hasattr(self.mc, "_add_tasks"):
+        if self.mc and len(new_subs) > 0 and hasattr(self.mc, "_add_tasks_main_safe"):
             try:
                 # 新規サブドメインに対してポートスキャンタスクを追加
                 task = Task(
@@ -565,7 +567,7 @@ class ParallelTasks:
                     },
                     priority=70
                 )
-                self.mc._add_tasks([task], source="recon.permutation")
+                self.mc._add_tasks_main_safe([task], source="recon.permutation")
             except Exception as e:
                 logger.error("Failed to register task to MC: %s", e)
         
@@ -710,7 +712,7 @@ class ParallelTasks:
             logger.warning("Failed to send notification: %s", e)
         
         # MC にタスク登録
-        if self.mc and alive_count > 0 and hasattr(self.mc, "_add_tasks"):
+        if self.mc and alive_count > 0 and hasattr(self.mc, "_add_tasks_main_safe"):
             try:
                 # 復活したサブドメインの調査タスク
                 task = Task(
@@ -724,7 +726,7 @@ class ParallelTasks:
                     },
                     priority=80
                 )
-                self.mc._add_tasks([task], source="recon.dead_sub_scan")
+                self.mc._add_tasks_main_safe([task], source="recon.dead_sub_scan")
             except Exception as e:
                 logger.error("Failed to register task to MC: %s", e)
 

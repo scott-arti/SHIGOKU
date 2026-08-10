@@ -440,7 +440,7 @@
 | SGK-2026-0428 | bug-bounty bundle preflight のテスト baseline 失敗の解消 | deferred | plan | SGK-2026-0426 | docs/shigoku/plans/2026-08-07_sgk-2026-0428_bugbounty-bundle-preflight-test-baseline_plan.md |
 | SGK-2026-0429 | LLM API キー依存テストの隔離（キー無し環境での fail 回避） | deferred | plan | SGK-2026-0426 | docs/shigoku/plans/2026-08-07_sgk-2026-0429_llm-key-dependent-test-isolation_plan.md |
 | SGK-2026-0430 | 0426修正の封印ライブ実効確認（Juice Shop m3a rerun） | done | subtask_plan | SGK-2026-0418 | docs/shigoku/subtasks/done/2026-08-07_sgk-2026-0430_sealed-live-rerun-verification_subtask_plan.md |
-| SGK-2026-0431 | 並列 executor における VDP follow-up drain 合流点の再配線 | active | plan | SGK-2026-0430 | docs/shigoku/plans/2026-08-08_sgk-2026-0431_parallel-executor-vdp-followup-drain-rehoming_plan.md |
+| SGK-2026-0431 | 並列 executor における VDP follow-up drain 合流点の再配線 | done | plan | SGK-2026-0430 | docs/shigoku/plans/done/2026-08-08_sgk-2026-0431_parallel-executor-vdp-followup-drain-rehoming_plan.md |
 | SGK-2026-0432 | 検出品質（深さ）の因果診断：candidate→confirmed gap-closure段 | done | subtask_plan | SGK-2026-0418 | docs/shigoku/subtasks/done/2026-08-08_sgk-2026-0432_gap-closure-causal-diagnosis_subtask_plan.md |
 | SGK-2026-0433 | m3a gap-closure 能力拡張（第2アカウント authz 比較・タイミング基盤） | done | plan | SGK-2026-0432 | docs/shigoku/plans/done/2026-08-08_sgk-2026-0433_m3a-gap-closure-capability_plan.md |
 | SGK-2026-0434 | payload_request_mismatch probe の funnel-truth 改善 | done | plan | SGK-2026-0432 | docs/shigoku/plans/done/2026-08-08_sgk-2026-0434_payload-mismatch-funnel-truth_plan.md |

@@ -50,9 +50,10 @@ class TestIntegration:
                 mock_notifier.notify.assert_called_once()
                 assert "Full Port Scan Completed" in mock_notifier.notify.call_args[0][0]
                 
-                # MC 登録確認
-                mc._add_tasks.assert_called_once()
-                args = mc._add_tasks.call_args[0]
+                # MC 登録確認 (SGK-2026-0431: off-main producers route through
+                # the safe entry _add_tasks_main_safe)
+                mc._add_tasks_main_safe.assert_called_once()
+                args = mc._add_tasks_main_safe.call_args[0]
                 added_tasks = args[0]
                 assert len(added_tasks) == 1
                 assert added_tasks[0].agent_type == "vuln_scanner"
