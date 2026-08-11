@@ -5316,6 +5316,17 @@ tasks:
   - docs/shigoku/reports/2026-08-10_sgk-2026-0438_followup-firing-breadth-admission-diagnosis_work_report.md
   - docs/shigoku/reports/2026-08-11_sgk-2026-0439_param-dependent-attack-enablement-safe_work_report.md
   - docs/shigoku/worklogs/2026-08-11_sgk-2026-0439_param-dependent-attack-enablement-safe_work_log.md
+- provisional_id: DOC-0496
+  task_id: SGK-2026-0440
+  doc_type: plan
+  title: 本物の攻撃経路（候補→確定）を正しく計測する finding-pipeline 計装
+  primary_doc: docs/shigoku/plans/2026-08-11_sgk-2026-0440_finding-pipeline-instrumentation.md
+  status: active
+  provisional: false
+  task_summary: swarm の候補→検証→確定→レポート経路を first-failure で計測（計測のみ・確定ロジック不変・additive/off-by-default）
+  parent_task_id: SGK-2026-0418
+  related_docs:
+  - docs/shigoku/reports/2026-08-11_sgk-2026-0439_param-dependent-attack-enablement-safe_work_report.md
 doc_type_allowed_values:
 - spec
 - roadmap

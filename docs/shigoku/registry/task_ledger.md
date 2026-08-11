@@ -449,3 +449,4 @@
 | SGK-2026-0437 | 封印ローカルターゲットでの authz gap-closure エンドツーエンド実証 | done | plan | SGK-2026-0433 | docs/shigoku/plans/done/2026-08-10_sgk-2026-0437_authz-gap-closure-e2e-verification_plan.md |
 | SGK-2026-0438 | 発射される follow-up の広さ診断（5案中1発しか撃たない原因） | done | plan | SGK-2026-0418 | docs/shigoku/plans/done/2026-08-10_sgk-2026-0438_followup-firing-breadth-admission-diagnosis.md |
 | SGK-2026-0439 | param 依存攻撃（注入系）を安全に撃てるようにする | done | plan | SGK-2026-0418 | docs/shigoku/plans/done/2026-08-11_sgk-2026-0439_param-dependent-attack-enablement-safe.md |
+| SGK-2026-0440 | 本物の攻撃経路（候補→確定）を正しく計測する finding-pipeline 計装 | active | plan | SGK-2026-0418 | docs/shigoku/plans/2026-08-11_sgk-2026-0440_finding-pipeline-instrumentation.md |
