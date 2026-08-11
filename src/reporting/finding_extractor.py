@@ -29,6 +29,77 @@ __all__ = [
 ]
 
 
+def _funnel_entries_by_id(session_data: dict) -> Dict[str, Dict[str, Any]]:
+    """Index the session's ``finding_funnel_v1`` entries by finding_id.
+
+    SGK-2026-0440 Lane B (additive): empty when the funnel section is
+    absent. The funnel is measurement-only (finding_id hashes + vocab
+    strings, no secrets).
+    """
+    funnel = session_data.get("finding_funnel_v1")
+    if not isinstance(funnel, dict):
+        return {}
+    entries = funnel.get("entries")
+    if not isinstance(entries, list):
+        return {}
+    return {
+        str(entry.get("finding_id", "") or "").strip(): entry
+        for entry in entries
+        if isinstance(entry, dict) and str(entry.get("finding_id", "") or "").strip()
+    }
+
+
+def _finding_id_for_dict(finding: Dict[str, Any]) -> str:
+    """Resolve a raw finding dict's funnel id.
+
+    Matches the funnel recorder's ``finding_id`` (the ``Finding.id`` md5,
+    serialized as the top-level ``id`` key in sessions): additional_info
+    ``finding_id`` first, then top-level ``id``, then the title-hash
+    fallback used by ``build_finding_memo_map``.
+    """
+    info = finding.get("additional_info")
+    if isinstance(info, dict):
+        finding_id = str(info.get("finding_id", "") or "").strip()
+        if finding_id:
+            return finding_id
+    finding_id = str(finding.get("id", "") or "").strip()
+    if finding_id:
+        return finding_id
+    return f"C{hash(finding.get('title', '')) & 0xFFFF:X}"
+
+
+def _attach_funnel_first_failure_to_dicts(
+    findings: List[Dict[str, Any]],
+    funnel_entries: Dict[str, Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Additively attach first_failure_stage/reason from funnel entries.
+
+    Returns new copies for matched findings; unmatched findings are
+    returned unchanged. No-op when there are no funnel entries.
+    """
+    if not funnel_entries:
+        return findings
+    result: List[Dict[str, Any]] = []
+    for finding in findings:
+        if not isinstance(finding, dict):
+            result.append(finding)
+            continue
+        entry = funnel_entries.get(_finding_id_for_dict(finding))
+        if entry is None:
+            result.append(finding)
+            continue
+        stage = entry.get("first_failure_stage")
+        reason = entry.get("first_failure_reason")
+        if stage is None and reason is None:
+            result.append(finding)
+            continue
+        finding_copy = dict(finding)
+        finding_copy["first_failure_stage"] = stage
+        finding_copy["first_failure_reason"] = reason
+        result.append(finding_copy)
+    return result
+
+
 def extract_all_findings(session_data: dict) -> List[Dict[str, Any]]:
     """Extract all findings from a session using the canonical extraction logic.
 
@@ -117,4 +188,10 @@ def extract_all_findings(session_data: dict) -> List[Dict[str, Any]]:
         if isinstance(partial_findings, list):
             all_findings = [f for f in partial_findings if f]
 
-    return all_findings
+    # SGK-2026-0440 Lane B (additive): expose per-finding first-failure
+    # stage/reason from the funnel section when present. Absent -> output
+    # unchanged (legacy byte-identical).
+    return _attach_funnel_first_failure_to_dicts(
+        all_findings,
+        _funnel_entries_by_id(session_data),
+    )

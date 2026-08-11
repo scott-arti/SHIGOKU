@@ -194,6 +194,7 @@ def _auto_generate_standard_reports_for_target(target: str) -> dict[str, Path] |
                 if isinstance(session_data.get("vdp_contract"), dict)
                 else None
             ),
+            finding_funnel_section=session_data.get("finding_funnel_v1"),
         )
         gate_result = evaluate_initial_release_gate(
             haddix_report_path,
@@ -227,6 +228,7 @@ def _auto_generate_standard_reports_for_target(target: str) -> dict[str, Path] |
                 if isinstance(session_data.get("vdp_contract"), dict)
                 else None
             ),
+            finding_funnel_section=session_data.get("finding_funnel_v1"),
         )
         haddix_gate_path.write_text(json.dumps(gate_result, ensure_ascii=False, indent=2), encoding="utf-8")
         haddix_deferred_path.write_text(

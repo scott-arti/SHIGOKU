@@ -196,6 +196,13 @@ class HaddixFormatter:
         # readable ``vdp_run_failed_v1`` marker so it is never presented as
         # a normal completion. Absent -> no marker (additive-absent).
         self._vdp_run_outcome: Any = None
+        # SGK-2026-0440 Lane B: optional finding-funnel section
+        # (``finding_funnel_v1``). When present, the machine-readable funnel
+        # block is embedded and per-finding first-failure
+        # stage/reason is attached to HaddixFinding.additional_info.
+        # Absent -> no block, no additional_info keys (additive-absent,
+        # byte-identical legacy reports).
+        self._finding_funnel_section: Any = None
 
     def set_vdp_canonical_summary(self, summary) -> None:
         """Attach the immutable canonical VDP summary (reporting read-only)."""
@@ -216,6 +223,96 @@ class HaddixFormatter:
         ``vdp_run_failed_v1`` marker; healthy runs pass None (no marker).
         """
         self._vdp_run_outcome = run_outcome
+
+    def set_finding_funnel_section(self, section) -> None:
+        """Attach the session's ``finding_funnel_v1`` section (Lane B, read-only).
+
+        Used only to embed the additive machine-readable funnel block and to
+        attach per-finding first-failure stage/reason to
+        ``additional_info``; the section itself is never copied into the
+        report beyond the block.
+        """
+        self._finding_funnel_section = section
+
+    # ------------------------------------------------------------------
+    # SGK-2026-0440 Lane B: per-finding first-failure attribution
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _resolve_finding_id(finding: HaddixFinding) -> str:
+        """Resolve a finding's funnel id: the raw session id captured at
+        ``add_finding_from_dict`` time (the ``Finding.id`` md5 the funnel
+        recorder keys on), then ``additional_info.finding_id``, then a
+        title-hash fallback (same convention as ``build_finding_memo_map``)."""
+        raw_id = getattr(finding, "_funnel_raw_id", "") or ""
+        if raw_id:
+            return str(raw_id).strip()
+        info = finding.additional_info if isinstance(finding.additional_info, dict) else {}
+        finding_id = str(info.get("finding_id", "") or "").strip()
+        if finding_id:
+            return finding_id
+        return f"C{hash(finding.title) & 0xFFFF:X}"
+
+    def _funnel_entries_by_id(self) -> Dict[str, Dict[str, Any]]:
+        """Index funnel entries by finding_id (empty when section absent)."""
+        section = self._finding_funnel_section
+        if not isinstance(section, dict):
+            return {}
+        entries = section.get("entries")
+        if not isinstance(entries, list):
+            return {}
+        return {
+            str(entry.get("finding_id", "") or "").strip(): entry
+            for entry in entries
+            if isinstance(entry, dict) and str(entry.get("finding_id", "") or "").strip()
+        }
+
+    def _funnel_entry_for_finding(self, finding: HaddixFinding) -> Optional[Dict[str, Any]]:
+        return self._funnel_entries_by_id().get(self._resolve_finding_id(finding))
+
+    def _attach_funnel_first_failure(
+        self,
+        finding: HaddixFinding,
+        *,
+        stage: str,
+        reason: str,
+    ) -> None:
+        info = finding.additional_info if isinstance(finding.additional_info, dict) else {}
+        finding.additional_info = info
+        info["first_failure_stage"] = stage
+        info["first_failure_reason"] = reason
+
+    def _apply_funnel_first_failure(
+        self,
+        confirmed_findings: List[HaddixFinding],
+        candidate_findings: List[HaddixFinding],
+    ) -> None:
+        """Attach per-candidate first-failure data (Lane B, additive).
+
+        No-op when the funnel section is absent. Findings whose funnel entry
+        recorded an earlier stop get the entry's stage/reason; candidates
+        that reached the report without an earlier stop in the funnel get
+        ``F5`` / ``evidence_insufficient`` (data, not assertion).
+        """
+        if self._finding_funnel_section is None:
+            return
+        entries = self._funnel_entries_by_id()
+        for finding in list(confirmed_findings) + list(candidate_findings):
+            entry = entries.get(self._resolve_finding_id(finding))
+            if entry is not None and entry.get("first_failure_stage"):
+                self._attach_funnel_first_failure(
+                    finding,
+                    stage=str(entry["first_failure_stage"]),
+                    reason=str(entry.get("first_failure_reason") or ""),
+                )
+        for finding in candidate_findings:
+            info = finding.additional_info if isinstance(finding.additional_info, dict) else {}
+            if not info.get("first_failure_stage"):
+                self._attach_funnel_first_failure(
+                    finding,
+                    stage="F5",
+                    reason="evidence_insufficient",
+                )
 
     @property
     def _has_canonical_summary(self) -> bool:
@@ -683,6 +780,14 @@ class HaddixFormatter:
         include, reason = self._should_include_finding(finding)
         if include:
             self._findings.append(finding)
+            # SGK-2026-0440 Lane B: capture the raw session finding id
+            # (``Finding.id`` md5) so funnel entries can be matched even
+            # though HaddixFinding has no id field of its own. Deliberately
+            # a runtime attribute, NOT a dataclass field: asdict()-based
+            # finding logging must stay byte-identical.
+            raw_id = str(data.get("id", "") or "").strip()
+            if raw_id:
+                finding._funnel_raw_id = raw_id  # type: ignore[attr-defined]
             return
 
         self._suppressed_findings.append(
@@ -1839,16 +1944,19 @@ class HaddixFormatter:
             embed_vdp_canonical_index,
             embed_vdp_diagnostic_index,
             embed_vdp_run_failed_marker,
+            embed_finding_funnel_index,
         )
 
         if self._vdp_canonical_summary is not None:
             content = embed_vdp_canonical_index(content, self._vdp_canonical_summary)
         content = embed_vdp_diagnostic_index(content, self._vdp_diagnostics_section)
         content = embed_vdp_run_failed_marker(content, self._vdp_run_outcome)
+        content = embed_finding_funnel_index(content, self._finding_funnel_section)
         if (
             self._vdp_canonical_summary is not None
             or self._vdp_diagnostics_section is not None
             or self._vdp_run_outcome is not None
+            or self._finding_funnel_section is not None
         ):
             atomic_write_report(
                 output_path,
@@ -1872,6 +1980,7 @@ class HaddixFormatter:
         if (
             self._vdp_canonical_summary is not None
             or self._vdp_diagnostics_section is not None
+            or self._finding_funnel_section is not None
         ):
             from src.reporting.vdp_report_projection import (
                 atomic_write_report,
@@ -1886,6 +1995,8 @@ class HaddixFormatter:
             diag_index = build_vdp_diagnostic_index(self._vdp_diagnostics_section)
             if diag_index is not None:
                 data["vdp_diagnostic_index_v1"] = diag_index
+            if self._finding_funnel_section is not None:
+                data["finding_funnel_v1"] = self._finding_funnel_section
             atomic_write_report(output_path, json.dumps(data, indent=2, ensure_ascii=False))
             return
         output_path.write_text(content, encoding="utf-8")
@@ -2304,6 +2415,9 @@ class HaddixFormatter:
                 candidates.append(finding)
             else:
                 confirmed.append(finding)
+        # SGK-2026-0440 Lane B (additive): per-finding first-failure
+        # attribution when the funnel section is present. No-op when absent.
+        self._apply_funnel_first_failure(confirmed, candidates)
         return self._deduplicate_confirmed_findings(confirmed), self._deduplicate_candidate_findings(candidates)
 
     def _normalize_vulnerability_class(self, value: Any) -> str:
@@ -2797,6 +2911,7 @@ def generate_haddix_report(
     vdp_canonical_summary: Any = None,
     vdp_diagnostics_section: Any = None,
     vdp_run_outcome: Any = None,
+    finding_funnel_section: Any = None,
 ) -> None:
     """Generate the canonical Haddix report.
 
@@ -2818,6 +2933,12 @@ def generate_haddix_report(
     fail-closed run outcome (``vdp_contract.run_outcome``); a failed
     follow-up stage embeds the ``vdp_run_failed_v1`` marker so the report is
     never presented as a normal completion.
+
+    ``finding_funnel_section`` (SGK-2026-0440 Lane B, additive): the
+    session's ``finding_funnel_v1`` section; when present the machine-
+    readable funnel block is embedded and per-finding first-failure
+    stage/reason is attached. Absent -> no block, no additional_info keys
+    (legacy reports unchanged).
     """
     if format_type != "json":
         from src.reporting.haddix_submission_internal_formatter import (
@@ -2837,6 +2958,7 @@ def generate_haddix_report(
             vdp_canonical_summary=vdp_canonical_summary,
             vdp_diagnostics_section=vdp_diagnostics_section,
             vdp_run_outcome=vdp_run_outcome,
+            finding_funnel_section=finding_funnel_section,
         )
         return
 
@@ -2853,6 +2975,8 @@ def generate_haddix_report(
         formatter.set_vdp_diagnostics_section(vdp_diagnostics_section)
     if vdp_run_outcome is not None:
         formatter.set_vdp_run_outcome(vdp_run_outcome)
+    if finding_funnel_section is not None:
+        formatter.set_finding_funnel_section(finding_funnel_section)
 
     for f in findings:
         formatter.add_finding_from_dict(f)

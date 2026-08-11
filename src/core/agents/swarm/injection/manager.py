@@ -116,9 +116,103 @@ from src.core.agents.swarm.injection.manager_internal.unknown_hypotheses import 
     build_unknown_hypotheses,
     build_unknown_idor_candidate_finding,
 )
+from src.core.engine.finding_funnel_trace import get_finding_funnel, url_fingerprint
 from src.core.config.settings import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _decompose_phase2_block_reasons(
+    *,
+    phase1_findings: List[Any],
+    tool_error: bool,
+    weak_signal: bool,
+    high_risk_requires_phase2: bool,
+    phase2_on_empty_phase1: bool,
+    cors_no_signal_safe_skip: bool,
+) -> List[str]:
+    """SGK-2026-0367 phase2-block-reason decomposition (shared helper).
+
+    Identical output to the inline decomposition historically used by
+    ``dispatch``; extracted so the finding-funnel (SGK-2026-0440) can record
+    the same decomposed strings on every Phase-2 skip path without drift.
+    """
+    reasons: List[str] = []
+    if not phase1_findings:
+        reasons.append("no_phase1_findings")
+    if not tool_error:
+        reasons.append("no_tool_error")
+    if not weak_signal:
+        reasons.append("no_weak_signal")
+    if not high_risk_requires_phase2:
+        reasons.append("risk_not_met")
+    if not phase2_on_empty_phase1:
+        reasons.append("phase2_on_empty_disabled")
+    if cors_no_signal_safe_skip:
+        reasons.append("cors_no_signal")
+    return reasons
+
+
+def _funnel_task_event(
+    url: str, stage: str, outcome: str, reason_code: Optional[str] = None
+) -> None:
+    """SGK-2026-0440: guarded URL-keyed funnel event (measurement only).
+
+    Disabled funnel -> no-op; hook exceptions NEVER raise and never alter
+    the existing detection / confirmation / suppression flow.
+    """
+    funnel = get_finding_funnel()
+    if funnel is None:
+        return
+    try:
+        funnel.record_task_event(
+            url_fingerprint(url), stage, outcome, reason_code=reason_code
+        )
+    except Exception:  # noqa: BLE001 — boundary hook must not break the run
+        pass
+
+
+def _funnel_finding_event(
+    finding: Any,
+    stage: str,
+    outcome: str,
+    reason_code: Optional[str] = None,
+    block_reasons: Optional[List[str]] = None,
+) -> None:
+    """SGK-2026-0440: guarded finding-keyed funnel event (measurement only).
+
+    Attaches pending URL-keyed (F0/F1) events to the finding entry before
+    recording, so pre-finding stages merge into the same entry.
+    """
+    funnel = get_finding_funnel()
+    if funnel is None:
+        return
+    try:
+        finding_id = getattr(finding, "id", "") or ""
+        if not finding_id:
+            return
+        funnel.attach(finding_id, url_fingerprint(getattr(finding, "target_url", "") or ""))
+        funnel.record(
+            finding_id,
+            stage,
+            outcome,
+            reason_code=reason_code,
+            block_reasons=block_reasons,
+            producer="InjectionManager",
+        )
+    except Exception:  # noqa: BLE001 — boundary hook must not break the run
+        pass
+
+
+def _funnel_finding_created(finding: Any) -> None:
+    """SGK-2026-0440: F2 signal_detected for a new Phase-1 finding.
+
+    Auto-reverified findings additionally record F4 evidence_captured
+    (evidence was captured via the auto-reverification probe paths).
+    """
+    _funnel_finding_event(finding, "F2", "reached")
+    if "auto_reverified" in (getattr(finding, "tags", None) or []):
+        _funnel_finding_event(finding, "F4", "reached")
 
 @AgentRegistry.register(
     names=["InjectionManager", "InjectionManagerAgent", "injection_manager", "InjectionSwarm"],
@@ -1258,6 +1352,8 @@ class InjectionManagerAgent(BaseManagerAgent):
             )
             self.current_context["findings"].append(finding)
             findings_count += 1
+            # SGK-2026-0440: measurement only — F2 signal_detected.
+            _funnel_finding_created(finding)
 
             object_ab_ok = bool(object_ab_comparison.get("performed"))
             object_ab_status_a = int(object_ab_comparison.get("status_a", 0) or 0)
@@ -1432,6 +1528,8 @@ class InjectionManagerAgent(BaseManagerAgent):
                     )
                     self.current_context["findings"].append(finding)
                     findings_count += 1
+                    # SGK-2026-0440: measurement only — F2 signal_detected.
+                    _funnel_finding_created(finding)
                     _capture_probe_evidence(
                         method="GET",
                         request_url=discovered_url,
@@ -1487,6 +1585,8 @@ class InjectionManagerAgent(BaseManagerAgent):
             )
             self.current_context["findings"].append(finding)
             findings_count += 1
+            # SGK-2026-0440: measurement only — F2 signal_detected.
+            _funnel_finding_created(finding)
 
         # 軽量 mass-assignment probe（応答スキーマから候補キーを抽出して拡張）
         schema_probe_fields = extract_mass_assignment_schema_candidates(
@@ -1745,6 +1845,9 @@ class InjectionManagerAgent(BaseManagerAgent):
                 )
                 self.current_context["findings"].append(finding)
                 findings_count += 1
+                # SGK-2026-0440: measurement only — F2 signal_detected
+                # (auto-reverified findings additionally record F4).
+                _funnel_finding_created(finding)
                 mass_assignment_finding_emitted = True
                 _capture_probe_evidence(
                     method=probe_method,
@@ -1923,6 +2026,9 @@ class InjectionManagerAgent(BaseManagerAgent):
                     )
                     self.current_context["findings"].append(finding)
                     findings_count += 1
+                    # SGK-2026-0440: measurement only — F2 signal_detected
+                    # (auto-reverified findings additionally record F4).
+                    _funnel_finding_created(finding)
         else:
             # write method が判定できない API-like endpoint でも、
             # read-only query probe を1回送って反射/挙動を観測する。
@@ -1990,6 +2096,8 @@ class InjectionManagerAgent(BaseManagerAgent):
                         )
                         self.current_context["findings"].append(finding)
                         findings_count += 1
+                        # SGK-2026-0440: measurement only — F2 signal_detected.
+                        _funnel_finding_created(finding)
                 except Exception:
                     api_probe_skipped_reason = "write_method_not_discovered_and_read_probe_failed"
             else:
@@ -2167,6 +2275,10 @@ class InjectionManagerAgent(BaseManagerAgent):
                         "attempt_traces": [],
                         "detection_mode": "phase1",
                     })
+                    # SGK-2026-0440: measurement only — record the URL-level skip.
+                    _funnel_task_event(
+                        target_url, "F1", "skipped", reason_code="url_skipped_dedupe"
+                    )
                     continue
                 executed_keys.add(dedupe_key)
                 logger.info(
@@ -2228,6 +2340,13 @@ class InjectionManagerAgent(BaseManagerAgent):
                             "attempt_traces": [],
                             "detection_mode": "phase1",
                         })
+                        # SGK-2026-0440: measurement only — low ssrf score skip.
+                        _funnel_task_event(
+                            target_url,
+                            "F1",
+                            "skipped",
+                            reason_code="url_skipped_low_ssrf_score",
+                        )
                         continue
 
                     reachable, gate_reason = ssrf_reachability_gate(target_url, base_params)
@@ -2250,6 +2369,13 @@ class InjectionManagerAgent(BaseManagerAgent):
                             "attempt_traces": [],
                             "detection_mode": "phase1",
                         })
+                        # SGK-2026-0440: measurement only — ssrf reachability skip.
+                        _funnel_task_event(
+                            target_url,
+                            "F1",
+                            "skipped",
+                            reason_code="url_skipped_ssrf_reachability",
+                        )
                         continue
 
                 # キャッシュチェック
@@ -2338,6 +2464,13 @@ class InjectionManagerAgent(BaseManagerAgent):
                         },
                         "detection_mode": "phase1",
                     })
+                    # SGK-2026-0440: measurement only — circuit breaker skip.
+                    _funnel_task_event(
+                        target_url,
+                        "F1",
+                        "skipped",
+                        reason_code="url_skipped_timeout_circuit",
+                    )
                     continue
                 if (
                     timeout_retry_guard_enabled
@@ -2506,6 +2639,10 @@ class InjectionManagerAgent(BaseManagerAgent):
                             "ssrf_score": ssrf_score if vuln_type == "ssrf" else 0,
                             "score_breakdown": score_breakdown if vuln_type == "ssrf" else {},
                         })
+                        # SGK-2026-0440: measurement only — the attempt timed out.
+                        _funnel_task_event(
+                            target_url, "F1", "failed", reason_code="url_timeout"
+                        )
                         break
                     except Exception as exc:
                         logger.error("[%s] Phase 1 error on %s: %s", self.name, target_url, exc)
@@ -2546,6 +2683,10 @@ class InjectionManagerAgent(BaseManagerAgent):
                             "ssrf_score": ssrf_score if vuln_type == "ssrf" else 0,
                             "score_breakdown": score_breakdown if vuln_type == "ssrf" else {},
                         })
+                        # SGK-2026-0440: measurement only — the attempt errored.
+                        _funnel_task_event(
+                            target_url, "F1", "failed", reason_code="url_error"
+                        )
                         break
 
             urls_checked += len(batch)
@@ -2608,12 +2749,37 @@ class InjectionManagerAgent(BaseManagerAgent):
             phase1_vuln_types=phase1_vuln_types,
             coerce_bool=self._coerce_bool,
         )
+        # Hoisted above the early-return check (SGK-2026-0440) so the funnel
+        # can decompose the same phase2 block reasons on every skip path.
+        # Pure move: the computation depends only on task.params + settings.
+        phase2_on_empty_phase1 = self._coerce_bool(
+            task.params.get("phase2_on_empty_phase1"),
+            default=False,
+        )
+        if bool(getattr(settings, "phase2_on_empty_force_disable", False)):
+            phase2_on_empty_phase1 = False
+
         if phase1_findings and (early_return_enabled or auto_early_return):
             reason = "phase1_early_return" if early_return_enabled else "phase1_auto_early_return_findings"
             logger.info(
                 "[%s] Early return (%s) with %d Phase 1 findings. Skipping Phase 2.",
                 self.name, reason, len(phase1_findings)
             )
+            # SGK-2026-0440: measurement only — Phase 2 skipped (F3).
+            early_block_reasons = _decompose_phase2_block_reasons(
+                phase1_findings=phase1_findings,
+                tool_error=phase1_signals["tool_error"],
+                weak_signal=phase1_signals["weak_signal"],
+                high_risk_requires_phase2=high_risk_requires_phase2,
+                phase2_on_empty_phase1=phase2_on_empty_phase1,
+                cors_no_signal_safe_skip=cors_no_signal_safe_skip,
+            )
+            for _f in phase1_findings:
+                _funnel_finding_event(
+                    _f, "F3", "skipped",
+                    reason_code="phase2_skipped_early_return",
+                    block_reasons=early_block_reasons,
+                )
             return SwarmResult(
                 findings=phase1_findings,
                 status="success",
@@ -2647,19 +2813,15 @@ class InjectionManagerAgent(BaseManagerAgent):
             phase2_on_empty_phase1 = False
 
         # SGK-2026-0367: decomposed skip reason for session evidence
-        phase2_block_reason: list[str] = []
-        if not phase1_findings:
-            phase2_block_reason.append("no_phase1_findings")
-        if not phase1_signals["tool_error"]:
-            phase2_block_reason.append("no_tool_error")
-        if not phase1_signals["weak_signal"]:
-            phase2_block_reason.append("no_weak_signal")
-        if not high_risk_requires_phase2:
-            phase2_block_reason.append("risk_not_met")
-        if not phase2_on_empty_phase1:
-            phase2_block_reason.append("phase2_on_empty_disabled")
-        if cors_no_signal_safe_skip:
-            phase2_block_reason.append("cors_no_signal")
+        # (shared helper also feeds the SGK-2026-0440 funnel records).
+        phase2_block_reason = _decompose_phase2_block_reasons(
+            phase1_findings=phase1_findings,
+            tool_error=phase1_signals["tool_error"],
+            weak_signal=phase1_signals["weak_signal"],
+            high_risk_requires_phase2=high_risk_requires_phase2,
+            phase2_on_empty_phase1=phase2_on_empty_phase1,
+            cors_no_signal_safe_skip=cors_no_signal_safe_skip,
+        )
 
         # SGK-2026-0367: exception targets that should NOT skip Phase 2
         # even without signals (client_route_dom, javascript/, hash-route with query)
@@ -2712,6 +2874,16 @@ class InjectionManagerAgent(BaseManagerAgent):
                 "[%s] Skipping Phase 2: no findings/signals, phase2_block_reason=%s, force_phase2=%s.",
                 self.name, phase2_block_reason, force_phase2,
             )
+            # SGK-2026-0440: measurement only — Phase 2 skipped (F3).
+            # No candidates exist on this path (skip requires no findings),
+            # so the per-finding loop is a no-op today; it stays for parity
+            # with the other skip paths.
+            for _f in phase1_findings:
+                _funnel_finding_event(
+                    _f, "F3", "skipped",
+                    reason_code="phase2_skipped_early_return",
+                    block_reasons=phase2_block_reason,
+                )
             return SwarmResult(
                 findings=phase1_findings,
                 status="success",
@@ -2788,6 +2960,11 @@ class InjectionManagerAgent(BaseManagerAgent):
                 "[%s] Skipping Phase 2 due to exhausted manager budget (elapsed=%.1fs, budget=%ds)",
                 self.name, elapsed_after_phase1, manager_timeout
             )
+            # SGK-2026-0440: measurement only — Phase 2 blocked by budget (F3).
+            for _f in phase1_findings:
+                _funnel_finding_event(
+                    _f, "F3", "blocked", reason_code="budget_exhausted"
+                )
             return SwarmResult(
                 findings=phase1_findings,
                 status="partial_success" if phase1_findings else "failed",
@@ -2812,6 +2989,10 @@ class InjectionManagerAgent(BaseManagerAgent):
                 successful_specialists=1 if phase1_findings else 0,
             )
 
+        # SGK-2026-0440: measurement only — Phase 2 actually starts (F3).
+        for _f in phase1_findings:
+            _funnel_finding_event(_f, "F3", "reached")
+
         try:
             result: SwarmResult = await asyncio.wait_for(super().dispatch(task), timeout=remaining_budget)
         except asyncio.TimeoutError:
@@ -2819,6 +3000,11 @@ class InjectionManagerAgent(BaseManagerAgent):
                 "[%s] Phase 2 timed out after %ds. Returning Phase 1 partial result.",
                 self.name, remaining_budget
             )
+            # SGK-2026-0440: measurement only — Phase 2 timed out (F3).
+            for _f in phase1_findings:
+                _funnel_finding_event(
+                    _f, "F3", "failed", reason_code="phase2_timeout"
+                )
             return SwarmResult(
                 findings=phase1_findings,
                 status="partial_success" if phase1_findings else "failed",
@@ -2909,6 +3095,8 @@ class InjectionManagerAgent(BaseManagerAgent):
             quick_mode=bool(quick_mode),
             detection_mode=detection_mode,
         )
+        # SGK-2026-0440: measurement only — a specialist attack is dispatched.
+        _funnel_task_event(url, "F1", "reached")
 
         try:
             if vuln_type == "sqli":
@@ -3744,6 +3932,16 @@ class InjectionManagerAgent(BaseManagerAgent):
             validate_one=self._finding_validator.validate,
         )
 
+        # SGK-2026-0440: measurement only — the validator gate (F4).
+        # Passing findings captured independent evidence; rejected findings
+        # stop here. The rejection behavior itself is unchanged.
+        for _f in valid:
+            _funnel_finding_event(_f, "F4", "reached")
+        for _f, _result in rejected:
+            _funnel_finding_event(
+                _f, "F4", "skipped", reason_code="finding_validator_rejected"
+            )
+
         for finding, result in rejected:
             logger.warning(
                 "Finding rejected by validator: reason=%s, url=%s",
@@ -3766,11 +3964,23 @@ class InjectionManagerAgent(BaseManagerAgent):
         Returns:
             List: 検証済み有効findingリスト
         """
-        original_count = len(self.current_context.get("findings", []) or []) if isinstance(self.current_context, dict) else 0
+        pre_filter_findings = list(self.current_context.get("findings", []) or []) if isinstance(self.current_context, dict) else []
+        original_count = len(pre_filter_findings)
         valid = filter_manager_findings(
             self.current_context if isinstance(self.current_context, dict) else {},
             validate_one=self._finding_validator.validate,
         )
+        # SGK-2026-0440: measurement only — the validator gate (F4).
+        # The filter behavior is unchanged; rejected findings (by identity)
+        # are recorded as F4 skipped.
+        for _f in valid:
+            _funnel_finding_event(_f, "F4", "reached")
+        _valid_ids = {id(_f) for _f in valid}
+        for _f in pre_filter_findings:
+            if id(_f) not in _valid_ids:
+                _funnel_finding_event(
+                    _f, "F4", "skipped", reason_code="finding_validator_rejected"
+                )
         current_findings = self.current_context.get("findings", []) if isinstance(self.current_context, dict) else []
         filtered_count = max(0, len(getattr(self, "current_context", {}).get("findings", []) or []))
         if isinstance(current_findings, list):

@@ -497,6 +497,9 @@ class HaddixSubmissionInternalFormatter(HaddixFormatter):
             # SGK-2026-0422: canonical VDP sessions use ONLY canonical
             # verdicts. No enforcement-mode re-judgement.
             confirmed, candidates = self._canonical_split(sorted_findings)
+            # SGK-2026-0440 Lane B (additive): funnel attribution for
+            # canonical candidates as well (idempotent, no-op when absent).
+            self._apply_funnel_first_failure(confirmed, candidates)
             result = (confirmed, candidates, [])
             self._cached_enforced_split = result
             return result
@@ -591,6 +594,10 @@ class HaddixSubmissionInternalFormatter(HaddixFormatter):
                         info["reason_codes"] = list(verdict.reason_codes)
 
         enforced_candidates = self._deduplicate_candidate_findings(enforced_candidates)
+        # SGK-2026-0440 Lane B (additive): per-finding first-failure
+        # attribution when the funnel section is present. Idempotent — covers
+        # findings demoted from confirmed to candidate by enforcement mode.
+        self._apply_funnel_first_failure(enforced_confirmed, enforced_candidates)
         return enforced_confirmed, enforced_candidates, verdicts
 
     # ------------------------------------------------------------------
@@ -1917,6 +1924,7 @@ def generate_haddix_submission_internal_report(
     vdp_canonical_summary: Any = None,
     vdp_diagnostics_section: Any = None,
     vdp_run_outcome: Any = None,
+    finding_funnel_section: Any = None,
 ) -> None:
     """Generate a submission/internal split Haddix report from findings.
 
@@ -1927,6 +1935,9 @@ def generate_haddix_submission_internal_report(
     (SGK-2026-0425 M5, additive) embeds the diagnostic index when present.
     ``vdp_run_outcome`` (SGK-2026-0426 W3, additive) embeds the fail-closed
     run-failed marker when the follow-up stage failed.
+    ``finding_funnel_section`` (SGK-2026-0440 Lane B, additive) embeds the
+    machine-readable funnel block and attaches per-finding first-failure
+    stage/reason when present.
     """
     formatter = HaddixSubmissionInternalFormatter()
     formatter.set_target(target, program_name)
@@ -1941,6 +1952,8 @@ def generate_haddix_submission_internal_report(
         formatter.set_vdp_diagnostics_section(vdp_diagnostics_section)
     if vdp_run_outcome is not None:
         formatter.set_vdp_run_outcome(vdp_run_outcome)
+    if finding_funnel_section is not None:
+        formatter.set_finding_funnel_section(finding_funnel_section)
 
     for raw_finding in findings:
         formatter.add_finding_from_dict(raw_finding)

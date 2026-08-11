@@ -54,6 +54,15 @@ VDP_RUN_FAILED_MARKER_VERSION = "vdp_run_failed_v1"
 _RUN_FAILED_BLOCK_START = "<!-- vdp_run_failed:start -->"
 _RUN_FAILED_BLOCK_END = "<!-- vdp_run_failed:end -->"
 
+# SGK-2026-0440 Lane B: additive finding-funnel block. The funnel section
+# (finding_id hashes + vocab strings, no secrets) is embedded verbatim as a
+# machine-readable JSON payload so consumers can attribute per-candidate
+# first-failure stages/reasons. Independent from the canonical / diagnostic
+# index blocks; all may coexist in one report.
+FINDING_FUNNEL_INDEX_VERSION = "finding_funnel_v1"
+_FINDING_FUNNEL_BLOCK_START = "<!-- finding_funnel_v1:start -->"
+_FINDING_FUNNEL_BLOCK_END = "<!-- finding_funnel_v1:end -->"
+
 # Known secret markers used by the report secret scan (additive).
 _SECRET_PATTERNS = [
     re.compile(r"Bearer\s+[a-zA-Z0-9._\-+/=]{10,}", re.IGNORECASE),
@@ -390,6 +399,70 @@ def extract_vdp_run_failed_marker_from_report(
     except (json.JSONDecodeError, ValueError):
         return None
     if not isinstance(data, dict) or data.get("marker_version") != VDP_RUN_FAILED_MARKER_VERSION:
+        return None
+    return data
+
+
+# ---------------------------------------------------------------------------
+# Machine-readable finding-funnel block (SGK-2026-0440 Lane B)
+# ---------------------------------------------------------------------------
+
+
+def embed_finding_funnel_index(
+    markdown: str,
+    funnel_section: Optional[Dict[str, Any]],
+) -> str:
+    """Embed the ``finding_funnel_v1`` block into a Markdown report.
+
+    When the funnel section is absent (or not a dict) NO block is added and
+    the markdown is returned unchanged (additive-absent: legacy reports keep
+    their exact bytes). An existing block is replaced; otherwise the block
+    is appended. The section is embedded verbatim — it is measurement-only
+    (finding_id hashes + vocab strings) and carries no secret material.
+    """
+    if not isinstance(funnel_section, dict):
+        return markdown
+    block = (
+        f"{_FINDING_FUNNEL_BLOCK_START}\n"
+        f"{json.dumps(funnel_section, ensure_ascii=False, sort_keys=True, indent=2)}\n"
+        f"{_FINDING_FUNNEL_BLOCK_END}"
+    )
+    if _FINDING_FUNNEL_BLOCK_START in markdown:
+        head = markdown.split(_FINDING_FUNNEL_BLOCK_START, 1)[0]
+        tail = (
+            markdown.split(_FINDING_FUNNEL_BLOCK_END, 1)[1]
+            if _FINDING_FUNNEL_BLOCK_END in markdown
+            else ""
+        )
+        return f"{head}{block}\n{tail}"
+    return f"{markdown.rstrip()}\n\n{block}\n"
+
+
+def extract_finding_funnel_index_from_report(
+    report_text: str,
+) -> Optional[Dict[str, Any]]:
+    """Extract the embedded ``finding_funnel_v1`` from a report (Lane B).
+
+    None when the markers are absent, the payload is not JSON, or the
+    payload is not a funnel section (schema_version/entries/summary).
+    """
+    if (
+        _FINDING_FUNNEL_BLOCK_START not in report_text
+        or _FINDING_FUNNEL_BLOCK_END not in report_text
+    ):
+        return None
+    payload = report_text.split(_FINDING_FUNNEL_BLOCK_START, 1)[1].split(
+        _FINDING_FUNNEL_BLOCK_END, 1
+    )[0]
+    try:
+        data = json.loads(payload.strip())
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    if data.get("schema_version") != 1:
+        return None
+    if not isinstance(data.get("entries"), list) or not isinstance(data.get("summary"), dict):
         return None
     return data
 

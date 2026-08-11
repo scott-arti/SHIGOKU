@@ -318,6 +318,14 @@ def inject_vdp_section_to_session_payload(payload: dict, vdp_state: dict) -> dic
     if vdp_state.get("verdicts_finalized") is not None:
         vdp_section["verdicts_finalized"] = bool(vdp_state["verdicts_finalized"])
 
+    # SGK-2026-0440 Lane B (additive): finding-funnel telemetry. The funnel
+    # section is measurement-only — finding_id hashes + vocab strings, no
+    # secrets. Carried only when provided; absent -> key absent (legacy
+    # byte-identical session payloads).
+    finding_funnel_section = vdp_state.get("finding_funnel_section")
+    if finding_funnel_section is not None:
+        vdp_section["finding_funnel_v1"] = redact_secrets_deep(finding_funnel_section)
+
     result["vdp_contract"] = vdp_section
 
     # Redact the ENTIRE payload (not just VDP section)

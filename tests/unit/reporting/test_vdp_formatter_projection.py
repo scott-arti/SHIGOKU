@@ -285,6 +285,90 @@ class TestDiagnosticIndexInReports:
         assert "evt-1" not in text
 
 
+class TestFindingFunnelIndexInReports:
+    """SGK-2026-0440 Lane B — additive finding_funnel_v1 embedding.
+
+    A report generated for a session WITH finding-funnel telemetry carries
+    the machine-readable funnel block; a report without a funnel stays
+    block-free (additive-absent, legacy bit-identical).
+    """
+
+    def _funnel_section(self) -> dict:
+        return {
+            "schema_version": 1,
+            "entries": [
+                {
+                    "finding_id": "F1",
+                    "first_failure_stage": "F3",
+                    "first_failure_reason": "phase2_skipped_early_return",
+                    "block_reasons": [],
+                    "max_stage_reached": "F3",
+                    "stages": {
+                        "F0": "reached",
+                        "F1": "reached",
+                        "F2": "reached",
+                        "F3": "skipped",
+                    },
+                    "producer": "InjectionManager",
+                }
+            ],
+            "summary": {
+                "by_stage": {"F0": 16},
+                "by_reason": {"phase2_skipped_early_return": 1},
+                "suppressed_tasks": 0,
+                "total_candidates": 16,
+            },
+        }
+
+    def test_markdown_report_embeds_funnel_block(self, tmp_path):
+        from src.reporting.vdp_report_projection import (
+            extract_finding_funnel_index_from_report,
+        )
+
+        out = tmp_path / "haddix_funnel_test.md"
+        generate_haddix_report(
+            findings=[],
+            target="https://example.com",
+            output_path=out,
+            finding_funnel_section=self._funnel_section(),
+        )
+        text = out.read_text(encoding="utf-8")
+        data = extract_finding_funnel_index_from_report(text)
+        assert data is not None
+        assert data["schema_version"] == 1
+        assert data["summary"]["total_candidates"] == 16
+        assert data["entries"][0]["finding_id"] == "F1"
+
+    def test_report_without_funnel_stays_block_free(self, tmp_path):
+        """No funnel section -> no finding_funnel_v1 anywhere (legacy
+        byte-identical)."""
+        from src.reporting.vdp_report_projection import (
+            extract_finding_funnel_index_from_report,
+        )
+
+        out = tmp_path / "haddix_no_funnel_test.md"
+        generate_haddix_report(
+            findings=[],
+            target="https://example.com",
+            output_path=out,
+        )
+        text = out.read_text(encoding="utf-8")
+        assert extract_finding_funnel_index_from_report(text) is None
+        assert "finding_funnel_v1" not in text
+
+    def test_json_report_includes_funnel(self, tmp_path):
+        out = tmp_path / "haddix_funnel_test.json"
+        generate_haddix_report(
+            findings=[],
+            target="https://example.com",
+            output_path=out,
+            format_type="json",
+            finding_funnel_section=self._funnel_section(),
+        )
+        data = json.loads(out.read_text(encoding="utf-8"))
+        assert data["finding_funnel_v1"]["entries"][0]["finding_id"] == "F1"
+
+
 class TestReportAtomicity:
     def test_formatter_exception_no_partial_report(self, tmp_path):
         """A formatter exception must not leave a partial official file."""

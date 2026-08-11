@@ -47,6 +47,7 @@ from src.core.learning.findings_repository import get_findings_repository
 from src.core.infra.async_writer import AsyncDatabaseWriter
 from src.core.factory import AgentFactory
 from src.core.engine.attack_planner import AttackPlanner
+from src.core.engine.finding_funnel_trace import get_finding_funnel, url_fingerprint
 from src.core.engine.intervention_policy import InterventionPolicy
 from src.core.engine.recipe_contracts import validate_task_schema
 from src.core.engine.recipe_loader import TakeoverCandidate, RecipeCandidate, build_suppression_key
@@ -1746,6 +1747,11 @@ class MasterConductor:
             logger.info(
                 "Suppressing injection task %s (category=%s url=%s exec_path=%s) — ownership already claimed",
                 task.id, category, normalized_url, ep,
+            )
+            # SGK-2026-0440: measurement only — the suppression decision above
+            # is unchanged; the funnel merely records it as a blocked F0.
+            self._finding_funnel_task_event(
+                target, "F0", "blocked", reason_code="task_suppressed_ownership"
             )
             return False
 
@@ -4022,6 +4028,22 @@ class MasterConductor:
             run_id=self.run_ledger_recorder.run_id,
         )
 
+            # --- SGK-2026-0440 Lane B: finding-funnel telemetry (additive) ---
+            # Measurement-only funnel section (finding_id hashes + vocab
+            # strings, no secrets). The recorder lives in
+            # finding_funnel_trace.py (parallel lane); while it is absent or
+            # disabled the section is None and the key stays absent (legacy
+            # byte-identical). Any recorder failure must never block a
+            # session save -> fail-absent.
+            funnel_section = None
+            try:
+                from src.core.engine.finding_funnel_trace import get_finding_funnel
+                funnel_recorder = get_finding_funnel()
+                if funnel_recorder is not None:
+                    funnel_section = funnel_recorder.to_section()
+            except Exception:
+                funnel_section = None
+
             # --- Inject VDP contract section (SGK-2026-0419) ---
             # Always inject; an empty vdp_section signals VDP is not active yet.
             vdp_state = getattr(self, '_vdp_state', None)
@@ -4035,7 +4057,10 @@ class MasterConductor:
                     "budget_snapshot": {},
                     "run_health": {},
                 }
-            session_data = inject_vdp_section_to_session_payload(session_data, vdp_state)
+            inject_vdp_state = dict(vdp_state)
+            if funnel_section is not None:
+                inject_vdp_state["finding_funnel_section"] = funnel_section
+            session_data = inject_vdp_section_to_session_payload(session_data, inject_vdp_state)
 
             # --- Inject additive vdp_diagnostics_v1 section (SGK-2026-0425) ---
             # The collector is the lowest writer and deep-redacts; a second
@@ -4048,6 +4073,13 @@ class MasterConductor:
                     session_data['vdp_diagnostics_v1'] = redact_secrets_deep(
                         diag_section
                     )
+
+            # --- SGK-2026-0440 Lane B: finding_funnel_v1 session key ---
+            # Parallel to ``vdp_diagnostics_v1`` above (same additive
+            # pattern): deep-redacted copy, key absent when no funnel.
+            if funnel_section is not None:
+                from src.core.models.vdp_contract import redact_secrets_deep
+                session_data['finding_funnel_v1'] = redact_secrets_deep(funnel_section)
 
             # --- M0 gate validation before save (SGK-2026-0419) ---
             # The M0 gate itself validates vdp_active consistency (inactive + data
@@ -7153,6 +7185,9 @@ class MasterConductor:
         """
         再帰的実行ループ (並列化対応版)
         """
+        # SGK-2026-0440: reset the finding-funnel recorder at run start
+        # (measurement only; no-op when diagnostics are disabled).
+        self._reset_finding_funnel()
         if max_tasks is None:
             max_tasks = getattr(settings, "max_session_tasks", 1000)
         executed = 0
@@ -11525,6 +11560,48 @@ class MasterConductor:
             getattr(collector, 'hook_failed', False)
         )
 
+    # ------------------------------------------------------------------
+    # SGK-2026-0440: finding-pipeline funnel trace (additive, measurement only)
+    # ------------------------------------------------------------------
+
+    def _finding_funnel_task_event(
+        self,
+        url: str,
+        stage: str,
+        outcome: str,
+        reason_code: Optional[str] = None,
+    ) -> None:
+        """Emit a URL-keyed finding-funnel event (SGK-2026-0440, additive).
+
+        Guarded: disabled funnel (``diagnostics.enabled`` False) -> no-op;
+        hook exceptions NEVER raise and never alter the existing path.
+        """
+        funnel = get_finding_funnel()
+        if funnel is None:
+            return
+        try:
+            funnel.record_task_event(
+                url_fingerprint(url), stage, outcome, reason_code=reason_code
+            )
+        except Exception:  # noqa: BLE001 — boundary hook must not break the run
+            pass
+
+    def _reset_finding_funnel(self) -> None:
+        """Reset the finding-funnel recorder at run start (SGK-2026-0440).
+
+        Uses the module accessor (config-guarded) and touches no instance
+        state, so ``__new__``-based test doubles and lazy inits stay safe
+        (lessons.md hasattr convention).
+        """
+        funnel = get_finding_funnel()
+        if funnel is None:
+            return
+        try:
+            funnel.reset()
+        except Exception:  # noqa: BLE001 — measurement hook must never break the run
+            pass
+
+
     def _queue_vdp_follow_ups(
         self,
         scope_definition=None,
@@ -13796,6 +13873,10 @@ class MasterConductor:
                     params=signal_task_params,
                 )
                 tasks.append(task)
+                # SGK-2026-0440: measurement only — record F0 target_selected
+                # per recon target URL that produced an injection task.
+                for signal_url in signal_urls:
+                    self._finding_funnel_task_event(signal_url, "F0", "reached")
                 if normalized_category != "command_injection":
                     _append_legacy_detection_companion_tasks(
                         targets=signal_urls,
@@ -14639,6 +14720,12 @@ class MasterConductor:
                     tags=tag_map.get(normalized_category, [normalized_category]),
                     priority=task_priority,
                 ))
+                # SGK-2026-0440: measurement only — record F0 target_selected
+                # per recon target URL that produced an injection task.
+                for funnel_target_url in resolved_targets:
+                    self._finding_funnel_task_event(
+                        funnel_target_url, "F0", "reached"
+                    )
                 if normalized_category != "command_injection":
                     _append_legacy_detection_companion_tasks(
                         targets=resolved_targets,
