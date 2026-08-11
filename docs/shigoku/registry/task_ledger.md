@@ -450,3 +450,4 @@
 | SGK-2026-0438 | 発射される follow-up の広さ診断（5案中1発しか撃たない原因） | done | plan | SGK-2026-0418 | docs/shigoku/plans/done/2026-08-10_sgk-2026-0438_followup-firing-breadth-admission-diagnosis.md |
 | SGK-2026-0439 | param 依存攻撃（注入系）を安全に撃てるようにする | done | plan | SGK-2026-0418 | docs/shigoku/plans/done/2026-08-11_sgk-2026-0439_param-dependent-attack-enablement-safe.md |
 | SGK-2026-0440 | 本物の攻撃経路（候補→確定）を正しく計測する finding-pipeline 計装 | done | plan | SGK-2026-0418 | docs/shigoku/plans/done/2026-08-11_sgk-2026-0440_finding-pipeline-instrumentation.md |
+| SGK-2026-0441 | 検証ループの近代化 — 見つけた候補を賞金級 PoC で確定させる | active | plan | SGK-2026-0418 | docs/shigoku/plans/2026-08-11_sgk-2026-0441_validation-loop-modernization-payout-grade.md |

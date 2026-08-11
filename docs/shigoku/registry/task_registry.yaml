@@ -5329,6 +5329,17 @@ tasks:
   - docs/shigoku/reports/2026-08-11_sgk-2026-0439_param-dependent-attack-enablement-safe_work_report.md
   - docs/shigoku/reports/2026-08-11_sgk-2026-0440_finding-pipeline-instrumentation_work_report.md
   - docs/shigoku/worklogs/2026-08-11_sgk-2026-0440_finding-pipeline-instrumentation_work_log.md
+- provisional_id: DOC-0497
+  task_id: SGK-2026-0441
+  doc_type: plan
+  title: 検証ループの近代化 — 見つけた候補を賞金級 PoC で確定させる
+  primary_doc: docs/shigoku/plans/2026-08-11_sgk-2026-0441_validation-loop-modernization-payout-grade.md
+  status: active
+  provisional: false
+  task_summary: 飛ばされているPhase2検証ループを近代化(目的駆動・熟考)し賞金級PoCで確定。敷居据え置き・カーブフィッティング無し・診断先行
+  parent_task_id: SGK-2026-0418
+  related_docs:
+  - docs/shigoku/reports/2026-08-11_sgk-2026-0440_finding-pipeline-instrumentation_work_report.md
 doc_type_allowed_values:
 - spec
 - roadmap
