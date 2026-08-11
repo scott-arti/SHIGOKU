@@ -1,7 +1,7 @@
 ---
 task_id: SGK-2026-0441
 doc_type: plan
-status: active
+status: done
 parent_task_id: SGK-2026-0418
 related_docs:
 - docs/shigoku/reports/2026-08-11_sgk-2026-0440_finding-pipeline-instrumentation_work_report.md

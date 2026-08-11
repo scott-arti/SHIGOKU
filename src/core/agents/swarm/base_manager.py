@@ -99,6 +99,59 @@ class BaseManagerAgent(SwarmManager):
                 missing,
             )
 
+    def _phase2_time_budget_seconds(self) -> Optional[float]:
+        """Lane B (SGK-2026-0441): Phase-2 時間予算を task context から読む。
+
+        Lane A が dispatch 経路上で `phase2_time_budget_seconds` を設定する
+        （current_context 直下、または params 内）。None/欠落/不正値 → チェックなし
+        （legacy 挙動）。
+        """
+        budget = self.current_context.get("phase2_time_budget_seconds")
+        if budget is None:
+            params = self.current_context.get("params")
+            if isinstance(params, dict):
+                budget = params.get("phase2_time_budget_seconds")
+        if budget is None:
+            return None
+        try:
+            return float(budget)
+        except (TypeError, ValueError):
+            return None
+
+    def _payout_grade_obtained(self, observation_result: Any) -> bool:
+        """Lane B (SGK-2026-0441): ペイアウト級 PoC 早期停止チェック。
+
+        Lane A の決定的ジャッジ evaluate_payout_grade(finding) を呼ぶ。
+        候補 finding はツール結果の `candidate_findings` または
+        current_context の `candidate_findings`（dict のリスト）から取得する。
+        fail-closed: ジャッジ未実装（import 失敗）・候補なし・ジャッジ例外 → False（no-op）。
+        ここでは判定結果で停止するだけで、finding への記録は Lane A が行う。
+        """
+        candidates: List[Any] = []
+        if isinstance(observation_result, dict):
+            raw = observation_result.get("candidate_findings")
+            if isinstance(raw, list):
+                candidates.extend(raw)
+        raw = self.current_context.get("candidate_findings")
+        if isinstance(raw, list):
+            candidates.extend(raw)
+        if not candidates:
+            return False
+        try:
+            from src.core.agents.swarm.injection.payout_grade import evaluate_payout_grade
+        except Exception as exc:  # Lane A モジュール未着など → no-op
+            logger.debug("[%s] payout_grade judge unavailable: %s", self.name, exc)
+            return False
+        for finding in candidates:
+            if not isinstance(finding, dict):
+                continue
+            try:
+                if evaluate_payout_grade(finding).payout_grade:
+                    return True
+            except Exception as exc:  # ジャッジ例外も fail-closed
+                logger.debug("[%s] payout_grade judge error: %s", self.name, exc)
+        return False
+
     def set_llm_client(self, client: Any) -> None:
         """Shared LLM Client を設定 (Override)"""
         super().set_llm_client(client)
@@ -212,11 +265,23 @@ class BaseManagerAgent(SwarmManager):
         turn = 0
         status = "running"
         degraded_responses = 0
+        # Lane B (SGK-2026-0441): ループを早期停止した理由（additive フィールド）
+        stop_reason: Optional[str] = None
         
         logger.info(f"[{self.name}] Starting Think Loop for task: {task.name}")
         
         while turn < self.max_turns and status == "running":
             turn += 1
+
+            # Lane B (SGK-2026-0441): Phase-2 時間予算チェック（各 decide の前）
+            # 予算は task context の phase2_time_budget_seconds から読む。None/欠落なら
+            # チェックしない（legacy 挙動を維持）。
+            phase2_budget = self._phase2_time_budget_seconds()
+            if phase2_budget is not None and (asyncio.get_running_loop().time() - start_time) >= phase2_budget:
+                logger.info(f"[{self.name}] Phase-2 time budget exhausted ({phase2_budget}s). Stopping loop.")
+                stop_reason = "phase2_time_budget_exhausted"
+                execution_log.append({"turn": turn, "type": "warning", "content": "Phase-2 time budget exhausted; aborting loop"})
+                break
             
             # 1. Think (LLM Query)
             try:
@@ -289,6 +354,15 @@ class BaseManagerAgent(SwarmManager):
                     
                     self.history.append({"role": "user", "content": observation})
                     execution_log.append({"turn": turn, "type": "action", "action": action, "result": result})
+
+                    # Lane B (SGK-2026-0441): ペイアウト級 PoC 早期停止（次の LLM ターン前）
+                    # 判定は Lane A の決定的ジャッジに委ねる。ここでは停止するだけ。
+                    if self._payout_grade_obtained(result):
+                        logger.info(f"[{self.name}] Payout-grade PoC obtained. Stopping loop early.")
+                        status = "success"
+                        stop_reason = "payout_grade_obtained"
+                        execution_log.append({"turn": turn, "type": "warning", "content": "Payout-grade PoC obtained; stopping loop"})
+                        break
                     
                 except Exception as e:
                     error_msg = f"Observation: Tool execution failed. Error: {str(e)}"
@@ -303,7 +377,7 @@ class BaseManagerAgent(SwarmManager):
         all_findings = self.current_context["findings"]
         total_time = asyncio.get_event_loop().time() - start_time
         
-        return SwarmResult(
+        result = SwarmResult(
             findings=all_findings,
             status=status,
             execution_log=execution_log,
@@ -315,6 +389,9 @@ class BaseManagerAgent(SwarmManager):
             input_tags=task.tags,
             output_tags=[] # Findingから収集すべき
         )
+        # Lane B (SGK-2026-0441): additive フィールド（モデル定義は変更しない）
+        result.stop_reason = stop_reason
+        return result
         
     async def _build_system_prompt(self, task: Task) -> str:
         """システムプロンプトを構築（PromptRenderer使用）"""

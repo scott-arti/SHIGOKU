@@ -5333,13 +5333,15 @@ tasks:
   task_id: SGK-2026-0441
   doc_type: plan
   title: 検証ループの近代化 — 見つけた候補を賞金級 PoC で確定させる
-  primary_doc: docs/shigoku/plans/2026-08-11_sgk-2026-0441_validation-loop-modernization-payout-grade.md
-  status: active
+  primary_doc: docs/shigoku/plans/done/2026-08-11_sgk-2026-0441_validation-loop-modernization-payout-grade.md
+  status: done
   provisional: false
-  task_summary: 飛ばされているPhase2検証ループを近代化(目的駆動・熟考)し賞金級PoCで確定。敷居据え置き・カーブフィッティング無し・診断先行
+  task_summary: "賞金級 PoC 判定器（fail-closed）+ 門番修正 + 時間予算 + poc_judge role。封印 run で funnel F4 3→8・Phase2 実動・confirmed 0 は敷居据え置きの実証"
   parent_task_id: SGK-2026-0418
   related_docs:
   - docs/shigoku/reports/2026-08-11_sgk-2026-0440_finding-pipeline-instrumentation_work_report.md
+  - docs/shigoku/reports/2026-08-12_sgk-2026-0441_validation-loop-modernization-payout-grade_work_report.md
+  - docs/shigoku/worklogs/2026-08-12_sgk-2026-0441_validation-loop-modernization-payout-grade_work_log.md
 doc_type_allowed_values:
 - spec
 - roadmap

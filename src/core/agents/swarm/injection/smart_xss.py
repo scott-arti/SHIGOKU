@@ -1205,7 +1205,9 @@ Decide next step for XSS testing. Focus on reflection context and escaping mecha
 
     async def should_stop(self, step: ThoughtStep) -> bool:
         """Check if we should stop."""
-        if self.vulnerable:
+        # SGK-2026-0441 ⑤: a payout-grade PoC also stops the loop (additive;
+        # all existing stop conditions are preserved).
+        if self.vulnerable or self._payout_grade_obtained():
             return True
 
         if self._consecutive_blocked_observations >= 2:
@@ -1229,6 +1231,34 @@ Decide next step for XSS testing. Focus on reflection context and escaping mecha
         if step.action == "finish":
             return True
         return False
+
+    def _payout_grade_obtained(self) -> bool:
+        """SGK-2026-0441 ⑤: payout-grade PoC stop trigger (additive,
+        fail-closed). True only when the candidate finding projected from
+        this specialist's own captured-evidence state (PoC pair + reflected
+        marker + impact + reproduction steps) is payout-grade. No candidate
+        state -> False.
+        """
+        if not getattr(self, "_last_poc_request", "") or not getattr(self, "_last_poc_response", ""):
+            return False
+        from src.core.agents.swarm.injection.payout_grade import evaluate_payout_grade
+
+        candidate = {
+            "vuln_type": "xss",
+            "additional_info": {
+                "poc_request": getattr(self, "_last_poc_request", ""),
+                "poc_response": getattr(self, "_last_poc_response", ""),
+                "reflection_observed": bool(getattr(self, "reflection_observed", False)),
+            },
+            "impact": str(getattr(self, "evidence", "") or ""),
+            "reproduction_steps": [
+                str(p) for p in (getattr(self, "used_payloads", None) or [])
+            ],
+        }
+        try:
+            return evaluate_payout_grade(candidate).payout_grade
+        except Exception:  # noqa: BLE001 — fail closed, never stop on error
+            return False
 
     def get_result(self) -> Dict[str, Any]:
         """Override to return XSS-specific result."""

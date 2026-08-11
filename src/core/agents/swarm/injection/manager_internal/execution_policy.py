@@ -100,12 +100,21 @@ def should_auto_early_return(
     phase1_signals: Dict[str, bool],
     phase1_vuln_types: set[str],
     coerce_bool: Callable[[Any, bool], bool],
+    payout_grade_hold: bool = False,
 ) -> bool:
     """
     deterministic 精度が比較的高いカテゴリは finding が出た時点で自動早期終了して
     Phase2 の長時間化を避ける。
+
+    SGK-2026-0441 Lane A: ``payout_grade_hold`` が True（Phase-1 候補の
+    いずれかが payout-grade PoC を持たない）場合は自動早期終了を保留し
+    Phase 2 を走らせる（fail-closed）。全候補が payout-grade の場合は
+    従来どおりの判定を維持する。明示指定の早期リターン
+    （``phase1_early_return_on_findings``）には影響しない。
     """
     if not phase1_findings:
+        return False
+    if payout_grade_hold:
         return False
     if phase1_signals.get("tool_error", False):
         return False

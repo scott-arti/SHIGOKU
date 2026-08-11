@@ -117,6 +117,13 @@ from src.core.agents.swarm.injection.manager_internal.unknown_hypotheses import 
     build_unknown_idor_candidate_finding,
 )
 from src.core.engine.finding_funnel_trace import get_finding_funnel, url_fingerprint
+from src.core.agents.swarm.injection.payout_grade import (
+    PayoutGradeResult,
+    evaluate_payout_grade,
+    finding_payload,
+    has_explicit_refute_signal,
+    payout_grade_stage,
+)
 from src.core.config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -2742,12 +2749,26 @@ class InjectionManagerAgent(BaseManagerAgent):
             task.params.get("phase1_early_return_on_findings"),
             default=(not phase1_coverage_mode),
         )
+        # SGK-2026-0441: payout-grade hold — every Phase-1 candidate is
+        # scored with the deterministic payout-grade gate (reproducible
+        # req/res + firing marker + impact). If ANY candidate lacks a
+        # payout-grade PoC, the auto early-return is held so Phase 2 can
+        # re-verify (fail-closed; payout-grade-complete runs keep the
+        # legacy decision).
+        payout_grade_results: List[PayoutGradeResult] = []
+        payout_grade_hold = False
+        if phase1_findings:
+            payout_grade_results = [
+                evaluate_payout_grade(finding_payload(_f)) for _f in phase1_findings
+            ]
+            payout_grade_hold = any(not _r.payout_grade for _r in payout_grade_results)
         auto_early_return = should_auto_early_return(
             task=task,
             phase1_findings=phase1_findings,
             phase1_signals=phase1_signals,
             phase1_vuln_types=phase1_vuln_types,
             coerce_bool=self._coerce_bool,
+            payout_grade_hold=payout_grade_hold,
         )
         # Hoisted above the early-return check (SGK-2026-0440) so the funnel
         # can decompose the same phase2 block reasons on every skip path.
@@ -2760,6 +2781,18 @@ class InjectionManagerAgent(BaseManagerAgent):
             phase2_on_empty_phase1 = False
 
         if phase1_findings and (early_return_enabled or auto_early_return):
+            # SGK-2026-0441: measurement only — payout-grade verdict at the
+            # early-return point (F4). Payout-grade candidates reached F4;
+            # the rest are recorded evidence_insufficient. The decision
+            # itself is unchanged (funnel is a no-op when disabled).
+            for _f, _r in zip(phase1_findings, payout_grade_results):
+                stage = payout_grade_stage(getattr(_f, "id", "") or "", _r)
+                if stage:
+                    _funnel_finding_event(_f, stage, "reached")
+                else:
+                    _funnel_finding_event(
+                        _f, "F4", "skipped", reason_code="evidence_insufficient"
+                    )
             reason = "phase1_early_return" if early_return_enabled else "phase1_auto_early_return_findings"
             logger.info(
                 "[%s] Early return (%s) with %d Phase 1 findings. Skipping Phase 2.",
@@ -3033,6 +3066,28 @@ class InjectionManagerAgent(BaseManagerAgent):
         # Phase 1 の findings を LLM 結果にマージ
         all_findings = phase1_findings + [f for f in result.findings if f not in phase1_findings]
         result.findings = all_findings
+        # SGK-2026-0441: payout-grade confirmation gate on the Phase-2 merge.
+        # Candidates confirm (F5) ONLY with a payout-grade PoC (reproducible
+        # req/res + firing marker + impact). Findings without one stay
+        # candidates (unmarked) unless an explicit refute signal exists —
+        # never refuted speculatively. Measurement-only funnel emits; the
+        # additional_info marks are additive and fail-closed.
+        for _f in result.findings:
+            _grade = evaluate_payout_grade(finding_payload(_f))
+            if _grade.payout_grade:
+                _funnel_finding_event(_f, "F4", "reached")
+                _funnel_finding_event(
+                    _f, "F5", "reached", reason_code="payout_grade_poc"
+                )
+                _info = getattr(_f, "additional_info", None)
+                if isinstance(_info, dict):
+                    _info["payout_grade"] = True
+                    _info["payout_grade_reason"] = _grade.reason
+                    _info["payout_grade_markers"] = _grade.marker
+            elif has_explicit_refute_signal(_f):
+                _funnel_finding_event(
+                    _f, "F5", "skipped", reason_code="false_positive_refuted"
+                )
         result.execution_log.append({
             "phase": "phase1_summary",
             "urls_checked": urls_checked,

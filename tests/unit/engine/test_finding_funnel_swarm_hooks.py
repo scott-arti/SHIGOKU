@@ -201,20 +201,24 @@ class TestEnabledDispatch:
             assert section["summary"]["total_candidates"] == 2
             entries = {e["finding_id"]: e for e in section["entries"]}
             assert len(entries) == 2
+            # SGK-2026-0441: the early-return path now records the payout-grade
+            # gate verdict at F4. Neither api candidate carries a payout-grade
+            # PoC (no impact/reproduction_steps), so both are F4 skipped
+            # evidence_insufficient — superseding the auto-reverified F4
+            # reached (funnel design: the later gate verdict wins).
             for entry in section["entries"]:
                 # finding id is the md5 Finding.id; F0/F1 merged via attach().
                 assert entry["stages"]["F0"] == "reached"
                 assert entry["stages"]["F1"] == "reached"
                 assert entry["stages"]["F2"] == "reached"
+                assert entry["stages"]["F4"] == "skipped"
                 # Phase 2 skipped on early return -> first failure at F3.
                 assert entry["first_failure_stage"] == "F3"
                 assert entry["first_failure_reason"] == "phase2_skipped_early_return"
                 assert entry["producer"] == "InjectionManager"
-            # The auto-reverified candidate captured independent evidence (F4);
-            # the other candidate stopped at F3.
-            assert any(e["stages"].get("F4") == "reached" for e in section["entries"])
-            assert any(e["max_stage_reached"] == "F3" for e in section["entries"])
+            assert all(e["max_stage_reached"] == "F4" for e in section["entries"])
             assert section["summary"]["by_stage"]["F0"] == 2
+            assert section["summary"]["by_stage"]["F4"] == 2
             assert section["summary"]["by_reason"] == {"phase2_skipped_early_return": 2}
             assert section["summary"]["suppressed_tasks"] == 0
         finally:

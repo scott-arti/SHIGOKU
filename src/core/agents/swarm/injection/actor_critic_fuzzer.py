@@ -290,7 +290,31 @@ INPUT: [Input]
             return f"Unknown action: {action}"
             
     async def should_stop(self, step) -> bool:
-         return step.action == "finish"
+        # SGK-2026-0441 ⑤: a payout-grade PoC also stops the loop (additive;
+        # the existing finish condition is preserved).
+        if step.action == "finish":
+            return True
+        if self._payout_grade_obtained():
+            return True
+        return False
+
+    def _payout_grade_obtained(self) -> bool:
+        """SGK-2026-0441 ⑤: payout-grade stop trigger (additive, fail-closed).
+
+        The fuzzer itself carries no candidate finding state; a caller
+        (Lane B verification loop) may attach one via
+        ``self.payout_grade_candidate`` (a finding dict in the
+        ``evaluate_payout_grade`` shape). Without a candidate -> False.
+        """
+        candidate = getattr(self, "payout_grade_candidate", None)
+        if not isinstance(candidate, dict):
+            return False
+        from src.core.agents.swarm.injection.payout_grade import evaluate_payout_grade
+
+        try:
+            return evaluate_payout_grade(candidate).payout_grade
+        except Exception:  # noqa: BLE001 — fail closed, never stop on error
+            return False
          
     async def run(self, initial_observation: str = "") -> Optional[str]:
         # ループ開始

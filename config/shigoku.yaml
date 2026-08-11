@@ -192,6 +192,10 @@ llm:
       profile: reasoning_api
       fallback_profile: cheap_api
       system_prompt_template: roles/xss_specialist.md
+    poc_judge:
+      profile: reasoning_api
+      fallback_profile: cheap_api
+      system_prompt_template: roles/poc_judge.md
     sqli_specialist:
       profile: cheap_api
       fallback_profile: reasoning_api

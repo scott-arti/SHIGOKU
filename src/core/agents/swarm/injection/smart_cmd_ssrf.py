@@ -1017,9 +1017,50 @@ Decide next step for Command Injection / SSRF testing.
 
     async def should_stop(self, step: ThoughtStep) -> bool:
         """Check if we should stop."""
+        # SGK-2026-0441 ⑤: a payout-grade PoC also stops the loop (additive;
+        # the existing finish condition is preserved).
         if step.action == "finish":
             return True
+        if self._payout_grade_obtained():
+            return True
         return False
+
+    def _payout_grade_obtained(self) -> bool:
+        """SGK-2026-0441 ⑤: payout-grade PoC stop trigger (additive,
+        fail-closed). True only when the candidate finding projected from
+        the specialist's delivery evidence (PoC pair + command-execution
+        marker + impact + reproduction steps) is payout-grade. No candidate
+        state -> False.
+        """
+        delivery = getattr(self, "last_delivery_evidence", None) or {}
+        if not isinstance(delivery, dict) or not delivery.get("poc_request") or not delivery.get("poc_response"):
+            return False
+        from src.core.agents.swarm.injection.payout_grade import evaluate_payout_grade
+
+        candidate = {
+            "vuln_type": "cmd_ssrf",
+            "evidence": {
+                "request_method": str(delivery.get("request_method", "") or ""),
+                "request_url": str(delivery.get("request_url", "") or ""),
+                "response_status": delivery.get("response_status", 0),
+                "response_body": str(delivery.get("response_body", "") or ""),
+            },
+            "additional_info": {
+                "poc_request": str(delivery.get("poc_request", "") or ""),
+                "poc_response": str(delivery.get("poc_response", "") or ""),
+                "command_execution_evidence": (
+                    getattr(self, "command_execution_evidence", None) or {}
+                ),
+            },
+            "impact": str(getattr(self, "evidence", "") or ""),
+            "reproduction_steps": [
+                str(p) for p in (getattr(self, "used_payloads", None) or [])
+            ],
+        }
+        try:
+            return evaluate_payout_grade(candidate).payout_grade
+        except Exception:  # noqa: BLE001 — fail closed, never stop on error
+            return False
 
     def get_result(self) -> Dict[str, Any]:
         return {

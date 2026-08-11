@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "manifest_version": "v1",
-  "content_hash": "sha256:b40a689960e265c4161d97ae3e4c13d0c0156fbdca95beaed07921322a45c787",
+  "content_hash": "sha256:a0addb96643e9b5ec99ce1b10069a272f0c20e2c75026845a02d18f8e82cfe99",
   "created_at": "2026-08-06",
   "generated_for_task": "SGK-2026-0425",
   "summary": {
@@ -547,6 +547,32 @@
       "lines": [
         1226
       ]
+    },
+    {
+      "file": "src/core/agents/swarm/injection/manager_internal/execution_policy.py",
+      "lines": [
+        39
+      ],
+      "product": "DVWA",
+      "kind": "path_sniffing_known_screens",
+      "purpose": "既知検査画面（/vulnerabilities/sqli/ 等）のタイムアウト解決（事前存在・HEAD 確認済み）",
+      "reachability": "GENERAL_RUNTIME_ONLY",
+      "importer_chain": "src/core/agents/swarm/injection pkg -> swarm_dispatcher.py（VDP メソッド外）",
+      "tests": [],
+      "note": "SGK-2026-0441 で変更したがトークン行は既存のまま。pre-existing（git show HEAD で確認）"
+    },
+    {
+      "file": "src/core/agents/swarm/injection/smart_cmd_ssrf.py",
+      "lines": [
+        184
+      ],
+      "product": "DVWA",
+      "kind": "path_sniffing_known_screens",
+      "purpose": "既知検査画面（/vulnerabilities/exec 等）の入力欄優先 param 推定（事前存在・HEAD 確認済み）",
+      "reachability": "GENERAL_RUNTIME_ONLY",
+      "importer_chain": "src/core/agents/swarm/injection pkg -> swarm_dispatcher.py（VDP メソッド外）",
+      "tests": [],
+      "note": "SGK-2026-0441 で変更したがトークン行は既存のまま。pre-existing（git show HEAD で確認）"
     }
   ],
   "evaluator_only_artifacts": [
