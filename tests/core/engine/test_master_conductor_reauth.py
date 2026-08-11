@@ -10,6 +10,7 @@ SGK-2026-0280: integration tests for the full reauth flow:
 """
 
 import time
+import logging
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from types import SimpleNamespace
@@ -408,3 +409,92 @@ class TestDegradationInMasterConductor:
             await mc._handle_session_expired(event)
 
             assert not mock_dispatcher.dispatch.called
+
+
+# ---------------------------------------------------------------------------
+# SGK-2026-0439: log/ledger surfaces mask restored values; orchestrator keeps raw url
+# ---------------------------------------------------------------------------
+
+class TestSessionExpiredLogSafety:
+    """The SESSION_EXPIRED handler must never put restored original values
+    into logger/ledger surfaces (log_safe_url), while the reauth orchestrator
+    and the Swarm dispatcher keep the RAW url (SGK-2026-0280 contract)."""
+
+    RAW_URL = "https://target.example/api/data?token=RESTORED_SECRET_42"
+    SAFE_URL = "https://target.example/api/data?token=[MASKED]"
+
+    def _event(self, with_safe: bool = True) -> Event:
+        payload = {
+            "url": self.RAW_URL,
+            "method": "GET",
+            "request_headers": {},
+            "origin_task_id": "task_006",
+            "reauth_attempt_id": generate_reauth_attempt_id(),
+            "auth_context_version": 1,
+        }
+        if with_safe:
+            payload["log_safe_url"] = self.SAFE_URL
+        return Event(
+            type=EventType.SESSION_EXPIRED,
+            payload=payload,
+            source="AsyncNetworkClient",
+        )
+
+    @pytest.mark.asyncio
+    async def test_warning_logs_safe_url_not_raw_url(self, caplog) -> None:
+        mc = _new_mc_reauth()
+        caplog.set_level(logging.WARNING, logger="src.core.engine.master_conductor")
+
+        with patch("src.core.engine.swarm_dispatcher.get_swarm_dispatcher") as mock_disp:
+            mock_dispatcher = AsyncMock()
+            mock_disp.return_value = mock_dispatcher
+            await mc._handle_session_expired(self._event())
+
+        assert self.SAFE_URL in caplog.text
+        assert "RESTORED_SECRET_42" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_storm_ledger_source_refs_carry_safe_url(self) -> None:
+        mc = _new_mc_reauth()
+
+        # Trigger storm by recording many events
+        for _ in range(6):
+            mc.reauth_orchestrator.record_expired_event()
+        assert mc.reauth_orchestrator.is_storm_active
+
+        await mc._handle_session_expired(self._event())
+
+        record = getattr(mc.run_ledger_recorder, "record")  # MagicMock child
+        assert record.called
+        source_refs = record.call_args.kwargs["source_refs"]
+        assert source_refs["url"] == self.SAFE_URL
+        assert "RESTORED_SECRET_42" not in repr(source_refs)
+
+    @pytest.mark.asyncio
+    async def test_orchestrator_and_dispatcher_keep_raw_url(self) -> None:
+        mc = _new_mc_reauth()
+        register_spy = MagicMock(wraps=mc.reauth_orchestrator.register_inflight)
+        mc.reauth_orchestrator.register_inflight = register_spy
+
+        with patch("src.core.engine.swarm_dispatcher.get_swarm_dispatcher") as mock_disp:
+            mock_dispatcher = AsyncMock()
+            mock_disp.return_value = mock_dispatcher
+            await mc._handle_session_expired(self._event())
+
+        # Orchestrator keyed on the raw url (single-flight / cooldown contract)
+        assert register_spy.call_args[0][0] == self.RAW_URL
+        # Swarm dispatcher target keeps the raw url
+        assert mock_dispatcher.dispatch.call_args.kwargs["target"] == self.RAW_URL
+
+    @pytest.mark.asyncio
+    async def test_safe_url_falls_back_to_raw_url(self, caplog) -> None:
+        """Backward compatible: payload without log_safe_url logs the raw url."""
+        mc = _new_mc_reauth()
+        caplog.set_level(logging.WARNING, logger="src.core.engine.master_conductor")
+
+        with patch("src.core.engine.swarm_dispatcher.get_swarm_dispatcher") as mock_disp:
+            mock_dispatcher = AsyncMock()
+            mock_disp.return_value = mock_dispatcher
+            await mc._handle_session_expired(self._event(with_safe=False))
+
+        assert self.RAW_URL in caplog.text

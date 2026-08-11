@@ -351,6 +351,11 @@ class Observation:
     freshness_basis: str = ""  # SGK-2026-0421: e.g. "recon_artifact" (no wall-clock in IDs)
     has_second_actor_evidence: bool = False
     has_admin_evidence: bool = False
+    # SGK-2026-0439: masked form of the RAW request URL (query VALUES
+    # preserved inside tokens). Additive — excluded from the canonical
+    # observation payload so observation_id stays deterministic. None when
+    # no masker is configured (fail-closed default: current behavior).
+    masked_request_url: Optional[str] = None
 
     @property
     def has_form_params(self) -> bool:
@@ -379,6 +384,7 @@ class Observation:
             "freshness_basis": self.freshness_basis,
             "has_second_actor_evidence": self.has_second_actor_evidence,
             "has_admin_evidence": self.has_admin_evidence,
+            "masked_request_url": self.masked_request_url,
         }
 
 
@@ -405,8 +411,17 @@ class AdapterResult:
 class ObservationAdapter:
     """Adapts raw recon signals into typed Observations at the VDP boundary."""
 
-    def __init__(self, source_kind: ObservationSourceKind = ObservationSourceKind.RECON_SIGNAL_BUNDLE):
+    def __init__(
+        self,
+        source_kind: ObservationSourceKind = ObservationSourceKind.RECON_SIGNAL_BUNDLE,
+        masker=None,
+    ):
         self._source_kind = source_kind
+        # SGK-2026-0439: run-scoped PIIMasker instance. When provided, the
+        # raw request URL is masked at ingest (masked_request_url); when
+        # None, the observation carries no masked material (fail-closed
+        # default: pre-0439 behavior fully preserved).
+        self._masker = masker
 
     def adapt_signal_bundle(self, signal_bundle: Any) -> AdapterResult:
         """Adapt a full ``_signal_bundle`` dict (SGK-2026-0261 format).
@@ -452,6 +467,17 @@ class ObservationAdapter:
         if not raw_url:
             return None
         url = normalize_url(raw_url)
+
+        # SGK-2026-0439: mask the RAW url (query VALUES) at ingest when a
+        # run-scoped masker is configured. The normalized ``url`` (values
+        # dropped by normalize_url) stays the observation's canonical URL —
+        # observation_id is unchanged.
+        masked_request_url = None
+        if self._masker is not None:
+            try:
+                masked_request_url = self._masker.mask_url_query_values(raw_url)
+            except Exception:  # noqa: BLE001 — masking must never break adaptation
+                masked_request_url = None
 
         method = str(signal.get("method", "") or "GET").strip().upper() or "GET"
         entity_type = str(signal.get("entity_type", "") or "").strip()
@@ -503,4 +529,5 @@ class ObservationAdapter:
             freshness_basis="recon_artifact",
             has_second_actor_evidence=has_second,
             has_admin_evidence=has_admin,
+            masked_request_url=masked_request_url,
         )

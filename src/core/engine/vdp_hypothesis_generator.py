@@ -526,12 +526,15 @@ def build_hypothesis(
     # values and auth credentials are gone), do NOT issue it as the first
     # m3a gap — advance to the next required evidence so the funnel labels
     # the gap honestly instead of promising an impossible probe.
+    # SGK-2026-0439: when the observation carries masked_request_url, the
+    # values are PRESERVED (mask-at-ingest) — material is not destroyed, so
+    # the gap is NOT demoted.
     _observation_material_destroyed = bool(
         observation.param_names
         or observation.param_locations
         or observation.has_auth_header
         or observation.has_cookie
-    )
+    ) and not bool(observation.masked_request_url)
     if (
         _observation_material_destroyed
         and required_evidence

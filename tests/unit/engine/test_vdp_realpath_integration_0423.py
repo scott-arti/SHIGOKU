@@ -85,8 +85,9 @@ def _build_session_payload(mc: MasterConductor) -> dict:
 async def _run_enforce_session(tmp_path, monkeypatch):
     """Full readonly_enforce real-path run with a REAL key chain.
 
-    Generates hypotheses, queues follow-ups, dispatches every task through
-    the M3a executor with a fake network (plain 200).  Returns
+    Generates hypotheses, queues follow-ups, dispatches the queued render
+    `/search` follow-up (payload_request_mismatch lineage) through the M3a
+    executor with a fake network (plain 200).  Returns
     ``(mc, signer, tasks)``.
     """
     monkeypatch.delenv("SHIGOKU_VDP_SIGNING_KEY", raising=False)
@@ -116,19 +117,43 @@ async def _run_enforce_session(tmp_path, monkeypatch):
     )
     tasks = [t for t in mc.task_queue if t.agent_type == "vdp_follow_up"]
     assert tasks
-    # SGK-2026-0434: the queued render `/search` spec carries the
-    # payload_request_mismatch gap (destroyed material) and is honestly
-    # blocked at S07; the real-path chain exercises the executor with a
-    # healthy executable gap on the SAME task (real hypothesis/verdict
-    # lineage preserved).
-    blocked = await mc._dispatch(tasks[0])
+    # SGK-2026-0439: the queued render `/search` payload spec carries
+    # masked_request_url (exact request material preserved via mask at
+    # ingest / restore at the send boundary), so dispatching it now
+    # EXECUTES (fake network returns a plain 200); the S07 honest-block
+    # applies only to genuinely material-less payload_request_mismatch
+    # specs — that regression is covered below.
+    first = await mc._dispatch(tasks[0])
+    assert first["success"] is True, first
+    assert first["data"]["status"] == "executed"
+    # SGK-2026-0439 S07 honest-block regression (preserves the 0434
+    # fail-closed intent): a payload_request_mismatch spec WITHOUT
+    # masked_request_url still has no exact request material and is
+    # blocked as manual_review — never a fabricated payload-less probe.
+    from src.core.domain.model.task import Task
+
+    material_less_spec = dict(tasks[0].params["vdp_follow_up_spec"])
+    material_less_spec.pop("masked_request_url", None)
+    material_less = Task(
+        id="task-s07-material-less",
+        name="vdp_follow_up:payload_request_mismatch",
+        agent_type="vdp_follow_up",
+        action="run",
+        params={"vdp_follow_up_spec": material_less_spec},
+    )
+    blocked = await mc._dispatch(material_less)
     assert blocked["data"]["status"] == "manual_review"
     assert blocked["data"]["reason"] == "exact_request_material_unavailable"
     tasks[0].params["vdp_follow_up_spec"]["evidence_gap"] = "authz_impact_not_proven"
-    for task in tasks:
-        result = await mc._dispatch(task)
-        assert result["success"] is True, result
-        assert result["data"]["status"] == "executed"
+    # Healthy executable gap on the SAME task (real hypothesis/verdict
+    # lineage preserved). Only this lineage's dispatch is exercised: the M0
+    # restore requires the confirmed verdict's evaluated evidence set to
+    # EXACTLY match the session evidence set (evidence_set_mismatch is
+    # fail-closed on extra records), so the real-path session carries one
+    # evidence lineage.
+    result = await mc._dispatch(tasks[0])
+    assert result["success"] is True, result
+    assert result["data"]["status"] == "executed"
     return mc, signer, tasks
 
 

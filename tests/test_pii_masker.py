@@ -297,3 +297,81 @@ class TestCustomPatterns:
         text = "ID: CUSTOM-ABCD-1234"
         result = masker.mask(text)
         assert "[PII:CUSTOM_ID:" in result.masked
+
+
+class TestMaskUrlQueryValues:
+    """SGK-2026-0439 — deny-by-default query-value masking (mask at ingest)."""
+
+    @staticmethod
+    def _query(url: str) -> str:
+        from urllib.parse import urlsplit
+        return urlsplit(url).query
+
+    def test_deny_by_default_masks_all_values_names_intact(self):
+        """Unrecognized values (id=12345, q=test) are tokenized as a whole —
+        BOTH values masked, param NAMES and locations preserved."""
+        masker = PIIMasker()
+        masked = masker.mask_url_query_values("http://x/search?q=test&id=12345")
+        assert "q=test" not in masked
+        assert "id=12345" not in masked
+        assert "q=" in masked and "id=" in masked
+        # names and order preserved via parse_qsl on the query part
+        from urllib.parse import parse_qsl
+        pairs = dict(parse_qsl(self._query(masked)))
+        assert set(pairs.keys()) == {"q", "id"}
+        assert masker.has_tokens(masked)
+
+    def test_known_secret_pattern_value_gets_typed_token(self):
+        """A known secret pattern (sk-... OpenAI key style) inside a query
+        value is masked with the TYPED token, not a generic one."""
+        masker = PIIMasker()
+        masked = masker.mask_url_query_values(
+            "http://x/search?key=sk-1234567890abcdefghijklmnop&q=test"
+        )
+        assert "sk-1234567890abcdefghijklmnop" not in masked
+        assert "[PII:OPENAI_API_KEY:" in masked
+        assert "[PII:VALUE:" in masked  # q=test generic token
+
+    def test_round_trip_restores_query_values(self):
+        """unmask(mask_url_query_values(url)) restores the same query values
+        (parse_qsl equality on the query part)."""
+        from urllib.parse import parse_qsl
+
+        masker = PIIMasker()
+        url = "http://x/search?q=hello world&id=12345&flag=&key=sk-1234567890abcdefghijklmnop"
+        masked = masker.mask_url_query_values(url)
+        restored = masker.unmask(masked)
+        assert parse_qsl(self._query(restored), keep_blank_values=True) == parse_qsl(
+            self._query(url), keep_blank_values=True
+        )
+
+    def test_no_query_url_unchanged(self):
+        masker = PIIMasker()
+        url = "http://x/plain/path"
+        assert masker.mask_url_query_values(url) == url
+
+    def test_empty_query_value_stays_empty(self):
+        masker = PIIMasker()
+        masked = masker.mask_url_query_values("http://x/check?flag=")
+        assert "flag=" in masked
+        from urllib.parse import parse_qsl
+        assert parse_qsl(self._query(masked), keep_blank_values=True) == [("flag", "")]
+
+    def test_disabled_masker_unchanged(self):
+        masker = PIIMasker(enabled=False)
+        url = "http://x/search?q=test&id=12345"
+        assert masker.mask_url_query_values(url) == url
+
+    def test_same_value_same_token_idempotent(self):
+        """The same value reuses the same token (reverse-map idempotency)."""
+        masker = PIIMasker()
+        masked1 = masker.mask_url_query_values("http://x/a?id=12345")
+        masked2 = masker.mask_url_query_values("http://x/b?id=12345")
+        assert "id=12345" not in masked1
+        assert masked1.split("id=")[1] == masked2.split("id=")[1]
+
+    def test_has_tokens(self):
+        masker = PIIMasker()
+        assert masker.has_tokens("[PII:VALUE:abcd1234]") is True
+        assert masker.has_tokens("plain text") is False
+        assert masker.has_tokens("") is False

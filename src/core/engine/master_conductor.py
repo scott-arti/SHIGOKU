@@ -849,6 +849,11 @@ class MasterConductor:
         """
         payload = event.payload
         url: str = payload.get("url", "unknown")
+        # SGK-2026-0439: restored original values must never reach
+        # log/checkpoint/ledger surfaces. The reauth orchestrator and the
+        # Swarm dispatcher keep the RAW url (SGK-2026-0280 keys on it);
+        # every logger/ledger write below uses the safe url instead.
+        safe_url: str = payload.get("log_safe_url") or payload.get("url", "unknown")
         method: str = payload.get("method", "GET")
         request_headers: dict[str, Any] = payload.get("request_headers", {})
         origin_task_id: str = payload.get("origin_task_id", "")
@@ -856,7 +861,7 @@ class MasterConductor:
         auth_context_version: int = payload.get("auth_context_version", self._auth_ctx.auth_context_version)
 
         logger.warning("🚨 [MasterConductor] Session EXPIRED at %s (attempt=%s origin=%s)",
-                       url, reauth_attempt_id, origin_task_id)
+                       safe_url, reauth_attempt_id, origin_task_id)
 
         # === Storm detection ===
         if self.reauth_orchestrator.record_expired_event():
@@ -872,7 +877,7 @@ class MasterConductor:
                     error="reauth_storm_suppressed",
                     action="storm_suppress",
                     source_refs={
-                        "url": url,
+                        "url": safe_url,
                         "reason_code": "reauth_storm_suppressed",
                         "origin_task_id": origin_task_id,
                     },
@@ -883,17 +888,17 @@ class MasterConductor:
 
         # === Degradation check ===
         if self.reauth_orchestrator.is_degraded(url):
-            logger.info("[MasterConductor] Target %s is degraded — skipping reauth", url)
+            logger.info("[MasterConductor] Target %s is degraded — skipping reauth", safe_url)
             return
 
         # === Cooldown check ===
         if self.reauth_orchestrator.is_in_cooldown(url):
-            logger.info("[MasterConductor] Target %s is in cooldown — skipping reauth", url)
+            logger.info("[MasterConductor] Target %s is in cooldown — skipping reauth", safe_url)
             return
 
         # === Single-flight ===
         if not self.reauth_orchestrator.can_launch_reauth(url, auth_context_version):
-            logger.info("[MasterConductor] Single-flight blocked reauth for %s", url)
+            logger.info("[MasterConductor] Single-flight blocked reauth for %s", safe_url)
             return
 
         # === Register in-flight ===
@@ -11183,7 +11188,11 @@ class MasterConductor:
         try:
             # --- adapt observations ---
             from src.core.engine.vdp_observation_adapter import ObservationAdapter
-            adapter = ObservationAdapter()
+            # SGK-2026-0439: pass the run-scoped PIIMasker so the raw request
+            # URL (query VALUES) is masked at ingest (masked_request_url) —
+            # param-dependent follow-ups can later restore it at the send
+            # boundary. None → pre-0439 behavior preserved.
+            adapter = ObservationAdapter(masker=self._ensure_vdp_pii_masker())
             adapter_result = adapter.adapt_signal_bundle(signal_bundle)
 
             # SGK-2026-0425: raw producer artifact exists (S01 reached)
@@ -11700,8 +11709,14 @@ class MasterConductor:
             if (
                 (observation.param_names or observation.param_locations)
                 and gap not in _COMPARISON_GAPS
+                # SGK-2026-0439: when the observation carries
+                # masked_request_url the values are PRESERVED (mask at
+                # ingest) — exact replay is possible, so do NOT skip.
+                # getattr: the optional field is absent (None) on
+                # duck-typed observations without masked material.
+                and not getattr(observation, 'masked_request_url', None)
             ):
-                continue  # values discarded; exact replay required for non-comparison gaps
+                continue  # values truly discarded; exact replay required for non-comparison gaps
             spec = build_follow_up_spec(
                 str(na.get('next_action_id', '') or ''),
                 HypothesisRecord.from_dict(hyp_dict) if hyp_dict else HypothesisRecord(
@@ -11722,6 +11737,14 @@ class MasterConductor:
             )
             if spec['task_id'] in already:
                 continue
+            # SGK-2026-0439: the masked request URL (values preserved inside
+            # tokens) travels with the spec so the executor can restore the
+            # exact request at the send boundary. Only the MASKED form is
+            # ever serialized into _vdp_state / checkpoints; the raw values
+            # live solely in the run-scoped masker's token map.
+            _masked_request_url = getattr(observation, 'masked_request_url', None)
+            if _masked_request_url:
+                spec['masked_request_url'] = _masked_request_url
             # SGK-2026-0423 Lane F: the authorized m3b branch marks the spec
             # so the dispatch pre-communication gate and the executor's M3b
             # authorization gate admit the single state-changing send.
@@ -12056,6 +12079,22 @@ class MasterConductor:
             if account_id and secret:
                 credentials[account_id] = secret
         return credentials
+
+    def _ensure_vdp_pii_masker(self):
+        """SGK-2026-0439: lazily create the run-scoped PIIMasker used by the
+        VDP attack path (mask at ingest / restore before HTTP send).
+
+        A per-run instance (NOT the module-level singleton) is used for
+        thread isolation from the LLM path — the singleton is process-
+        lifetime and not thread-safe. Construction mirrors the singleton's
+        config (``PIIMasker(enabled=True)``, see get_pii_masker).
+        hasattr-guarded for __new__-minimal test instances.
+        """
+        if not hasattr(self, '_vdp_pii_masker'):
+            from src.core.security.pii_masker import PIIMasker
+
+            self._vdp_pii_masker = PIIMasker(enabled=True)
+        return self._vdp_pii_masker
 
     def _make_vdp_hitl_ticket_validator(self, spec) -> Callable[[str], bool]:
         """Build the HITL ticket validator closure for one state-changing
@@ -12404,6 +12443,10 @@ class MasterConductor:
             # SGK-2026-0425 M1: inject the diagnostic collector (None when
             # diagnostics disabled → executor emissions are no-ops).
             diagnostic_collector=self._ensure_vdp_diagnostics(),
+            # SGK-2026-0439: the run-scoped PIIMasker restores the masked
+            # request URL (exact values) at the send boundary — the same
+            # instance that masked at ingest, so its token map resolves.
+            pii_masker=self._ensure_vdp_pii_masker(),
         )
         # SGK-2026-0425: S06 routing reached (executor dispatch)
         self._vdp_diagnostic_emit(

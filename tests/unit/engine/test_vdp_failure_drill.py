@@ -429,17 +429,21 @@ class TestQueueAndCheckpointDrills:
         def _boom(data, path):
             raise OSError(28, "No space left on device")
 
-        # SGK-2026-0434: the queued render `/search` spec carries the
-        # payload_request_mismatch gap (destroyed material) and is honestly
-        # blocked at S07; the checkpoint drill dispatches a healthy
-        # executable spec (authz comparison fallback) to exercise the
+        # SGK-2026-0439: the queued render `/search` payload spec now
+        # carries masked request material (mask-at-ingest) and is
+        # executable; S07 exact_request_material_unavailable applies only to
+        # genuinely material-less payload specs (regression). The checkpoint
+        # drill dispatches a healthy executable spec to exercise the
         # post-send checkpoint failure path.
         from tests.unit.engine.test_vdp_rollout_mc_integration import (
             _read_only_spec,
             _vdp_task,
         )
 
-        blocked = await mc._dispatch(tasks[0])
+        material_less = _vdp_task(
+            dict(_read_only_spec("task-pm-ck6"), evidence_gap="payload_request_mismatch")
+        )
+        blocked = await mc._dispatch(material_less)
         assert blocked["data"]["status"] == "manual_review"
         assert blocked["data"]["reason"] == "exact_request_material_unavailable"
         healthy = _vdp_task(_read_only_spec("task-ro-ck6"))
@@ -665,16 +669,21 @@ class TestQueueAndCheckpointDrills:
         )
         tasks = [t for t in mc1.task_queue if t.agent_type == "vdp_follow_up"]
         assert tasks
-        # SGK-2026-0434: the queued payload_request_mismatch spec is
-        # honestly blocked at S07; the resume drill exercises the
-        # checkpoint roundtrip with a healthy executable spec.
+        # SGK-2026-0439: the queued payload_request_mismatch spec now
+        # carries masked request material and is executable; S07 blocks only
+        # genuinely material-less payload specs (regression). The resume
+        # drill exercises the checkpoint roundtrip with a healthy
+        # executable spec.
         from tests.unit.engine.test_vdp_rollout_mc_integration import (
             _read_only_spec,
             _vdp_task,
         )
 
         healthy = _vdp_task(_read_only_spec("task-ro-ck10"))
-        blocked = await mc1._dispatch(tasks[0])
+        material_less = _vdp_task(
+            dict(_read_only_spec("task-pm-ck10"), evidence_gap="payload_request_mismatch")
+        )
+        blocked = await mc1._dispatch(material_less)
         assert blocked["data"]["status"] == "manual_review"
         assert blocked["data"]["reason"] == "exact_request_material_unavailable"
         for task in (healthy,):
@@ -922,6 +931,7 @@ class TestOperationalStopDrills:
             _inject_structured_markers,
         )
         from tests.unit.engine.test_vdp_rollout_mc_integration import (
+            _read_only_spec,
             _state_changing_spec,
             _vdp_task,
         )
@@ -957,11 +967,16 @@ class TestOperationalStopDrills:
         )
         tasks = [t for t in mc.task_queue if t.agent_type == "vdp_follow_up"]
         assert tasks
-        # SGK-2026-0434: the queued render `/search` spec is honestly
-        # blocked at S07 (exact material unavailable); the key-provider
+        # SGK-2026-0439: the queued render `/search` payload spec now
+        # carries masked request material (mask-at-ingest) and is
+        # executable; S07 exact_request_material_unavailable applies only to
+        # genuinely material-less payload specs (regression). The key-provider
         # drill then exercises the signer path with a healthy executable gap
         # on the SAME task (real hypothesis/verdict lineage preserved).
-        blocked = await mc._dispatch(tasks[0])
+        material_less = _vdp_task(
+            dict(_read_only_spec("task-pm-drill14"), evidence_gap="payload_request_mismatch")
+        )
+        blocked = await mc._dispatch(material_less)
         assert blocked["data"]["status"] == "manual_review"
         assert blocked["data"]["reason"] == "exact_request_material_unavailable"
         tasks[0].params["vdp_follow_up_spec"]["evidence_gap"] = (

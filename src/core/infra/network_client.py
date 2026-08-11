@@ -314,6 +314,7 @@ class AsyncNetworkClient:
         cache_ttl: int = 300,
         auto_waf_bypass: bool = True,
         guard_context: Optional[Dict[str, Any]] = None,  # Phase 2: SGK-2026-0335
+        log_safe_url: Optional[str] = None,  # SGK-2026-0439: masked URL for all request-lifecycle logs
         **kwargs
     ) -> NetworkResponse:
         """
@@ -326,6 +327,11 @@ class AsyncNetworkClient:
                 ``policy`` (LoadedGuardPolicy), ``stage`` (EnforcementStage),
                 ``bundle_id``, ``host``, ``phase``, ``attack_class``,
                 ``source_agent``, ``requested_action``.
+            log_safe_url: Optional masked URL substituted for ``url`` in
+                EVERY log/event message of this request lifecycle
+                (secret-masking support for restored request targets).
+                When omitted, the actual ``url`` is used — existing
+                behavior unchanged.
 
         Returns:
             NetworkResponse: レスポンスオブジェクト
@@ -416,7 +422,7 @@ class AsyncNetworkClient:
             
             cached_res = await self._cache.get(cache_key)
             if cached_res:
-                logger.debug("Cache hit for %s", url)
+                logger.debug("Cache hit for %s", log_safe_url or url)
                 return NetworkResponse(**cached_res)
 
         timeout_val = timeout if timeout is not None else self.default_timeout
@@ -435,7 +441,7 @@ class AsyncNetworkClient:
             if should_use_proxy and self.proxy_manager:
                 proxy_url = self.proxy_manager.get_proxy()
 
-            logger.debug(f"Requesting {method} {url} (proxy={proxy_url})")
+            logger.debug(f"Requesting {method} {log_safe_url or url} (proxy={proxy_url})")
             
             # Sanitize parameters and headers to avoid type errors in aiohttp/yarl
             params = self._sanitize_request_parameters(params)
@@ -462,7 +468,7 @@ class AsyncNetworkClient:
 
                     # Phase 4: FlagWatcher Hook
                     from src.core.engine.flag_watcher import FlagWatcher
-                    FlagWatcher.get_instance().check(body, source=f"HTTP:{url}")
+                    FlagWatcher.get_instance().check(body, source=f"HTTP:{log_safe_url or url}")
 
                     net_res = NetworkResponse(
                         status=response.status,
@@ -488,13 +494,13 @@ class AsyncNetworkClient:
                     
                     # 5xx エラーはリトライ対象
                     if 500 <= response.status < 600 and attempt < retries:
-                        logger.warning("Request failed (%d) on attempt %d/%d for %s. Retrying...", response.status, attempt + 1, retries + 1, url)
+                        logger.warning("Request failed (%d) on attempt %d/%d for %s. Retrying...", response.status, attempt + 1, retries + 1, log_safe_url or url)
                         await asyncio.sleep(0.5 * (attempt + 1))
                         continue
 
                     # 403/406 WAF Block (Tier 7 WAF Bypass)
                     if response.status in (403, 406) and auto_waf_bypass and attempt < retries:
-                        logger.warning("WAF Block detected (%d) on attempt %d/%d for %s. Attempting bypass...", response.status, attempt + 1, retries + 1, url)
+                        logger.warning("WAF Block detected (%d) on attempt %d/%d for %s. Attempting bypass...", response.status, attempt + 1, retries + 1, log_safe_url or url)
                         waf_name = "unknown"
                         waf_confidence = 0.0
                         mutation_types = None
@@ -544,7 +550,7 @@ class AsyncNetworkClient:
                                     payload={
                                         "level": "warning",
                                         "message": (
-                                            f"WAF Block {response.status} at {url}. "
+                                            f"WAF Block {response.status} at {log_safe_url or url}. "
                                             f"detected={waf_name} confidence={waf_confidence:.2f}. "
                                             "Initiating payload mutation."
                                         ),
@@ -581,7 +587,12 @@ class AsyncNetworkClient:
                         self.event_bus.emit_sync(Event(
                             type=EventType.SESSION_EXPIRED,
                             payload={
+                                # SGK-2026-0439: "url" keeps the raw value for
+                                # the reauth contract (SGK-2026-0280 keys on it);
+                                # "log_safe_url" is the additive masked variant
+                                # for log/ledger surfaces only.
                                 "url": url,
+                                "log_safe_url": log_safe_url or url,
                                 "method": method,
                                 "request_headers": headers or {},
                                 "origin_task_id": origin_task_id,
@@ -614,7 +625,7 @@ class AsyncNetworkClient:
                         logger.warning(
                             "Connection to %s failed in Docker. "
                             "Retrying with 'host.docker.internal' as fallback...",
-                            url
+                            log_safe_url or url
                         )
                         url = url.replace("localhost", "host.docker.internal") \
                                  .replace("127.0.0.1", "host.docker.internal") \
@@ -623,7 +634,7 @@ class AsyncNetworkClient:
                         logger.warning(
                             "Connection to %s failed even with 'host.docker.internal'. "
                             "Please check your Docker networking or host firewall.",
-                            url
+                            log_safe_url or url
                         )
                 elif is_localhost:
                     # 全環境共通: localhostへのHTTPS接続が失敗した場合にHTTPにフォールバック
@@ -631,19 +642,19 @@ class AsyncNetworkClient:
                         logger.warning(
                             "HTTPS connection to %s failed. "
                             "Falling back to HTTP for localhost...",
-                            url
+                            log_safe_url or url
                         )
                         url = url.replace("https://", "http://", 1)
                     else:
                         logger.warning(
                             "Connection to %s failed. "
                             "If you are using Docker, ensure the target port is exposed and reachable.",
-                            url
+                            log_safe_url or url
                         )
 
                 logger.warning(
                     "Connection error on attempt %d/%d for %s: %s",
-                    attempt + 1, retries + 1, url, str(e)
+                    attempt + 1, retries + 1, log_safe_url or url, str(e)
                 )
 
                 if attempt < retries:
@@ -652,7 +663,7 @@ class AsyncNetworkClient:
 
             except Exception as e:
                 # 予期せぬエラー
-                logger.error("Unexpected error for %s: %s", url, e)
+                logger.error("Unexpected error for %s: %s", log_safe_url or url, e)
                 raise NetworkClientError(f"Unexpected error: {e}") from e
 
         # リトライアウト
@@ -660,7 +671,7 @@ class AsyncNetworkClient:
             raise NetworkClientError(f"Request failed after {retries} retries") from last_exception
 
         # ここには到達しないはずだが念のため
-        raise Exception(f"Request failed for {url}")
+        raise Exception(f"Request failed for {log_safe_url or url}")
 
 
     async def save_session_async(self, filepath: str) -> None:

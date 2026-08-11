@@ -265,13 +265,17 @@ class TestShadowDiffRecording:
         )
         tasks = [t for t in mc.task_queue if t.agent_type == "vdp_follow_up"]
         assert tasks
-        # SGK-2026-0434: the queued payload_request_mismatch spec (render
-        # search endpoint, param-less observation = destroyed material) is
-        # now honestly blocked at S07 exact_request_material_unavailable
-        # instead of sending a payload-less probe.
+        # SGK-2026-0439: the queued payload_request_mismatch spec (render
+        # search endpoint) now carries masked request material (mask-at-
+        # ingest) and is executable; S07 exact_request_material_unavailable
+        # applies only to genuinely material-less payload specs (regression).
         queued_spec = tasks[0].params["vdp_follow_up_spec"]
         assert queued_spec["evidence_gap"] == "payload_request_mismatch"
-        blocked = await mc._dispatch(tasks[0])
+        assert queued_spec.get("masked_request_url")  # material preserved
+        material_less = _vdp_task(
+            dict(_read_only_spec("task-pm-dispatch"), evidence_gap="payload_request_mismatch")
+        )
+        blocked = await mc._dispatch(material_less)
         assert blocked["data"]["status"] == "manual_review"
         assert blocked["data"]["reason"] == "exact_request_material_unavailable"
         # Dispatch-phase record: a HEALTHY executable spec (authz comparison

@@ -219,7 +219,73 @@ class PIIMasker:
         self._reverse_map[original_value] = token
         
         return token
-    
+
+    def _register_query_value_token(self, value: str) -> str:
+        """SGK-2026-0439: register an unrecognized query value as a generic
+        token (deny-by-default masking). Reuses the existing private token
+        registration so idempotency and the token format stay unchanged."""
+        return self._generate_token("VALUE", value)
+
+    def mask_url_query_values(self, url: str) -> str:
+        """SGK-2026-0439: deny-by-default masking of EVERY query param value
+        in a URL while preserving param names and locations.
+
+        - Known secret patterns are masked via the existing ``mask()`` (typed
+          token). Unrecognized values (``?id=12345``, ``?q=test``) are
+          tokenized as a whole via the same token_map mechanism (generic
+          ``[PII:VALUE:...]`` token, idempotent through the reverse map).
+        - Empty values stay empty; already-tokenized values are left as-is
+          (no nested tokens); URLs without a query are returned unchanged.
+        - ``masker.unmask(mask_url_query_values(url))`` restores the same
+          query values (round-trip).
+        - Disabled masker returns the URL unchanged.
+        """
+        if not self.enabled or not url:
+            return url
+
+        from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
+
+        parsed = urlsplit(url)
+        if not parsed.query:
+            return url
+
+        masked_pairs = []
+        for key, value in parse_qsl(parsed.query, keep_blank_values=True):
+            if value == "":
+                masked_pairs.append((key, ""))
+                continue
+            if self.SKIP_TOKEN_PATTERN.fullmatch(value):
+                # already a token (idempotent re-masking) — never nest
+                masked_pairs.append((key, value))
+                continue
+            result = self.mask(value)
+            if result.masked != value:
+                # typed token (or partial replacement) from known patterns
+                masked_pairs.append((key, result.masked))
+            else:
+                # unrecognized format → deny-by-default generic token
+                masked_pairs.append((key, self._register_query_value_token(value)))
+
+        def _quote_via(
+            string: str | bytes,
+            safe: str | bytes,
+            encoding: str = "utf-8",
+            errors: str = "strict",
+        ) -> str:
+            # keep [PII:...] tokens verbatim so unmask() can restore them;
+            # everything else keeps %-encoding style
+            return quote(str(string), safe="[]:")
+
+        new_query = urlencode(masked_pairs, quote_via=_quote_via)
+        return urlunsplit(
+            (parsed.scheme, parsed.netloc, parsed.path, new_query, parsed.fragment)
+        )
+
+    def has_tokens(self, text: str) -> bool:
+        """SGK-2026-0439: True when TOKEN_PATTERN matches anywhere in
+        ``text`` — used for the fail-closed residual check after unmask."""
+        return bool(text) and bool(self.TOKEN_PATTERN.search(text))
+
     def mask(self, text: str) -> MaskResult:
         """
         テキスト内のPII/機密情報をトークン化してマスクする

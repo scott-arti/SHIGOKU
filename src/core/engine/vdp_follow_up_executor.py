@@ -52,6 +52,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from src.core.engine.vdp_admission import VdpAdmissionGate
 from src.core.engine.vdp_diagnostic_trace import DiagnosticCollector
+from src.core.security.pii_masker import PIIMasker
 from src.core.engine.vdp_follow_up import (
     FollowUpPlan,
     classify_reason_code,
@@ -331,6 +332,7 @@ class VdpFollowUpExecutor:
         hypothesis: Optional[HypothesisRecord] = None,
         gate: Optional[VdpAdmissionGate] = None,
         diagnostic_collector: Optional[DiagnosticCollector] = None,
+        pii_masker: Optional[PIIMasker] = None,
     ):
         """Executes one M3a/M3b follow-up spec.
 
@@ -352,6 +354,13 @@ class VdpFollowUpExecutor:
         a hook failure was recorded, ``execute`` stops with a blocked
         ``diagnostic_telemetry_hook_failure`` result BEFORE the first
         network send (fail-closed telemetry kill switch).
+
+        ``pii_masker`` (SGK-2026-0439): the run-scoped PIIMasker instance
+        that masked the request URL at ingest. At the send boundary the
+        spec's ``masked_request_url`` is restored with it (exact query
+        values) — the same instance guarantees the token map resolves.
+        None → specs carrying masked material cannot be restored and fail
+        closed (MANUAL_REVIEW).
         """
         self.scope_definition = scope_definition
         self.capability_matrix = capability_matrix
@@ -366,6 +375,7 @@ class VdpFollowUpExecutor:
         self.account_credentials = dict(account_credentials or {})
         self.timeout = float(timeout)
         self.hypothesis = hypothesis
+        self.pii_masker = pii_masker
         self.gate = gate or VdpAdmissionGate(
             capability_matrix=capability_matrix, budget=None
         )
@@ -493,24 +503,31 @@ class VdpFollowUpExecutor:
             )
 
         # SGK-2026-0434: payload_request_mismatch can never be truthfully
-        # probed in m3a. The gap exists precisely because the hypothesis
-        # payload did not match the observed request — payload VALUES are
-        # deliberately discarded at the observation boundary (0425 §5.1),
-        # so the exact request material can NEVER be reconstructed for this
-        # gap. A payload-less probe would be a fabricated generic request
-        # and would misleadingly reach S08/S10/S11 (0430 row 3). This
-        # includes the param-empty case: the previous check only blocked
-        # when request material was PRESENT, letting param-empty specs
-        # slip through the hole. Block at S07 exact_request_material_unavailable
-        # for every payload_request_mismatch spec (material present or not).
+        # probed in m3a when the request material is genuinely unavailable.
+        # The gap exists precisely because the hypothesis payload did not
+        # match the observed request — payload VALUES are deliberately
+        # discarded at the observation boundary (0425 §5.1), so without the
+        # masked material the exact request can NEVER be reconstructed for
+        # this gap. A payload-less probe would be a fabricated generic
+        # request and would misleadingly reach S08/S10/S11 (0430 row 3).
+        # This includes the param-empty case: the previous check only
+        # blocked when request material was PRESENT, letting param-empty
+        # specs slip through the hole.
+        # SGK-2026-0439: when the spec carries ``masked_request_url`` the
+        # exact request material IS available (masked at ingest, restored
+        # at the send boundary) — the spec proceeds past the gate.
         if plan.reason_code == "payload_request_mismatch":
-            self._diag_emit(
-                stage_id="S07", outcome="blocked",
-                source_refs=("exact_request_material_unavailable",),
+            material_available = bool(
+                str(spec.get("masked_request_url", "") or "").strip()
             )
-            return FollowUpExecutionResult(
-                MANUAL_REVIEW, "exact_request_material_unavailable"
-            )
+            if not material_available:
+                self._diag_emit(
+                    stage_id="S07", outcome="blocked",
+                    source_refs=("exact_request_material_unavailable",),
+                )
+                return FollowUpExecutionResult(
+                    MANUAL_REVIEW, "exact_request_material_unavailable"
+                )
 
         # 3. Preconditions must be satisfiable (constraint G / plan §3)
         missing = [
@@ -586,6 +603,43 @@ class VdpFollowUpExecutor:
                 source_refs=("request_fingerprint_mismatch",),
             )
             return FollowUpExecutionResult(BLOCKED, "request_fingerprint_mismatch")
+
+        # SGK-2026-0439: restore the masked request URL at the send
+        # boundary. The fingerprint / attempt / evidence / budget keys keep
+        # the normalized (values-free) spec url — the exact query values
+        # enter ONLY the actual HTTP request. FAIL-CLOSED: when the restored
+        # URL still carries a token (e.g. a spec resumed from a persisted
+        # checkpoint whose run-scoped token map is gone) or no masker is
+        # available, do NOT send — MANUAL_REVIEW.
+        send_url = url
+        masked_request_url = str(spec.get("masked_request_url", "") or "").strip()
+        if masked_request_url:
+            if self.pii_masker is None:
+                self._diag_emit(
+                    stage_id="S08", outcome="blocked",
+                    reason_codes=("masked_request_material_unresolvable",),
+                    source_refs=("masker_unavailable",),
+                )
+                return FollowUpExecutionResult(
+                    MANUAL_REVIEW, "masked_request_material_unresolvable"
+                )
+            restored_url = self.pii_masker.unmask(masked_request_url)
+            if self.pii_masker.has_tokens(restored_url):
+                self._diag_emit(
+                    stage_id="S08", outcome="blocked",
+                    reason_codes=("masked_request_material_unresolvable",),
+                    source_refs=("unresolved_token_after_unmask",),
+                )
+                return FollowUpExecutionResult(
+                    MANUAL_REVIEW, "masked_request_material_unresolvable"
+                )
+            send_url = restored_url
+
+        # SGK-2026-0439: the restored URL exists ONLY as the actual request
+        # target argument. Every log/accounting argument at the send
+        # boundary uses the MASKED url (or the normalized values-free spec
+        # url when no material) — never the restored values.
+        log_safe_url = masked_request_url if masked_request_url else url
 
         hypothesis = self.hypothesis
         if hypothesis is None:
@@ -837,12 +891,18 @@ class VdpFollowUpExecutor:
                                 BLOCKED, f"budget:{decision.reason_code}"
                             )
                     if comparison_ready:
-                        # authenticated GET for the i-th account (A then B)
+                        # authenticated GET for the i-th account (A then B);
+                        # SGK-2026-0439: sends the RESTORED (unmasked) URL —
+                        # both accounts get the identical exact-request URL;
+                        # the masked url is passed for every log line.
                         body, status = await self._send_with_auth(
-                            method, url, (auth_a_id, auth_b_id)[i]
+                            method, send_url, (auth_a_id, auth_b_id)[i],
+                            log_safe_url=log_safe_url,
                         )
                     else:
-                        body, status = await self._send_read_request(method, url)
+                        body, status = await self._send_read_request(
+                            method, send_url, log_safe_url=log_safe_url
+                        )
                     if body is None:
                         attempt.state = "failed"
                         attempt.execution_result = {
@@ -1033,6 +1093,7 @@ class VdpFollowUpExecutor:
         url: str,
         *,
         extra_headers: Optional[Dict[str, str]] = None,
+        log_safe_url: Optional[str] = None,
     ) -> Tuple[Optional[str], int]:
         """Send ONE admitted request with hidden communication disabled.
 
@@ -1047,6 +1108,12 @@ class VdpFollowUpExecutor:
         admission. ``extra_headers`` (Lane P-1) is attached to the request
         when given (the cross-account Authorization header); the default
         call shape is unchanged for all existing callers.
+
+        SGK-2026-0439: ``log_safe_url`` is the MASKED (or normalized
+        values-free) url passed to the network client so that the RESTORED
+        url — the actual request target — never reaches any log/accounting
+        record. When omitted (e.g. the timing sequence, whose urls are
+        already values-free), the network client logs the actual url.
 
         Returns ``(body, http_status)``; ``body`` is None on transport
         failure (status 0). The status is a NEUTRAL fact about the response
@@ -1063,6 +1130,7 @@ class VdpFollowUpExecutor:
                 allow_redirects=False,
                 timeout=int(self.timeout),
                 use_proxy=True,
+                log_safe_url=log_safe_url,  # SGK-2026-0439: never log restored values
             )
             if extra_headers:
                 request_kwargs["headers"] = dict(extra_headers)
@@ -1070,7 +1138,9 @@ class VdpFollowUpExecutor:
             status = int(getattr(resp, "status", 0) or 0)
             if self.budget is not None:
                 latency = float(getattr(resp, "elapsed", 0.0) or 0.0) * 1000.0
-                self.budget.record_response(url, status, latency_ms=latency)
+                self.budget.record_response(
+                    log_safe_url or url, status, latency_ms=latency
+                )
             body = getattr(resp, "body", "") or ""
             if isinstance(body, bytes):
                 body = body.decode("utf-8", errors="replace")
@@ -1081,11 +1151,15 @@ class VdpFollowUpExecutor:
             # connection-refused/DNS/TLS error is NOT a timeout).
             self._last_transport_error_type = type(exc).__name__
             if self.budget is not None:
-                self.budget.record_timeout(url)
+                self.budget.record_timeout(log_safe_url or url)
             return None, 0
 
     async def _send_with_auth(
-        self, method: str, url: str, account_id: str
+        self,
+        method: str,
+        url: str,
+        account_id: str,
+        log_safe_url: Optional[str] = None,
     ) -> Tuple[Optional[str], int]:
         """Send ONE authenticated GET for the given account (Lane P-1).
 
@@ -1093,6 +1167,10 @@ class VdpFollowUpExecutor:
         (the spec carries the account ID only) and is attached as an
         ``Authorization`` header passed solely to the network client — it
         is never logged, stored in the attempt/evidence, or returned.
+
+        ``log_safe_url`` (SGK-2026-0439) is forwarded to
+        ``_send_read_request``: the masked url for every log line while the
+        restored url remains the request target only.
         """
         secret = str(self.account_credentials.get(str(account_id or ""), "") or "")
         if not secret:
@@ -1101,6 +1179,7 @@ class VdpFollowUpExecutor:
             method,
             url,
             extra_headers={"Authorization": f"Bearer {secret}"},
+            log_safe_url=log_safe_url,
         )
 
     def _evaluate_cross_account_comparison(

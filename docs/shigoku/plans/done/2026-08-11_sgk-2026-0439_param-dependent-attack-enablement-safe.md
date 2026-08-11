@@ -1,7 +1,7 @@
 ---
 task_id: SGK-2026-0439
 doc_type: plan
-status: active
+status: done
 parent_task_id: SGK-2026-0418
 related_docs:
 - docs/shigoku/reports/2026-08-10_sgk-2026-0438_followup-firing-breadth-admission-diagnosis_work_report.md
