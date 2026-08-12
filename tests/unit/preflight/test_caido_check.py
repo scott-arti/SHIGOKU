@@ -670,3 +670,279 @@ class TestHasCaidoSchemaFields:
         """Empty body → False."""
         resp = self._resp(body="")
         assert _has_caido_schema_fields(resp) is False
+
+
+# ---------------------------------------------------------------------------
+# Forwarding check (SGK-2026-0447)
+# ---------------------------------------------------------------------------
+
+
+# Additive imports for the forwarding-check tests only (existing imports and
+# test classes above are left untouched).
+from contextlib import contextmanager  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
+
+from src.core.infra.proxy_manager import ProxyChainManager  # noqa: E402
+from src.core.preflight.caido_check import (  # noqa: E402
+    _CANNED_BODY_MAX_BYTES,
+    _FORWARD_TIMEOUT,
+)
+from tests.fixtures.proxy_fakes import (  # noqa: E402
+    start_dummy_proxy,
+    start_forwarding_proxy,
+)
+
+
+class TestCaidoCheckForwarding:
+    """Mock-based tests for check_forwarding() (SGK-2026-0447)."""
+
+    @staticmethod
+    def _canned(body: bytes = b'{"kind":"canned"}') -> SimpleNamespace:
+        return SimpleNamespace(status=200, body=body)
+
+    @staticmethod
+    def _setup_client(mock_cls, responses):
+        """Configure the mocked AsyncNetworkClient with a response sequence."""
+        client = MagicMock()
+        client.start = AsyncMock()
+        client.close = AsyncMock()
+        client.request = AsyncMock(side_effect=responses)
+        mock_cls.return_value = client
+        return client
+
+    @pytest.mark.asyncio
+    async def test_identical_short_bodies_fail_closed(self):
+        """(a) All probes identical short canned body → PROXY_NOT_FORWARDING."""
+        with patch("src.core.preflight.caido_check.AsyncNetworkClient") as m:
+            client = self._setup_client(
+                m, [self._canned(), self._canned(), self._canned()]
+            )
+            ck = CaidoCheck(target="http://origin.test/")
+            ok, reason = await ck.check_forwarding()
+            assert ok is False
+            assert reason == "PROXY_NOT_FORWARDING"
+            assert client.request.await_count == 3
+
+    @pytest.mark.asyncio
+    async def test_path_dependent_responses_pass(self):
+        """(b) Path-dependent responses → forwarding confirmed, PASS."""
+        responses = [
+            SimpleNamespace(status=200, body=b"<html>root page</html>"),
+            SimpleNamespace(status=404, body=b'{"error":"no such resource"}'),
+            SimpleNamespace(status=404, body=b'{"error":"no such resource"}'),
+        ]
+        with patch("src.core.preflight.caido_check.AsyncNetworkClient") as m:
+            client = self._setup_client(m, responses)
+            ck = CaidoCheck(target="http://origin.test")
+            ok, reason = await ck.check_forwarding()
+            assert ok is True
+            assert reason == ""
+            assert client.request.await_count == 3
+
+    @pytest.mark.asyncio
+    async def test_probe_exception_fails_closed(self):
+        """(c) Probe exception (TimeoutError) → PROXY_FORWARD_CHECK_FAILED."""
+        with patch("src.core.preflight.caido_check.AsyncNetworkClient") as m:
+            client = MagicMock()
+            client.start = AsyncMock()
+            client.close = AsyncMock()
+            client.request = AsyncMock(side_effect=asyncio.TimeoutError())
+            m.return_value = client
+            ck = CaidoCheck(target="http://origin.test")
+            ok, reason = await ck.check_forwarding()
+            assert ok is False
+            assert reason == "PROXY_FORWARD_CHECK_FAILED"
+
+    @pytest.mark.asyncio
+    async def test_empty_target_skips(self):
+        """(d) Empty target → skip (True, "") and no requests sent."""
+        with patch("src.core.preflight.caido_check.AsyncNetworkClient") as m:
+            client = self._setup_client(m, [])
+            ck = CaidoCheck()
+            ok, reason = await ck.check_forwarding()
+            assert ok is True
+            assert reason == ""
+            client.request.assert_not_awaited()
+            m.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_env_kill_switch_skips(self, monkeypatch):
+        """(e) SHIGOKU_SKIP_FORWARD_CHECK=1 → skip and no requests sent."""
+        monkeypatch.setenv("SHIGOKU_SKIP_FORWARD_CHECK", "1")
+        with patch("src.core.preflight.caido_check.AsyncNetworkClient") as m:
+            client = self._setup_client(m, [])
+            ck = CaidoCheck(target="http://origin.test")
+            ok, reason = await ck.check_forwarding()
+            assert ok is True
+            assert reason == ""
+            client.request.assert_not_awaited()
+            m.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_long_identical_bodies_pass(self):
+        """(f) Identical but long bodies (>512B) → PASS (SPA fallback guard)."""
+        long_body = b"A" * (_CANNED_BODY_MAX_BYTES + 1)
+        with patch("src.core.preflight.caido_check.AsyncNetworkClient") as m:
+            client = self._setup_client(
+                m,
+                [
+                    SimpleNamespace(status=200, body=long_body),
+                    SimpleNamespace(status=200, body=long_body),
+                    SimpleNamespace(status=200, body=long_body),
+                ],
+            )
+            ck = CaidoCheck(target="http://origin.test")
+            ok, reason = await ck.check_forwarding()
+            assert ok is True
+            assert reason == ""
+
+    @pytest.mark.asyncio
+    async def test_probe_uses_proxy_path_without_retries(self):
+        """Probes must use the proxied path, no retries/redirects, live cache off."""
+        with patch("src.core.preflight.caido_check.AsyncNetworkClient") as m:
+            client = self._setup_client(
+                m, [self._canned(), self._canned(), self._canned()]
+            )
+            ck = CaidoCheck(target="http://origin.test/")
+            await ck.check_forwarding()
+            assert client.request.await_count == 3
+            for call in client.request.await_args_list:
+                assert call.kwargs["use_proxy"] is True
+                assert call.kwargs["retries"] == 0
+                assert call.kwargs["follow_redirects"] is False
+                assert call.kwargs["use_cache"] is False
+                assert call.kwargs["timeout"] == _FORWARD_TIMEOUT
+                # The ONLY sanctioned skip_guard call site is this probe.
+                assert call.kwargs["skip_guard"] is True
+
+    @pytest.mark.asyncio
+    async def test_identical_302_redirects_pass(self):
+        """All-identical 302 (short body) → PASS (http→https redirect pattern)."""
+        body = b"Redirecting..."
+        responses = [
+            SimpleNamespace(status=302, body=body),
+            SimpleNamespace(status=302, body=body),
+            SimpleNamespace(status=302, body=body),
+        ]
+        with patch("src.core.preflight.caido_check.AsyncNetworkClient") as m:
+            client = self._setup_client(m, responses)
+            ck = CaidoCheck(target="http://origin.test")
+            ok, reason = await ck.check_forwarding()
+            assert ok is True
+            assert reason == ""
+
+    @pytest.mark.asyncio
+    async def test_identical_404_api_pass(self):
+        """All-identical 404 (short body) → PASS (route-less API 404 pattern)."""
+        body = b'{"detail":"Not Found"}'
+        responses = [
+            SimpleNamespace(status=404, body=body),
+            SimpleNamespace(status=404, body=body),
+            SimpleNamespace(status=404, body=body),
+        ]
+        with patch("src.core.preflight.caido_check.AsyncNetworkClient") as m:
+            client = self._setup_client(m, responses)
+            ck = CaidoCheck(target="http://origin.test")
+            ok, reason = await ck.check_forwarding()
+            assert ok is True
+            assert reason == ""
+
+    @pytest.mark.asyncio
+    async def test_long_identical_200_warns_and_passes(self, caplog):
+        """200 identical >512B → PASS with a false-negative visibility warning."""
+        long_body = b"A" * 600
+        responses = [
+            SimpleNamespace(status=200, body=long_body),
+            SimpleNamespace(status=200, body=long_body),
+            SimpleNamespace(status=200, body=long_body),
+        ]
+        with patch("src.core.preflight.caido_check.AsyncNetworkClient") as m:
+            client = self._setup_client(m, responses)
+            ck = CaidoCheck(target="http://origin.test")
+            with caplog.at_level("WARNING", logger="src.core.preflight.caido_check"):
+                ok, reason = await ck.check_forwarding()
+            assert ok is True
+            assert reason == ""
+            assert any(
+                "possible large canned dummy" in r.message for r in caplog.records
+            )
+
+    @pytest.mark.asyncio
+    async def test_mixed_200_404_pass(self):
+        """Mixed 200/404 responses → PASS (path-dependent origin behavior)."""
+        responses = [
+            SimpleNamespace(status=200, body=b"<html>root</html>"),
+            SimpleNamespace(status=404, body=b'{"detail":"Not Found"}'),
+            SimpleNamespace(status=404, body=b'{"detail":"Not Found"}'),
+        ]
+        with patch("src.core.preflight.caido_check.AsyncNetworkClient") as m:
+            client = self._setup_client(m, responses)
+            ck = CaidoCheck(target="http://origin.test")
+            ok, reason = await ck.check_forwarding()
+            assert ok is True
+            assert reason == ""
+
+
+class TestCaidoCheckForwardingRealProxy:
+    """Forwarding check against real stdlib fixture proxy servers.
+
+    Exercises the full AsyncNetworkClient → ProxyChainManager → fixture
+    proxy path with plain-HTTP targets (aiohttp sends absolute-form requests
+    to an HTTP proxy, no CONNECT needed).
+    """
+
+    @staticmethod
+    @contextmanager
+    def _route_via_proxy(proxy_url: str):
+        """Context routing AsyncNetworkClient through *proxy_url*.
+
+        - ``get_proxy_manager`` in network_client: attach a ProxyChainManager
+          whose single proxy is the fixture server.
+        - ``get_settings`` in settings: proxy URL + mode used by the client
+          (reachability pre-check and run-mode resolution).
+
+        The compiled guard is deliberately NOT patched here: the forwarding
+        probe runs with ``skip_guard=True`` (SGK-2026-0447), so it must reach
+        the proxy with the guard untouched — this proves the bypass works in
+        the production path (policy=None would otherwise fail-closed).
+        """
+        settings_mock = MagicMock()
+        settings_mock.get_proxy_url.return_value = proxy_url
+        settings_mock.mode = "bugbounty"
+        manager = ProxyChainManager(proxy_urls=[proxy_url])
+        with (
+            patch(
+                "src.core.infra.network_client.get_proxy_manager",
+                return_value=manager,
+                create=True,
+            ),
+            patch(
+                "src.core.config.settings.get_settings",
+                return_value=settings_mock,
+            ),
+        ):
+            yield
+
+    @pytest.mark.asyncio
+    async def test_dummy_proxy_detected(self):
+        """Real canned dummy proxy → PROXY_NOT_FORWARDING (fail-closed)."""
+        ok: bool = False
+        reason: str = ""
+        with start_dummy_proxy() as (server, proxy_url):
+            with self._route_via_proxy(proxy_url):
+                ck = CaidoCheck(target="http://origin.test/")
+                ok, reason = await ck.check_forwarding()
+        assert ok is False
+        assert reason == "PROXY_NOT_FORWARDING"
+
+    @pytest.mark.asyncio
+    async def test_forwarding_proxy_passes(self):
+        """Real path-dependent forwarding proxy → PASS."""
+        ok: bool = False
+        reason: str = ""
+        with start_forwarding_proxy() as (server, proxy_url):
+            with self._route_via_proxy(proxy_url):
+                ck = CaidoCheck(target="http://origin.test/")
+                ok, reason = await ck.check_forwarding()
+        assert ok is True
+        assert reason == ""

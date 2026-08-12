@@ -158,10 +158,11 @@ class EntryGate:
     async def _run_caido_check(
         self, context: PreflightContext, snapshot: PreflightSnapshot
     ) -> List[PreflightFailure]:
-        """Run Caido TCP + HTTP checks."""
+        """Run Caido TCP + HTTP checks plus proxy forwarding verification."""
         check = CaidoCheck(
             caido_url=context.caido_url,
             caido_token=context.caido_token,
+            target=context.target,
         )
 
         # TCP check
@@ -174,6 +175,45 @@ class EntryGate:
 
         # Full run for structured failures
         _, failures = await check.run()
+
+        # Forwarding check (SGK-2026-0447): fail-closed when the configured
+        # proxy answers every path with an identical short body (dummy proxy)
+        # or forwarding cannot be verified.
+        fwd_ok, fwd_reason = await check.check_forwarding()
+        snapshot.caido_forward_ok = fwd_ok
+        if not fwd_ok:
+            if fwd_reason == "PROXY_NOT_FORWARDING":
+                remediation = (
+                    "Configured proxy answers every path with an identical "
+                    "short body and does not forward to the target. Point "
+                    "the proxy at a real forwarding proxy (e.g. Caido) and "
+                    "retry."
+                )
+            elif fwd_reason == "PROXY_FORWARD_CHECK_FAILED":
+                remediation = (
+                    "Could not verify the proxy forwards traffic to the "
+                    "target. Check proxy and target reachability, then retry."
+                )
+            else:
+                remediation = (
+                    "Proxy forwarding verification failed. Check proxy and "
+                    "target configuration, then retry."
+                )
+            failures.append(
+                PreflightFailure(
+                    reason_code=fwd_reason,
+                    severity="critical",
+                    category="Caido Proxy",
+                    remediation=remediation,
+                    evidence={
+                        "target_host": (
+                            urlparse(context.target).hostname
+                            if context.target
+                            else ""
+                        )
+                    },
+                )
+            )
         return failures
 
     async def _run_target_basic_check(

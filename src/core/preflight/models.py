@@ -251,6 +251,7 @@ class PreflightSnapshot:
         failures: List of failures (empty on pass).
         caido_tcp_ok: Caido TCP reachability.
         caido_http_ok: Caido HTTP/GraphQL response.
+        caido_forward_ok: Proxy forwarding verification (SGK-2026-0447).
         tool_results: Per-tool status map.
         auth_result: AuthProbeResult if auth probe ran.
         ai_traces: Classification traces from AI classifier.
@@ -262,6 +263,7 @@ class PreflightSnapshot:
     failures: List[PreflightFailure] = field(default_factory=list)
     caido_tcp_ok: bool = False
     caido_http_ok: bool = False
+    caido_forward_ok: bool = False
     tool_results: Dict[str, ToolStatus] = field(default_factory=dict)
     auth_result: Optional[AuthProbeResult] = None
     ai_traces: List[Dict[str, Any]] = field(default_factory=list)

@@ -319,3 +319,113 @@ class TestLogSafeUrl:
         assert emitted.type == EventType.SESSION_EXPIRED
         assert emitted.payload["url"] == "http://test.com/records/42?name=x"
         assert emitted.payload["log_safe_url"] == "http://test.com/records/42?name=x"
+
+
+# ---------------------------------------------------------------------------
+# SGK-2026-0447 B4: sealed-run GET-only network-boundary enforcement
+# ---------------------------------------------------------------------------
+
+
+# Additive import for the GET-only enforcement tests only (existing imports
+# above are left untouched).
+from src.core.infra.network_client import ReadonlyEnforcedError  # noqa: E402
+
+
+class TestSealedRunGetOnlyEnforcement:
+    """Sealed-run GET-only enforcement at the AsyncNetworkClient boundary.
+
+    When ``settings.sealed_run_get_only`` is on, every non-GET/HEAD send on
+    the proxied TARGET path (``use_proxy=True``) is blocked BEFORE any
+    network I/O (aiohttp session.request must not be called).  The Caido
+    control plane (``use_proxy=False``: preflight identity / caido_auth /
+    caido_sitemap) is exempt.  Default off keeps existing runs byte-identical.
+    """
+
+    @staticmethod
+    def _settings_mock(sealed: bool) -> MagicMock:
+        s = MagicMock()
+        s.sealed_run_get_only = sealed
+        return s
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("method", ["PATCH", "POST", "PUT"])
+    @patch("src.core.infra.network_client.AsyncNetworkClient.start", new_callable=AsyncMock)
+    @patch("src.core.infra.network_client.AsyncNetworkClient._check_proxy_reachable", return_value=True)
+    async def test_non_get_blocked_when_flag_on(self, mock_proxy_check, mock_start, mock_session, method):
+        """(a) Flag ON + use_proxy=True (target attack path): PATCH/POST/PUT
+        raise ReadonlyEnforcedError and no network send happens."""
+        with patch(
+            "src.core.config.settings.get_settings",
+            return_value=self._settings_mock(True),
+        ):
+            client = AsyncNetworkClient(mode="ctf")
+            client._session = mock_session
+
+            with pytest.raises(ReadonlyEnforcedError) as exc_info:
+                await client.request(
+                    method, "http://test.com", use_proxy=True, use_cache=False
+                )
+
+            assert exc_info.value.reason_code == "READONLY_GET_ONLY_ENFORCED"
+            mock_session.request.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("src.core.infra.network_client.AsyncNetworkClient.start", new_callable=AsyncMock)
+    @patch("src.core.infra.network_client.AsyncNetworkClient._check_proxy_reachable", return_value=True)
+    async def test_post_allowed_when_flag_on_without_proxy(self, mock_proxy_check, mock_start, mock_session):
+        """(a2) Flag ON + use_proxy=False (Caido control plane: preflight
+        identity / caido_auth / caido_sitemap) is NOT blocked — POST reaches
+        aiohttp normally."""
+        with patch(
+            "src.core.config.settings.get_settings",
+            return_value=self._settings_mock(True),
+        ):
+            client = AsyncNetworkClient(mode="ctf")
+            client._session = mock_session
+
+            resp = await client.request(
+                "POST", "http://test.com", use_proxy=False, use_cache=False
+            )
+
+            assert resp.status == 200
+            assert mock_session.request.called
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("method", ["GET", "HEAD"])
+    @patch("src.core.infra.network_client.AsyncNetworkClient.start", new_callable=AsyncMock)
+    @patch("src.core.infra.network_client.AsyncNetworkClient._check_proxy_reachable", return_value=True)
+    async def test_get_head_allowed_when_flag_on(self, mock_proxy_check, mock_start, mock_session, method):
+        """(b) Flag ON: GET/HEAD still go through normally."""
+        with patch(
+            "src.core.config.settings.get_settings",
+            return_value=self._settings_mock(True),
+        ):
+            client = AsyncNetworkClient(mode="ctf")
+            client._session = mock_session
+
+            resp = await client.request(
+                method, "http://test.com", use_proxy=False, use_cache=False
+            )
+
+            assert resp.status == 200
+            assert mock_session.request.called
+
+    @pytest.mark.asyncio
+    @patch("src.core.infra.network_client.AsyncNetworkClient.start", new_callable=AsyncMock)
+    @patch("src.core.infra.network_client.AsyncNetworkClient._check_proxy_reachable", return_value=True)
+    async def test_patch_allowed_when_flag_off(self, mock_proxy_check, mock_start, mock_session):
+        """(c) Flag OFF (default): PATCH sends exactly as before (no
+        regression / byte-identical behavior)."""
+        with patch(
+            "src.core.config.settings.get_settings",
+            return_value=self._settings_mock(False),
+        ):
+            client = AsyncNetworkClient(mode="ctf")
+            client._session = mock_session
+
+            resp = await client.request(
+                "PATCH", "http://test.com", use_proxy=False, use_cache=False
+            )
+
+            assert resp.status == 200
+            assert mock_session.request.called

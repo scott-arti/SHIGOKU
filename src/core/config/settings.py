@@ -657,6 +657,12 @@ class Settings(BaseSettings):
     # off). False -> the Phase-2 merge gate behaves exactly as before (no
     # poc_judge calls, no reproduction checker, no candidate ledger).
     t3_hybrid_enabled: bool = False
+    # SGK-2026-0447 B4: sealed run GET-only network-boundary enforcement
+    # (default off -> existing runs byte-identical). When on
+    # (SHIGOKU_SEALED_RUN_GET_ONLY=1), AsyncNetworkClient blocks every
+    # non-GET/HEAD send at the network boundary; state-changing findings are
+    # mapped to needs_human by the injection manager.
+    sealed_run_get_only: bool = False
     # SGK-2026-0367: safety switches for injection ownership and Phase2 suppression
     injection_ownership_dedup_enabled: bool = True
     xss_no_signal_phase2_suppress_enabled: bool = True

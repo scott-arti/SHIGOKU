@@ -9,7 +9,10 @@ Verifies:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
+import os
+import secrets
 from dataclasses import dataclass
 from urllib.parse import urljoin, urlparse
 
@@ -31,6 +34,14 @@ _GRAPHQL_INTROSPECTION_QUERY = """
 _TCP_TIMEOUT = 2.0
 _HTTP_TIMEOUT = 5
 
+# Forwarding check (SGK-2026-0447): a non-forwarding dummy proxy answers
+# every path with one identical short body.  Bodies at or below this size
+# with identical (status, body) across all probes are treated as canned.
+_CANNED_BODY_MAX_BYTES = 512
+# Per-probe request timeout (seconds); the whole check is additionally
+# bounded by _FORWARD_TIMEOUT + 3 via asyncio.wait_for.
+_FORWARD_TIMEOUT = 5
+
 
 # ---------------------------------------------------------------------------
 # Internal state
@@ -44,6 +55,7 @@ class _CaidoState:
     url: str = "http://127.0.0.1:8080"
     token: str = ""
     masked_token: str = ""
+    target: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -68,17 +80,24 @@ class CaidoCheck:
     - ``CAIDO_TOKEN_INVALID`` — The configured token was rejected (HTTP 401/403).
     - ``CAIDO_IDENTITY_UNVERIFIED`` — Port is reachable but Caido identity
       could not be confirmed without a token.
+    - ``PROXY_NOT_FORWARDING`` — All forwarding probes returned an identical
+      short body: the configured proxy answers every path itself and does not
+      forward to the target.
+    - ``PROXY_FORWARD_CHECK_FAILED`` — Forwarding could not be verified
+      (probe exception); the gate fails closed.
     """
 
     def __init__(
         self,
         caido_url: str = "http://127.0.0.1:8080",
         caido_token: str = "",
+        target: str = "",
     ) -> None:
         self._state = _CaidoState(
             url=caido_url.rstrip("/"),
             token=caido_token,
             masked_token=_mask_token(caido_token),
+            target=target,
         )
 
     @property
@@ -454,10 +473,175 @@ class CaidoCheck:
 
         return all_ok, failures
 
+    # --------------------------------------------------
+    # Forwarding check (SGK-2026-0447)
+    # --------------------------------------------------
+
+    async def check_forwarding(self) -> tuple[bool, str]:
+        """Verify the configured proxy actually forwards traffic to the target.
+
+        Sends three GET probes through the same proxy path a run uses
+        (``use_proxy=True`` → ProxyChainManager → settings proxy):
+
+        1. ``GET <target>/``
+        2. ``GET <target>/__shigoku_fwd_probe_<nonce>``
+        3. ``GET <target>/__shigoku_fwd_probe_<nonce>`` (different nonce)
+
+        A non-forwarding dummy proxy answers every path with one identical
+        short canned body.  The check fails closed with
+        ``PROXY_NOT_FORWARDING`` only when all three responses are
+        ``status == 200`` with byte-identical bodies of at most
+        ``_CANNED_BODY_MAX_BYTES`` bytes.  Identical non-200 responses
+        (e.g. a uniform 302 redirect or a route-less API 404) are treated
+        as the origin answering through the proxy and PASS — those patterns
+        legitimately occur on real forwarding paths and would otherwise be
+        false positives.  Identical 200 bodies larger than
+        ``_CANNED_BODY_MAX_BYTES`` also PASS, but are logged as a possible
+        large canned dummy (false-negative visibility).  Any probe exception
+        fails closed with ``PROXY_FORWARD_CHECK_FAILED`` (unverifiable ⇒ do
+        not pass).
+
+        Skip conditions (return ``(True, "")`` without probing):
+
+        - ``SHIGOKU_SKIP_FORWARD_CHECK=1`` environment kill switch (default
+          unset → guard active / fail-closed).
+        - No target configured.
+
+        Response bodies are never logged — only status, body length, and the
+        first 12 hex chars of the body sha256.  The target is logged as
+        ``host:port`` only (path/query/credentials masked).
+
+        Returns:
+            ``(True, "")`` on success or skip, ``(False, reason_code)`` on
+            verified non-forwarding or unverifiable forwarding.
+        """
+        if os.environ.get("SHIGOKU_SKIP_FORWARD_CHECK") == "1":
+            logger.info(
+                "CaidoCheck Forward: skipped (SHIGOKU_SKIP_FORWARD_CHECK=1)"
+            )
+            return True, ""
+
+        target = self._state.target
+        if not target:
+            logger.info("CaidoCheck Forward: skipped (no target configured)")
+            return True, ""
+
+        log_target = _log_safe_target(target)
+        base = target.rstrip("/")
+        probes = [
+            f"{base}/",
+            f"{base}/__shigoku_fwd_probe_{secrets.token_hex(8)}",
+            f"{base}/__shigoku_fwd_probe_{secrets.token_hex(8)}",
+        ]
+
+        try:
+            responses = await asyncio.wait_for(
+                self._probe_urls(probes, log_target),
+                timeout=_FORWARD_TIMEOUT + 3,
+            )
+        except Exception as exc:
+            # Fail-closed: an unverifiable proxy must not pass the gate.
+            # Log only the exception type — the message may embed the
+            # request URL (possibly with embedded credentials).
+            logger.warning(
+                "CaidoCheck Forward: probe failed for %s (%s)",
+                log_target,
+                type(exc).__name__,
+            )
+            return False, "PROXY_FORWARD_CHECK_FAILED"
+
+        for index, (status, body) in enumerate(responses, start=1):
+            logger.debug(
+                "CaidoCheck Forward: probe %d -> status=%s body_len=%d "
+                "body_sha256=%s",
+                index,
+                status,
+                len(body),
+                hashlib.sha256(body).hexdigest()[:12],
+            )
+
+        unique_statuses = {status for status, _ in responses}
+        unique_bodies = {body for _, body in responses}
+        all_200 = unique_statuses == {200}
+        all_identical = len(unique_statuses) == 1 and len(unique_bodies) == 1
+
+        if all_200 and all_identical:
+            body_len = len(next(iter(unique_bodies)))
+            if body_len <= _CANNED_BODY_MAX_BYTES:
+                logger.warning(
+                    "CaidoCheck Forward: all probes returned an identical "
+                    "short 200 body (%d bytes) — proxy answers every path "
+                    "itself and does not forward to the target",
+                    body_len,
+                )
+                return False, "PROXY_NOT_FORWARDING"
+            logger.warning(
+                "CaidoCheck Forward: all probes returned an identical 200 "
+                "body of %d bytes (> %d) — possible large canned dummy "
+                "proxy (false-negative visibility); passing",
+                body_len,
+                _CANNED_BODY_MAX_BYTES,
+            )
+            return True, ""
+
+        logger.info(
+            "CaidoCheck Forward: path-dependent or non-200 responses "
+            "observed — proxy forwards to the target"
+        )
+        return True, ""
+
+    async def _probe_urls(
+        self, urls: list[str], log_target: str
+    ) -> list[tuple[int, bytes]]:
+        """Run one proxied GET probe per URL, returning ``(status, body)``.
+
+        Each probe uses a fresh ``AsyncNetworkClient`` with ``use_proxy=True``
+        so the request follows the exact proxy path (ProxyChainManager →
+        settings proxy) a real run uses.  ``use_cache=False`` keeps the check
+        live (a stale cached body must not satisfy the comparison),
+        ``log_safe_url`` keeps credentials out of client-side logs, and
+        ``skip_guard=True`` (the ONLY sanctioned call site) lets the probe
+        reach the proxy before any guard bundle is loaded — the preflight
+        gate must observe the raw proxied path even when policy=None would
+        otherwise fail-closed.
+        """
+        responses: list[tuple[int, bytes]] = []
+        for url in urls:
+            client = AsyncNetworkClient()
+            await client.start()
+            try:
+                response = await client.request(
+                    "GET",
+                    url,
+                    timeout=_FORWARD_TIMEOUT,
+                    retries=0,
+                    use_proxy=True,
+                    follow_redirects=False,
+                    use_cache=False,
+                    log_safe_url=f"{log_target}/__shigoku_fwd_probe_<masked>",
+                    skip_guard=True,
+                )
+                body = response.body
+                if not isinstance(body, bytes):
+                    body = body.encode("utf-8", errors="replace")
+                responses.append((response.status, body))
+            finally:
+                await client.close()
+        return responses
+
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _log_safe_target(target: str) -> str:
+    """Return ``host:port`` for logging — path/query/credentials masked."""
+    parsed = urlparse(target)
+    host = parsed.hostname or ""
+    if parsed.port:
+        return f"{host}:{parsed.port}"
+    return host
 
 
 def _mask_token(token: str) -> str:

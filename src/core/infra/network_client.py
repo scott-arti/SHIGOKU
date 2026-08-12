@@ -29,6 +29,21 @@ class NetworkClientError(Exception):
     pass
 
 
+class ReadonlyEnforcedError(NetworkClientError):
+    """Raised by the network boundary when sealed-run GET-only enforcement
+    blocks a non-GET request (SGK-2026-0447 B4).
+
+    This is raised at the network boundary only — the injection manager maps
+    the blocked state-changing probe to a needs_human finding.  ``reason_code``
+    is the stable code used for that mapping.
+    """
+
+    reason_code = "READONLY_GET_ONLY_ENFORCED"
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+
+
 @dataclass
 class NetworkResponse:
     """統一ネットワークレスポンス"""
@@ -315,6 +330,7 @@ class AsyncNetworkClient:
         auto_waf_bypass: bool = True,
         guard_context: Optional[Dict[str, Any]] = None,  # Phase 2: SGK-2026-0335
         log_safe_url: Optional[str] = None,  # SGK-2026-0439: masked URL for all request-lifecycle logs
+        skip_guard: bool = False,  # SGK-2026-0447: preflight internal probes ONLY
         **kwargs
     ) -> NetworkResponse:
         """
@@ -332,6 +348,14 @@ class AsyncNetworkClient:
                 (secret-masking support for restored request targets).
                 When omitted, the actual ``url`` is used — existing
                 behavior unchanged.
+            skip_guard: FOR PREFLIGHT INTERNAL PROBES ONLY — bypasses the
+                compiled-guard evaluation for this single request.  This is
+                used exclusively by the preflight forwarding check
+                (SGK-2026-0447), which must observe the raw proxied path
+                before any guard policy is loaded.  Attack code MUST NOT
+                pass ``skip_guard=True``; any new caller requires explicit
+                security review.  Default ``False`` keeps the guard active
+                for every other request (existing behavior unchanged).
 
         Returns:
             NetworkResponse: レスポンスオブジェクト
@@ -347,7 +371,12 @@ class AsyncNetworkClient:
         # Only active in bug bounty mode. Merge: shared (always fresh) ->
         # explicit instance default -> per-request.  Shared is re-read every
         # request so that updates/clears propagate.
-        if self.mode.lower() == "bugbounty":
+        #
+        # skip_guard=True is reserved for the preflight forwarding probe
+        # (SGK-2026-0447): the check must run before any guard bundle is
+        # loaded, so evaluating with policy=None would fail-closed and the
+        # probe could never reach the proxy.  Attack code must not use it.
+        if not skip_guard and self.mode.lower() == "bugbounty":
             active_guard = dict(_shared_guard_context or {})
             if self._default_guard_context:
                 active_guard.update(self._default_guard_context)
@@ -409,7 +438,37 @@ class AsyncNetworkClient:
                     "Please start Caido or check your settings."
                 )
 
+        # ---- Sealed-run GET-only enforcement (SGK-2026-0447 B4) -----------
+        # Network-boundary guard: when enabled (SHIGOKU_SEALED_RUN_GET_ONLY),
+        # only GET/HEAD may leave the process on the TARGET attack path.
+        # State-changing probes are blocked here before any bytes are sent;
+        # the injection manager maps the resulting ReadonlyEnforcedError to a
+        # needs_human finding.  Default off -> existing runs byte-identical.
+        #
+        # use_proxy=False is reserved for the Caido control plane (preflight
+        # identity / caido_auth / caido_sitemap); the target attack path is
+        # always use_proxy=True under the all-traffic-through-proxy contract.
+        # If a future use_proxy=False TARGET attack path is added, it must
+        # NOT silently bypass this guard.
+        try:
+            from src.core.config.settings import get_settings
 
+            if (
+                get_settings().sealed_run_get_only
+                and use_proxy
+                and str(method or "").upper() not in ("GET", "HEAD")
+            ):
+                logger.warning(
+                    "Sealed-run GET-only enforcement: blocked %s request to %s",
+                    method,
+                    log_safe_url or "<url>",
+                )
+                raise ReadonlyEnforcedError(
+                    f"Request blocked by sealed-run GET-only enforcement: "
+                    f"{str(method or '').upper()}"
+                )
+        except ImportError:
+            pass
 
         # 1. キャッシュチェック (GETのみ)
         cache_key = None

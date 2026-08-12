@@ -366,3 +366,94 @@ class TestEntryGateCacheKey:
 
         # Same everything = same key
         assert facade._cache_key(ctx_a) == facade._cache_key(ctx_a)
+
+
+class TestEntryGateForwardingCheck:
+    """Forwarding check wiring in _run_caido_check (SGK-2026-0447).
+
+    CaidoCheck is injected by patching the class used inside
+    ``_run_caido_check``; the forwarding verdict must drive gate status.
+    """
+
+    @staticmethod
+    def _mock_caido_check(forwarding_result):
+        mock_check = MagicMock()
+        mock_check.check_tcp = AsyncMock(return_value=(True, ""))
+        mock_check.check_http = AsyncMock(return_value=(True, ""))
+        mock_check.run = AsyncMock(return_value=(True, []))
+        mock_check.check_forwarding = AsyncMock(return_value=forwarding_result)
+        return mock_check
+
+    @pytest.mark.asyncio
+    async def test_forwarding_fail_fails_gate(self):
+        """PROXY_NOT_FORWARDING → FAIL, failure present, snapshot False."""
+        gate = EntryGate()
+        mock_check = self._mock_caido_check((False, "PROXY_NOT_FORWARDING"))
+
+        with patch(
+            "src.core.preflight.entry_gate.CaidoCheck", return_value=mock_check
+        ):
+            with patch.object(
+                gate, "_run_target_basic_check", new_callable=AsyncMock
+            ) as mock_target:
+                mock_target.return_value = []
+                context = PreflightContext(
+                    target="https://example.com",
+                    active_phases=[GatePhase.PHASE_1_DETERMINISTIC],
+                )
+                result = await gate.run(context)
+
+        assert result.failed
+        codes = [f.reason_code for f in result.failures]
+        assert "PROXY_NOT_FORWARDING" in codes
+        assert result.snapshot.caido_forward_ok is False
+
+    @pytest.mark.asyncio
+    async def test_forwarding_failed_check_reason(self):
+        """PROXY_FORWARD_CHECK_FAILED → FAIL with the reason code."""
+        gate = EntryGate()
+        mock_check = self._mock_caido_check((False, "PROXY_FORWARD_CHECK_FAILED"))
+
+        with patch(
+            "src.core.preflight.entry_gate.CaidoCheck", return_value=mock_check
+        ):
+            with patch.object(
+                gate, "_run_target_basic_check", new_callable=AsyncMock
+            ) as mock_target:
+                mock_target.return_value = []
+                context = PreflightContext(
+                    target="https://example.com",
+                    active_phases=[GatePhase.PHASE_1_DETERMINISTIC],
+                )
+                result = await gate.run(context)
+
+        assert result.failed
+        codes = [f.reason_code for f in result.failures]
+        assert "PROXY_FORWARD_CHECK_FAILED" in codes
+        assert result.snapshot.caido_forward_ok is False
+
+    @pytest.mark.asyncio
+    async def test_forwarding_pass_not_in_failures(self):
+        """Forwarding PASS → gate passes, snapshot True, no forwarding failure."""
+        gate = EntryGate()
+        mock_check = self._mock_caido_check((True, ""))
+
+        with patch(
+            "src.core.preflight.entry_gate.CaidoCheck", return_value=mock_check
+        ):
+            with patch.object(
+                gate, "_run_target_basic_check", new_callable=AsyncMock
+            ) as mock_target:
+                mock_target.return_value = []
+                context = PreflightContext(
+                    target="https://example.com",
+                    active_phases=[GatePhase.PHASE_1_DETERMINISTIC],
+                )
+                result = await gate.run(context)
+
+        assert result.passed
+        assert all(
+            f.reason_code not in ("PROXY_NOT_FORWARDING", "PROXY_FORWARD_CHECK_FAILED")
+            for f in result.failures
+        )
+        assert result.snapshot.caido_forward_ok is True

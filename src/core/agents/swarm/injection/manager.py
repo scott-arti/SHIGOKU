@@ -1078,6 +1078,71 @@ class InjectionManagerAgent(BaseManagerAgent):
             )
             return None
 
+    def _put_readonly_enforced_candidate(self, finding: Any) -> bool:
+        """SGK-2026-0447 B4: put a NEEDS_HUMAN candidate record directly.
+
+        The T3 wiring (``_t3_run_hybrid_pass``) depends on the PoC judge, so
+        it is skipped here; the lifecycle ``apply_verdict`` record generation
+        is reused instead (function-level imports keep the validation <=>
+        injection import loop away).  Ledger open reuses
+        ``_open_candidate_ledger`` (injected ledger / ledger path /
+        ProjectManager-resolved path).  Never confirms; only ever records
+        NEEDS_HUMAN.
+        """
+        from types import SimpleNamespace
+
+        from src.core.validation.candidate_lifecycle import (
+            CandidateLifecycleManager,
+        )
+        from src.core.validation.finding_validator import (
+            HybridVerdict,
+            ReproductionOutcome,
+            VerdictState,
+        )
+
+        ledger = self._open_candidate_ledger(
+            SimpleNamespace(
+                target=self.current_context.get("target", "")
+                if isinstance(self.current_context, dict)
+                else ""
+            )
+        )
+        if ledger is None:
+            return False
+        lifecycle = CandidateLifecycleManager()
+        verdict = HybridVerdict(
+            state=VerdictState.NEEDS_HUMAN,
+            reason="readonly_get_only_enforced",
+            mechanical_floor=PayoutGradeResult(
+                payout_grade=False,
+                reason="not_evaluated",
+                evidence_refs=[],
+                marker=None,
+            ),
+            ai_judgement=None,
+            reproduction=ReproductionOutcome(
+                "not_run", "readonly_get_only_enforced"
+            ),
+            evidence_refs=(),
+            promise_score=0.0,
+        )
+        try:
+            # lifecycle の record 生成と NEEDS_MORE -> NEEDS_HUMAN 遷移を再利用
+            # （judge 非依存で needs_human に直接写像）。
+            record = lifecycle.apply_verdict(None, verdict, finding=finding)
+            record = lifecycle.apply_verdict(record, verdict, finding=finding)
+            ledger.put(record)
+            ledger.save()
+        except Exception:  # noqa: BLE001 — persistence boundary, run continues
+            logger.warning(
+                "[%s] T3 hybrid: readonly-enforced candidate ledger write "
+                "failed for finding %s",
+                self.name,
+                getattr(finding, "id", "?"),
+            )
+            return False
+        return True
+
     def _t3_apply_hybrid_verdict(
         self,
         finding: Any,
@@ -1997,6 +2062,9 @@ class InjectionManagerAgent(BaseManagerAgent):
                         break
 
         if probe_method:
+            # 循環 import 回避のため関数内 import（network_client <=> injection）
+            from src.core.infra.network_client import ReadonlyEnforcedError
+
             api_probe_sent = True
             tested_params.extend(
                 [
@@ -2006,27 +2074,119 @@ class InjectionManagerAgent(BaseManagerAgent):
                 ]
             )
             mass_assignment_finding_emitted = False
-            probe_resp = await request_client.request(
-                method=probe_method,
-                url=api_probe_target,
-                headers=probe_headers,
-                json=probe_payload,
-                timeout=20,
-                use_cache=False,
-                allow_redirects=False,
-            )
+
+            def _emit_readonly_enforced_finding(
+                *,
+                method: str,
+                request_url: str,
+                request_headers: Dict[str, Any],
+                request_payload: Any,
+            ) -> None:
+                """SGK-2026-0447 B4: blocked non-GET mass-assignment probe ->
+                needs_human finding (1 回だけ・重複防止は
+                ``mass_assignment_finding_emitted`` ガード)。
+
+                Finding の evidence は固定のマスク済み body
+                (``blocked: readonly_get_only_enforced``) で秘密なし。
+                confirmed にはしない。
+                """
+                nonlocal mass_assignment_finding_emitted
+                if mass_assignment_finding_emitted:
+                    return
+                _capture_probe_evidence(
+                    method=method,
+                    request_url=request_url,
+                    request_headers=request_headers,
+                    request_payload=request_payload,
+                    response_status=0,
+                    response_headers={},
+                    response_body="blocked: readonly_get_only_enforced",
+                )
+                finding = Finding(
+                    vuln_type=VulnType.MASS_ASSIGNMENT,
+                    severity=Severity.MEDIUM,
+                    title=(
+                        "Mass Assignment probe blocked by sealed-run "
+                        "GET-only enforcement"
+                    ),
+                    description=(
+                        "A state-changing (non-GET) mass-assignment probe "
+                        "was blocked at the network boundary by sealed-run "
+                        "GET-only enforcement. Manual review required."
+                    ),
+                    target_url=url,
+                    evidence=Evidence(
+                        request_method=method,
+                        request_url=url,
+                        request_headers=request_headers,
+                        request_body=str(request_payload),
+                        response_status=0,
+                        response_headers={},
+                        response_body="blocked: readonly_get_only_enforced",
+                    ),
+                    source_agent=self.name,
+                    confidence=0.0,
+                    tags=["api_candidate", "manual_verify", "readonly_enforced"],
+                    additional_info={
+                        "parameter": ",".join(schema_candidate_params),
+                        "payload": json.dumps(request_payload),
+                        "payloads_used": [json.dumps(request_payload)],
+                        "tested_params": tested_params,
+                        "detection_mode": detection_mode,
+                        "readonly_enforced": True,
+                        "hybrid_final_state": "needs_human",
+                    },
+                )
+                self.current_context["findings"].append(finding)
+                mass_assignment_finding_emitted = True
+                _funnel_finding_event(
+                    finding, "F5", "reached", reason_code="hybrid_needs_human"
+                )
+                # T3 配線（judge 依存）はスキップし、NEEDS_HUMAN record を
+                # ledger に直接 put（judge 非依存・confirmed にしない）。
+                self._put_readonly_enforced_candidate(finding)
+                logger.warning(
+                    "[%s] Sealed-run GET-only: blocked %s mass-assignment "
+                    "probe -> finding %s (needs_human)",
+                    self.name,
+                    method,
+                    finding.id,
+                )
+
+            try:
+                probe_resp = await request_client.request(
+                    method=probe_method,
+                    url=api_probe_target,
+                    headers=probe_headers,
+                    json=probe_payload,
+                    timeout=20,
+                    use_cache=False,
+                    allow_redirects=False,
+                )
+            except ReadonlyEnforcedError:
+                # ネットワーク境界（AsyncNetworkClient）で GET-only 強制に
+                # よりブロックされた。以降の recheck 等は probe_status=0 で
+                # 自動スキップされる。
+                _emit_readonly_enforced_finding(
+                    method=probe_method,
+                    request_url=api_probe_target,
+                    request_headers=probe_headers,
+                    request_payload=probe_payload,
+                )
+                probe_resp = None
             probe_status = int(getattr(probe_resp, "status", 0) or 0)
             probe_body_raw = str(getattr(probe_resp, "body", "") or "")
             probe_resp_headers = dict(getattr(probe_resp, "headers", {}) or {})
-            _capture_probe_evidence(
-                method=probe_method,
-                request_url=api_probe_target,
-                request_headers=probe_headers,
-                request_payload=probe_payload,
-                response_status=probe_status,
-                response_headers=probe_resp_headers,
-                response_body=probe_body_raw,
-            )
+            if probe_resp is not None:
+                _capture_probe_evidence(
+                    method=probe_method,
+                    request_url=api_probe_target,
+                    request_headers=probe_headers,
+                    request_payload=probe_payload,
+                    response_status=probe_status,
+                    response_headers=probe_resp_headers,
+                    response_body=probe_body_raw,
+                )
             probe_body = probe_body_raw.lower()
             reflection_markers = ["role", "is_admin", "__shigoku_probe", "admin"]
             reflection_hit = any(k in probe_body for k in reflection_markers)
@@ -2085,6 +2245,19 @@ class InjectionManagerAgent(BaseManagerAgent):
                             "reflection_reproduced": reflection_reproduced,
                         }
                     )
+                except ReadonlyEnforcedError:
+                    # SGK-2026-0447 B4: recheck 送信もネットワーク境界で
+                    # ブロックされ得る。needs_human 写像（重複は
+                    # mass_assignment_finding_emitted ガードで防止）。
+                    _emit_readonly_enforced_finding(
+                        method=probe_method,
+                        request_url=api_probe_target,
+                        request_headers=probe_headers,
+                        request_payload=reflection_recheck_payload,
+                    )
+                    auto_reverification["reflection_recheck_error"] = (
+                        "readonly_get_only_enforced"
+                    )
                 except Exception as exc:
                     auto_reverification["reflection_recheck_error"] = str(exc)
 
@@ -2118,6 +2291,17 @@ class InjectionManagerAgent(BaseManagerAgent):
                             "recheck_login_like": recheck_login_like,
                         }
                     )
+                except ReadonlyEnforcedError:
+                    # SGK-2026-0447 B4: recheck 送信もネットワーク境界で
+                    # ブロックされ得る。needs_human 写像（重複は
+                    # mass_assignment_finding_emitted ガードで防止）。
+                    _emit_readonly_enforced_finding(
+                        method=probe_method,
+                        request_url=api_probe_target,
+                        request_headers=probe_headers,
+                        request_payload=recheck_payload,
+                    )
+                    auto_reverification["error"] = "readonly_get_only_enforced"
                 except Exception as exc:
                     auto_reverification["error"] = str(exc)
 
