@@ -1,15 +1,17 @@
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
 import random
 import re
-from typing import Dict, Any, List, Optional, Tuple
-from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+from pathlib import Path
+from typing import Dict, Any, List, Optional, Tuple, TYPE_CHECKING
+from urllib.parse import urlparse, parse_qs, urlencode, urlunparse, urlsplit
 
 from src.core.agents.swarm.base_manager import BaseManagerAgent
 from src.core.agents.swarm.base import Specialist, Task
 from src.core.models.finding import Finding, VulnType, Severity, Evidence
-from src.core.validation.finding_validator import FindingValidator, ValidationResult
 from src.core.models.swarm import SwarmResult
 from src.core.engine.agent_registry import AgentRegistry
 from src.core.engine.tag_taxonomy_registry import (
@@ -126,6 +128,14 @@ from src.core.agents.swarm.injection.payout_grade import (
 )
 from src.core.config.settings import settings
 
+if TYPE_CHECKING:
+    # 型ヒント専用（runtime import は循環回避のため関数内 lazy import）。
+    # 注: src.core.validation は candidate_lifecycle 経由で本モジュールを
+    # import するため、module-level の runtime import は不可。
+    from src.core.security.ethics_guard import ScopeDefinition
+    from src.core.validation.candidate_ledger import CandidateLedger
+    from src.core.validation.candidate_lifecycle import CandidateLifecycleManager
+
 logger = logging.getLogger(__name__)
 
 
@@ -221,6 +231,84 @@ def _funnel_finding_created(finding: Any) -> None:
     if "auto_reverified" in (getattr(finding, "tags", None) or []):
         _funnel_finding_event(finding, "F4", "reached")
 
+
+def _extract_target_host_port(target_url: Any) -> Optional[str]:
+    """ターゲット URL から host[:port] を抽出（封印スコープ・ledger パス共用）。
+
+    - http/https のみ許可。不正/スキーム不明/空は None（fail-closed）。
+    - userinfo を除去した netloc（IPv6 ブラケット表記も保持）。
+    - 不正ポート（urlsplit の ValueError）は None へ写像。
+    """
+    raw = str(target_url or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = urlsplit(raw)
+        scheme = (parsed.scheme or "").lower()
+        host = (parsed.hostname or "").lower()
+        if scheme not in {"http", "https"} or not host:
+            return None
+        # port の検証（不正ポートは ValueError → fail-closed）
+        port = parsed.port
+        netloc = (parsed.netloc or "").lower()
+        if "@" in netloc:
+            netloc = netloc.rsplit("@", 1)[1]
+        if not netloc:
+            return None
+    except Exception:  # noqa: BLE001 — boundary, fail closed
+        return None
+    return netloc
+
+
+def _resolve_candidate_ledger_path(target_url: Any) -> Optional[str]:
+    """SGK-2026-0445: ``workspace/projects/<target>/candidate_ledger.json``.
+
+    Reuses the ProjectManager's canonical projects-base-dir resolution
+    (project_manager.py ``_default_projects_base_dir`` — env overridable,
+    repo-root default). The project directory is host[:port]-scoped
+    (master_conductor resolves workspace/projects/<host:port> with
+    recon_state/scans/reports), while the raw task.target may carry a
+    path/query (e.g. http://localhost:3000/rest/products/search?q=) —
+    extracting the host[:port] keeps every finding of the run in ONE
+    ledger (run5 regression: 11 findings were split across 9 per-URL-path
+    ledger files). None when the target cannot produce a host:port
+    (fail-closed: the hybrid wiring stays off).
+    """
+    try:
+        from src.core.project.project_manager import _default_projects_base_dir
+
+        host_port = _extract_target_host_port(target_url)
+        if host_port is None:
+            return None
+        return str(
+            Path(_default_projects_base_dir()) / host_port / "candidate_ledger.json"
+        )
+    except Exception:  # noqa: BLE001 — path resolution boundary, fail closed
+        return None
+
+
+def _build_sealed_reproduction_scope(target_url: Any) -> Optional["ScopeDefinition"]:
+    """封印再現用スコープ: ターゲット自身の host[:port] のみ許可。
+
+    - target から scheme を除去し host[:port] を抽出（不正/スキーム不明は
+      None → fail-closed）。
+    - ScopeDefinition(in_scope_domains=[host:port], strict_mode=True,
+      allow_post_exploit=False) を返す。実VDP外部・他ホストへは決して
+      許可しない（in_scope_domains がターゲット自身のみ）。
+    """
+    # 循環回避のため関数内 import（他 T3 ヘルパーとパターン統一）
+    from src.core.security.ethics_guard import ScopeDefinition
+
+    netloc = _extract_target_host_port(target_url)
+    if netloc is None:
+        return None
+    return ScopeDefinition(
+        program_name="sealed-reproduction",
+        in_scope_domains=[netloc],
+        strict_mode=True,
+        allow_post_exploit=False,
+    )
+
 @AgentRegistry.register(
     names=["InjectionManager", "InjectionManagerAgent", "injection_manager", "InjectionSwarm"],
     tags=["injection", "sqli", "xss", "command_injection", "lfi", "open_redirect"]
@@ -283,7 +371,18 @@ class InjectionManagerAgent(BaseManagerAgent):
         "cookies",
     }
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(
+        self,
+        config: Optional[Dict[str, Any]] = None,
+        *,
+        # SGK-2026-0445 T3: hybrid wiring injectables (all additive; the
+        # wiring runs ONLY when hybrid_enabled resolves True).
+        hybrid_enabled: Optional[bool] = None,       # None -> settings.t3_hybrid_enabled
+        poc_judge: Optional[Any] = None,             # judge instance (default PoCJudge())
+        reproduction_checker: Optional[Any] = None,  # checker (default SealedReproductionChecker)
+        ledger_path: Optional[str] = None,           # explicit ledger path (wiring side)
+        candidate_ledger: Optional[CandidateLedger] = None,  # already-open ledger (tests)
+    ):
         super().__init__(config)
         # 各インジェクション型スキャナ (Specialist) の初期化
         self._initialize_specialists()
@@ -291,10 +390,20 @@ class InjectionManagerAgent(BaseManagerAgent):
         self._ephemeral_network_clients: List[Any] = []
 
         # FindingValidator初期化（証拠品質ゲート）
+        # 循環回避のため関数内 import（validation <=> injection の import ループ）
+        from src.core.validation.finding_validator import FindingValidator
+
         self._finding_validator = FindingValidator()
 
         # LLMから呼び出し可能なツールとして登録 (Phase 2 用)
         self._register_manager_tools()
+
+        # SGK-2026-0445 T3: hybrid wiring injectables
+        self._t3_hybrid_enabled_override = hybrid_enabled
+        self._t3_poc_judge = poc_judge
+        self._t3_reproduction_checker = reproduction_checker
+        self._t3_ledger_path = ledger_path
+        self._t3_candidate_ledger = candidate_ledger
 
     def _register_manager_tools(self):
         """スペシャリストの実行メソッドをLLMツールとして登録"""
@@ -918,6 +1027,214 @@ class InjectionManagerAgent(BaseManagerAgent):
         client = AsyncNetworkClient(mode=resolve_run_mode())
         self._ephemeral_network_clients.append(client)
         return client
+
+    # ------------------------------------------------------------------
+    # SGK-2026-0445 T3: hybrid judgement + candidate lifecycle wiring
+    # ------------------------------------------------------------------
+
+    def _t3_hybrid_active(self) -> bool:
+        """T3 wiring gate: constructor override wins, else the additive
+        ``settings.t3_hybrid_enabled`` flag (default False). When False the
+        Phase-2 merge gate behaves exactly as before (no judge, no
+        reproduction checker, no candidate ledger)."""
+        if self._t3_hybrid_enabled_override is not None:
+            return bool(self._t3_hybrid_enabled_override)
+        try:
+            return bool(getattr(settings, "t3_hybrid_enabled", False))
+        except Exception:  # noqa: BLE001 — settings boundary, fail closed
+            return False
+
+    def _open_candidate_ledger(self, task: Any) -> Optional[CandidateLedger]:
+        """Open the run's candidate ledger.
+
+        Priority: injected ledger -> injected ledger_path -> the
+        ProjectManager-resolved ``workspace/projects/<target>/
+        candidate_ledger.json``. None (unresolvable path / open failure) ->
+        the hybrid wiring stays off for this run (fail-closed: no
+        confirmation without persistence).
+        """
+        # 循環回避のため関数内 import（validation <=> injection の import ループ）
+        from src.core.validation.candidate_ledger import CandidateLedger
+
+        if self._t3_candidate_ledger is not None:
+            return self._t3_candidate_ledger
+        path = self._t3_ledger_path
+        if not path:
+            path = _resolve_candidate_ledger_path(getattr(task, "target", None))
+        if not path:
+            logger.warning(
+                "[%s] T3 hybrid: no candidate ledger path for target; "
+                "hybrid wiring disabled for this run",
+                self.name,
+            )
+            return None
+        try:
+            return CandidateLedger.open(path)
+        except Exception:  # noqa: BLE001 — ledger boundary, fail closed
+            logger.warning(
+                "[%s] T3 hybrid: cannot open candidate ledger at %s; "
+                "hybrid wiring disabled for this run",
+                self.name, path,
+            )
+            return None
+
+    def _t3_apply_hybrid_verdict(
+        self,
+        finding: Any,
+        *,
+        judge: Any,
+        checker: Any,
+        lifecycle: CandidateLifecycleManager,
+        ledger: CandidateLedger,
+    ) -> bool:
+        """SGK-2026-0445: one finding through T1 judgement + T2 lifecycle.
+
+        - Records already terminal/parked in the ledger are skipped (no
+          judge call, no blind retry — ``apply_verdict`` no-op).
+        - JudgeBudgetExhausted / PoCJudge ValueError (JSON parse etc.) maps
+          to ``ai_judge=None`` re-run -> needs_more /
+          ai_judgement_pending. Never confirmed without evidence.
+        - F5 emit only for the terminal/parked verdicts
+          (hybrid_confirmed / hybrid_refuted / hybrid_parked /
+          hybrid_needs_human) + ``additional_info["hybrid_final_state"]``.
+        - Returns True when the ledger was mutated (caller saves once at
+          run end; no per-finding save).
+        """
+        # 循環回避のため関数内 import（validation <=> injection の import ループ）
+        from src.core.validation.candidate_lifecycle import LifecycleState
+        from src.core.validation.finding_validator import validate_finding
+        from src.core.validation.sealed_reproduction_checker import JudgeBudgetExhausted
+
+        finding_id = str(getattr(finding, "id", "") or "")
+        if not finding_id:
+            return False
+        record = ledger.get(finding_id)
+        if record is not None and record.state != LifecycleState.NEEDS_MORE:
+            return False  # already terminal/parked: skip judgement entirely
+
+        try:
+            verdict = validate_finding(
+                finding,
+                ai_judge=judge,
+                reproduction_checker=checker,
+            )
+        except (JudgeBudgetExhausted, ValueError):
+            # Budget exhausted / PoCJudge parse failure -> ai_judge=None
+            # re-run (fail-closed: maps to needs_more, never confirmed).
+            try:
+                verdict = validate_finding(
+                    finding,
+                    ai_judge=None,
+                    reproduction_checker=checker,
+                )
+            except (JudgeBudgetExhausted, ValueError):
+                logger.warning(
+                    "[%s] T3 hybrid: judgement retry failed, skipping finding %s",
+                    self.name, finding_id,
+                )
+                return False
+        except Exception:  # noqa: BLE001 — boundary hook must not break the run
+            logger.warning(
+                "[%s] T3 hybrid: judgement failed, skipping finding %s",
+                self.name, finding_id,
+            )
+            return False
+
+        new_record = lifecycle.apply_verdict(record, verdict, finding=finding)
+        ledger.put(new_record)
+
+        # F5 emit は apply_verdict 後の最終ライフサイクル状態（record.state）
+        # ベース: T6 予算切れ棚上げ（verdict=NEEDS_MORE でも budget_used が
+        # max_visits 到達で record が inconclusive_parked になる）も反映する。
+        # NEEDS_MORE（継続中）は従来どおり F5 emit しない。
+        lstate = getattr(new_record, "state", None)
+        if lstate is None:
+            return True
+        reason = {
+            LifecycleState.CONFIRMED: "hybrid_confirmed",
+            LifecycleState.REFUTED: "hybrid_refuted",
+            LifecycleState.INCONCLUSIVE_PARKED: "hybrid_parked",
+            LifecycleState.NEEDS_HUMAN: "hybrid_needs_human",
+        }.get(lstate)
+        if reason is not None:
+            _funnel_finding_event(finding, "F5", "reached", reason_code=reason)
+            _info = getattr(finding, "additional_info", None)
+            if isinstance(_info, dict):
+                _info["hybrid_final_state"] = lstate.value
+        return True
+
+    def _t3_run_hybrid_pass(self, task: Any, findings: list) -> bool:
+        """SGK-2026-0445: one T3 hybrid pass over findings.
+
+        Shared by the Phase-1 confirmation point (early-return paths never
+        reach the Phase-2 merge gate) and the Phase-2 merge gate (only new
+        findings are additionally judged — terminal/parked records are
+        skipped by ``_t3_apply_hybrid_verdict``, needs_more records get one
+        more visit per T2 T5).
+
+        Ledger open (fail-closed: None -> pass skipped) -> budgeted
+        poc_judge + sealed reproduction checker + lifecycle -> per-finding
+        ``_t3_apply_hybrid_verdict`` -> ONE ledger save at pass end (atomic
+        and idempotent; per-finding saves are avoided). OFF (flag off or no
+        findings) -> no-op, no validation imports touched (byte-identical).
+        Returns True when any ledger record was written.
+        """
+        if not self._t3_hybrid_active():
+            return False
+        if not findings:
+            return False
+        # 循環回避のため関数内 import（validation <=> injection の import ループ）
+        from src.core.validation.candidate_lifecycle import (
+            CandidateLifecycleManager,
+        )
+        from src.core.validation.finding_validator import PoCJudge
+        from src.core.validation.sealed_reproduction_checker import (
+            BudgetedPoCJudge,
+            PoCJudgeBudget,
+            SealedReproductionChecker,
+        )
+
+        ledger = self._open_candidate_ledger(task)
+        if ledger is None:
+            return False
+        judge = BudgetedPoCJudge(
+            self._t3_poc_judge if self._t3_poc_judge is not None else PoCJudge(),
+            PoCJudgeBudget(),
+        )
+        checker = (
+            self._t3_reproduction_checker
+            if self._t3_reproduction_checker is not None
+            else SealedReproductionChecker(
+                network_client=self.network_client,
+                # 封印スコープ: ターゲット自身の host[:port] のみ許可。
+                # 構築失敗（target 不正等）は None → 従来どおり fail-closed
+                # （not_run → needs_more。confirmed にしない安全側は不変）。
+                scope_definition=_build_sealed_reproduction_scope(
+                    getattr(task, "target", None)
+                ),
+            )
+        )
+        lifecycle = CandidateLifecycleManager()
+        dirty = False
+        for _f in findings:
+            if self._t3_apply_hybrid_verdict(
+                _f,
+                judge=judge,
+                checker=checker,
+                lifecycle=lifecycle,
+                ledger=ledger,
+            ):
+                dirty = True
+        if dirty:
+            try:
+                ledger.save()
+            except Exception:  # noqa: BLE001 — persistence boundary, run continues
+                logger.warning(
+                    "[%s] T3 hybrid: candidate ledger save failed; "
+                    "records remain in memory only",
+                    self.name,
+                )
+        return dirty
 
     def _should_bypass_cache(self, url: str, vuln_type: str, params: Dict[str, Any]) -> bool:
         """高リスク対象はキャッシュ再利用を避ける（0件再利用による取りこぼし防止）。"""
@@ -2780,6 +3097,14 @@ class InjectionManagerAgent(BaseManagerAgent):
         if bool(getattr(settings, "phase2_on_empty_force_disable", False)):
             phase2_on_empty_phase1 = False
 
+        # SGK-2026-0445 T3: hybrid judgement + lifecycle for EVERY Phase-1
+        # finding right after confirmation. The early-return path returns
+        # before the Phase-2 merge gate, so the pass must run here to cover
+        # fast-types (lfi/redirect/csrf/api/cors etc.). OFF -> no-op
+        # (byte-identical); the merge gate later re-judges only findings
+        # still in needs_more (T2 T5) or new Phase-2 findings.
+        self._t3_run_hybrid_pass(task, phase1_findings)
+
         if phase1_findings and (early_return_enabled or auto_early_return):
             # SGK-2026-0441: measurement only — payout-grade verdict at the
             # early-return point (F4). Payout-grade candidates reached F4;
@@ -3072,6 +3397,15 @@ class InjectionManagerAgent(BaseManagerAgent):
         # candidates (unmarked) unless an explicit refute signal exists —
         # never refuted speculatively. Measurement-only funnel emits; the
         # additional_info marks are additive and fail-closed.
+        #
+        # SGK-2026-0445 T3 (additive, OFF by default): after the mechanical
+        # floor gate the merged findings go through the hybrid judgement
+        # (budgeted poc_judge + sealed reproduction back-check) and the T2
+        # candidate lifecycle (ledger upsert; save once at pass end).
+        # Findings already judged at the Phase-1 pass are skipped by the
+        # ledger state check (terminal/parked -> zero judge calls;
+        # needs_more -> one more visit per T2 T5). OFF -> no-op and the
+        # 0441 gate below is byte-identical to before.
         for _f in result.findings:
             _grade = evaluate_payout_grade(finding_payload(_f))
             if _grade.payout_grade:
@@ -3088,6 +3422,7 @@ class InjectionManagerAgent(BaseManagerAgent):
                 _funnel_finding_event(
                     _f, "F5", "skipped", reason_code="false_positive_refuted"
                 )
+        self._t3_run_hybrid_pass(task, result.findings)
         result.execution_log.append({
             "phase": "phase1_summary",
             "urls_checked": urls_checked,

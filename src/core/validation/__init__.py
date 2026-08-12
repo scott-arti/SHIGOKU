@@ -34,6 +34,12 @@ from src.core.validation.candidate_ledger import (
     CandidateLedger,
     LEDGER_SCHEMA_VERSION,
 )
+from src.core.validation.sealed_reproduction_checker import (
+    SealedReproductionChecker,
+    PoCJudgeBudget,
+    BudgetedPoCJudge,
+    JudgeBudgetExhausted,
+)
 
 __all__ = [
     # Finding Validator
@@ -63,4 +69,9 @@ __all__ = [
     "LifecycleState",
     "CandidateLedger",
     "LEDGER_SCHEMA_VERSION",
+    # SGK-2026-0445 T3 Sealed reproduction checker + poc_judge run budget
+    "SealedReproductionChecker",
+    "PoCJudgeBudget",
+    "BudgetedPoCJudge",
+    "JudgeBudgetExhausted",
 ]

@@ -66,6 +66,13 @@ REASON_CODES: Tuple[str, ...] = (
     "evidence_insufficient",
     "false_positive_refuted",
     "task_suppressed_ownership",
+    # SGK-2026-0445 T3: hybrid-verdict terminal states (additive; OUTCOMES
+    # vocabulary unchanged — the final state is expressed via reason_code).
+    "hybrid_confirmed",
+    "hybrid_refuted",
+    "hybrid_parked",
+    "hybrid_needs_human",
+    "reproduction_transport_error",
 )
 
 _STAGE_INDEX: Dict[str, int] = {stage: i for i, stage in enumerate(STAGES)}

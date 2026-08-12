@@ -653,6 +653,10 @@ class Settings(BaseSettings):
     # Deprecated compatibility field. Runtime LLM selection is role-based.
     model: str = ""
     phase2_on_empty_force_disable: bool = False
+    # SGK-2026-0445: T3 hybrid judge + lifecycle wiring (additive, default
+    # off). False -> the Phase-2 merge gate behaves exactly as before (no
+    # poc_judge calls, no reproduction checker, no candidate ledger).
+    t3_hybrid_enabled: bool = False
     # SGK-2026-0367: safety switches for injection ownership and Phase2 suppression
     injection_ownership_dedup_enabled: bool = True
     xss_no_signal_phase2_suppress_enabled: bool = True
