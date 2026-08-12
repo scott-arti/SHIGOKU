@@ -2,13 +2,21 @@
 Integration Tests - URLClassifier + ReconPipeline, FindingValidator + InjectionManagerAgent
 
 Phase A統合テスト
+
+SGK-2026-0443: FindingValidator セクションは新契約（HybridVerdict）に更新。
+URLClassifier テストは無変更。
 """
 import pytest
 import asyncio
 from unittest.mock import Mock, patch
 
+from src.core.models.finding import Evidence, Finding, Severity, VulnType
 from src.core.validation.url_classifier import URLClassifier, classify_url
-from src.core.validation.finding_validator import FindingValidator, validate_finding
+from src.core.validation.finding_validator import (
+    FindingValidator,
+    VerdictState,
+    validate_finding,
+)
 
 
 class TestURLClassifierIntegration:
@@ -61,10 +69,35 @@ class TestURLClassifierIntegration:
 
 
 class TestFindingValidatorIntegration:
-    """FindingValidator統合テスト"""
+    """FindingValidator統合テスト（SGK-2026-0443 新契約）"""
 
-    def test_thought_only_finding_rejection(self):
-        """thought-only findingは拒否される"""
+    def test_validate_finding_returns_hybrid_verdict(self):
+        """validate_finding は HybridVerdict を返す（AI 未実行 → needs_more）"""
+        finding = Finding(
+            vuln_type=VulnType.XSS,
+            severity=Severity.MEDIUM,
+            title="Reflected payload in search response",
+            description="Generic reflected-XSS style finding.",
+            target_url="https://target.example/",
+            evidence=Evidence(
+                request_method="GET",
+                request_url="https://target.example/search?q=probe",
+                response_status=200,
+                response_body='<html><script>alert(1)</script></html>',
+            ),
+            reproduction_steps=["Send the probe request", "Observe the reflected payload"],
+            impact="Session hijack via reflected payload execution.",
+        )
+
+        result = validate_finding(finding)
+
+        assert isinstance(result.state, VerdictState)
+        assert result.state == VerdictState.NEEDS_MORE
+        assert result.reason == "ai_judgement_pending"
+        assert result.ai_judgement is None
+
+    def test_legacy_validate_still_rejects_thought_only(self):
+        """レガシー validate() は thought-only を拒否し続ける（manager 配線用）"""
         mock_finding = Mock()
         mock_finding.actions = []
         mock_finding.metadata = {
@@ -73,14 +106,14 @@ class TestFindingValidatorIntegration:
             "response_body_sample": "test",
         }
         mock_finding.target = "http://test.com"
-        
-        result = validate_finding(mock_finding)
-        
+
+        result = FindingValidator().validate(mock_finding)
+
         assert result.reject is True
         assert result.reason == "thought-only"
 
-    def test_valid_finding_with_actions_accepted(self):
-        """action付きfindingは採用される"""
+    def test_legacy_validate_accepts_action_finding(self):
+        """レガシー validate() は action 付き finding を採用し続ける"""
         mock_finding = Mock()
         mock_finding.actions = [{"type": "probe", "payload": "test"}]
         mock_finding.metadata = {
@@ -88,9 +121,9 @@ class TestFindingValidatorIntegration:
             "response_status": 200,
             "response_body_sample": "test",
         }
-        
-        result = validate_finding(mock_finding)
-        
+
+        result = FindingValidator().validate(mock_finding)
+
         assert result.reject is False
 
 

@@ -452,4 +452,4 @@
 | SGK-2026-0440 | 本物の攻撃経路（候補→確定）を正しく計測する finding-pipeline 計装 | done | plan | SGK-2026-0418 | docs/shigoku/plans/done/2026-08-11_sgk-2026-0440_finding-pipeline-instrumentation.md |
 | SGK-2026-0441 | 検証ループの近代化 — 見つけた候補を賞金級 PoC で確定させる | done | plan | SGK-2026-0418 | docs/shigoku/plans/done/2026-08-11_sgk-2026-0441_validation-loop-modernization-payout-grade.md |
 | SGK-2026-0442 | 確定と候補ライフサイクルのプログラム（ロードマップ） | active | roadmap | SGK-2026-0418 | docs/shigoku/roadmaps/2026-08-12_sgk-2026-0442_confirmation-and-candidate-lifecycle-program.md |
-| SGK-2026-0443 | T1 共有ハイブリッド確定判定モジュール | active | plan | SGK-2026-0442 | docs/shigoku/plans/2026-08-12_sgk-2026-0443_shared-hybrid-confirmation-judge.md |
+| SGK-2026-0443 | T1 共有ハイブリッド確定判定モジュール | done | plan | SGK-2026-0442 | docs/shigoku/plans/done/2026-08-12_sgk-2026-0443_shared-hybrid-confirmation-judge.md |

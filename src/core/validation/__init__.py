@@ -9,6 +9,13 @@ from src.core.validation.finding_validator import (
     validate_finding,
     validate_findings,
     get_validator,
+    VerdictState,
+    HybridVerdict,
+    AiJudgement,
+    ReproductionOutcome,
+    ReproductionChecker,
+    NoopReproductionChecker,
+    PoCJudge,
 )
 from src.core.validation.url_classifier import (
     URLClassifier,
@@ -26,6 +33,14 @@ __all__ = [
     "validate_finding",
     "validate_findings",
     "get_validator",
+    # SGK-2026-0443 Hybrid Verdict (swarm-path advisory determination)
+    "VerdictState",
+    "HybridVerdict",
+    "AiJudgement",
+    "ReproductionOutcome",
+    "ReproductionChecker",
+    "NoopReproductionChecker",
+    "PoCJudge",
     # URL Classifier
     "URLClassifier",
     "ClassificationResult",

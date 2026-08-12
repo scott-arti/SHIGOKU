@@ -11,7 +11,7 @@ related_docs:
   - AGENTS.md
 title: SHIGOKU Learnings
 created_at: '2026-06-26'
-updated_at: '2026-08-11'
+updated_at: '2026-08-12'
 ---
 
 # SHIGOKU Learnings
@@ -533,3 +533,30 @@ assert p is not None and p.bundle_id.startswith('bbp-'), f'unexpected: {p}'
 
 - [topic: lessons | when: 計画書やDeepSeek指示で「仕様/設計はこうだ」と述べる時・原因を述べる時] 単一ファイルの挙動を仕様と断定するな。概念を所有するモジュール＋仕様書（docs/shigoku/specs）＋他の呼び出し元を照合し、参照した正本を明記せよ。示せない時は「未確認・要確認」と書いて止まる。原因は根拠が出るまで「仮説」と明示し断定しない。 verify: 指示/計画に照合した正本の参照が明記され、原因が confirmed/仮説 で区別されている
   detail: SGK-2026-0438/0439。admission・dedup を確認前に断定して後で却下され、値破棄を仕様と誤断した。事実と仮説を分離せず断定口調で提示したのが根因。
+
+- [topic: lessons | when: finding_funnel_v1 のカバレッジを封印 run で確認する時] レポートの Candidate 行数と funnel entries 数は粒度が違う（同一 finding_id が複数タスクの result.findings に重複記録される）。カバレッジ照合はユニーク finding_id の集合で diff せよ（行数で比較しない）。 verify: `.venv/bin/python -c "import json; s=json.load(open('workspace/projects/localhost:3000/sessions/session_*.json')); ids={f['id'] for t in s['completed_tasks'] for f in (t.get('result') or {}).get('findings') or []}; print(len(ids))"`
+  detail: SGK-2026-0440。17 finding dict がユニーク id 8 に縮退し、funnel entries 8 = 全ユニーク候補をカバー（raw NOT in funnel: [] で確認）。レポート「Candidate: 16」は dict 行数で、funnel の total_candidates 8 と見かけが乖離するが計測欠落ではない。行数で比較すると誤って「カバレッジ不足」と誤判定する。
+
+- [topic: report-session-consistency | when: 封印 run の funnel before/after で「検証段への進行」を判定する時] first_failure_stage は最も早い停止点で固定され後の進行を上書きしないため、進行の実測は max_stage_reached と by_stage の増加で見よ（first_failure_stage の変化では判定しない）。 verify: `rg -o '"max_stage_reached": "[^"]*"' workspace/projects/localhost:3000/sessions/session_20260811_223709.json | sort | uniq -c`
+  detail: SGK-2026-0441。0440→0441 で F4 by_stage 3→8・全エントリ max_stage F4 に到達（Phase 2 ThoughtLoop 実動）したが、first_failure_stage は F3×5/F0×3 のまま。first-failure 規約（finding_funnel_trace.py:125-131）は最初の失敗を保持するため、before/after 比較は first_failure 分布でなく max_stage/by_stage で行う。
+
+- [topic: lessons | when: PIIMasker で秘密マスクの新経路を設計する時] 既存 `mask()` は正規表現パターン認識ベースで fail-open（未認識の値は素通し）。deny-by-default には値全体をトークン化するプリミティブ（`mask_url_query_values()` 相当）を明示追加せよ。 verify: `.venv/bin/pytest tests/test_pii_masker.py -q` と `rg -n "PATTERNS" src/core/security/pii_masker.py`
+  detail: SGK-2026-0439。`?id=12345` のような短い値はどの PATTERNS にも一致せず `mask()` で素通し（test_pii_masker.py:15-21 が masked==original を実証）。VDP 攻撃経路の値保持には既存 mask の上に「既知秘密型は型付け・残りは全体トークン化」の deny-by-default レイヤーが必要だった。既存エントリ（PIIMasker が正本）は言及していない罠。
+
+- [topic: lessons | when: session/diagnostic に新しいイベントフィールドやセクションを足す時] `DiagnosticEventV1.from_dict` は未知キーで TypeError を投げる strict スキーマなので、新フィールドは既存イベントへ足さず `vdp_contract` の新トップレベルキー（finding_funnel_v1 等）として additive に追加せよ。 verify: `.venv/bin/pytest tests/unit/engine/test_vdp_diagnostic_trace.py tests/unit/reporting/test_finding_funnel_reporting.py -q`
+  detail: SGK-2026-0440。vdp_diagnostic_trace.py:403-441 の from_dict が未知キーで raise するため、funnel セクションを vdp_contract 新キーとして追加した（injector の inject_vdp_section_to_session_payload と read_session_compat は未知キーを許容・保持する）。イベントスキーマ拡張だと既存の M0 ゲート検証を壊す。
+
+- [topic: lessons | when: swarm 経路の finding 確定・検証機構を探す・実装する時] `validate_findings`/`filter_valid_findings`（FindingValidator ゲート）は呼び出し元のないデッドコードで、swarm の「confirmed」はレポートタイム推論のみ。実装前に grep で実在の呼び出し元を確認し、「存在する機構」と「見た目だけの機構」を区別せよ。 verify: `rg -n "validate_findings|filter_valid_findings|ExploitVerifier" src/ | rg -v "def |class "`
+  detail: SGK-2026-0441。manager.py:3915/3960 の FindingValidator ゲートは dispatch 経路から呼ばれておらず（0440 run の F4 reached は auto_reverified タグ経由のみ）、ExploitVerifier（exploit_verifier.py:56）も src/ 内に呼び出しゼロ。swarm の確定は haddix_formatter.py:308-315 のレポートタイム推論だけ。このギャップが 0441 の賞金級 PoC 判定器の新設理由。
+
+- [topic: lessons | when: Phase 2 検証ループの停止条件・時間予算を変更する時] Phase 2 の実体は thought_loop.py でなく `BaseManagerAgent.dispatch`（base_manager.py:218・max_turns=5）なので、予算/早期停止フックは base_manager のループ境界へ接続せよ（thought_loop.py は専門家用の別ループ・max_turns=10）。 verify: `rg -n "while turn < self.max_turns" src/core/agents/swarm/base_manager.py src/core/agents/swarm/thought_loop.py`
+  detail: SGK-2026-0441。計画段階では thought_loop.py を Phase 2 と誤認したが、診断で base_manager.py:120 の dispatch が実体と判明。manager.py:2997 の asyncio.wait_for が既存の唯一の時間予算。変更対象を間違えると効果が無い（0441 では両方に接続した）。
+
+- [topic: lessons | when: swarm 検証ループの送信に read-only（GET-only）制約を課す時] `vdp_readonly_guard` の GET-only は VDP follow-up 経路のみに適用され swarm thought_loop 経路は対象外（ExecutionSafeguard の MethodRiskPolicy のみ）。検証ループの追加送信には GET-only ガード（assert_read_only_probe 相当）を明示配線せよ。 verify: `rg -n "evaluate_readonly_request" src/core/engine/ | rg -v "def "` と `.venv/bin/pytest tests/core/agents/swarm/injection/test_payout_grade.py -q`
+  detail: SGK-2026-0441。vdp_readonly_guard.py:111-204 の適用は vdp_follow_up_executor.py:572/1302 のみで、swarm 専門家は POST を送れる（smart_sqli.py:1045-1052）。read-only エンベロープの担保は「ガード関数を用意した」だけでは不十分で、呼び出し元まで確認する（本タスクは新規送信を追加しない方針で構造的に充足 + 封印 run で GET 38 件全てを実測）。
+
+- [topic: reporting | when: preflight の token_scan_changed_files が fail した時] changed-files に含まれる既存ファイルの denylist トークンは `git show HEAD:<file>` で既存を証明してから manifest hits[] へ pre-existing 分類登録し、content_hash を canonical body（content_hash キー除く・sort_keys・ensure_ascii=False の sha256）で再計算せよ。新規トークンを manifest 登録で隠すのは禁止。 verify: `.venv/bin/python scripts/check_vdp_product_independence.py --manifest config/diagnostics/product_independence_manifest_v1.json --denylist config/diagnostics/sealed_product_denylist.txt --changed-files <file> 2>&1 | tail -3`
+  detail: SGK-2026-0441。execution_policy.py:39 / smart_cmd_ssrf.py:184 の `/vulnerabilities/` は HEAD に存在する既存コード（git show HEAD | rg -c = 1・diff の + 行ではない）で、ファイルを変更したことで changed-files スキャンに晒された。smart_xss.py と同型の pre-existing 登録（SGK-2026-0426 委譲・deferred_classified）で正規解決。content_hash は scripts/check_vdp_product_independence.py:74-83 の canonical_manifest_body と同一方式で再計算する。
+
+- [topic: python-tests | when: 並列実装後の HEAD 回帰比較（失敗集合の一致確認）をする時] 同一ツリーでの `git stash` 比較は並列 fixer 稼働中は無効（他レーンの変更が混在・HEAD 側で collection が壊れる）。`git worktree add --detach <dir> HEAD` で pristine HEAD を切り、gitignore された実行時モジュール（src/core/workspace）をコピーしてから同一サブセットを実行し、FAILED 集合を diff せよ。 verify: `git worktree add --detach /tmp/wt HEAD && cp -r src/core/workspace /tmp/wt/src/core/ && cd /tmp/wt && PYTHONPATH=/tmp/wt pytest <subset> -q 2>&1 | rg '^FAILED' | sort > /tmp/f.txt && diff /tmp/f.txt <(cd /home/bbb/Documents/App/Shigoku && .venv/bin/pytest <subset> -q 2>&1 | rg '^FAILED' | sort)`
+  detail: SGK-2026-0440。stash 比較で HEAD 側が 82 collection errors（src/core/workspace が .gitignore:24 で worktree に無く import 不能）となり比較不能だった。worktree へ workspace をコピー + PYTHONPATH 指定で HEAD 実行が可能になり、38 failed が IDENTICAL と確定（0440/0441 両方で使用）。stash は 0439 がコミット済みだったため 0440 分しか退避されず無効だった。既存 stash レシピ（0421）は単一レーン時の話。
