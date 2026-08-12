@@ -5379,6 +5379,17 @@ tasks:
   - docs/shigoku/roadmaps/2026-08-12_sgk-2026-0442_confirmation-and-candidate-lifecycle-program.md
   - docs/shigoku/reports/2026-08-12_sgk-2026-0444_candidate-lifecycle-and-parked-store_work_report.md
   - docs/shigoku/worklogs/2026-08-12_sgk-2026-0444_candidate-lifecycle-and-parked-store_work_log.md
+- provisional_id: DOC-0501
+  task_id: SGK-2026-0445
+  doc_type: plan
+  title: T3 共有判定＋ライフサイクルを swarm 経路に配線（実戦投入）
+  primary_doc: docs/shigoku/plans/2026-08-12_sgk-2026-0445_wire-hybrid-judge-into-swarm-live.md
+  status: active
+  provisional: false
+  task_summary: T1判定+T2ライフサイクルをswarmに配線し封印runで確定/棚上げ/人間送りを実測(0440 before/after)・敷居据え置き
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/roadmaps/2026-08-12_sgk-2026-0442_confirmation-and-candidate-lifecycle-program.md
 doc_type_allowed_values:
 - spec
 - roadmap
