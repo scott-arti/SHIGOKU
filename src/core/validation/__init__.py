@@ -25,6 +25,15 @@ from src.core.validation.url_classifier import (
     get_classifier,
     TAXONOMY_RULES,
 )
+from src.core.validation.candidate_lifecycle import (
+    CandidateLifecycleManager,
+    CandidateRecord,
+    LifecycleState,
+)
+from src.core.validation.candidate_ledger import (
+    CandidateLedger,
+    LEDGER_SCHEMA_VERSION,
+)
 
 __all__ = [
     # Finding Validator
@@ -48,4 +57,10 @@ __all__ = [
     "classify_urls",
     "get_classifier",
     "TAXONOMY_RULES",
+    # SGK-2026-0444 T2 Candidate lifecycle + parked store
+    "CandidateLifecycleManager",
+    "CandidateRecord",
+    "LifecycleState",
+    "CandidateLedger",
+    "LEDGER_SCHEMA_VERSION",
 ]
