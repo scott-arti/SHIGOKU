@@ -11,7 +11,7 @@ related_docs:
   - AGENTS.md
 title: SHIGOKU Learnings
 created_at: '2026-06-26'
-updated_at: '2026-08-12'
+updated_at: '2026-08-13'
 ---
 
 # SHIGOKU Learnings
@@ -575,3 +575,30 @@ assert p is not None and p.bundle_id.startswith('bbp-'), f'unexpected: {p}'
 
 - [topic: lessons | when: テスト fixture の製品非依存を preflight の pass で裏取ろうとする時] preflight（check_vdp_product_independence.py）の token_scan_changed_files は src/, scripts/, config/, recipes/, prompts/, data/ のみをスキャンし、tests/ は対象外。fixture の非依存性は目視・自前チェックで担保せよ（preflight 0 hit を fixture の裏取りに使うな）。 verify: `python3 scripts/check_vdp_product_independence.py --manifest config/diagnostics/product_independence_manifest_v1.json --denylist config/diagnostics/sealed_product_denylist.txt 2>&1 | tail -2` の files_scanned に tests/ が含まれないことを確認
   detail: SGK-2026-0443。fixture は target.example 等の汎用ドメインで作成し製品非依存を満たしたが、preflight の total_token_hits 0（files_scanned 4 = src/・prompts/ 分のみ）は tests/ 配下の fixture を検査しておらず、裏取りにはならない。
+
+- [topic: lessons | when: preflight/エントリゲートのプローブが AsyncNetworkClient 経由でネットワークに出ない時] 既定構成では `request()` の compiled guard（bugbounty・policy=None → policy_unavailable fail-closed block）に全プローブが呑まれる。preflight 内部プローブは `request(skip_guard=True)` を**唯一の呼び出し箇所**として使い、`skip_guard=True` の実呼び出しが 1 箇所のみであることを grep で検証せよ。 verify: `rg -n "skip_guard=True" src/ | grep -v "def request\|: bool = False"`
+  detail: SGK-2026-0447 B1。network_client.py:364 は bugbounty モードで evaluate_at_layer(policy=None) → fail-closed するため、ガードなしでは転送プローブが常に PROXY_FORWARD_CHECK_FAILED になる（テストの evaluate_at_layer allow patch が本番挙動を隠蔽していた）。
+
+- [topic: lessons | when: プロキシ転送検証（check_forwarding）の canned 判定を実装・変更する時] canned 判定は「全応答 status==200 かつ byte-identical かつ ≤512B」に限定せよ。非 200 の同一応答（全パス 302 / API 404）は誤検知するため PASS とし、200 identical >512B は PASS + WARNING で false-negative を可視化せよ。 verify: `.venv/bin/pytest tests/unit/preflight/test_caido_check.py -k "302 or 404 or Forward" -q`
+  detail: SGK-2026-0447 B2。当初の「全応答 identical かつ ≤512B → FAIL」は本物ターゲットでも全パス 302（http→https）やルート無し API 404（FastAPI デフォルト）で FAIL する（実測）。status==200 限定により実測ダミー（200+30B）は検知維持・誤検知解消。
+
+- [topic: codingrules | when: caido.url / 任意の settings 値を run 単位で上書きする時] settings の優先順位は init > env > YAML（settings_customise_sources）なので、環境変数設定済みの値は YAML 追記では変わらない。run コマンドに `SHIGOKU_<FIELD>`（ネストは `__`）を付与して上書きせよ。 verify: `env SHIGOKU_CAIDO__URL=http://127.0.0.1:8081 .venv/bin/python -c "from src.core.config.settings import settings; print(settings.caido.url)"`
+  detail: SGK-2026-0447 Part B。環境に SHIGOKU_CAIDO__URL が設定済みのため config/shigoku.yaml の caido: セクション追記（url: 8081）が無視され 8080 のままだった（実測）。settings.py:750-807 の sources 順序を確認してから設定変更すること。
+
+- [topic: lessons | when: finding_funnel_v1（F0〜F6）を session で確認・計測する時] funnel レコーダーは `diagnostics.enabled=true` のときのみ有効（get_finding_funnel が None を返す）なので、funnel 計測 run は `SHIGOKU_DIAGNOSTICS__ENABLED=true` で実行せよ。 run 後に `finding_funnel_v1` キーの存在を確認せよ。 verify: run 後 `.venv/bin/python -c "import json; d=json.load(open('<session>')); print('finding_funnel_v1' in d)"` → True
+  detail: SGK-2026-0447 B3。finding_funnel_trace.py:346-360 は cfg.enabled False で None を返す。run1 は diagnostics off のため session に funnel が記録されず「funnel before/after 計測不能」になった（run6 は m5 harness が一時有効化していた）。
+
+- [topic: lessons | when: 封印 run / read-only エンベロープの GET-only を検証する時] 状態変更メソッドはネットワーク境界（`sealed_run_get_only` + `use_proxy=True` 限定）で強制し、session の evidence `request_method` を集計して PATCH/POST/PUT が 0 件であることを確認せよ（finding の有無だけで GET-only を断定するな）。 verify: session の task_execution_records → vulnerabilities_found → evidence.request_method を Counter 集計
+  detail: SGK-2026-0447 B4。manager.py:1933-1937 の mass_assignment は probe_method に PATCH を選び recheck を送る（run1 実測 PATCH 13 件・response 200）。run6 の「GET-only 20/20」は偽的（canned 応答）では recheck が発動しなかっただけ＝偽の的の数字。
+
+- [topic: lessons | when: ネットワーク境界ガード（GET-only 等）を AsyncNetworkClient.request() に追加する時] ガードは `use_proxy=True`（ターゲット攻撃面・全通信プロキシ化契約 network_client.py:326）に限定せよ。`use_proxy=False` は Caido コントロールプレーン専用（preflight identity / caido_auth / caido_sitemap）で、巻き込むと entry gate が abort する。 verify: `rg -n "use_proxy=False" src/ | rg -v test` が caido_check / caido_auth / caido_sitemap のみ
+  detail: SGK-2026-0447 run2 実測。全リクエストに GET-only を掛けたら preflight の POST /graphql（use_proxy=False）までブロックされ「Preflight entry gate failed — aborting」。ターゲット攻撃は AsyncNetworkClient デフォルト use_proxy=True で proxy 経由のため、use_proxy=True 限定で目的を満たす。
+
+- [topic: codingrules | when: 境界ガードの専用例外（ReadonlyEnforcedError 等）を呼び出し側で処理する時] 専用ブロック例外は汎用 `except Exception: continue` より**前に**捕捉せよ。汎用 except が飲むと写像・ログが一切発動しない（サイレントスキップ）。 verify: `rg -n "except Exception: continue" src/core/agents/swarm/injection/manager.py` と同ファイル内の ReadonlyEnforcedError 捕捉箇所の順序を確認
+  detail: SGK-2026-0447 D-B4-1。manager.py:2017-2028 の discovery ループが ReadonlyEnforcedError をサイレントに飲み、needs_human 写像が欠落（送信ゼロで安全・検知のみ欠落 → deferred 追跡）。専用例外は汎用ハンドラより先に except すること。
+
+- [topic: shigoku-docs | when: plan を done/ へ移動する時] ファイル移動に加えて front matter の `status: active → done` も更新せよ。移動だけでは validator が `REGISTRY_ISSUES=task_*_status_mismatch` を出す。 verify: `python3 scripts/validate_shigoku_docs.py | rg "REGISTRY_ISSUES"` が 0
+  detail: SGK-2026-0447 閉鎖時。git mv で done/ へ移しても front matter status が active のままだと status_mismatch（既存エントリの related_docs 一括更新と併用すること）。validator は配置と front matter の両方を検査する。
+
+- [topic: codingrules | when: snip 経由で環境変数付きコマンドを実行する時] `VAR=x cmd` プレフィックスは snip の passthrough で「executable file not found」になる。`env VAR=x cmd` の形で実行せよ。 verify: `env SHIGOKU_MODE=vulntest .venv/bin/python -c "print(1)"` が通ること
+  detail: SGK-2026-0447 Part B。`SHIGOKU_MODE=vulntest .venv/bin/python ...` は snip がプレフィックスを実行ファイル名として扱い失敗。既存の snip 系エントリ（python3 -c の `;`）と同系統の別罠。
