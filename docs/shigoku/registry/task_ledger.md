@@ -456,3 +456,4 @@
 | SGK-2026-0444 | T2 候補ライフサイクル＋棚上げ保管（candidate_ledger）＋復活 | done | plan | SGK-2026-0442 | docs/shigoku/plans/done/2026-08-12_sgk-2026-0444_candidate-lifecycle-and-parked-store.md |
 | SGK-2026-0445 | T3 共有判定＋ライフサイクルを swarm 経路に配線（実戦投入） | active | plan | SGK-2026-0442 | docs/shigoku/plans/2026-08-12_sgk-2026-0445_wire-hybrid-judge-into-swarm-live.md |
 | SGK-2026-0447 | 本物 Caido 経由の正しい再実行 ＋ 偽プロキシ検知ガード | done | plan | SGK-2026-0442 | docs/shigoku/plans/done/2026-08-12_sgk-2026-0447_real-caido-rerun-and-fake-proxy-guard.md |
+| SGK-2026-0448 | 本物の対象で確定1件を実際に出すための3レバー | active | plan | SGK-2026-0442 | docs/shigoku/plans/2026-08-13_sgk-2026-0448_confirm-real-bug-three-levers.md |
