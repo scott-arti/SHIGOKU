@@ -5414,6 +5414,33 @@ tasks:
   status: done
   provisional: false
   task_summary: "0447で攻撃が本物Juice Shopに届く土台を固めた後も確定=0のままである原因を、パイプライン内の3レバー（早期終了でPhase-2打ち切り／impactゲートで認可系がmissing_impact落ち／再現裏取り未到達）に切り分けて潰す。フェーズ0で候補単位トレースによりレバー1（legacy早期終了がpayout_grade_holdを迂回）とレバー2（認可系impact空でmissing_impact）をconfirmed・レバー3（再現配線）を否定し、承認後オプトイン（phase1_early_return_require_payout_grade・既定OFF）と機械的impact/repro生成（authz_fields.py）を実装。確定バー（3条件AND）は無改変（payout_grade.py diff 0）。STEP 3封印run（session_20260813_232923）でearly_return 3→1・認可系2件がpayout_grade PASS・新規sqli候補1件（impact空）を観測。確定0のまま完了条件(b)（候補単位fail-closed説明）でdone。"
+- provisional_id: DOC-0504
+  task_id: SGK-2026-0449
+  doc_type: plan
+  title: D01 SQLi候補にimpactを機械充填し本物の確定1件を出す
+  primary_doc: docs/shigoku/plans/done/2026-08-13_sgk-2026-0449_confirm-real-sqli-mechanical-impact.md
+  status: done
+  provisional: false
+  task_summary: "0448 deferred D01の実施。0448 runで出た本物SQLi候補（/rest/products/search?q=' OR '1'='1' --・実応答500・sql_error発火）がpayout_gradeでmissing_impactのみで落ちている（判定順序からEvidence/再現可能性/marker/カテゴリは通過済み）。SQLi findingにimpact/reproduction_stepsを機械充填し、ユーザー承認スコープBとしてEvidenceに実観測リクエスト（request_method=GET・payload付き実送信URL・response_status=500）も記録。これで再現チェッカーのfingerprintが一致しGETリプレイでsql_error独立再発火→matched。オーケストレータが実gate＋実checkerでend-to-end再現し、充填でpayout_grade=missing_impact→satisfied・reproduction=matchedを実証（payout_grade.py/sealed_reproduction_checker.py diff 0）。ただしSTEP3実runはconfirmed=0＝検出の非決定性（LLM Phase-2 90sタイムアウトでsql_error候補未生成）。ユーザー判断で機構完成・確定実証済みとしてdone、検出決定化はSGK-2026-0450で継続。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/roadmaps/2026-08-12_sgk-2026-0442_confirmation-and-candidate-lifecycle-program.md
+  - docs/shigoku/plans/done/2026-08-13_sgk-2026-0448_confirm-real-bug-three-levers.md
+  - docs/shigoku/plans/2026-08-14_sgk-2026-0450_deterministic-error-based-sqli-detection.md
+  - docs/shigoku/reports/2026-08-14_sgk-2026-0449_confirm-real-sqli-mechanical-impact_work_report.md
+  - docs/shigoku/worklogs/2026-08-14_sgk-2026-0449_confirm-real-sqli-mechanical-impact_work_log.md
+- provisional_id: DOC-0505
+  task_id: SGK-2026-0450
+  doc_type: plan
+  title: エラーベースSQLi検出を決定的にして実runで確定1件を出す
+  primary_doc: docs/shigoku/plans/2026-08-14_sgk-2026-0450_deterministic-error-based-sqli-detection.md
+  status: active
+  provisional: false
+  task_summary: "0449で充填機構は完成し候補さえ出ればconfirmedに至ることを実証したが、実runはconfirmed=0＝エラーベースSQLi検出がLLM Phase-2の予算・タイミングに依存し非決定的（90sタイムアウトでsql_error候補が生成されない）。ターゲット挙動は決定的（GETリプレイ3/3で500+SQLITE_ERROR）。LLMに依存しない決定的エラーベースSQLiプローブ（汎用構文破壊payloadをGET送信しsql_errorを判定）を最小差分で加え、対象にSQLエラーが実在する限りrun毎に必ず候補化する。0449の充填経路にそのまま乗りpayout_grade PASS→再現matched→confirmed。確定バー・再現チェッカー・0449充填ヘルパーは無改変・カーブフィッティング禁止（製品非依存payload）。完了条件は連続3runで3回ともconfirmed>=1・誤確定0。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/roadmaps/2026-08-12_sgk-2026-0442_confirmation-and-candidate-lifecycle-program.md
+  - docs/shigoku/plans/done/2026-08-13_sgk-2026-0449_confirm-real-sqli-mechanical-impact.md
   parent_task_id: SGK-2026-0442
   related_docs:
   - docs/shigoku/roadmaps/2026-08-12_sgk-2026-0442_confirmation-and-candidate-lifecycle-program.md

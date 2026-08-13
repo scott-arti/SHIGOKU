@@ -265,6 +265,12 @@ INPUT: [Input]
                     f"(payload='{payload}', observed_latency={observed_latency:.2f}s, "
                     f"expected_delay={expected_delay:.2f}s)."
                 )
+            # SGK-2026-0449 Scope B: observed-request evidence + impact/repro
+            # fill for error-based SQLi findings (fail-closed: without a
+            # complete sql_error observation everything stays as before).
+            observed, impact, reproduction_steps = _build_sqli_evidence_and_impact(
+                result, task.target
+            )
             finding = Finding(
                 vuln_type=VulnType.SQLI,
                 severity=Severity.HIGH,
@@ -276,7 +282,9 @@ INPUT: [Input]
                 ),
                 target_url=task.target,
                 evidence=Evidence(
-                    request_url=task.target,
+                    request_url=observed.get("request_url") or task.target,
+                    request_method=observed.get("request_method") or "",
+                    response_status=observed.get("response_status") or 0,
                     response_body=evidence_text
                 ),
                 source_agent=self.name,
@@ -294,7 +302,9 @@ INPUT: [Input]
                     "response_differential": result.get("response_differential", {}),
                     "poc_request": str(result.get("poc_request", "") or ""),
                     "poc_response": str(result.get("poc_response", "") or ""),
-                }
+                },
+                impact=impact or "",
+                reproduction_steps=reproduction_steps or [],
             )
             findings.append(finding)
 
@@ -1381,3 +1391,47 @@ Decide next step for SQL injection testing.
                 }
 
         return {"type": "none", "severity": "none", "details": "", "exploitable": False}
+
+
+def _build_sqli_evidence_and_impact(
+    result: Dict[str, Any], target_url: str
+) -> Tuple[Dict[str, Any], Optional[str], Optional[list]]:
+    """SGK-2026-0449 Scope B: observed-request evidence + impact/repro fill
+    for error-based SQLi findings.
+
+    Composes the two pure helpers from manager_internal.injection_evidence_fields.
+    Fail-closed: without a complete sql_error observation the evidence
+    kwargs stay empty and impact/reproduction_steps are None — the Finding
+    construction then keeps its current fields (bar unchanged). The import
+    is function-local to avoid the manager_internal package import cycle.
+    """
+    # 循環回避のため関数内 import（manager_internal/__init__ が manager 系を推移 import）
+    from src.core.agents.swarm.injection.manager_internal.injection_evidence_fields import (
+        build_sqli_impact_and_reproduction_steps,
+        build_sqli_observed_evidence,
+    )
+
+    sql_error_observed = bool(result.get("sql_error_observed", False))
+    rd = result.get("response_differential", {})
+    if not isinstance(rd, dict):
+        rd = {}
+    see = result.get("sql_error_evidence", {})
+    if not isinstance(see, dict):
+        see = {}
+    observed = build_sqli_observed_evidence(
+        target_url=target_url,
+        poc_request=str(result.get("poc_request", "") or ""),
+        poc_response=str(result.get("poc_response", "") or ""),
+        attack_status=rd.get("attack_status", 0),
+        sql_error_observed=sql_error_observed,
+    )
+    impact, steps = build_sqli_impact_and_reproduction_steps(
+        parameter=result.get("param"),
+        payload=(result.get("payloads_used") or [""])[-1],
+        method=observed.get("request_method") if observed else None,
+        request_url=observed.get("request_url") if observed else None,
+        response_status=observed.get("response_status") if observed else None,
+        sql_error_observed=sql_error_observed,
+        marker_excerpt=see.get("body_snippet", ""),
+    )
+    return observed, impact, steps

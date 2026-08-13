@@ -457,3 +457,5 @@
 | SGK-2026-0445 | T3 共有判定＋ライフサイクルを swarm 経路に配線（実戦投入） | active | plan | SGK-2026-0442 | docs/shigoku/plans/2026-08-12_sgk-2026-0445_wire-hybrid-judge-into-swarm-live.md |
 | SGK-2026-0447 | 本物 Caido 経由の正しい再実行 ＋ 偽プロキシ検知ガード | done | plan | SGK-2026-0442 | docs/shigoku/plans/done/2026-08-12_sgk-2026-0447_real-caido-rerun-and-fake-proxy-guard.md |
 | SGK-2026-0448 | 本物の対象で確定1件を実際に出すための3レバー | done | plan | SGK-2026-0442 | docs/shigoku/plans/done/2026-08-13_sgk-2026-0448_confirm-real-bug-three-levers.md |
+| SGK-2026-0449 | D01 SQLi候補にimpactを機械充填し本物の確定1件を出す | done | plan | SGK-2026-0442 | docs/shigoku/plans/done/2026-08-13_sgk-2026-0449_confirm-real-sqli-mechanical-impact.md |
+| SGK-2026-0450 | エラーベースSQLi検出を決定的にして実runで確定1件を出す | active | plan | SGK-2026-0442 | docs/shigoku/plans/2026-08-14_sgk-2026-0450_deterministic-error-based-sqli-detection.md |
