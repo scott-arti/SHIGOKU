@@ -272,6 +272,9 @@ class IdorHunterSpecialist(Specialist):
                 return await self._run_unauth_check(client, url, method, headers, clean_headers, body, use_proxy)
 
     async def _run_unauth_check(self, client, url, method, headers, clean_headers, body, use_proxy):
+        from src.core.agents.swarm.injection.manager_internal.authz_fields import (
+            build_authz_impact_and_reproduction_steps,
+        )
         try:
             baseline = await client.request(method, url, headers=headers, data=body, use_proxy=use_proxy)
             if baseline.status != 200:
@@ -297,7 +300,7 @@ class IdorHunterSpecialist(Specialist):
             result = await comparator.compare(comp_input)
 
             if result.is_vulnerable:
-                return Finding(
+                finding = Finding(
                     vuln_type=VulnType.IDOR,
                     severity=result.severity_hint,
                     title="Unauthenticated API Access Allowed",
@@ -317,6 +320,18 @@ class IdorHunterSpecialist(Specialist):
                         }
                     }
                 )
+                _impact, _steps = build_authz_impact_and_reproduction_steps(
+                    scenario="unauthenticated_access",
+                    url=url,
+                    method=method,
+                    authenticated_status=baseline.status,
+                    unauthenticated_status=test_resp.status,
+                    signals=finding.additional_info["authz_differential"].get("signals") or [],
+                )
+                if _impact is not None:
+                    finding.impact = _impact
+                    finding.reproduction_steps = _steps
+                return finding
         except Exception as e:  # pylint: disable=broad-except
             logger.error("[%s] Unauth request failed: %s", self.name, e)
         return None

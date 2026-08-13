@@ -44,6 +44,7 @@ from src.core.agents.swarm.injection.manager_internal.execution_policy import (
     resolve_per_url_timeout,
     resolve_risk_force_allowlist,
     should_auto_early_return,
+    should_early_return_phase2,
     should_force_phase2_by_risk,
     ssrf_reachability_gate,
 )
@@ -57,6 +58,9 @@ from src.core.agents.swarm.injection.manager_internal.api_probe_targets import (
 )
 from src.core.agents.swarm.injection.manager_internal.api_probe_analysis import (
     build_authz_differential,
+)
+from src.core.agents.swarm.injection.manager_internal.authz_fields import (
+    build_authz_impact_and_reproduction_steps,
 )
 from src.core.agents.swarm.injection.manager_internal.api_probe_evidence import (
     render_http_request,
@@ -1739,6 +1743,17 @@ class InjectionManagerAgent(BaseManagerAgent):
                     ),
                 },
             )
+            _impact, _steps = build_authz_impact_and_reproduction_steps(
+                scenario="unauthenticated_api_access",
+                url=url,
+                method="GET",
+                authenticated_status=auth_status,
+                unauthenticated_status=status,
+                signals=finding.additional_info["authz_differential"].get("signals") or [],
+            )
+            if _impact is not None:
+                finding.impact = _impact
+                finding.reproduction_steps = _steps
             self.current_context["findings"].append(finding)
             findings_count += 1
             # SGK-2026-0440: measurement only — F2 signal_detected.
@@ -1817,6 +1832,10 @@ class InjectionManagerAgent(BaseManagerAgent):
                         ),
                     },
                 )
+                # SGK-2026-0448 lever 2: intentionally NOT wired here. Both
+                # object_ab probes are authenticated (object A vs object B),
+                # so the helper's "unauthenticated access is allowed" claim
+                # would be fabricated — the guard is the absence of the call.
                 self.current_context["findings"].append(idor_finding)
                 findings_count += 1
 
@@ -1915,6 +1934,17 @@ class InjectionManagerAgent(BaseManagerAgent):
                             ),
                         },
                     )
+                    _impact, _steps = build_authz_impact_and_reproduction_steps(
+                        scenario="unauthenticated_discovered_api_access",
+                        url=discovered_url,
+                        method="GET",
+                        authenticated_status=probe_auth_status,
+                        unauthenticated_status=probe_unauth_status,
+                        signals=finding.additional_info["authz_differential"].get("signals") or [],
+                    )
+                    if _impact is not None:
+                        finding.impact = _impact
+                        finding.reproduction_steps = _steps
                     self.current_context["findings"].append(finding)
                     findings_count += 1
                     # SGK-2026-0440: measurement only — F2 signal_detected.
@@ -2532,6 +2562,17 @@ class InjectionManagerAgent(BaseManagerAgent):
                             ),
                         },
                     )
+                    _impact, _steps = build_authz_impact_and_reproduction_steps(
+                        scenario="authenticated_overposting_requires_auth_context",
+                        url=url,
+                        method=probe_method,
+                        authenticated_status=auth_probe_status,
+                        unauthenticated_status=probe_status,
+                        signals=finding.additional_info["authz_differential"].get("signals") or [],
+                    )
+                    if _impact is not None:
+                        finding.impact = _impact
+                        finding.reproduction_steps = _steps
                     self.current_context["findings"].append(finding)
                     findings_count += 1
                     # SGK-2026-0440: measurement only — F2 signal_detected
@@ -3289,7 +3330,14 @@ class InjectionManagerAgent(BaseManagerAgent):
         # still in needs_more (T2 T5) or new Phase-2 findings.
         self._t3_run_hybrid_pass(task, phase1_findings)
 
-        if phase1_findings and (early_return_enabled or auto_early_return):
+        if should_early_return_phase2(
+            phase1_findings=phase1_findings,
+            early_return_enabled=early_return_enabled,
+            auto_early_return=auto_early_return,
+            payout_grade_hold=payout_grade_hold,
+            task=task,
+            coerce_bool=self._coerce_bool,
+        ):
             # SGK-2026-0441: measurement only — payout-grade verdict at the
             # early-return point (F4). Payout-grade candidates reached F4;
             # the rest are recorded evidence_insufficient. The decision

@@ -6,6 +6,7 @@ from src.core.agents.swarm.injection.manager_internal.execution_policy import (
     resolve_per_url_timeout,
     resolve_risk_force_allowlist,
     should_auto_early_return,
+    should_early_return_phase2,
     should_force_phase2_by_risk,
 )
 
@@ -60,3 +61,78 @@ def test_resolve_risk_force_allowlist_matches_existing_behavior() -> None:
     allow = resolve_risk_force_allowlist(task, scan_profile="bbpt")
 
     assert allow == {"csrf", "api"}
+
+
+def _coerce_bool_like(value, default):
+    return bool(default if value is None else value)
+
+
+def test_should_early_return_phase2_optin_off_matches_legacy() -> None:
+    # SGK-2026-0448 lever 1: opt-in OFF (default) keeps the byte-identical
+    # legacy condition even when payout_grade_hold=True.
+    task = SimpleNamespace(params={})
+
+    assert should_early_return_phase2(
+        phase1_findings=[object()],
+        early_return_enabled=True,
+        auto_early_return=False,
+        payout_grade_hold=True,
+        task=task,
+        coerce_bool=_coerce_bool_like,
+    ) is True
+
+
+def test_should_early_return_phase2_optin_on_holds_when_payout_grade_missing() -> None:
+    # SGK-2026-0448 lever 1: opt-in ON + a candidate lacking payout-grade PoC
+    # (hold=True) -> early return is held so Phase 2 runs (fail-closed).
+    task = SimpleNamespace(params={"phase1_early_return_require_payout_grade": True})
+
+    assert should_early_return_phase2(
+        phase1_findings=[object()],
+        early_return_enabled=True,
+        auto_early_return=False,
+        payout_grade_hold=True,
+        task=task,
+        coerce_bool=_coerce_bool_like,
+    ) is False
+
+
+def test_should_early_return_phase2_optin_on_all_payout_grade_keeps_legacy() -> None:
+    # SGK-2026-0448 lever 1: opt-in ON but every candidate is payout-grade
+    # (hold=False) -> legacy behavior is preserved.
+    task = SimpleNamespace(params={"phase1_early_return_require_payout_grade": True})
+
+    assert should_early_return_phase2(
+        phase1_findings=[object()],
+        early_return_enabled=True,
+        auto_early_return=False,
+        payout_grade_hold=False,
+        task=task,
+        coerce_bool=_coerce_bool_like,
+    ) is True
+
+
+def test_should_early_return_phase2_no_findings() -> None:
+    task = SimpleNamespace(params={"phase1_early_return_require_payout_grade": True})
+
+    assert should_early_return_phase2(
+        phase1_findings=[],
+        early_return_enabled=True,
+        auto_early_return=True,
+        payout_grade_hold=False,
+        task=task,
+        coerce_bool=_coerce_bool_like,
+    ) is False
+
+
+def test_should_early_return_phase2_both_flags_false() -> None:
+    task = SimpleNamespace(params={})
+
+    assert should_early_return_phase2(
+        phase1_findings=[object()],
+        early_return_enabled=False,
+        auto_early_return=False,
+        payout_grade_hold=True,
+        task=task,
+        coerce_bool=_coerce_bool_like,
+    ) is False

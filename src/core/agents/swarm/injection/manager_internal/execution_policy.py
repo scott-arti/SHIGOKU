@@ -137,6 +137,37 @@ def should_auto_early_return(
     return False
 
 
+def should_early_return_phase2(
+    *,
+    phase1_findings: List[Any],
+    early_return_enabled: bool,
+    auto_early_return: bool,
+    payout_grade_hold: bool,
+    task: Any,
+    coerce_bool: Callable[[Any, bool], bool],
+) -> bool:
+    """SGK-2026-0448 lever 1: legacy early-return hold (fail-closed, opt-in).
+
+    Default (``phase1_early_return_require_payout_grade`` unset/False):
+    identical to the historical condition ``bool(phase1_findings) and
+    (early_return_enabled or auto_early_return)`` so existing runs stay
+    byte-identical. Opt-in ON: when any Phase-1 candidate lacks a
+    payout-grade PoC (``payout_grade_hold=True``) the early return is held
+    so Phase 2 can re-verify (fail-closed direction only; the SGK-2026-0441
+    hold already covered the auto path — this closes the legacy
+    ``phase1_early_return_on_findings`` gap).
+    """
+    if not phase1_findings:
+        return False
+    if not (early_return_enabled or auto_early_return):
+        return False
+    if payout_grade_hold:
+        task_params = task.params if hasattr(task, "params") and isinstance(task.params, dict) else {}
+        if coerce_bool(task_params.get("phase1_early_return_require_payout_grade"), default=False):
+            return False
+    return True
+
+
 def ssrf_reachability_gate(url: str, base_params: Dict[str, Any]) -> tuple:
     """
     SSRF が成立しうる注入ポイントがあるかを判定する。

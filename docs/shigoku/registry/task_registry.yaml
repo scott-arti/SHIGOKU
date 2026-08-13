@@ -5410,15 +5410,17 @@ tasks:
   task_id: SGK-2026-0448
   doc_type: plan
   title: 本物の対象で確定1件を実際に出すための3レバー
-  primary_doc: docs/shigoku/plans/2026-08-13_sgk-2026-0448_confirm-real-bug-three-levers.md
-  status: active
+  primary_doc: docs/shigoku/plans/done/2026-08-13_sgk-2026-0448_confirm-real-bug-three-levers.md
+  status: done
   provisional: false
-  task_summary: "0447で攻撃が本物Juice Shopに届く土台を固めた後も確定=0のままである原因を、パイプライン内の3レバー（早期終了でPhase-2打ち切り／impactゲートで認可系がmissing_impact落ち／再現裏取り未到達）に切り分けて潰す。フェーズ0で候補単位トレースにより各レバーをconfirmed/否定に確定し、確定バー（3条件AND）を下げずカーブフィッティングもせず、本物Caido経由GET-onlyの封印runで確定1件を出す（または正当なfail-closedを候補単位で説明する）。"
+  task_summary: "0447で攻撃が本物Juice Shopに届く土台を固めた後も確定=0のままである原因を、パイプライン内の3レバー（早期終了でPhase-2打ち切り／impactゲートで認可系がmissing_impact落ち／再現裏取り未到達）に切り分けて潰す。フェーズ0で候補単位トレースによりレバー1（legacy早期終了がpayout_grade_holdを迂回）とレバー2（認可系impact空でmissing_impact）をconfirmed・レバー3（再現配線）を否定し、承認後オプトイン（phase1_early_return_require_payout_grade・既定OFF）と機械的impact/repro生成（authz_fields.py）を実装。確定バー（3条件AND）は無改変（payout_grade.py diff 0）。STEP 3封印run（session_20260813_232923）でearly_return 3→1・認可系2件がpayout_grade PASS・新規sqli候補1件（impact空）を観測。確定0のまま完了条件(b)（候補単位fail-closed説明）でdone。"
   parent_task_id: SGK-2026-0442
   related_docs:
   - docs/shigoku/roadmaps/2026-08-12_sgk-2026-0442_confirmation-and-candidate-lifecycle-program.md
   - docs/shigoku/plans/done/2026-08-12_sgk-2026-0447_real-caido-rerun-and-fake-proxy-guard.md
   - docs/shigoku/plans/done/2026-08-12_sgk-2026-0445_wire-hybrid-judge-into-swarm-live.md
+  - docs/shigoku/reports/2026-08-13_sgk-2026-0448_confirm-real-bug-three-levers_work_report.md
+  - docs/shigoku/worklogs/2026-08-13_sgk-2026-0448_confirm-real-bug-three-levers_work_log.md
 doc_type_allowed_values:
 - spec
 - roadmap
