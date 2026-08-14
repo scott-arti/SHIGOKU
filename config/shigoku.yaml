@@ -138,16 +138,23 @@ llm:
           reasoning_effort: null
     reasoning_api:
       provider: deepseek
-      model: deepseek/deepseek-v4-pro
+      # SGK-2026 (2026-08-15): モデルは Flash に統一（現状 Flash > Pro の判断）。
+      # このプロファイルは重要判断ロール（planner / final_judgement / xss_final /
+      # poc_judge）が使う。Flash は既定で深い推論を行う（reasoning_content を返す, 実測
+      # ~5-8s）ため深く考えさせられる。速い経路（ハンター/マネージャ等）は cheap_api
+      # （thinking 無効・実測 1-2s）を使う。旧 pro(thinking=high) は実測 5-14s でばらつき大。
+      model: deepseek/deepseek-v4-flash
       timeout_seconds: 300
       max_retries: 2
       max_concurrency: 2
       rate_limit_per_minute: 30
       temperature: 0.0
       extra:
-        thinking:
-          type: enabled
-          reasoning_effort: high
+        # 注: flash は既定で深い推論を行い reasoning_content を返す（実測 ~8s）。
+        # 一方 thinking.type=enabled を明示送信（extra_body.thinking）すると flash は
+        # ハングする（実測 >80s、llm.py:229-254 経由）。reasoning_effort=high も同様。
+        # よって重要判断ロールは thinking:null（＝param を送らず flash 既定の推論に任せる）。
+        thinking: null
     vision_api:
       provider: openai
       model: openai/gpt-4o
