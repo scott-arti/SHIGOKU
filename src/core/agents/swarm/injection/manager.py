@@ -3729,6 +3729,11 @@ class InjectionManagerAgent(BaseManagerAgent):
                 blind_correlation = normalize_blind_correlation(
                     sqli_result.get("blind_correlation", {}) or {}
                 )
+                # SGK-2026-0451: fire-path recording wiring (recording only).
+                # Default (fire path off) keeps None/"" exactly as before.
+                probe_sent = sqli_result.get("probe_sent")
+                probe_request_raw = str(sqli_result.get("probe_request_raw", "") or "")
+                probe_response_raw = str(sqli_result.get("probe_response_raw", "") or "")
                 findings_list = self.current_context["findings"][-findings_count:] if findings_count > 0 else []
                 if findings_count == 0:
                     # SQLi 発見なしの場合、XSS のみ実行
@@ -4044,6 +4049,16 @@ class InjectionManagerAgent(BaseManagerAgent):
         blind_correlation = normalize_blind_correlation(blind_correlation)
         normalize_findings_additional_info(findings, tested_params, detection_mode, excluded_params=self.EXCLUDED_TESTED_PARAMS)
 
+        # SGK-2026-0451: fire-path recording wiring (recording only; dispatch
+        # logic untouched). Surfaced ONLY when the opt-in fire path is on —
+        # default runs keep probe_sent=None / probe_request_raw="" exactly as
+        # before (byte-equivalent).
+        sqli_firing = bool(getattr(settings, "sqli_firing_path_enabled", False))
+        _sq = self.specialists["sqli"]
+        sqli_probe_sent = getattr(_sq, "_last_probe_sent", None) if sqli_firing else None
+        sqli_probe_request_raw = str(getattr(_sq, "_last_poc_request", "") or "") if sqli_firing else ""
+        sqli_probe_response_raw = str(getattr(_sq, "_last_poc_response", "") or "") if sqli_firing else ""
+
         # Layer 3: Hunter ツールの出力形式改善 - LLM が誤解しない明確な形式
         if findings:
             finding = findings[0]
@@ -4058,7 +4073,10 @@ class InjectionManagerAgent(BaseManagerAgent):
                 "blind_correlation": blind_correlation,
                 "evidence": finding.description if hasattr(finding, 'description') else str(finding),
                 "severity": finding.severity.name if hasattr(finding, 'severity') else "HIGH",
-                "info": f"SQL Injection vulnerability confirmed in parameter '{finding.additional_info.get('parameter', 'unknown')}'"
+                "info": f"SQL Injection vulnerability confirmed in parameter '{finding.additional_info.get('parameter', 'unknown')}'",
+                "probe_sent": sqli_probe_sent,
+                "probe_request_raw": sqli_probe_request_raw,
+                "probe_response_raw": sqli_probe_response_raw,
             }
         else:
             return {
@@ -4066,7 +4084,10 @@ class InjectionManagerAgent(BaseManagerAgent):
                 "findings_count": 0,
                 "tested_params": tested_params,
                 "blind_correlation": blind_correlation,
-                "message": "No SQL Injection vulnerabilities found after comprehensive testing"
+                "message": "No SQL Injection vulnerabilities found after comprehensive testing",
+                "probe_sent": sqli_probe_sent,
+                "probe_request_raw": sqli_probe_request_raw,
+                "probe_response_raw": sqli_probe_response_raw,
             }
 
     async def run_xss_hunter(self, url: str, params: Dict[str, Any] = None, quick_mode: bool = False, **_kwargs) -> Dict[str, Any]:

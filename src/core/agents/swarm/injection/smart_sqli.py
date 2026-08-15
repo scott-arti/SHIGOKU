@@ -83,6 +83,10 @@ class SmartSQLiHunter(Specialist, ThoughtLoop):
     MAX_PARAMS_TO_TEST = 5
     EXCLUDED_PARAM_NAMES = {"scan_profile", "profile", "_auth", "method"}
     NON_ATTACK_PARAM_NAMES = {"submit", "change", "token", "csrf", "csrf_token", "user_token"}
+    # SGK-2026-0451: protocol-level noise params (socket.io handshake) —
+    # framework/protocol knowledge, not product-specific. Excluded from
+    # attack candidates only on the opt-in fire path.
+    NOISE_PARAM_NAMES = {"eio", "transport"}
     CRITICAL_PARAM_HINTS = {
         "id", "user_id", "uid", "account_id", "order_id", "product_id", "item_id", "username"
     }
@@ -94,6 +98,10 @@ class SmartSQLiHunter(Specialist, ThoughtLoop):
     @classmethod
     def _is_non_attack_param(cls, name: str) -> bool:
         return str(name or "").strip().lower() in cls.NON_ATTACK_PARAM_NAMES
+
+    @classmethod
+    def _is_noise_param(cls, name: str) -> bool:
+        return str(name or "").strip().lower() in cls.NOISE_PARAM_NAMES
 
     SYSTEM_PROMPT = """You are an expert SQL Injection Penetration Tester.
 You must work in a thought loop to detect SQL injection vulnerabilities.
@@ -185,6 +193,9 @@ INPUT: [Input]
         self._sql_error_observed = False
         self._sql_error_evidence: Dict[str, Any] = {}
         self._response_differential: Dict[str, Any] = {}
+        # SGK-2026-0451: deterministic fire-path state (opt-in).
+        self._probe_sent = False
+        self._last_probe_sent: Optional[bool] = None
 
     def _compute_adaptive_turn_budget(
         self,
@@ -254,7 +265,19 @@ INPUT: [Input]
             and blind_time_based_confirmed
         )
 
-        if result.get("vulnerable") or forced_blind_detection:
+        # SGK-2026-0451 (opt-in fire path): a complete sql_error observation
+        # (marker + PoC pair) from the deterministic fire path produces a
+        # candidate finding even when the LLM loop already finished. Same
+        # evidence/fill machinery as before; the AI judge is untouched and
+        # may still refute error-only candidates (fail-closed).
+        sql_error_fire = (
+            self._firing_path_enabled()
+            and not bool(result.get("vulnerable", False))
+            and bool(result.get("sql_error_observed", False))
+            and bool(result.get("poc_request", ""))
+        )
+
+        if result.get("vulnerable") or forced_blind_detection or sql_error_fire:
             evidence_text = str(result.get("evidence", "") or "").strip()
             if forced_blind_detection:
                 payload = str(time_based.get("payload", "") or "")
@@ -264,6 +287,15 @@ INPUT: [Input]
                     "Time-based blind SQLi signal confirmed "
                     f"(payload='{payload}', observed_latency={observed_latency:.2f}s, "
                     f"expected_delay={expected_delay:.2f}s)."
+                )
+            if sql_error_fire and not evidence_text:
+                _see = result.get("sql_error_evidence", {})
+                if not isinstance(_see, dict):
+                    _see = {}
+                evidence_text = (
+                    "SQL error observed: "
+                    f"{str(_see.get('details', '') or '')} "
+                    f"(body: {str(_see.get('body_snippet', '') or '')[:200]})"
                 )
             # SGK-2026-0449 Scope B: observed-request evidence + impact/repro
             # fill for error-based SQLi findings (fail-closed: without a
@@ -278,7 +310,11 @@ INPUT: [Input]
                 description=(
                     "Time-based blind SQL Injection confirmed."
                     if forced_blind_detection
-                    else result.get("description", "Detected by SmartSQLiHunter.")
+                    else (
+                        "SQL Injection detected (error-based)."
+                        if sql_error_fire
+                        else result.get("description", "Detected by SmartSQLiHunter.")
+                    )
                 ),
                 target_url=task.target,
                 evidence=Evidence(
@@ -333,7 +369,17 @@ INPUT: [Input]
             "tags", "category", "_context", "extra_targets",
             "auth_headers", "headers", "count", "forms", "scan_profile", "profile",
         }
-        payload_params = {k: v for k, v in params.items() if k not in META_KEYS}
+        # SGK-2026-0451 (opt-in fire path): internal meta keys
+        # (url_evidence / detection_mode) must never leak into attack payload
+        # params. The base META_KEYS stays untouched when the fire path is
+        # off (byte-equivalent default).
+        firing_path_enabled = self._firing_path_enabled()
+        meta_keys = (
+            META_KEYS | {"url_evidence", "detection_mode"}
+            if firing_path_enabled
+            else META_KEYS
+        )
+        payload_params = {k: v for k, v in params.items() if k not in meta_keys}
 
         parsed = urlparse(target)
         url_params = parse_qs(parsed.query)
@@ -413,10 +459,25 @@ INPUT: [Input]
         if 'forms' not in locals():
             forms = []
 
-        candidate_params = [
-            name for name in list(payload_params.keys())
-            if not self._is_excluded_param(name) and not self._is_non_attack_param(name)
-        ][:self.MAX_PARAMS_TO_TEST] if payload_params else []
+        # SGK-2026-0451 (opt-in fire path): generic noise exclusion (socket.io
+        # handshake params) + generic priority — params actually present in
+        # THIS url's query first, then form-derived, then discovery hints.
+        # No product-specific name priority table (no curve fitting).
+        # keep_blank_values: a real param may legitimately carry an empty
+        # value (e.g. ?q=) and must still count as present-in-URL.
+        if firing_path_enabled:
+            fire_url_params = parse_qs(parsed.query, keep_blank_values=True)
+            fire_url_params_flat = {
+                k: (v[0] if v else "") for k, v in fire_url_params.items()
+            }
+            candidate_params = self._prioritize_candidate_params_generic(
+                payload_params, fire_url_params_flat
+            )
+        else:
+            candidate_params = [
+                name for name in list(payload_params.keys())
+                if not self._is_excluded_param(name) and not self._is_non_attack_param(name)
+            ][:self.MAX_PARAMS_TO_TEST] if payload_params else []
         quick_mode_flag = bool(self.context.get("quick_mode", False))
         tested_params: List[str] = []
         self.last_tested_params = tested_params
@@ -432,6 +493,7 @@ INPUT: [Input]
         self._sql_error_observed = False
         self._sql_error_evidence = {}
         self._response_differential = {}
+        self._probe_sent = False
         loop_result: Dict[str, Any] = {"status": "not_run", "reason": "no_parameters"}
 
         for param_name in candidate_params:
@@ -487,14 +549,26 @@ INPUT: [Input]
                     }
                     self.max_turns = original_param_max_turns
                     break
+            # SGK-2026-0451 (opt-in fire path): deterministic first-fire —
+            # send error-based probes to this discovered parameter BEFORE the
+            # LLM loop and feed the observation into the loop context. Firing
+            # is guaranteed even if the LLM finishes immediately; the adaptive
+            # loop (full payload freedom) stays untouched.
+            if firing_path_enabled:
+                probe_observation = await self._fire_error_based_probe(
+                    param_name,
+                    payload_params.get(param_name, "1") if payload_params else "1",
+                )
+                self.context["probe_observation"] = probe_observation
             self.history_messages.append({"role": "system", "content": self.SYSTEM_PROMPT})
 
+            probe_observation = str(self.context.get("probe_observation", "") or "")
             initial_prompt = f"""Target URL: {target}
 Method: {method}
 Parameter: {param_name}
 Original Value: {payload_params.get(param_name, '') if payload_params else ''}
 
-Start your SQL injection testing.
+{('Deterministic probe observation:\n' + probe_observation + '\n\n') if probe_observation else ''}Start your SQL injection testing.
 """
             self.history_messages.append({"role": "user", "content": initial_prompt})
 
@@ -513,7 +587,11 @@ Start your SQL injection testing.
         blind_correlation = self._build_blind_correlation(self.used_payloads)
         self.last_blind_correlation = blind_correlation
 
-        return {
+        # SGK-2026-0451 (opt-in fire path): surface the deterministic
+        # fire-path record for the manager's url_result wiring. Keys are
+        # added ONLY when the fire path is enabled (byte-equivalent default).
+        self._last_probe_sent = self._probe_sent if firing_path_enabled else None
+        result: Dict[str, Any] = {
             "vulnerable": self.vulnerable,
             "evidence": self.evidence,
             "param": self.context.get("param"),
@@ -528,6 +606,11 @@ Start your SQL injection testing.
             "poc_request": self._last_poc_request,
             "poc_response": self._last_poc_response,
         }
+        if firing_path_enabled:
+            result["probe_sent"] = self._probe_sent
+            result["probe_request_raw"] = self._last_poc_request
+            result["probe_response_raw"] = self._last_poc_response
+        return result
 
     def _build_specialist_tool_schema(self) -> List[Dict[str, Any]]:
         """SGK-2026-0450 A: SmartSQLiHunter 専用ツールスキーマ（tool-calling 用）。
@@ -598,6 +681,11 @@ Start your SQL injection testing.
                 )
         history_text = "\n".join(history_lines)
 
+        # SGK-2026-0451 (opt-in fire path): surface the deterministic probe
+        # observation to the LLM loop so it can adapt on top of it. Empty
+        # when the fire path is off (byte-equivalent default).
+        probe_obs = str(self.context.get("probe_observation", "") or "")
+        pre_probe_block = f"Pre-probe observation:\n{probe_obs}\n\n" if probe_obs else ""
         prompt = f"""Target: {self.context['target']}
 Testing Parameter: {self.context['param']}
 Method: {self.context['method']}
@@ -606,7 +694,7 @@ Current Turn: {turn}
 History:
 {history_text if history_text else 'No previous actions'}
 
-Decide next step for SQL injection testing.
+{pre_probe_block}Decide next step for SQL injection testing.
 """
         # SGK-2026-0450 A: tool-calling 分岐（既定 OFF → 既存 regex パスを byte 等価維持）
         use_tool_calling = bool(self.context.get("tool_calling", False))
@@ -743,37 +831,9 @@ Decide next step for SQL injection testing.
             else:
                 self._consecutive_blocked_observations = 0
 
-            error_classification = obs.get("error_classification", {})
-            if not isinstance(error_classification, dict):
-                error_classification = {}
-            error_type = str(error_classification.get("type", "") or "").lower()
-            status_code = int(obs.get("status", 0) or 0)
-            if (not error_type or error_type == "none") and status_code > 0 and diff_type in {
-                "error",
-                "syntax",
-                "schema",
-                "data",
-                "auth",
-            }:
-                error_type = diff_type if diff_type != "error" else "sql_error"
-                error_classification = {
-                    "type": error_type,
-                    "details": "SQL error inferred from response differential",
-                }
-            if error_type and error_type != "none":
-                self._sql_error_observed = True
-                self._sql_error_evidence = {
-                    "error_type": error_type,
-                    "details": str(error_classification.get("details", "") or ""),
-                    "db_detection": obs.get("db_detection", {}),
-                    "body_snippet": str(obs.get("body_snippet", "") or ""),
-                    "payload": payload,
-                }
-                self._response_differential = {
-                    "attack_status": obs.get("status", 0),
-                    "attack_body_snippet": str(obs.get("body_snippet", "") or ""),
-                    "diff_type": diff_type,
-                }
+            # SGK-2026-0451: sql_error marker / evidence recording is shared
+            # with the deterministic fire path (same logic, byte-identical).
+            self._record_sql_observation(obs, payload, diff_type)
 
             elapsed = float(obs.get("elapsed_seconds", 0.0) or 0.0)
             if elapsed > self._max_observed_latency:
@@ -1157,6 +1217,129 @@ Decide next step for SQL injection testing.
             return "waf_evasion_encoding"
         else:
             return "basic"
+
+    @staticmethod
+    def _firing_path_enabled() -> bool:
+        """SGK-2026-0451: opt-in switch for the deterministic fire path.
+        Default off -> existing behavior stays byte-identical."""
+        try:
+            from src.core.config.settings import get_settings
+            return bool(getattr(get_settings(), "sqli_firing_path_enabled", False))
+        except Exception:  # noqa: BLE001 — settings boundary, fail closed
+            return False
+
+    def _prioritize_candidate_params_generic(
+        self,
+        payload_params: Dict[str, Any],
+        url_params_flat: Dict[str, Any],
+    ) -> List[str]:
+        """SGK-2026-0451: generic candidate ordering for the fire path.
+
+        Excludes meta/noise params, then orders: params present in this
+        url's own query string first, remaining candidates after. Generic
+        across every discovered parameter — no product-specific name
+        priority table (no curve fitting).
+        """
+        base = [
+            name for name in list(payload_params.keys())
+            if not self._is_excluded_param(name)
+            and not self._is_non_attack_param(name)
+            and not self._is_noise_param(name)
+            # internal meta keys (defense in depth; normally already
+            # filtered out of payload_params by the meta-keys filter)
+            and str(name or "").strip().lower() not in {"url_evidence", "detection_mode"}
+        ]
+        ordered: List[str] = []
+        for name in list(url_params_flat.keys()):
+            if name in base and name not in ordered:
+                ordered.append(name)
+        for name in base:
+            if name not in ordered:
+                ordered.append(name)
+        return ordered[: self.MAX_PARAMS_TO_TEST]
+
+    @staticmethod
+    def _build_error_based_probes(param_name: str, baseline_value: Any) -> List[str]:
+        """SGK-2026-0451: basic error-based probes built on the baseline
+        value (single/double quote). Generic across every discovered
+        parameter; the adaptive LLM loop keeps full payload freedom."""
+        base = str(baseline_value if baseline_value is not None else "1")
+        if not base:
+            base = "1"
+        return [
+            f"{param_name}={base}'",
+            f'{param_name}={base}"',
+        ]
+
+    def _record_sql_observation(self, obs: Dict[str, Any], payload: str, diff_type: str) -> str:
+        """SGK-2026-0451: record sql_error markers + evidence from one
+        observed response. Shared by act() (LLM request) and
+        _fire_error_based_probe() (deterministic first-fire) — the logic is
+        byte-identical to the former act() request branch. Returns the
+        classified error type ("" when none)."""
+        error_classification = obs.get("error_classification", {})
+        if not isinstance(error_classification, dict):
+            error_classification = {}
+        error_type = str(error_classification.get("type", "") or "").lower()
+        status_code = int(obs.get("status", 0) or 0)
+        if (not error_type or error_type == "none") and status_code > 0 and diff_type in {
+            "error",
+            "syntax",
+            "schema",
+            "data",
+            "auth",
+        }:
+            error_type = diff_type if diff_type != "error" else "sql_error"
+            error_classification = {
+                "type": error_type,
+                "details": "SQL error inferred from response differential",
+            }
+        if error_type and error_type != "none":
+            self._sql_error_observed = True
+            self._sql_error_evidence = {
+                "error_type": error_type,
+                "details": str(error_classification.get("details", "") or ""),
+                "db_detection": obs.get("db_detection", {}),
+                "body_snippet": str(obs.get("body_snippet", "") or ""),
+                "payload": payload,
+            }
+            self._response_differential = {
+                "attack_status": obs.get("status", 0),
+                "attack_body_snippet": str(obs.get("body_snippet", "") or ""),
+                "diff_type": diff_type,
+            }
+        return error_type
+
+    async def _fire_error_based_probe(self, param_name: str, baseline_value: Any) -> str:
+        """SGK-2026-0451: deterministic first-fire — send error-based probes
+        to the discovered parameter via the existing _send_request (GET-only
+        preserved), record probe_sent / poc_request / poc_response /
+        sql_error markers through the same path as act(), and return a
+        compact observation for the LLM loop. This is a firing guarantee
+        only; the adaptive loop and payload breadth are unchanged."""
+        lines = []
+        for payload in self._build_error_based_probes(param_name, baseline_value):
+            obs = await self._send_request(payload)
+            self._probe_sent = True
+            # SGK-2026-0451: record the fired payload like act() does, so
+            # the 0449 evidence/impact fill (payload non-empty requirement)
+            # works for fire-path findings too (recording only; the adaptive
+            # loop and payload breadth are unchanged).
+            if payload not in self.used_payloads:
+                self.used_payloads.append(payload)
+            if obs.get("poc_request"):
+                self._last_poc_request = str(obs.get("poc_request", "") or "")
+            if obs.get("poc_response"):
+                self._last_poc_response = str(obs.get("poc_response", "") or "")
+            diff_type = str(obs.get("diff", "")).lower()
+            error_type = self._record_sql_observation(obs, payload, diff_type)
+            status = int(obs.get("status", 0) or 0)
+            snippet = str(obs.get("body_snippet", "") or "")[:160]
+            lines.append(
+                f"Probe {payload!r}: Status={status}, Diff={diff_type}, "
+                f"ErrorType={error_type or 'none'}, Body={snippet}"
+            )
+        return "\n".join(lines)
 
     async def _send_request(self, payload: str) -> Dict[str, Any]:
         """実際のリクエストを送信し、結果を返す"""

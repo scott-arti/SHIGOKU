@@ -459,4 +459,4 @@
 | SGK-2026-0448 | 本物の対象で確定1件を実際に出すための3レバー | done | plan | SGK-2026-0442 | docs/shigoku/plans/done/2026-08-13_sgk-2026-0448_confirm-real-bug-three-levers.md |
 | SGK-2026-0449 | D01 SQLi候補にimpactを機械充填し本物の確定1件を出す | done | plan | SGK-2026-0442 | docs/shigoku/plans/done/2026-08-13_sgk-2026-0449_confirm-real-sqli-mechanical-impact.md |
 | SGK-2026-0450 | AIハンターの信頼化（tool-calling移行＋重複排除ガード＋LLM設定） | done | plan | SGK-2026-0442 | docs/shigoku/plans/done/2026-08-14_sgk-2026-0450_deterministic-error-based-sqli-detection.md |
-| SGK-2026-0451 | SmartSQLiHunter発火経路の修正（発見パラメータへerror-basedプローブを確実送信） | active | plan | SGK-2026-0442 | docs/shigoku/plans/2026-08-15_sgk-2026-0451_smart-sqli-firing-path-fix.md |
+| SGK-2026-0451 | SmartSQLiHunter発火経路の修正（発見パラメータへerror-basedプローブを確実送信） | done | plan | SGK-2026-0442 | docs/shigoku/plans/done/2026-08-15_sgk-2026-0451_smart-sqli-firing-path-fix.md |

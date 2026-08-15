@@ -11,7 +11,7 @@ related_docs:
   - AGENTS.md
 title: SHIGOKU Learnings
 created_at: '2026-06-26'
-updated_at: '2026-08-13'
+updated_at: '2026-08-15'
 ---
 
 # SHIGOKU Learnings
@@ -602,3 +602,18 @@ assert p is not None and p.bundle_id.startswith('bbp-'), f'unexpected: {p}'
 
 - [topic: codingrules | when: snip 経由で環境変数付きコマンドを実行する時] `VAR=x cmd` プレフィックスは snip の passthrough で「executable file not found」になる。`env VAR=x cmd` の形で実行せよ。 verify: `env SHIGOKU_MODE=vulntest .venv/bin/python -c "print(1)"` が通ること
   detail: SGK-2026-0447 Part B。`SHIGOKU_MODE=vulntest .venv/bin/python ...` は snip がプレフィックスを実行ファイル名として扱い失敗。既存の snip 系エントリ（python3 -c の `;`）と同系統の別罠。
+
+- [topic: lessons | when: SmartSQLiHunter / decide の tool-calling 化後に「発火ペイロードを送信した」と判定する時] decide が `tool call 'request' with payload` を返したログだけでは実 HTTP 送信を断定するな。session の sqli url_result に `probe_sent=true` が 1 件以上あることを確認せよ（0 なら未送信）。`q=',` は session 内 Python repr のクロージング誤読で実 payload ではない。 verify: `python3 -c "import json,glob; raw=json.dumps(json.load(open(sorted(glob.glob('workspace/projects/localhost:3000/sessions/session_*.json'))[-1]))); print(raw.count('\"probe_sent\": true'))"` → 0 なら未送信
+  detail: SGK-2026-0450 STEP3 独立検証の訂正。3 run とも probe_sent=true=0/68（各 sqli url_result で 0）＝ SmartSQLiHunter は `q` へのシングルクォート発火 payload を一度も送っていない。`q` に届いた実リクエストは CORS 検査の空 `q=`（Origin: evil.com）のみ。tool_calls の返却と実プローブ送信は別レイヤーで、発火経路欠陥は SGK-2026-0451 へ移管。
+
+- [topic: codingrules | when: LLMClient.generate / agenerate に tools= を渡してツール実行を期待する時] LLMClient の内部 tool_calls ループはダミー文字列（`f"Result from {function_name}"`）を返すだけで**実実行しない**。ツール実行が必要なら `tool_loop=False` で tool_calls を含む生応答を受け取り、呼び出し側で実行して `role: tool` メッセージを履歴へ戻せ。 verify: `rg -n "Result from" src/core/models/llm.py` でダミー実装の存在を確認
+  detail: SGK-2026-0450 A。llm.py:426,616 のダミー実行。tools= を渡しても実行されないため、base_manager は `agenerate(history, tools=schemas, tool_loop=False)` → `_handle_tool_calls` で実行する設計にした（既定 tool_loop=True は既存呼び出し元のバイト等価を維持）。
+
+- [topic: codingrules | when: LLMClient.generate / agenerate にツール関連パラメータ（tool_loop 等）を追加する時] 認証エラーのフォールバック再帰呼び出しにも新パラメータを伝播せよ。伝播しないとフォールバック先で黙って既定（ダミー実行）モードに戻り、フラグの意味論が壊れる。 verify: `rg -n "return self.generate|return await self.agenerate" src/core/models/llm.py` に `tool_loop=tool_loop` が渡っていること
+  detail: SGK-2026-0450 A。llm.py:478,667。tool_loop=False で呼んだのに AuthenticationError フォールバック先が tool_loop 未指定（=True）だと、リトライがダミー実行モードに戻る。仕様に明記は無かったがフラグ伝播を追加した。
+
+- [topic: lessons | when: モック LLM 応答の message.tool_calls を検査して tool-calling 分岐を書く時] MagicMock は未知属性 `tool_calls` を自動生成して truthy になるため、`if tool_calls:` 単独では既定 OFF パスが tool-calling 経路へ誤進入する。機能オプトイン（`self._use_tool_calling`）と AND でガードせよ。 verify: `.venv/bin/pytest tests/core/agents/swarm/test_auth_manager.py tests/unit/agents/swarm/test_base_manager_tool_calling.py -q` が全 pass
+  detail: SGK-2026-0450。base_manager.py think loop は `if self._use_tool_calling and _tool_calls:` に修正。初回実装は `if _tool_calls:` のみで、MagicMock の自動属性生成により test_auth_manager_ninja_delegation が回帰（オプトイン OFF でも tool-calling 分岐へ誤進入）した。
+
+- [topic: report-session-consistency | when: finding_funnel_v1 の F5 / F4 から「検出された / されなかった」を判定する時] F5 は apply_verdict 後のライフサイクル状態（confirmed/refuted/parked/needs_human）の記録であり、F5:0 は検出 0 を意味しない。F4 reached の candidate がどの vuln_type かを session の finding_id → completed_tasks で追跡してから判定せよ。 verify: `python3 -c "import json; s=json.load(open('<session>')); [print(e['finding_id'], e['stages'].get('F4'), e.get('first_failure_reason')) for e in s['finding_funnel_v1']['entries']]"` と completed_tasks の vuln_type を突き合わせ
+  detail: SGK-2026-0450 STEP3。manager.py:1215 付近で F5 emit は apply_verdict 後。3 run とも F5:0 だったが、F4 reached の candidate は cors_misconfiguration / broken_access_control で SQLi は 0（finding_id 追跡で判明）。F5:0 のみで「sql_error 候補なし」と断定するのは不足だった。
