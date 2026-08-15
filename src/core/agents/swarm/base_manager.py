@@ -246,6 +246,23 @@ class BaseManagerAgent(SwarmManager):
         self.history = []
         execution_log = []
         self.total_tools_executed = 0 # リセット
+
+        # SGK-2026-0450 A/B: tool-calling 移行・重複排除ガードのオプトイン
+        # （既定 OFF → 既存 run は byte 等価。task.params が最優先、無ければ settings）
+        self._use_tool_calling = bool(task.params.get("tool_calling", False))
+        self._use_dedup_guard = bool(task.params.get("dedup_guard", False))
+        if not self._use_tool_calling or not self._use_dedup_guard:
+            try:
+                from src.core.config.settings import get_settings
+                _settings = get_settings()
+                if not self._use_tool_calling:
+                    self._use_tool_calling = bool(getattr(_settings, "tool_calling_enabled", False))
+                if not self._use_dedup_guard:
+                    self._use_dedup_guard = bool(getattr(_settings, "dedup_guard_enabled", False))
+            except Exception:
+                pass
+        # 重複排除ガード用の実行済みアクション集合（dispatch 単位で初期化）
+        self._executed_actions: set = set()
         
         # システムプロンプト構築
         system_prompt = await self._build_system_prompt(task)
@@ -292,7 +309,15 @@ class BaseManagerAgent(SwarmManager):
 
                 # Semaphore による同時実行制御 (LLMリクエストのバースト防止)
                 async with self.semaphore:
-                    response = await llm_for_dispatch.agenerate(self.history)
+                    if self._use_tool_calling:
+                        # SGK-2026-0450 A: 型付きスキーマで呼び出し、tool_calls を含む生応答をそのまま受ける
+                        response = await llm_for_dispatch.agenerate(
+                            self.history,
+                            tools=self._build_tool_schemas(),
+                            tool_loop=False,
+                        )
+                    else:
+                        response = await llm_for_dispatch.agenerate(self.history)
                 
                 if response is None or not hasattr(response, 'choices') or not response.choices:
                     logger.warning(f"[{self.name}] LLM returned empty or invalid response. Retrying turn {turn}...")
@@ -300,8 +325,34 @@ class BaseManagerAgent(SwarmManager):
                     execution_log.append({"turn": turn, "type": "warning", "content": "Empty LLM response, retrying..."})
                     degraded_responses += 1
                     continue
-                    
-                llm_output = response.choices[0].message.content
+
+                _message = response.choices[0].message
+                _tool_calls = getattr(_message, "tool_calls", None) or []
+
+                # SGK-2026-0450 A: 構造化 tool_calls がある場合はそこから実行（ast/regex パースを経由しない）。
+                # オプトイン時のみ有効（既定 OFF は既存パスを byte 等価で維持）
+                if self._use_tool_calling and _tool_calls:
+                    self.history.append({
+                        "role": "assistant",
+                        "content": getattr(_message, "content", "") or "",
+                        "tool_calls": _tool_calls,
+                    })
+                    execution_log.append({
+                        "turn": turn,
+                        "type": "thought",
+                        "content": f"tool_calls: {[getattr(getattr(tc, 'function', None), 'name', '') for tc in _tool_calls]}",
+                    })
+                    payout_stop = await self._handle_tool_calls(_tool_calls, turn, execution_log)
+                    if payout_stop:
+                        logger.info(f"[{self.name}] Payout-grade PoC obtained. Stopping loop early.")
+                        status = "success"
+                        stop_reason = "payout_grade_obtained"
+                        execution_log.append({"turn": turn, "type": "warning", "content": "Payout-grade PoC obtained; stopping loop"})
+                        break
+                    # ツール結果を履歴に追加済み。次のターンでモデルが観測して続行。
+                    continue
+
+                llm_output = getattr(_message, "content", None)
 
                 if llm_output is None:
                     logger.warning(f"[{self.name}] LLM returned null content. Retrying turn {turn}...")
@@ -418,6 +469,192 @@ class BaseManagerAgent(SwarmManager):
             logger.error(f"Failed to render system prompt: {e}")
             # Fallback to simple prompt if rendering fails
             return f"You are {self.name}. Target: {task.target}. Error loading prompt: {e}"
+
+    @staticmethod
+    def _js_type_for(annotation: Any) -> str:
+        """SGK-2026-0450 A: Python 型注釈から JSON Schema 型へ機械的に変換する。"""
+        from typing import Union, get_args, get_origin
+        import types as _types
+
+        if annotation is bool:
+            return "boolean"
+        if annotation is int:
+            return "integer"
+        if annotation is float:
+            return "number"
+        if annotation is dict or get_origin(annotation) is dict:
+            return "object"
+        if annotation is list or get_origin(annotation) is list:
+            return "array"
+        origin = get_origin(annotation)
+        if origin in (Union, _types.UnionType):  # Optional[X] / X | None
+            inner = [a for a in get_args(annotation) if a is not type(None)]
+            if inner:
+                return BaseManagerAgent._js_type_for(inner[0])
+        return "string"
+
+    def _build_tool_schemas(self) -> List[Dict[str, Any]]:
+        """SGK-2026-0450 A: available_tools から型付き JSON スキーマを機械的に生成する。
+
+        ツールの意味は変えない（配線置換のみ）。未知ツール・無効引数は
+        _execute_tool 側の従来 fail-closed（ValueError/シグネチャフィルタ）に委ねる。
+        """
+        schemas: List[Dict[str, Any]] = []
+        for name, info in self.available_tools.items():
+            func = info.get("func")
+            parameters: Dict[str, Any] = {"type": "object", "properties": {}, "required": []}
+            if func is not None:
+                try:
+                    sig = inspect.signature(func)
+                except (TypeError, ValueError):
+                    sig = None
+                if sig is not None:
+                    for pname, param in sig.parameters.items():
+                        if pname == "self" or param.kind in (
+                            inspect.Parameter.VAR_POSITIONAL,
+                            inspect.Parameter.VAR_KEYWORD,
+                        ):
+                            continue
+                        js_type = "string"
+                        if param.annotation is not inspect.Parameter.empty:
+                            js_type = self._js_type_for(param.annotation)
+                        parameters["properties"][pname] = {"type": js_type}
+                        if param.default is inspect.Parameter.empty:
+                            parameters["required"].append(pname)
+            schemas.append({
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": info.get("description", ""),
+                    "parameters": parameters,
+                },
+            })
+        return schemas
+
+    def _normalize_target_url(self, url: str) -> str:
+        """SGK-2026-0450 B: 重複排除用の URL 正規化（scheme と hostname を必須検証）。
+
+        小文字化・クエリソート・フラグメント除去。scheme/host 欠落は ValueError
+        （既存 origin 正規化ルール準拠）。呼び出し側で生 URL へフォールバックする。
+        """
+        from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+        parts = urlsplit(str(url))
+        if not parts.scheme or not parts.hostname:
+            raise ValueError(f"URL missing scheme or host: {url!r}")
+        query = urlencode(sorted(parse_qsl(parts.query, keep_blank_values=True)))
+        return urlunsplit(
+            (parts.scheme.lower(), parts.netloc.lower(), parts.path or "/", query, "")
+        )
+
+    def _action_fingerprint(self, action: str, args: Dict[str, Any]) -> Tuple[str, str, Any]:
+        """SGK-2026-0450 B: 重複排除ガードの機械的判定キー。
+
+        (action, 正規化対象URL, params fingerprint)。params が異なれば別手として許可
+        （適応幅を狭めない）。_auth 等の注入メタは fingerprint から除外。
+        """
+        target = str(
+            args.get("url") or args.get("target")
+            or self.current_context.get("target", "") or ""
+        )
+        try:
+            norm_url = self._normalize_target_url(target)
+        except ValueError:
+            norm_url = target
+        params = args.get("params")
+        if isinstance(params, dict):
+            visible = {k: v for k, v in params.items() if not str(k).startswith("_")}
+            params_fp = frozenset((str(k), str(v)) for k, v in sorted(visible.items()))
+        else:
+            params_fp = frozenset()
+        return (action, norm_url, params_fp)
+
+    async def _handle_tool_calls(
+        self,
+        tool_calls: Any,
+        turn: int,
+        execution_log: List[Dict[str, Any]],
+    ) -> bool:
+        """SGK-2026-0450 A/B: tool_calls（構造化）から名前・引数を取得して実行する。
+
+        - 無効引数は fail-closed（スキップして観察を返す）。
+        - 重複排除ガード: 同一 (action, 正規化URL, params) の再実行を抑止し前進させる。
+        - 戻り値: True ならペイアウト級 PoC によりループ早期停止すべき。
+        """
+        for tool_call in tool_calls:
+            fn = getattr(tool_call, "function", None)
+            name = getattr(fn, "name", "") or ""
+            tc_id = getattr(tool_call, "id", "") or ""
+            raw_args = getattr(fn, "arguments", None) or "{}"
+            args: Dict[str, Any] = {}
+            if isinstance(raw_args, str):
+                try:
+                    parsed = json.loads(raw_args)
+                    if isinstance(parsed, dict):
+                        args = parsed
+                except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                    logger.warning(
+                        "[%s] Turn %d: invalid tool arguments for '%s': %s. Skipping (fail-closed).",
+                        self.name, turn, name, exc,
+                    )
+                    execution_log.append({
+                        "turn": turn, "type": "warning",
+                        "content": f"Invalid tool arguments for {name}; skipped",
+                    })
+                    self.history.append({
+                        "role": "tool", "tool_call_id": tc_id, "name": name,
+                        "content": "Observation: invalid tool arguments; skipped",
+                    })
+                    continue
+            elif isinstance(raw_args, dict):
+                args = raw_args
+            if not isinstance(args, dict):
+                args = {}
+
+            # 重複排除ガード（オプトイン時のみ・機械的判定）
+            if self._use_dedup_guard:
+                fp = self._action_fingerprint(name, args)
+                if fp in self._executed_actions:
+                    logger.info(
+                        "[%s] Turn %d: dedupe guard hit for %s(%s). Skipping to force forward progress.",
+                        self.name, turn, name, args,
+                    )
+                    self.history.append({
+                        "role": "tool", "tool_call_id": tc_id, "name": name,
+                        "content": (
+                            "Observation: this exact action+target+params was already "
+                            "executed in this run; choose a different move."
+                        ),
+                    })
+                    execution_log.append({
+                        "turn": turn, "type": "action", "action": name,
+                        "result": {"skipped": "dedupe_guard"}, "dedupe_skipped": True,
+                    })
+                    continue
+                self._executed_actions.add(fp)
+
+            try:
+                result = await self._execute_tool(name, args)
+            except Exception as exc:
+                error_msg = f"Observation: Tool execution failed. Error: {str(exc)}"
+                self.history.append({
+                    "role": "tool", "tool_call_id": tc_id, "name": name,
+                    "content": error_msg,
+                })
+                execution_log.append({"turn": turn, "type": "error", "error": str(exc)})
+                logger.error("[%s] Tool Error: %s", self.name, exc)
+                continue
+
+            self.total_tools_executed += 1
+            observation = f"Observation: {json.dumps(result, ensure_ascii=False)}"
+            self.history.append({
+                "role": "tool", "tool_call_id": tc_id, "name": name,
+                "content": observation,
+            })
+            execution_log.append({"turn": turn, "type": "action", "action": name, "result": result})
+            if self._payout_grade_obtained(result):
+                return True
+        return False
 
     def _parse_llm_output(self, text: str) -> Tuple[Optional[str], Dict[str, Any], Optional[str]]:
         """

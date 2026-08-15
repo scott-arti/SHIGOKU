@@ -5426,27 +5426,36 @@ tasks:
   related_docs:
   - docs/shigoku/roadmaps/2026-08-12_sgk-2026-0442_confirmation-and-candidate-lifecycle-program.md
   - docs/shigoku/plans/done/2026-08-13_sgk-2026-0448_confirm-real-bug-three-levers.md
-  - docs/shigoku/plans/2026-08-14_sgk-2026-0450_deterministic-error-based-sqli-detection.md
+  - docs/shigoku/plans/done/2026-08-14_sgk-2026-0450_deterministic-error-based-sqli-detection.md
   - docs/shigoku/reports/2026-08-14_sgk-2026-0449_confirm-real-sqli-mechanical-impact_work_report.md
   - docs/shigoku/worklogs/2026-08-14_sgk-2026-0449_confirm-real-sqli-mechanical-impact_work_log.md
 - provisional_id: DOC-0505
   task_id: SGK-2026-0450
   doc_type: plan
   title: AIハンターの信頼化（tool-calling移行＋重複排除ガード＋LLM設定）
-  primary_doc: docs/shigoku/plans/2026-08-14_sgk-2026-0450_deterministic-error-based-sqli-detection.md
-  status: active
+  primary_doc: docs/shigoku/plans/done/2026-08-14_sgk-2026-0450_deterministic-error-based-sqli-detection.md
+  status: done
   provisional: false
   task_summary: "0449で『候補さえ出れば確定できる』機構は実証済みだが実runはconfirmed=0＝検出が非決定的。step-1根本原因調査（実ログ+実API計測）で3因を特定: (1)LLM判定が遅い(pro thinking=high 実測5-14s、targetは0.5sで無関係)→全ロールflash化で対処済み(commit 8040cf2); (2)自由テキストReActのast/regexパースが脆く散文・空引数で手が無駄になる; (3)マネージャに重複排除ガードが無く脆弱でないEPに繰り返し委譲し予算浪費。当初の2ペイロード決定的プローブ方式は『能力を縮小して信頼性を買う』カーブフィッティングとして破棄。新方針=(A)tool-calling移行(deepseek/litellmサポート実測確認)でAIの推論を確実に実行へ移す+(B)重複排除ガード。能力を狭めず信頼化する。確定バー/再現チェッカー/0449充填ヘルパー無改変。完了=連続3runで検出決定性(脆弱EPに発火ペイロード送信しsql_error候補生成)。live confirmedに要る実害実証(データ抽出)は別タスク(deferred、審査員は正しく実害未証明を却下するため)。"
   parent_task_id: SGK-2026-0442
   related_docs:
   - docs/shigoku/roadmaps/2026-08-12_sgk-2026-0442_confirmation-and-candidate-lifecycle-program.md
   - docs/shigoku/plans/done/2026-08-13_sgk-2026-0449_confirm-real-sqli-mechanical-impact.md
+  - docs/shigoku/plans/2026-08-15_sgk-2026-0451_smart-sqli-firing-path-fix.md
+  - docs/shigoku/reports/2026-08-15_sgk-2026-0450_ai-hunter-toolcalling-dedup_work_report.md
+  - docs/shigoku/worklogs/2026-08-15_sgk-2026-0450_ai-hunter-toolcalling-dedup_work_log.md
+- provisional_id: DOC-0506
+  task_id: SGK-2026-0451
+  doc_type: plan
+  title: SmartSQLiHunter発火経路の修正（発見パラメータへerror-basedプローブを確実送信）
+  primary_doc: docs/shigoku/plans/2026-08-15_sgk-2026-0451_smart-sqli-firing-path-fix.md
+  status: active
+  provisional: false
+  task_summary: "0450でtool-calling＋重複排除により根本原因2/3（空引数・繰り返し）は解消したが検出はまだ非決定的。0450 STEP3の独立検証で第4根本原因が判明: SmartSQLiHunterが発火payload（qにシングルクォート等のSQLi payload）を一度も送っていない（3run全sqli url_resultでprobe_sent=0・poc_request空）。qに届いた実リクエストはCORS検査の空q=のみ。本タスクは発火経路を汎用的に直し、発見した実パラメータへerror-basedプローブを確実送信してpoc_request/response記録・sql_error候補生成、0450からcarve-outした完了条件（連続3runでF5>0）を達成する。q等の特定パラメータ決め打ち・製品固有焼き込み禁止（カーブフィッティング禁止）、破棄した2ペイロード方式への回帰禁止、payload幅・適応ループ維持。確定バー/再現チェッカー/0449充填ヘルパー/poc_judge無改変。live confirmedに要る実害実証(データ抽出)は別タスク(deferred)。"
+  parent_task_id: SGK-2026-0442
   related_docs:
   - docs/shigoku/roadmaps/2026-08-12_sgk-2026-0442_confirmation-and-candidate-lifecycle-program.md
-  - docs/shigoku/plans/done/2026-08-12_sgk-2026-0447_real-caido-rerun-and-fake-proxy-guard.md
-  - docs/shigoku/plans/done/2026-08-12_sgk-2026-0445_wire-hybrid-judge-into-swarm-live.md
-  - docs/shigoku/reports/2026-08-13_sgk-2026-0448_confirm-real-bug-three-levers_work_report.md
-  - docs/shigoku/worklogs/2026-08-13_sgk-2026-0448_confirm-real-bug-three-levers_work_log.md
+  - docs/shigoku/plans/done/2026-08-14_sgk-2026-0450_deterministic-error-based-sqli-detection.md
 doc_type_allowed_values:
 - spec
 - roadmap

@@ -310,6 +310,7 @@ and deepseek thinking configuration.
         tools: Optional[List[Dict[str, Any]]] = None,
         force_cloud: bool = False,
         mask_pii: bool = True,
+        tool_loop: bool = True,
         **kwargs,
     ) -> Any:
         """
@@ -320,6 +321,7 @@ and deepseek thinking configuration.
             tools: ツール定義
             force_cloud: クラウドLLMを強制使用
             mask_pii: PII/機密情報をマスクするか（デフォルト: True）
+            tool_loop: False なら tool_calls を含む最初の生応答をそのまま返す（キャッシュもスキップ）
             **kwargs: Note: temperatureなどの追加パラメータ
 
         Returns:
@@ -342,7 +344,8 @@ and deepseek thinking configuration.
         # 1. キャッシュチェック（ローカル/クラウド両方に適用）
         cache = get_cache()
         cache_key = self._get_cache_key(messages, tools, **kwargs)
-        cached_response = self._run_safe(cache.get, cache_key)
+        # tool_loop=False のときは tool_calls を含む生応答をキャッシュしないため取得もスキップ
+        cached_response = self._run_safe(cache.get, cache_key) if tool_loop else None
         if cached_response and not kwargs.get("force_cloud"):
             logger.debug("LLM cache hit: %s", cache_key)
             try_record_llm_cache_hit(model=self.model, actor=self._actor_name())
@@ -394,6 +397,11 @@ and deepseek thinking configuration.
                 )
                 response = self._completion_with_retry(**cloud_kwargs)
                 
+                # tool_loop=False: tool_calls を含む最初の生応答をそのまま返す（ループ即 break）
+                if not tool_loop:
+                    final_response = response
+                    break
+                
                 # 関数呼び出しがあるか確認
                 if hasattr(response, 'choices') and response.choices:
                     choice = response.choices[0]
@@ -440,7 +448,7 @@ and deepseek thinking configuration.
                 final_response = response
 
             # 結果をキャッシュ (ModelResponseオブジェクトをそのまま保存)
-            if final_response:
+            if final_response and tool_loop:
                 # pydanticモデル(litellm.ModelResponse)は dict に変換してキャッシュするのが安全
                 resp_dict = final_response.dict() if hasattr(final_response, "dict") else final_response
                 self._run_safe(cache.set, cache_key, resp_dict)
@@ -467,7 +475,7 @@ and deepseek thinking configuration.
                     self.model = fallback_result.model
                     self.model_extra = dict(fallback_result.extra)
                     self.temperature = fallback_result.temperature
-                    return self.generate(messages, tools, force_cloud=True, mask_pii=mask_pii, **kwargs)
+                    return self.generate(messages, tools, force_cloud=True, mask_pii=mask_pii, tool_loop=tool_loop, **kwargs)
                 except Exception as fallback_err:
                     logger.error("Role fallback also failed: %s", fallback_err)
                     raise
@@ -494,6 +502,7 @@ and deepseek thinking configuration.
         tools: Optional[List[Dict[str, Any]]] = None,
         force_cloud: bool = False,
         mask_pii: bool = True,
+        tool_loop: bool = True,
         **kwargs,
     ) -> Any:
         """
@@ -503,6 +512,7 @@ and deepseek thinking configuration.
             messages: チャットメッセージリスト
             tools: ツール定義
             force_cloud: クラウドLLMを強制使用
+            tool_loop: False なら tool_calls を含む最初の生応答をそのまま返す（キャッシュもスキップ）
             **kwargs: 追加パラメータ
         Returns:
             LLM応答オブジェクト
@@ -524,7 +534,8 @@ and deepseek thinking configuration.
         # 1. キャッシュチェック (非同期)
         cache = get_cache()
         cache_key = self._get_cache_key(messages, tools, **kwargs)
-        cached_response = await cache.get(cache_key)
+        # tool_loop=False のときは tool_calls を含む生応答をキャッシュしないため取得もスキップ
+        cached_response = await cache.get(cache_key) if tool_loop else None
         if cached_response and not kwargs.get("force_cloud"):
             logger.debug("LLM cache hit (async): %s", cache_key)
             try_record_llm_cache_hit(model=self.model, actor=self._actor_name())
@@ -576,6 +587,11 @@ and deepseek thinking configuration.
                 )
                 response = await self._acompletion_with_retry(**cloud_kwargs)
                 
+                # tool_loop=False: tool_calls を含む最初の生応答をそのまま返す（ループ即 break）
+                if not tool_loop:
+                    final_response = response
+                    break
+                
                 # 関数呼び出しがあるか確認
                 if hasattr(response, 'choices') and response.choices:
                     choice = response.choices[0]
@@ -622,7 +638,7 @@ and deepseek thinking configuration.
                 final_response = response
 
             # 結果をキャッシュ
-            if final_response:
+            if final_response and tool_loop:
                 resp_dict = final_response.dict() if hasattr(final_response, "dict") else final_response
                 await cache.set(cache_key, resp_dict)
 
@@ -648,7 +664,7 @@ and deepseek thinking configuration.
                     self.model = fallback_result.model
                     self.model_extra = dict(fallback_result.extra)
                     self.temperature = fallback_result.temperature
-                    return await self.agenerate(messages, tools, force_cloud=True, mask_pii=mask_pii, **kwargs)
+                    return await self.agenerate(messages, tools, force_cloud=True, mask_pii=mask_pii, tool_loop=tool_loop, **kwargs)
                 except Exception as fallback_err:
                     logger.error("Async role fallback also failed: %s", fallback_err)
                     raise

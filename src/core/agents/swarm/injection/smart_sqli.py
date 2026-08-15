@@ -529,6 +529,57 @@ Start your SQL injection testing.
             "poc_response": self._last_poc_response,
         }
 
+    def _build_specialist_tool_schema(self) -> List[Dict[str, Any]]:
+        """SGK-2026-0450 A: SmartSQLiHunter 専用ツールスキーマ（tool-calling 用）。
+
+        ペイロードは自由文字列のまま（能力を狭めない）。request / finish の2ツールのみ。
+        act() は既存の finish/request 文字列分岐をそのまま使う（配線置換のみ）。
+        """
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": "request",
+                    "description": (
+                        "Send a SQL injection payload to the target parameter and observe the response."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "payload": {
+                                "type": "string",
+                                "description": (
+                                    "SQL injection payload (any form: error-based, boolean, union, "
+                                    "time-based, etc.)"
+                                ),
+                            }
+                        },
+                        "required": ["payload"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "finish",
+                    "description": "Conclude the SQL injection test with a summary.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "summary": {
+                                "type": "string",
+                                "description": (
+                                    "Conclusion. Include 'vulnerable'/'found'/'confirmed' if a "
+                                    "vulnerability was detected, otherwise state it is safe."
+                                ),
+                            }
+                        },
+                        "required": ["summary"],
+                    },
+                },
+            },
+        ]
+
     async def decide(self, turn: int) -> Tuple[str, str, Any]:
         """
         LLM decides the next move (ThoughtLoop abstract method).
@@ -557,12 +608,60 @@ History:
 
 Decide next step for SQL injection testing.
 """
-        response = await self.llm.agenerate([
-            {"role": "system", "content": self.SYSTEM_PROMPT},
-            {"role": "user", "content": prompt}
-        ])
+        # SGK-2026-0450 A: tool-calling 分岐（既定 OFF → 既存 regex パスを byte 等価維持）
+        use_tool_calling = bool(self.context.get("tool_calling", False))
+        if not use_tool_calling:
+            try:
+                from src.core.config.settings import get_settings
+                use_tool_calling = bool(getattr(get_settings(), "tool_calling_enabled", False))
+            except Exception:
+                use_tool_calling = False
 
-        content = response.choices[0].message.content if response and response.choices else ""
+        if use_tool_calling:
+            response = await self.llm.agenerate(
+                [
+                    {"role": "system", "content": self.SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt}
+                ],
+                tools=self._build_specialist_tool_schema(),
+                tool_loop=False,
+            )
+            _msg = response.choices[0].message if response and response.choices else None
+            tool_calls = getattr(_msg, "tool_calls", None) or []
+            if tool_calls:
+                _fn = getattr(tool_calls[0], "function", None)
+                _name = getattr(_fn, "name", "") or ""
+                _raw_args = getattr(_fn, "arguments", None) or "{}"
+                _args: Dict[str, Any] = {}
+                if isinstance(_raw_args, str):
+                    try:
+                        _parsed = json.loads(_raw_args)
+                        if isinstance(_parsed, dict):
+                            _args = _parsed
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        _args = {}
+                elif isinstance(_raw_args, dict):
+                    _args = _raw_args
+                if _name == "request":
+                    payload = str(_args.get("payload", "") or "")
+                    if payload:
+                        logger.info("Turn %d: tool call 'request' with payload (len=%d)", turn, len(payload))
+                        return (f"Turn {turn}: sending payload via tool call", "request", payload)
+                    logger.warning("Turn %d: request tool call with empty payload. Falling back to text parsing.", turn)
+                elif _name == "finish":
+                    summary = str(_args.get("summary", "safe") or "safe")
+                    logger.info("Turn %d: tool call 'finish' with summary=%r", turn, summary)
+                    return (f"Turn {turn}: finishing via tool call", "finish", summary)
+                else:
+                    logger.warning("Turn %d: unknown tool call '%s'. Falling back to text parsing.", turn, _name)
+            # tool_calls が無い/無効な場合は既存の Free-text パースへフォールバック
+            content = getattr(_msg, "content", "") or "" if _msg is not None else ""
+        else:
+            response = await self.llm.agenerate([
+                {"role": "system", "content": self.SYSTEM_PROMPT},
+                {"role": "user", "content": prompt}
+            ])
+            content = response.choices[0].message.content if response and response.choices else ""
 
         # フォールバック
         if not content:
