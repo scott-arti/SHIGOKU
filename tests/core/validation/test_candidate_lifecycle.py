@@ -132,6 +132,29 @@ class TestTransitionTable:
         assert "[PII:" in record.evidence_summary["request_url_masked"]
         assert "[PII:" in record.target_url_masked
 
+    def test_new_candidate_confirmed_verdict_created_confirmed(self):
+        """SGK-2026-0452 (承認・2026-08-16): record=None で CONFIRMED verdict
+        （3条件AND: payout_grade + poc_judge 正当受理 + reproduction matched）
+        が成立した場合、新規レコードは needs_more でなく confirmed で作成
+        される（B5 で reason=hybrid_confirmed のまま state=needs_more に
+        留まり funnel F6 / live confirmed に到達しない事象の再発防止）。
+        CONFIRMED 以外の verdict は従来どおり needs_more 起点。"""
+        manager = CandidateLifecycleManager()
+        finding = make_finding()
+
+        record = manager.apply_verdict(
+            None,
+            make_verdict(VerdictState.CONFIRMED, reason="hybrid_confirmed", promise_score=1.0),
+            finding,
+        )
+
+        assert isinstance(record, CandidateRecord)
+        assert record.state == LifecycleState.CONFIRMED
+        assert record.reason == "hybrid_confirmed"
+        assert record.promise_score == 1.0
+        assert record.budget_used == 1
+        assert record.first_seen == record.last_investigated
+
     def test_confirmed_transition(self):
         """CONFIRMED verdict → confirmed（reason 更新・budget 加算）"""
         manager = CandidateLifecycleManager()

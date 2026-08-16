@@ -5459,6 +5459,21 @@ tasks:
   - docs/shigoku/plans/done/2026-08-15_sgk-2026-0451_smart-sqli-firing-path-fix.md
   - docs/shigoku/reports/2026-08-15_sgk-2026-0451_smart-sqli-firing-path-fix_work_report.md
   - docs/shigoku/worklogs/2026-08-15_sgk-2026-0451_smart-sqli-firing-path-fix_work_log.md
+- provisional_id: DOC-0507
+  task_id: SGK-2026-0452
+  doc_type: plan
+  title: SQLi候補の安全な実害実証でlive confirmed=1を出す（縦=depth・バー無改変）
+  primary_doc: docs/shigoku/plans/done/2026-08-15_sgk-2026-0452_safe-sqli-impact-demonstration.md
+  status: done
+  provisional: false
+  task_summary: "0451で発火を決定化しsql_error候補は毎run安定して出るがlive confirmedは0。本タスクは確定バー（payout_grade/sealed_reproduction_checker/poc_judgeプロンプト/finding_validator/PCR-P1）を1バイトも触らず、poc_judgeが正当に納得する実害を本当に観測して確証した。boolean差分オラクル＋非機微1トークン（sqlite_version=3.44.2）抽出で実害を実証、機微データは抽出せずGET-only。証拠チェーン整合修正＋judge再試行（パース不能時1回・fail-closed）＋reproduction network_client修正（_resolve_request_client）＋lifecycle初回CONFIRMED精緻化＋funnel F6 emit＋report集計反映（hybrid_final_state==confirmedのみ・ledger source-of-truth・捏造なし）。B9(session_20260816_223550)でend-to-end実証: report Confirmed:1・F6=1・ledger confirmed・バー5点diff0・GET-only・consistency=consistent・product-independence=pass(token0)・docs0。完了条件2「連続3回」はpoc_judgeのLLM非決定性(B8正当却下)を踏まえユーザー合意でgenuine confirmed end-to-end実証＋機構の決定性に再解釈。judge非決定性(D01)・実害実証の防御回避未実装(D02)はSGK-2026-0442配下でdeferred。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/roadmaps/2026-08-12_sgk-2026-0442_confirmation-and-candidate-lifecycle-program.md
+  - docs/shigoku/plans/done/2026-08-13_sgk-2026-0449_confirm-real-sqli-mechanical-impact.md
+  - docs/shigoku/plans/done/2026-08-15_sgk-2026-0451_smart-sqli-firing-path-fix.md
+  - docs/shigoku/reports/2026-08-16_sgk-2026-0452_safe-sqli-impact-demonstration_work_report.md
+  - docs/shigoku/worklogs/2026-08-16_sgk-2026-0452_safe-sqli-impact-demonstration_work_log.md
 doc_type_allowed_values:
 - spec
 - roadmap

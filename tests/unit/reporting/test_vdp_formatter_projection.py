@@ -138,6 +138,104 @@ class TestSharedCanonicalConsumption:
         assert confirmed2 == []
         assert len(candidates2) == 1
 
+    def test_hybrid_final_state_confirmed_reflected_from_ledger(self):
+        """SGK-2026-0452 (計装・承認済み 2026-08-16): canonical verdict に
+        未登録でも、T3 lifecycle が ledger 上で真に confirmed に到達した
+        finding（additional_info.hybrid_final_state=confirmed・3条件AND成立）
+        は confirmed として report に反映される。source of truth は
+        ledger（backfill・formatter 側の promotion ではない）。"""
+        summary = _canonical_summary()
+        finding = _finding_dict("confirmed")
+        # canonical verdict にはマッチしない hypothesis だが、ledger 上で
+        # T3 が confirmed に到達した証跡が additional_info にある。
+        finding["additional_info"] = {
+            "hypothesis_id": "hyp-nonexistent",
+            "hybrid_final_state": "confirmed",
+        }
+
+        hf = HaddixFormatter()
+        hf.set_target("https://example.com")
+        hf.set_vdp_canonical_summary(summary)
+        hf.add_finding_from_dict(finding)
+        confirmed, candidates = hf._split_findings_by_confirmation(hf._findings)
+        assert [x.title for x in confirmed] == ["Raw labelled finding"]
+        assert candidates == []
+
+    def test_hybrid_final_state_not_confirmed_stays_candidate(self):
+        """SGK-2026-0452: hybrid_final_state が confirmed でない finding は
+        confirmed に化けない（needs_more/candidate は ledger の truth に
+        従い candidate のまま）。"""
+        summary = _canonical_summary()
+        finding = _finding_dict("confirmed")
+        finding["additional_info"] = {
+            "hypothesis_id": "hyp-nonexistent",
+            "hybrid_final_state": "needs_more",
+        }
+
+        hf = HaddixFormatter()
+        hf.set_target("https://example.com")
+        hf.set_vdp_canonical_summary(summary)
+        hf.add_finding_from_dict(finding)
+        confirmed, candidates = hf._split_findings_by_confirmation(hf._findings)
+        assert confirmed == []
+        assert len(candidates) == 1
+
+    def test_submission_internal_formatter_reflects_ledger_confirmed(self):
+        """SGK-2026-0452: markdown report の実生成は
+        HaddixSubmissionInternalFormatter（generate_haddix_report が
+        format_type != json で委譲）のため、そちらの
+        _canonical_status_for_finding も hybrid_final_state=confirmed を
+        拾う（ledger confirmed → report Confirmed≥1）。needs_more は
+        candidate のまま。"""
+        summary = _canonical_summary()
+        confirmed_finding = _finding_dict("confirmed")
+        confirmed_finding["additional_info"] = {
+            "hypothesis_id": "hyp-nonexistent",
+            "hybrid_final_state": "confirmed",
+        }
+        needs_more_finding = _finding_dict("confirmed")
+        needs_more_finding["additional_info"] = {
+            "hypothesis_id": "hyp-nonexistent",
+            "hybrid_final_state": "needs_more",
+        }
+
+        f = HaddixSubmissionInternalFormatter()
+        f.set_target("https://example.com")
+        f.set_vdp_canonical_summary(summary)
+        f.add_finding_from_dict(confirmed_finding)
+        f.add_finding_from_dict(needs_more_finding)
+        confirmed, candidates, _ = f._get_enforced_split()
+        assert [x.title for x in confirmed] == ["Raw labelled finding"]
+        assert len(candidates) == 1
+
+    def test_non_canonical_path_reflects_ledger_confirmed(self):
+        """SGK-2026-0452: canonical summary なし（非 canonical 経路）でも
+        _split_findings_by_confirmation は hybrid_final_state=confirmed
+        （ledger 3条件AND成立）の finding を confirmed に数え、needs_more
+        は candidate のまま（source of truth は ledger のみ・formatter
+        側 promotion 捏造なし）。
+
+        注: 実 markdown report は canonical summary 付き（canonical 経路）
+        で生成され _enforced_split（evidence quality enforce）は走らない。
+        本テストは集計関数 _split_findings_by_confirmation 単体の計装を
+        固定する。"""
+        confirmed_finding = _finding_dict("confirmed")
+        confirmed_finding["additional_info"] = {
+            "hybrid_final_state": "confirmed",
+        }
+        needs_more_finding = _finding_dict("confirmed")
+        needs_more_finding["additional_info"] = {
+            "hybrid_final_state": "needs_more",
+        }
+
+        f = HaddixSubmissionInternalFormatter()
+        f.set_target("https://example.com")
+        f.add_finding_from_dict(confirmed_finding)
+        f.add_finding_from_dict(needs_more_finding)
+        confirmed, candidates = f._split_findings_by_confirmation(f._findings)
+        assert [x.title for x in confirmed] == ["Raw labelled finding"]
+        assert [x.title for x in candidates] == ["Raw labelled finding"]
+
 
 class TestCanonicalIndexInReports:
     def test_markdown_report_embeds_index(self, tmp_path):

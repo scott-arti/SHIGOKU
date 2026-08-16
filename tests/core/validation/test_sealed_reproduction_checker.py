@@ -445,6 +445,27 @@ class TestBudgets:
         assert outcome.status == "not_run"
         assert outcome.reason == "reproduction_budget_exhausted"
 
+    def test_extended_time_budget_allows_replay_after_slow_judge(self, monkeypatch):
+        """SGK-2026-0452 (承認D・2026-08-16): checker 生成から check まで
+        100 秒経過（＝遅い judge／judge 再試行の実行時間を再現）しても、
+        拡大 time_budget_seconds=600 なら replay が budget 内で走り
+        matched に到達する（judge 時間が replay budget を食わない）。"""
+        values = iter([0.0, 100.0])
+        monkeypatch.setattr(checker_module.time, "monotonic", lambda: next(values))
+        checker = default_checker(time_budget_seconds=600)
+        outcome = checker.check(make_sqli_finding())
+        assert outcome.status == "matched"
+
+    def test_default_time_budget_still_exhausted_after_slow_judge(self, monkeypatch):
+        """既定 time_budget_seconds=60 では 100 秒経過で not_run（回帰なし・
+        既定の fail-closed 挙動を固定）。"""
+        values = iter([0.0, 100.0])
+        monkeypatch.setattr(checker_module.time, "monotonic", lambda: next(values))
+        checker = default_checker()  # 既定 60s
+        outcome = checker.check(make_sqli_finding())
+        assert outcome.status == "not_run"
+        assert outcome.reason == "reproduction_budget_exhausted"
+
     def test_poc_judge_budget_exhausted_raises(self):
         budget = PoCJudgeBudget(max_calls=1)
         calls = {"n": 0}

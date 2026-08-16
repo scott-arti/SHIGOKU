@@ -2365,6 +2365,14 @@ class HaddixFormatter:
         Matching uses the hypothesis_id / verdict_id recorded in
         additional_info when present, falling back to no match (None → the
         finding is shown as candidate, never confirmed).
+
+        SGK-2026-0452 (計装・承認済み 2026-08-16): the canonical verdict
+        match above is kept untouched; when it yields no match, a finding
+        whose T3 lifecycle genuinely reached confirmed on the LEDGER
+        (``additional_info.hybrid_final_state == "confirmed"`` — set only
+        when the 3-condition AND passed: payout_grade + poc_judge +
+        reproduction matched) is reflected as confirmed. Source of truth is
+        the ledger, never a backfill or formatter-side promotion.
         """
         if self._vdp_canonical_summary is None:
             return None
@@ -2378,6 +2386,8 @@ class HaddixFormatter:
                 return verdict.status
             if hypothesis_id and verdict.hypothesis_id == hypothesis_id:
                 return verdict.status
+        if str(info.get("hybrid_final_state") or "").strip() == "confirmed":
+            return "confirmed"
         return None
 
     def _split_findings_by_confirmation(
@@ -2404,6 +2414,24 @@ class HaddixFormatter:
         candidates: List[HaddixFinding] = []
 
         for finding in findings:
+            # SGK-2026-0452 (計装・承認済み 2026-08-16): ledger が真の
+            # source of truth。hybrid_final_state が設定されている finding
+            # は ledger の verdict に従い確定する：
+            #   - "confirmed"（T3 3条件AND成立）→ confirmed に数える
+            #   - それ以外（needs_more / candidate / parked）→ 絶対に
+            #     confirmed に数えない（candidate へ）
+            # hybrid_final_state が無い finding は従来どおりの判定へ
+            # フォールスルー（backfill・formatter 側 promotion 捏造なし）。
+            info = finding.additional_info if isinstance(finding.additional_info, dict) else {}
+            hfs = str(info.get("hybrid_final_state") or "").strip()
+            if hfs:
+                if hfs == "confirmed":
+                    confirmed.append(finding)
+                else:
+                    self._ensure_unconfirmed_reason_codes(finding, demoted_for_missing_poc=False)
+                    candidates.append(finding)
+                continue
+
             if self._is_candidate_finding(finding):
                 self._ensure_unconfirmed_reason_codes(finding, demoted_for_missing_poc=False)
                 candidates.append(finding)

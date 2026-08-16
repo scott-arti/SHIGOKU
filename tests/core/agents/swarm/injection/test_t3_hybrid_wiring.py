@@ -107,6 +107,43 @@ class _FakeReproductionChecker:
         return ReproductionOutcome("not_run", "reproduction_pending")
 
 
+class _ScriptedPoCJudge:
+    """judge 呼び出し順に outcome を返す（SGK-2026-0452 再試行シーケンス検証用）。
+
+    outcomes は呼び出し順のリスト: "positive" | "reject" | "bad_json"。
+    末尾の outcome が残りの呼び出しに繰り返し適用される。
+    """
+
+    def __init__(self, outcomes):
+        self.outcomes = list(outcomes)
+        self.calls = 0
+        self.called_finding_ids: list = []
+
+    def judge(self, finding):
+        outcome = self.outcomes[min(self.calls, len(self.outcomes) - 1)]
+        self.calls += 1
+        self.called_finding_ids.append(str(getattr(finding, "id", "") or ""))
+        if outcome == "bad_json":
+            raise ValueError("PoCJudge: LLM response is not valid JSON")
+        if outcome == "reject":
+            return AiJudgement(
+                payout_grade=False,
+                is_real=True,
+                has_actual_impact=False,
+                counter_evidence=False,
+                needs_human=False,
+                reason_masked="ai_no_prize_grade (test)",
+            )
+        return AiJudgement(
+            payout_grade=True,
+            is_real=True,
+            has_actual_impact=True,
+            counter_evidence=False,
+            needs_human=False,
+            reason_masked="hybrid_confirmed (test)",
+        )
+
+
 def _payout_finding(title: str = "Reflected XSS in search") -> Finding:
     """A payout-grade XSS finding (mechanical floor passes)."""
     return Finding(
@@ -226,7 +263,13 @@ def _fake_phase1_finding_producer(manager: InjectionManagerAgent, finding: Findi
 def _install_fake_phase1(manager: InjectionManagerAgent, finding: Finding) -> None:
     """Wire the fake Phase-1 producer + transport mock into the manager."""
     manager._process_single_url = _fake_phase1_finding_producer(manager, finding)
-    manager._resolve_request_client = MagicMock(return_value=_auto_reverified_client())
+    if manager.network_client is not None:
+        # SGK-2026-0452 (承認E): checker 構築は _resolve_request_client() を
+        # 使うため、network_client が設定済みならそれを返す（replay send が
+        # 実 client で試行される）。
+        manager._resolve_request_client = MagicMock(return_value=manager.network_client)
+    else:
+        manager._resolve_request_client = MagicMock(return_value=_auto_reverified_client())
 
 
 def _auto_reverified_client() -> MagicMock:
@@ -378,6 +421,26 @@ class TestT3On:
         hybrid = _hybrid_emits(calls, finding.id)
         assert any(c["reason_code"] == "hybrid_confirmed" for c in hybrid)
         assert finding.additional_info.get("hybrid_final_state") == "confirmed"
+        # SGK-2026-0452 (計装・承認済み): ledger confirmed に到達した finding
+        # のみ F6 を emit する（funnel レイヤー・バー無関係）。
+        f6 = [c for c in calls if c["finding_id"] == finding.id and c["stage"] == "F6"]
+        assert any(c["reason_code"] == "hybrid_confirmed" for c in f6)
+
+    async def test_needs_more_never_emits_f6(self, monkeypatch, tmp_path):
+        """needs_more（確定に至らない）finding には F6 を emit しない。"""
+        calls = _spy_funnel_events(monkeypatch)
+        ledger = CandidateLedger(tmp_path / "candidate_ledger.json")
+        finding = _payout_finding()
+        judge = _FakePoCJudge("bad_json")  # -> ai=None -> pending (needs_more)
+        manager = self._manager(judge=judge, checker=_FakeReproductionChecker("matched"), ledger=ledger)
+
+        await _run_dispatch(manager, phase2_findings=[finding])
+
+        record = ledger.get(finding.id)
+        assert record is not None
+        assert record.state == LifecycleState.NEEDS_MORE
+        f6 = [c for c in calls if c["finding_id"] == finding.id and c["stage"] == "F6"]
+        assert not f6, "needs_more must never emit F6"
 
     async def test_inconclusive_parks_and_emits_hybrid_parked(self, monkeypatch, tmp_path):
         calls = _spy_funnel_events(monkeypatch)
@@ -452,6 +515,103 @@ class TestT3On:
         assert record.state == LifecycleState.NEEDS_MORE  # fail-closed
         assert not _hybrid_emits(calls, finding.id)
         assert "hybrid_final_state" not in finding.additional_info
+
+    # --- SGK-2026-0452 (承認C・2026-08-16): judge の JSON パース失敗時のみ
+    # 最大1回の再試行。正当な却下は再試行しない（gaming 禁止）。
+    # 注: 再試行ロジックの単体検証は wiring レベルの直接呼び出しで行う
+    # （full dispatch 経路は finding が複数 pass で再判定され judge 呼び出し
+    # 回数が pass 数に依存するため、再試行セマンティクスの検証には不向き）。
+
+    def _direct_verdict(self, *, judge, finding, ledger, state=None):
+        if state is not None:
+            ledger.put(_seed_record(finding, state=state))
+        manager = self._manager(judge=judge, checker=_FakeReproductionChecker("matched"), ledger=ledger)
+        changed = manager._t3_apply_hybrid_verdict(
+            finding,
+            judge=judge,
+            checker=_FakeReproductionChecker("matched"),
+            lifecycle=CandidateLifecycleManager(),
+            ledger=ledger,
+        )
+        return changed, ledger.get(finding.id)
+
+    def test_legitimate_rejection_never_retried(self, tmp_path):
+        """正当な payout_grade=false（却下）では judge を再試行しない:
+        judge.judge は 1 回だけ呼ばれ、INCONCLUSIVE_PARKED になる。"""
+        ledger = CandidateLedger(tmp_path / "candidate_ledger.json")
+        finding = _payout_finding()
+        judge = _ScriptedPoCJudge(["reject"])
+        changed, record = self._direct_verdict(
+            judge=judge, finding=finding, ledger=ledger,
+            state=LifecycleState.NEEDS_MORE,
+        )
+        assert judge.calls == 1  # 再試行なし
+        assert changed is True
+        assert record is not None
+        assert record.state == LifecycleState.INCONCLUSIVE_PARKED
+
+    def test_bad_json_retried_once_then_confirmed(self, tmp_path):
+        """壊れた JSON → judge を 1 回だけ再試行し、2 回目が正当なら
+        CONFIRMED に確定する。"""
+        ledger = CandidateLedger(tmp_path / "candidate_ledger.json")
+        finding = _payout_finding()
+        judge = _ScriptedPoCJudge(["bad_json", "positive"])
+        changed, record = self._direct_verdict(
+            judge=judge, finding=finding, ledger=ledger,
+            state=LifecycleState.NEEDS_MORE,
+        )
+        assert judge.calls == 2  # 1回失敗 + 1回再試行
+        assert changed is True
+        assert record is not None
+        assert record.state == LifecycleState.CONFIRMED
+        assert record.reason == "hybrid_confirmed"
+
+    def test_bad_json_twice_fail_closed_pending(self, tmp_path):
+        """壊れた JSON ×2 → 再試行も失敗 → ai=None → NEEDS_MORE
+        （ai_judgement_pending）。fail-closed・確定を偽装しない。"""
+        ledger = CandidateLedger(tmp_path / "candidate_ledger.json")
+        finding = _payout_finding()
+        judge = _ScriptedPoCJudge(["bad_json", "bad_json"])
+        changed, record = self._direct_verdict(
+            judge=judge, finding=finding, ledger=ledger,
+        )
+        assert judge.calls == 2  # 1回失敗 + 1回再試行（両方失敗）
+        assert changed is True
+        assert record is not None
+        assert record.state == LifecycleState.NEEDS_MORE
+        assert record.reason == "ai_judgement_pending"
+
+    @pytest.mark.asyncio
+    async def test_t3_pass_builds_checker_with_resolved_network_client(self, monkeypatch, tmp_path):
+        """承認E (2026-08-16): T3 pass の checker 構築は
+        network_client=self._resolve_request_client() を使う（B3/B4 で
+        network_client=None → disabled_no_client → reproduction_pending と
+        なった事象の再発防止）。AgentFactory 経由 dispatch では
+        set_network_client が呼ばれないため、フォールバックが必須。"""
+        ledger = CandidateLedger(tmp_path / "candidate_ledger.json")
+        finding = _payout_finding()
+        judge = _FakePoCJudge("positive")
+        # checker を注入しない → _t3_run_hybrid_pass が自前構築する
+        manager = self._manager(judge=judge, checker=None, ledger=ledger)
+
+        captured = {}
+
+        def spy_checker(**kwargs):
+            captured.update(kwargs)
+            return _FakeReproductionChecker("matched")
+
+        # SealedReproductionChecker は manager 内で関数内 import されるため、
+        # 正本モジュールの属性を patch する（関数内 import は実行時に
+        # モジュール属性を参照する）。
+        monkeypatch.setattr(
+            "src.core.validation.sealed_reproduction_checker.SealedReproductionChecker",
+            spy_checker,
+        )
+        await _run_dispatch(manager, phase2_findings=[finding])
+
+        assert captured.get("network_client") is not None
+        assert captured.get("scope_definition") is not None
+        assert captured.get("time_budget_seconds") == 600
 
     def test_terminal_record_skips_judgement(self, tmp_path):
         """Already terminal/parked findings are not judged again (no blind

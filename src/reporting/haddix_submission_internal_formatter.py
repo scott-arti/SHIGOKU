@@ -512,7 +512,16 @@ class HaddixSubmissionInternalFormatter(HaddixFormatter):
         return result
 
     def _canonical_status_for_finding(self, finding: HaddixFinding) -> Optional[str]:
-        """Canonical verdict status for a finding, or None (never confirmed)."""
+        """Canonical verdict status for a finding, or None (never confirmed).
+
+        SGK-2026-0452 (計装・承認済み 2026-08-16): canonical verdict の
+        マッチは従来どおり優先。マッチしない場合でも、T3 lifecycle が
+        ledger 上で真に confirmed に到達した finding
+        （``additional_info.hybrid_final_state == "confirmed"`` — 3条件AND:
+        payout_grade + poc_judge 正当受理 + reproduction matched 成立時のみ
+        設定）は confirmed として反映する。source of truth は ledger
+        （backfill・formatter 側の promotion ではない）。
+        """
         if getattr(self._vdp_canonical_summary, "source_kind", "") != "canonical_vdp":
             return None
         info = finding.additional_info if isinstance(finding.additional_info, dict) else {}
@@ -523,6 +532,8 @@ class HaddixSubmissionInternalFormatter(HaddixFormatter):
                 return verdict.status
             if hypothesis_id and verdict.hypothesis_id == hypothesis_id:
                 return verdict.status
+        if str(info.get("hybrid_final_state") or "").strip() == "confirmed":
+            return "confirmed"
         return None
 
     def _canonical_split(

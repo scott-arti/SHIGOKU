@@ -671,6 +671,10 @@ class Settings(BaseSettings):
     # error-based 発火プローブ・ノイズ除外・probe_sent/poc_request 記録）の
     # オプトイン (default off -> 既存 run は byte-identical。env SHIGOKU_SQLI_FIRING_PATH_ENABLED)
     sqli_firing_path_enabled: bool = False
+    # SGK-2026-0452: SQLi impact demonstration（boolean 差分オラクル / 非機微
+    # トークン抽出の実証プローブ）のオプトイン (default off -> 既存 run は
+    # byte-identical。env SHIGOKU_SQLI_IMPACT_PROBE_ENABLED)
+    sqli_impact_probe_enabled: bool = False
     # SGK-2026-0367: safety switches for injection ownership and Phase2 suppression
     injection_ownership_dedup_enabled: bool = True
     xss_no_signal_phase2_suppress_enabled: bool = True
