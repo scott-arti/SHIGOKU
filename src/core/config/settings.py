@@ -675,6 +675,11 @@ class Settings(BaseSettings):
     # トークン抽出の実証プローブ）のオプトイン (default off -> 既存 run は
     # byte-identical。env SHIGOKU_SQLI_IMPACT_PROBE_ENABLED)
     sqli_impact_probe_enabled: bool = False
+    # SGK-2026-0453: SQLi 防御回避カタログ（妨害検知 / 汎用すり抜け変形 /
+    # boolean オラクル抽出フォールバック）のオプトイン (default off -> 既存
+    # run は byte-identical。env SHIGOKU_SQLI_EVASION_CATALOG_ENABLED。
+    # firing ∧ impact の両 ON を要求)
+    sqli_evasion_catalog_enabled: bool = False
     # SGK-2026-0367: safety switches for injection ownership and Phase2 suppression
     injection_ownership_dedup_enabled: bool = True
     xss_no_signal_phase2_suppress_enabled: bool = True

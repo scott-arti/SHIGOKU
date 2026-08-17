@@ -11,7 +11,7 @@ related_docs:
   - AGENTS.md
 title: SHIGOKU Learnings
 created_at: '2026-06-26'
-updated_at: '2026-08-15'
+updated_at: '2026-08-18'
 ---
 
 # SHIGOKU Learnings
@@ -617,3 +617,6 @@ assert p is not None and p.bundle_id.startswith('bbp-'), f'unexpected: {p}'
 
 - [topic: report-session-consistency | when: finding_funnel_v1 の F5 / F4 から「検出された / されなかった」を判定する時] F5 は apply_verdict 後のライフサイクル状態（confirmed/refuted/parked/needs_human）の記録であり、F5:0 は検出 0 を意味しない。F4 reached の candidate がどの vuln_type かを session の finding_id → completed_tasks で追跡してから判定せよ。 verify: `python3 -c "import json; s=json.load(open('<session>')); [print(e['finding_id'], e['stages'].get('F4'), e.get('first_failure_reason')) for e in s['finding_funnel_v1']['entries']]"` と completed_tasks の vuln_type を突き合わせ
   detail: SGK-2026-0450 STEP3。manager.py:1215 付近で F5 emit は apply_verdict 後。3 run とも F5:0 だったが、F4 reached の candidate は cors_misconfiguration / broken_access_control で SQLi は 0（finding_id 追跡で判明）。F5:0 のみで「sql_error 候補なし」と断定するのは不足だった。
+
+- [topic: lessons | when: SQLi実害実証系タスク（D02等）で「確定バー5点を触らない」を保証する時] バー5点の実パスは payout_grade.py（injection/）・sealed_reproduction_checker.py（validation/）・poc_judge.md（prompts/roles/）・finding_validator.py（validation/）・task_queue.py（engine/・PCR-P1）で、poc_judge.md はコードでなくプロンプトファイル、sealed_reproduction_checker は validation/ 配下にある。`git diff --quiet HEAD` でこれら5パスが exit 0 であることを確認せよ。 verify: `git diff --quiet HEAD -- src/core/agents/swarm/injection/payout_grade.py src/core/validation/sealed_reproduction_checker.py src/prompts/roles/poc_judge.md src/core/validation/finding_validator.py src/core/engine/task_queue.py && echo OK`
+  detail: SGK-2026-0453（D02 Ver.1 フェーズ0・計画書 docs/shigoku/plans/2026-08-16_sgk-2026-0453_sqli-impact-demonstration-defense-evasion.md:34）。名前からの配置推測（sealed_reproduction_checker が reproduction/ 配下・poc_judge がコード）は誤りで、実配置は validation/ と prompts/roles/ だった。PCR-P1 は task_queue.py:382/426 の main-thread mutation 強制。AGENTS.md はバーの実パスを列挙しておらず、計画書とコードを読まないと特定できない。

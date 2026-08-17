@@ -274,21 +274,74 @@ def build_sqli_impact_and_reproduction_steps(
         if response_excerpt:
             response_excerpt = response_excerpt[:120]
         if expr and value:
-            impact_parts.append(
-                f"Non-sensitive token extraction: {expr} evaluated to '{value}' "
-                "and was observed in the response body, demonstrating information "
-                "disclosure of server metadata."
-            )
-            if probe:
-                step = (
-                    f"Send GET {request_url} with parameter '{param}' set to '{probe}'; "
-                    f"observed '{expr}' evaluated to '{value}' in the response body"
+            # SGK-2026-0453 (additive): the boolean-oracle fallback derives the
+            # token bit-by-bit from OBSERVED differentials — never claim it was
+            # "observed in the response body" (backfill labeling, AGENTS.md §8).
+            oracle_derived = str(extraction.get("method") or "") == "boolean_oracle"
+            if oracle_derived:
+                impact_parts.append(
+                    f"Non-sensitive token extraction (boolean oracle): {expr} "
+                    f"derived as '{value}' bit-by-bit from observed boolean "
+                    "differentials and confirmed by one directly observed "
+                    "differential, demonstrating information disclosure of "
+                    "server metadata."
                 )
+            else:
+                impact_parts.append(
+                    f"Non-sensitive token extraction: {expr} evaluated to '{value}' "
+                    "and was observed in the response body, demonstrating information "
+                    "disclosure of server metadata."
+                )
+            if probe:
+                if oracle_derived:
+                    step = (
+                        f"Send GET {request_url} with parameter '{param}' set to '{probe}'; "
+                        f"observed the boolean differential confirming '{expr}' = '{value}'"
+                    )
+                else:
+                    step = (
+                        f"Send GET {request_url} with parameter '{param}' set to '{probe}'; "
+                        f"observed '{expr}' evaluated to '{value}' in the response body"
+                    )
             else:
                 step = f"Observed '{expr}' evaluated to '{value}' in the response body"
             if response_excerpt:
                 step += f" (response excerpt: '{response_excerpt}')"
             steps.append(step + ".")
+
+    # SGK-2026-0453 (additive): win-route freeze — when the evasion catalog
+    # adopted a transformed probe, the reproduction steps are the observed
+    # send-order route (the deterministic fixed procedure that crossed the
+    # defense); its final step is the adopted probe URL the sealed
+    # reproduction checker replays. Nothing recorded -> byte-identical 0452.
+    evasion = records.get("evasion")
+    evasion = evasion if isinstance(evasion, dict) else {}
+    adopted = evasion.get("adopted")
+    route = evasion.get("route")
+    if isinstance(adopted, dict) and isinstance(route, list) and route:
+        interference = evasion.get("interference")
+        interference = interference if isinstance(interference, dict) else {}
+        verdict = str(interference.get("verdict") or "none")
+        if verdict in ("blocked", "stripped_suspected"):
+            impact_parts.append(
+                "Defense-evasion route: the injected request was first blocked "
+                "or stripped by input filtering; the generic transformation "
+                "catalog regained a deterministic signal through the fixed "
+                "procedure below."
+            )
+        else:
+            impact_parts.append(
+                "Defense-evasion route: the injected request regained a "
+                "deterministic signal through the fixed procedure below."
+            )
+        for entry in route:
+            entry_probe = str(entry.get("probe") or "").strip()
+            entry_observed = str(entry.get("observed") or "").strip()
+            if entry_probe:
+                steps.append(
+                    f"Send GET {request_url} with parameter '{param}' set to "
+                    f"'{entry_probe}'; observed {entry_observed}."
+                )
 
     impact = " ".join(impact_parts)
     return impact, steps

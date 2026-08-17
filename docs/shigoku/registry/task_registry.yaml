@@ -5474,6 +5474,21 @@ tasks:
   - docs/shigoku/plans/done/2026-08-15_sgk-2026-0451_smart-sqli-firing-path-fix.md
   - docs/shigoku/reports/2026-08-16_sgk-2026-0452_safe-sqli-impact-demonstration_work_report.md
   - docs/shigoku/worklogs/2026-08-16_sgk-2026-0452_safe-sqli-impact-demonstration_work_log.md
+- provisional_id: DOC-0508
+  task_id: SGK-2026-0453
+  doc_type: plan
+  title: SQLi実害実証の防御ありの相手への対応（D02・Ver.1：防御検知＋汎用すり抜け変形・決定的）
+  primary_doc: docs/shigoku/plans/done/2026-08-16_sgk-2026-0453_sqli-impact-demonstration-defense-evasion.md
+  status: done
+  provisional: false
+  task_summary: "0452のdeferred D02。実害実証プローブは注入文字列がそのままクエリに届く前提で、相手に入力の絞り込み/遮断が1つでもあると実証不成立。本タスク（D02のVer.1・ユーザー承認済みの案A）は、確定バーを1バイトも触らず、防御を汎用の変形で越えて確定まで持っていく力を決定的に実装する。3部品: (1)妨害の検知（遮断/文字削除/別応答を汎用signalで見分ける・fail-closed）、(2)汎用すり抜け変形の道具箱（危険語をコメントで割る/空白をコメント化/大小混在/コメント終端別種/符号化違い/条件言い換え・有限集合を決まった順で試し最初に決定的差を取り戻す変形を採用）、(3)読み取り内の抽出フォールバック（UNION不可でもboolean制御があればエラー経由or真偽1bitずつで非機微1トークン・時間差方式なし）。加えてVer.2（案B・応答を見て組み替える自律型）を差し込む拡張点（選択戦略の継ぎ目・勝ち筋凍結→再現手順機構・妨害検知/否定記録/変形カタログの共有）を今回作る。カーブフィッティング/製品固有焼き込み禁止（product-independence pass・token0）、判定は狩り側でなく独立3条件の門、勝ち筋を決定的手順に凍結して再現を守る、GET-only、機微データ抽出0、既定OFFバイト等価。どの防御つき相手で実証するかはフェーズ0で決定。バー5点（payout_grade/sealed_reproduction_checker/poc_judge/finding_validator/PCR-P1）diff0。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/roadmaps/2026-08-12_sgk-2026-0442_confirmation-and-candidate-lifecycle-program.md
+  - docs/shigoku/plans/done/2026-08-15_sgk-2026-0452_safe-sqli-impact-demonstration.md
+  - docs/shigoku/reports/2026-08-16_sgk-2026-0452_safe-sqli-impact-demonstration_work_report.md
+  - docs/shigoku/reports/2026-08-18_sgk-2026-0453_sqli-impact-demonstration-defense-evasion_work_report.md
+  - docs/shigoku/worklogs/2026-08-18_sgk-2026-0453_sqli-impact-demonstration-defense-evasion_work_log.md
 doc_type_allowed_values:
 - spec
 - roadmap

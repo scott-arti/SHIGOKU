@@ -461,3 +461,4 @@
 | SGK-2026-0450 | AIハンターの信頼化（tool-calling移行＋重複排除ガード＋LLM設定） | done | plan | SGK-2026-0442 | docs/shigoku/plans/done/2026-08-14_sgk-2026-0450_deterministic-error-based-sqli-detection.md |
 | SGK-2026-0451 | SmartSQLiHunter発火経路の修正（発見パラメータへerror-basedプローブを確実送信） | done | plan | SGK-2026-0442 | docs/shigoku/plans/done/2026-08-15_sgk-2026-0451_smart-sqli-firing-path-fix.md |
 | SGK-2026-0452 | SQLi候補の安全な実害実証でlive confirmed=1を出す（縦=depth・バー無改変） | done | plan | SGK-2026-0442 | docs/shigoku/plans/done/2026-08-15_sgk-2026-0452_safe-sqli-impact-demonstration.md |
+| SGK-2026-0453 | SQLi実害実証の防御ありの相手への対応（D02・Ver.1：防御検知＋汎用すり抜け変形・決定的） | done | plan | SGK-2026-0442 | docs/shigoku/plans/done/2026-08-16_sgk-2026-0453_sqli-impact-demonstration-defense-evasion.md |

