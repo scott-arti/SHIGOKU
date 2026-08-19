@@ -1,13 +1,16 @@
 ---
 task_id: SGK-2026-0454
 doc_type: plan
-status: active
+status: done
 parent_task_id: SGK-2026-0442
 related_docs:
 - docs/shigoku/roadmaps/2026-08-12_sgk-2026-0442_confirmation-and-candidate-lifecycle-program.md
 - docs/shigoku/plans/done/2026-08-16_sgk-2026-0453_sqli-impact-demonstration-defense-evasion.md
+- docs/shigoku/reports/2026-08-20_sgk-2026-0454_xss-dom-firing-path_work_report.md
+- docs/shigoku/worklogs/2026-08-20_sgk-2026-0454_xss-dom-firing-path_work_log.md
+- docs/shigoku/plans/2026-08-20_sgk-2026-0455_dom-xss-confirmation-routing.md
 created_at: '2026-08-18'
-updated_at: '2026-08-18'
+updated_at: '2026-08-20'
 tags:
 - shigoku
 - vdp
@@ -21,6 +24,14 @@ tags:
 ---
 
 # SGK-2026-0454 計画書 — XSSの発火経路是正（DOM実行検証の到達性・ブラウザ導入・プロキシ経由の回復）
+
+## 完了メモ（2026-08-20・status=done / 方針B）
+
+発火経路の是正は達成。Juice Shop の看板DOM XSS `/#/search?q=<img src=x onerror=alert(1)>` で、Caido(8081)経由・**本物のブラウザ上で実際に alert 発火を実観測**（`browser_execution.dialog_observed=true`, executor=playwright）。`attempt_traces` に `xss:dom_browser_validation` が実データで出現（C1）。バー5点 `git diff --quiet HEAD` 全 exit0（C5）、製品非依存 verdict=pass/token0（C6）、新規40+回帰107 pass（C7）、chromium導入＋明示ログ（C2）、proxy配線（C3）。コミット `94a083c`。
+
+未達は **C4（本物のXSSを confirmed に）**。実データ funnel で当該XSS finding（id 512d98c4bde8）は **F3(phase2) で `phase2_skipped_early_return` / `risk_not_met` / `phase2_on_empty_disabled` により脱落**し、確定判定(F5/F6)に到達していない（confirmed=0・Gateは正しく fail-closed）。原因は凍結したバー5点ではなく、その手前の phase2 昇格ロジックにある可能性が高い（要精密診断）。DeepSeekが当初挙げた「判定予算枯渇/poc_judge形式拒否」は funnel 実データと矛盾し、Claude 独立検証で否定（hypothesis 扱い）。
+
+方針B：本タスクは発火経路是正（C1/C2/C3/C5/C6/C7）で `done`。C4＝ブラウザ実行証拠の確定経路是正は後続 **SGK-2026-0455** へ分離（バー無改変・カーブフィッティング禁止を継承）。
 
 ## 目的（Objective）
 

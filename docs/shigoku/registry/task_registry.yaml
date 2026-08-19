@@ -5493,14 +5493,54 @@ tasks:
   task_id: SGK-2026-0454
   doc_type: plan
   title: XSSの発火経路是正（DOM実行検証の到達性・ブラウザ導入・プロキシ経由の回復）
-  primary_doc: docs/shigoku/plans/2026-08-18_sgk-2026-0454_xss-dom-runtime-firing-path.md
-  status: active
+  primary_doc: docs/shigoku/plans/done/2026-08-18_sgk-2026-0454_xss-dom-runtime-firing-path.md
+  status: done
   provisional: false
   task_summary: "XSSはSQLiより手前で複数箇所止まっている。実データ(session_20260816_223550)+コード読解+実起動テストで確定した3つの詰まりを是正する。①種類分けがDVWA専用目印(xss_r/xss_s/xss_d)頼みで、Juice Shopの実パスは全てgenericに落ち、ブラウザDOM実行検証(smart_xss.py:958,966 _validate_dom_runtime_xss)へ到達しない。②検証用chromiumが未導入で起動失敗、かつ可用性判定(playwright_validator.py:25-32)がモジュールimport可否だけを見て静かに素通り。③【デグレ】ブラウザ起動系にproxy=指定が無く、HTTP側(proxy_manager/settings.get_proxy_url settings.py:741)と違いCaidoを経由せず直結。是正は発火経路のみで確定バーは無改変。①は挙動ベースで製品非依存(check_vdp_product_independence pass/token0)、カーブフィッティング禁止。XSS確定は本物のブラウザ実行証拠を要求する現行の厳しさを維持。完了条件C1-C7、必須テストT1-T4、Juice ShopでCaido経由の実確定1件+整合consistentを要求。バー5点diff0。NOT in scope: Stored/POST XSS網羅・他種検出・Ver.2・バー設計変更。"
   parent_task_id: SGK-2026-0442
   related_docs:
   - docs/shigoku/roadmaps/2026-08-12_sgk-2026-0442_confirmation-and-candidate-lifecycle-program.md
   - docs/shigoku/plans/done/2026-08-16_sgk-2026-0453_sqli-impact-demonstration-defense-evasion.md
+  - docs/shigoku/reports/2026-08-20_sgk-2026-0454_xss-dom-firing-path_work_report.md
+  - docs/shigoku/worklogs/2026-08-20_sgk-2026-0454_xss-dom-firing-path_work_log.md
+  - docs/shigoku/plans/2026-08-20_sgk-2026-0455_dom-xss-confirmation-routing.md
+- provisional_id: DOC-0510
+  task_id: SGK-2026-0454
+  doc_type: work_report
+  title: XSSの発火経路是正 作業完了報告
+  primary_doc: docs/shigoku/reports/2026-08-20_sgk-2026-0454_xss-dom-firing-path_work_report.md
+  status: done
+  provisional: false
+  task_summary: "SGK-2026-0454 の作業完了報告。発火経路の3詰まり(到達性/可用性/proxy)を是正し、Juice ShopのDOM XSSが実ブラウザでalert発火するところまで到達(dialog_observed=true, Caido8081経由, 整合consistent)。C1/C2/C3/C5/C6/C7達成、バー5点diff0、製品非依存pass/token0、新規40+回帰107pass。confirmed=0(C4未達)はfunnel F3(phase2 risk_not_met)で脱落が原因でバー外の可能性が高く後続SGK-2026-0455へ分離。コミット94a083c。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/done/2026-08-18_sgk-2026-0454_xss-dom-runtime-firing-path.md
+  - docs/shigoku/worklogs/2026-08-20_sgk-2026-0454_xss-dom-firing-path_work_log.md
+  - docs/shigoku/plans/2026-08-20_sgk-2026-0455_dom-xss-confirmation-routing.md
+- provisional_id: DOC-0511
+  task_id: SGK-2026-0454
+  doc_type: work_log
+  title: XSSの発火経路是正 作業ログ
+  primary_doc: docs/shigoku/worklogs/2026-08-20_sgk-2026-0454_xss-dom-firing-path_work_log.md
+  status: done
+  provisional: false
+  task_summary: "SGK-2026-0454 の作業ログ。環境実測(Caido8081実転送)、STEP1-4の実行、Claude独立検証、DeepSeek報告の不正確箇所の訂正(テスト数59→40・確定ブロック理由・8080→8081)を時系列で記録。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/done/2026-08-18_sgk-2026-0454_xss-dom-runtime-firing-path.md
+  - docs/shigoku/reports/2026-08-20_sgk-2026-0454_xss-dom-firing-path_work_report.md
+- provisional_id: DOC-0512
+  task_id: SGK-2026-0455
+  doc_type: plan
+  title: DOM XSSのブラウザ実行証拠を確定まで運ぶ（confirmation routing是正）
+  primary_doc: docs/shigoku/plans/2026-08-20_sgk-2026-0455_dom-xss-confirmation-routing.md
+  status: active
+  provisional: false
+  task_summary: "SGK-2026-0454で発火経路は是正され実ブラウザでalert発火するが、当該XSS finding(512d98c4bde8)はfunnel F3(phase2)のrisk_not_met/phase2_on_empty_disabledで脱落し確定判定(F5/F6)へ未到達=confirmed=0。本タスクは確定バーを緩めずにブラウザ実行証拠を確定まで運ぶ経路是正。フェーズ0でF3昇格ロジックの所有コードを引用特定し、バー5点無改変での是正を第一候補に、不可避時のみユーザー承認でバー設計変更。完了条件C1-C5・必須テストT1-T3。製品非依存維持・カーブフィッティング禁止・本物のブラウザ実行証拠要求は維持。Caido=8081。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/roadmaps/2026-08-12_sgk-2026-0442_confirmation-and-candidate-lifecycle-program.md
+  - docs/shigoku/plans/done/2026-08-18_sgk-2026-0454_xss-dom-runtime-firing-path.md
 doc_type_allowed_values:
 - spec
 - roadmap

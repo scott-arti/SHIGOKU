@@ -462,4 +462,5 @@
 | SGK-2026-0451 | SmartSQLiHunter発火経路の修正（発見パラメータへerror-basedプローブを確実送信） | done | plan | SGK-2026-0442 | docs/shigoku/plans/done/2026-08-15_sgk-2026-0451_smart-sqli-firing-path-fix.md |
 | SGK-2026-0452 | SQLi候補の安全な実害実証でlive confirmed=1を出す（縦=depth・バー無改変） | done | plan | SGK-2026-0442 | docs/shigoku/plans/done/2026-08-15_sgk-2026-0452_safe-sqli-impact-demonstration.md |
 | SGK-2026-0453 | SQLi実害実証の防御ありの相手への対応（D02・Ver.1：防御検知＋汎用すり抜け変形・決定的） | done | plan | SGK-2026-0442 | docs/shigoku/plans/done/2026-08-16_sgk-2026-0453_sqli-impact-demonstration-defense-evasion.md |
-| SGK-2026-0454 | XSSの発火経路是正（DOM実行検証の到達性・ブラウザ導入・プロキシ経由の回復） | active | plan | SGK-2026-0442 | docs/shigoku/plans/2026-08-18_sgk-2026-0454_xss-dom-runtime-firing-path.md |
+| SGK-2026-0454 | XSSの発火経路是正（DOM実行検証の到達性・ブラウザ導入・プロキシ経由の回復） | done | plan | SGK-2026-0442 | docs/shigoku/plans/done/2026-08-18_sgk-2026-0454_xss-dom-runtime-firing-path.md |
+| SGK-2026-0455 | DOM XSSのブラウザ実行証拠を確定まで運ぶ（confirmation routing是正・バー無改変） | active | plan | SGK-2026-0442 | docs/shigoku/plans/2026-08-20_sgk-2026-0455_dom-xss-confirmation-routing.md |
