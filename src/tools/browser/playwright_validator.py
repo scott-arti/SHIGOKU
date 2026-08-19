@@ -1,9 +1,62 @@
 
 import logging
 import asyncio
+from pathlib import Path
 from typing import Optional, List, Dict, Any
+from urllib.parse import urlparse, unquote
 
 logger = logging.getLogger(__name__)
+
+
+def build_playwright_proxy_config(proxy_url: Optional[str]) -> Optional[Dict[str, str]]:
+    """settings.get_proxy_url() の URL を Playwright の proxy 引数形式へ変換する。
+
+    - 未設定（None/空文字）は None を返す。呼び出し側は proxy 引数を渡さない＝直結（後方互換）。
+    - 資格情報付き URL（http://user:pass@host:port）は server から分離し、
+      username/password へ渡す。server に生資格情報を埋め込まない。
+    - ログには資格情報を含む URL をそのまま出力しない（userinfo をマスク）。
+    """
+    if not proxy_url:
+        return None
+    try:
+        parsed = urlparse(proxy_url)
+    except ValueError:
+        logger.warning(
+            "[Headless] Invalid proxy URL ignored (browser stays direct): %s",
+            _redact_proxy_url(proxy_url),
+        )
+        return None
+    if not parsed.scheme or not parsed.hostname:
+        logger.warning(
+            "[Headless] Invalid proxy URL ignored (browser stays direct): %s",
+            _redact_proxy_url(proxy_url),
+        )
+        return None
+
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    config: Dict[str, str] = {"server": f"{parsed.scheme}://{parsed.hostname}:{port}"}
+    if parsed.username:
+        config["username"] = unquote(parsed.username)
+    if parsed.password:
+        config["password"] = unquote(parsed.password)
+    return config
+
+
+def _redact_proxy_url(proxy_url: Optional[str]) -> str:
+    """ログ用に userinfo をマスクした proxy URL を返す（生資格情報を出さない）。"""
+    if not proxy_url:
+        return ""
+    try:
+        parsed = urlparse(proxy_url)
+        if parsed.username or parsed.password:
+            host = parsed.hostname or ""
+            if parsed.port:
+                host = f"{host}:{parsed.port}"
+            return f"{parsed.scheme}://***@{host}"
+    except ValueError:
+        pass
+    return str(proxy_url)
+
 
 class PlaywrightValidator:
     """
@@ -15,6 +68,8 @@ class PlaywrightValidator:
     
     def __init__(self):
         self._is_available = self._check_availability()
+        # SGK-2026-0454: 直前の検証で実測されたブラウザ実行ログ（dialog/console）。
+        self._last_observation_logs: List[Dict[str, str]] = []
         self._browser_args = [
             "--no-sandbox",
             "--disable-setuid-sandbox",
@@ -22,18 +77,63 @@ class PlaywrightValidator:
             "--disable-gpu"
         ]
 
+    @staticmethod
+    def _browser_binary_exists() -> bool:
+        """Playwright が管理する chromium ブラウザ実体が存在するか確認する。
+
+        デフォルトのキャッシュディレクトリ（PLAYWRIGHT_BROWSERS_PATH があればそれ）配下で、
+        chromium 系の実行ファイル（chrome-headless-shell / chrome / chromium / headless_shell）を探す。
+        """
+        import os
+        cache_root = os.environ.get("PLAYWRIGHT_BROWSERS_PATH") or str(Path.home() / ".cache" / "ms-playwright")
+        root = Path(cache_root)
+        if not root.is_dir():
+            return False
+        marker_names = ("chrome-headless-shell", "headless_shell", "chrome", "chromium")
+        try:
+            for entry in root.iterdir():
+                if not entry.is_dir():
+                    continue
+                if not any(marker in entry.name for marker in marker_names):
+                    continue
+                for exe in entry.rglob("*"):
+                    if exe.is_file() and exe.name in marker_names:
+                        return True
+        except OSError:
+            return False
+        return False
+
     def _check_availability(self) -> bool:
-        """Playwright モジュールの存在確認"""
+        """Playwright モジュールと chromium ブラウザ実体の両方の存在確認"""
         try:
             from playwright.async_api import async_playwright
-            return True
         except ImportError:
             logger.warning("[Headless] Playwright module not found. Browser verification will be skipped.")
             return False
+        if not self._browser_binary_exists():
+            logger.warning(
+                "[Headless] Playwright module found but no chromium browser binary installed. "
+                "Browser verification will be skipped. Run: .venv/bin/python -m playwright install chromium"
+            )
+            return False
+        return True
 
     @property
     def is_available(self) -> bool:
         return self._is_available
+
+    def _proxy_config(self) -> Optional[Dict[str, str]]:
+        """settings.get_proxy_url() を正本に、Playwright proxy 引数を生成する。
+
+        プロキシ未設定（get_proxy_url() が None/空）の場合は None を返し、
+        呼び出し側は proxy 引数を渡さない（直結・後方互換）。
+        資格情報は server から分離され、ログに生値を出さない。
+        """
+        try:
+            from src.core.config.settings import get_settings
+            return build_playwright_proxy_config(get_settings().get_proxy_url())
+        except ImportError:
+            return None
 
     async def validate_xss(self, url: str, timeout: float = 10.0, cookies: Optional[List[Dict[str, Any]]] = None) -> bool:
         """
@@ -56,19 +156,27 @@ class PlaywrightValidator:
             return False
         
         xss_triggered = False
+        # SGK-2026-0454: 実測されたブラウザ実行ログ（dialog 発火時の観測内容）。
+        # judge が「実測のブラウザ実行証拠」を評価できるよう、発火時に観測された
+        # 具体内容（type/message）を構造化して返す（捏造なし・実測の記録のみ）。
+        observed_logs: List[Dict[str, str]] = []
         
         try:
             async with async_playwright() as p:
-                browser = await p.chromium.launch(
-                    headless=True,
-                    args=self._browser_args
-                )
+                _proxy = self._proxy_config()
+                _launch_kwargs: Dict[str, Any] = {"headless": True, "args": self._browser_args}
+                if _proxy:
+                    _launch_kwargs["proxy"] = _proxy
+                browser = await p.chromium.launch(**_launch_kwargs)
                 
                 # コンテキスト作成
-                context = await browser.new_context(
-                    ignore_https_errors=True,
-                    user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                )
+                _context_kwargs: Dict[str, Any] = {
+                    "ignore_https_errors": True,
+                    "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                }
+                if _proxy:
+                    _context_kwargs["proxy"] = _proxy
+                context = await browser.new_context(**_context_kwargs)
                 
                 if cookies:
                     await context.add_cookies(cookies)
@@ -80,6 +188,11 @@ class PlaywrightValidator:
                     nonlocal xss_triggered
                     # alert, confirm, prompt などを検知
                     logger.info(f"[Headless] Dialog detected! Type: {dialog.type}, Message: {dialog.message}")
+                    observed_logs.append({
+                        "type": "dialog",
+                        "dialog_type": str(dialog.type),
+                        "message": str(dialog.message),
+                    })
                     xss_triggered = True
                     await dialog.dismiss()
                     
@@ -91,6 +204,10 @@ class PlaywrightValidator:
                     # 'SHIGOKU_XSS_CONFIRMED' という文字列が含まれていれば発火とみなす
                     if "SHIGOKU_XSS_CONFIRMED" in msg.text:
                         logger.info(f"[Headless] XSS Confirmed via console log: {msg.text}")
+                        observed_logs.append({
+                            "type": "console",
+                            "message": str(msg.text),
+                        })
                         xss_triggered = True
                 
                 page.on("console", handle_console)
@@ -115,6 +232,8 @@ class PlaywrightValidator:
             logger.error(f"[Headless] Browser launch failed: {e}")
             return False
             
+        if xss_triggered:
+            self._last_observation_logs = observed_logs
         return xss_triggered
 
     async def validate_xss_with_form(
@@ -142,15 +261,19 @@ class PlaywrightValidator:
         
         try:
             async with async_playwright() as p:
-                browser = await p.chromium.launch(
-                    headless=True,
-                    args=self._browser_args
-                )
+                _proxy = self._proxy_config()
+                _launch_kwargs: Dict[str, Any] = {"headless": True, "args": self._browser_args}
+                if _proxy:
+                    _launch_kwargs["proxy"] = _proxy
+                browser = await p.chromium.launch(**_launch_kwargs)
                 
-                context = await browser.new_context(
-                    ignore_https_errors=True,
-                    user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                )
+                _context_kwargs: Dict[str, Any] = {
+                    "ignore_https_errors": True,
+                    "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                }
+                if _proxy:
+                    _context_kwargs["proxy"] = _proxy
+                context = await browser.new_context(**_context_kwargs)
                 
                 if cookies:
                     await context.add_cookies(cookies)
@@ -234,8 +357,15 @@ class PlaywrightValidator:
         forms = []
         try:
             async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=True, args=self._browser_args)
-                context = await browser.new_context(ignore_https_errors=True)
+                _proxy = self._proxy_config()
+                _launch_kwargs: Dict[str, Any] = {"headless": True, "args": self._browser_args}
+                if _proxy:
+                    _launch_kwargs["proxy"] = _proxy
+                browser = await p.chromium.launch(**_launch_kwargs)
+                _context_kwargs: Dict[str, Any] = {"ignore_https_errors": True}
+                if _proxy:
+                    _context_kwargs["proxy"] = _proxy
+                context = await browser.new_context(**_context_kwargs)
                 if cookies:
                     await context.add_cookies(cookies)
                 page = await context.new_page()
@@ -281,8 +411,15 @@ class PlaywrightValidator:
         found = False
         try:
             async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=True, args=self._browser_args)
-                context = await browser.new_context(ignore_https_errors=True)
+                _proxy = self._proxy_config()
+                _launch_kwargs: Dict[str, Any] = {"headless": True, "args": self._browser_args}
+                if _proxy:
+                    _launch_kwargs["proxy"] = _proxy
+                browser = await p.chromium.launch(**_launch_kwargs)
+                _context_kwargs: Dict[str, Any] = {"ignore_https_errors": True}
+                if _proxy:
+                    _context_kwargs["proxy"] = _proxy
+                context = await browser.new_context(**_context_kwargs)
                 if cookies:
                     await context.add_cookies(cookies)
                 page = await context.new_page()
@@ -326,8 +463,15 @@ class PlaywrightValidator:
         
         try:
             async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=True, args=self._browser_args)
-                context = await browser.new_context(ignore_https_errors=True)
+                _proxy = self._proxy_config()
+                _launch_kwargs: Dict[str, Any] = {"headless": True, "args": self._browser_args}
+                if _proxy:
+                    _launch_kwargs["proxy"] = _proxy
+                browser = await p.chromium.launch(**_launch_kwargs)
+                _context_kwargs: Dict[str, Any] = {"ignore_https_errors": True}
+                if _proxy:
+                    _context_kwargs["proxy"] = _proxy
+                context = await browser.new_context(**_context_kwargs)
                 if cookies:
                     await context.add_cookies(cookies)
                 page = await context.new_page()
@@ -403,10 +547,17 @@ class PlaywrightValidator:
         is_vulnerable = False
         try:
             async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=True, args=self._browser_args)
+                _proxy = self._proxy_config()
+                _launch_kwargs: Dict[str, Any] = {"headless": True, "args": self._browser_args}
+                if _proxy:
+                    _launch_kwargs["proxy"] = _proxy
+                browser = await p.chromium.launch(**_launch_kwargs)
                 # CSRFシミュレーションなので、通常の認証クッキーを持たせつつ、
                 # アタッカー由来の別のコンテキスト（例えばattacker.com）からリクエストを送るような擬似環境を作る
-                context = await browser.new_context(ignore_https_errors=True)
+                _context_kwargs: Dict[str, Any] = {"ignore_https_errors": True}
+                if _proxy:
+                    _context_kwargs["proxy"] = _proxy
+                context = await browser.new_context(**_context_kwargs)
                 if cookies:
                     # 認証クッキーをSameSite=None等の条件で無理やりセットするか、対象ドメインにセットする
                     await context.add_cookies(cookies)

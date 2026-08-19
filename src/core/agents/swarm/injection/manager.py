@@ -3809,6 +3809,10 @@ class InjectionManagerAgent(BaseManagerAgent):
             elif vuln_type == "xss":
                 self._mark_attempt_trace(trace_context, "xss:start")
                 xss_result = await self.run_xss_hunter(url=url, params=base_params, quick_mode=quick_mode)
+                # SGK-2026-0454 (recording-only): DOM ブラウザ実行検証へ到達した場合のみ
+                # attempt_traces に段階を1件 mark する。攻撃・判定・確定ロジックには触れない。
+                if getattr(self.specialists.get("xss"), "_dom_browser_validation_attempted", False):
+                    self._mark_attempt_trace(trace_context, "xss:dom_browser_validation")
                 findings_count = xss_result.get("findings_count", 0)
                 tested_params = sanitize_tested_params(xss_result.get("tested_params", []), excluded_params=self.EXCLUDED_TESTED_PARAMS)
                 findings_list = self.current_context["findings"][-findings_count:] if findings_count > 0 else []

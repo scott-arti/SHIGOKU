@@ -103,8 +103,27 @@ class _ManagedBrowser:
         if not _PLAYWRIGHT_AVAILABLE:
             return
         self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.launch(headless=True)
+        _launch_kwargs: Dict[str, Any] = {"headless": True}
+        proxy_cfg = self._build_proxy_config()
+        if proxy_cfg:
+            _launch_kwargs["proxy"] = proxy_cfg
+        self._browser = await self._playwright.chromium.launch(**_launch_kwargs)
         logger.debug("[BrowserPool] Browser started (slot=%d)", self.slot_id)
+
+    @staticmethod
+    def _build_proxy_config() -> Optional[Dict[str, str]]:
+        """settings.get_proxy_url() を正本に、Playwright proxy 引数を生成する。
+
+        playwright_validator.build_playwright_proxy_config と同一の変換ロジックを
+        再利用する。未設定時は None（proxy 引数を渡さない＝直結・後方互換）。
+        資格情報は server から分離され、ログに生値を出さない。
+        """
+        try:
+            from src.tools.browser.playwright_validator import build_playwright_proxy_config
+            from src.core.config.settings import get_settings
+            return build_playwright_proxy_config(get_settings().get_proxy_url())
+        except ImportError:
+            return None
 
     async def stop(self) -> None:
         """ブラウザを停止"""

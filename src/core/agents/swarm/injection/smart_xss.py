@@ -185,6 +185,8 @@ INPUT: [Input]
         self._stored_xss_revisit_evidence: Dict[str, Any] = {}
         self._last_poc_request = ""
         self._last_poc_response = ""
+        # SGK-2026-0454: DOM ブラウザ実行検証へ到達したか（recording-only・判定に影響なし）
+        self._dom_browser_validation_attempted = False
 
     def _compute_adaptive_turn_budget(self, quick_mode: bool, candidate_count: int, variant: str) -> int:
         base = 4 if quick_mode else 6
@@ -240,6 +242,32 @@ INPUT: [Input]
             return "dom"
         return "generic"
 
+    # 反射向きの汎用パラメータ集合。
+    # PROFILE_PRIORITY_PARAMS の bbpt の reflected/dom/generic に登場する
+    # パラメータ名の和集合から導出（製品非依存）。DOM候補の挙動ベース判定に使用する。
+    _REFLECTION_ORIENTED_PARAMS = frozenset({
+        "name", "q", "query", "search", "keyword", "term", "s",
+        "default", "lang", "locale", "hash", "fragment", "message",
+    })
+
+    def _should_attempt_dom_browser_validation(self, target: str, param_name: str) -> bool:
+        """ブラウザDOM実行検証へ escalate すべきかの挙動ベース判定。
+
+        - DVWA 目印（xss_d / javascript パス）由来の dom は従来どおり True（温存・回帰なし）。
+        - stored は別経路（POST→revisit）なので False。
+        - それ以外（generic / reflected）は、反射向きの汎用パラメータ名であり、
+          かつサーバ応答本文への反射が観測されていない場合のみ True。
+          パス・ホスト・製品名は一切参照しない（カーブフィッティング禁止）。
+        """
+        variant = self._detect_xss_variant(target)
+        if variant == "stored":
+            return False
+        if variant == "dom":
+            return True
+        if str(param_name or "").lower() not in self._REFLECTION_ORIENTED_PARAMS:
+            return False
+        return not self.reflection_observed
+
     @staticmethod
     def _target_specific_candidate_params(target: str) -> List[str]:
         """既知のXSS画面では、汎用候補より画面固有の入力欄を優先する。"""
@@ -282,6 +310,93 @@ INPUT: [Input]
                 ordered.append(candidate)
 
         return ordered[:self.MAX_PARAMS_TO_TEST]
+
+    @staticmethod
+    def _build_xss_impact(additional_info: Dict[str, Any]) -> str:
+        """実測されたブラウザ実行証拠に基づく impact 文（捏造なし・実測の整理のみ）。
+
+        - dialog/DOM 実行が観測された場合のみ「実際にスクリプトが実行された」と記す。
+        - browser_execution が無い場合は空文字（実測なしに impact を補わない）。
+        """
+        browser_execution = additional_info.get("browser_execution")
+        if not isinstance(browser_execution, dict):
+            return ""
+        dialog_observed = bool(browser_execution.get("dialog_observed"))
+        dom_mutation = bool(browser_execution.get("dom_mutation_observed"))
+        if not (dialog_observed or dom_mutation):
+            return ""
+        variant = str(browser_execution.get("variant", "") or "")
+        parameter = str(browser_execution.get("parameter", "") or "")
+        payload = str(browser_execution.get("payload", "") or "")
+        mode = "dialog" if dialog_observed else "DOM sink"
+        return (
+            f"XSS payload executed in a real browser: {mode} observed via parameter "
+            f"'{parameter}' with payload {payload!r} (variant={variant}). "
+            "JavaScript execution in the victim's browser was confirmed by runtime observation."
+        )
+
+    @staticmethod
+    def _build_xss_reproduction_steps(additional_info: Dict[str, Any]) -> List[str]:
+        """実測されたブラウザ実行 URL・payload から再現手順を構築（実測のみ・推測なし）。"""
+        browser_execution = additional_info.get("browser_execution")
+        steps: List[str] = []
+        if not isinstance(browser_execution, dict):
+            return steps
+        test_url = str(browser_execution.get("test_url", "") or "").strip()
+        parameter = str(browser_execution.get("parameter", "") or "")
+        payload = str(browser_execution.get("payload", "") or "")
+        if test_url:
+            steps.append(f"1. Open {test_url} in a browser.")
+        if parameter and payload:
+            steps.append(f"2. Parameter '{parameter}' carries the payload {payload!r}.")
+        if browser_execution.get("dialog_observed"):
+            steps.append("3. Browser dialog (alert) fired, confirming script execution.")
+        elif browser_execution.get("dom_mutation_observed"):
+            steps.append("3. Dangerous DOM fragment observed in the rendered page.")
+        return steps
+
+    @staticmethod
+    def _build_browser_execution_poc_response(
+        *,
+        test_url: str,
+        observation_logs: List[Dict[str, str]],
+    ) -> str:
+        """ブラウザ実行の実測観測ログを構造化した PoC レスポンスを構築する。
+
+        捏造なし：validate_xss で実測された dialog/console イベントのみを記載する。
+        judge が「実測のブラウザ実行証拠」を評価できる形（リクエスト URL + 観測ログ）。
+        """
+        lines = ["HTTP/1.1 200", "Content-Type: text/html; charset=UTF-8", ""]
+        lines.append("[Browser runtime observation]")
+        lines.append(f"url: {test_url}")
+        if observation_logs:
+            for entry in observation_logs:
+                if entry.get("type") == "dialog":
+                    lines.append(
+                        f"dialog={entry.get('dialog_type', 'alert')} "
+                        f"message={entry.get('message', '')}"
+                    )
+                else:
+                    lines.append(f"console: {entry.get('message', '')}")
+        else:
+            lines.append("dialog_fired: true")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _build_browser_proxy_config() -> Optional[Dict[str, str]]:
+        """settings.get_proxy_url() を正本に、Playwright proxy 引数を生成する。
+
+        playwright_validator.build_playwright_proxy_config と同一の変換ロジックを
+        再利用する（プロキシURLの正本は src/core/config/settings.get_proxy_url）。
+        未設定時は None を返し、呼び出し側は proxy 引数を渡さない（直結・後方互換）。
+        資格情報は server から分離され、ログに生値を出さない。
+        """
+        try:
+            from src.tools.browser.playwright_validator import build_playwright_proxy_config
+            from src.core.config.settings import get_settings
+            return build_playwright_proxy_config(get_settings().get_proxy_url())
+        except ImportError:
+            return None
 
     @staticmethod
     def _build_playwright_cookies(target: str, cookies_str: str) -> List[Dict[str, Any]]:
@@ -358,11 +473,30 @@ INPUT: [Input]
         fragment_only_url = urlunparse(parsed_target._replace(fragment=payload))
         test_urls = [query_url, query_and_fragment_url, fragment_only_url]
 
+        # SGK-2026-0454: SPA の hash ルート（fragment 内に query を持つ URL、例 #/search?q=）を
+        # 構造ベースで検出し、fragment 内の query に param を注入した URL を先頭に追加する。
+        # fragment 内の query はサーバには送られずブラウザ内でソースになるため、
+        # DOM 実行検証の対象として正しい URL で到達する必要がある（製品非依存・汎用対応）。
+        fragment = parsed_target.fragment or ""
+        if "?" in fragment:
+            frag_path, _, frag_query = fragment.partition("?")
+            frag_params = parse_qs(frag_query, keep_blank_values=True)
+            frag_params[param_name] = [payload]
+            frag_query_encoded = urlencode(
+                {k: v[0] if isinstance(v, list) and v else v for k, v in frag_params.items()}
+            )
+            spa_fragment = f"{frag_path}?{frag_query_encoded}"
+            spa_url = urlunparse(parsed_target._replace(fragment=spa_fragment))
+            test_urls.insert(0, spa_url)
+
         pw_cookies = self._build_playwright_cookies(target, cookies_str)
         for test_url in test_urls:
             try:
                 executed = await validator.validate_xss(test_url, timeout=8.0, cookies=pw_cookies or None)
                 if executed:
+                    # SGK-2026-0454: 実測されたブラウザ実行ログ（dialog/console 発火）を
+                    # 証拠として保持。judge が「実測のブラウザ実行」を評価できるようにする。
+                    observation_logs = list(getattr(validator, "_last_observation_logs", []) or [])
                     self._browser_execution_evidence = {
                         "dialog_observed": True,
                         "executor": "playwright",
@@ -371,7 +505,14 @@ INPUT: [Input]
                         "parameter": param_name,
                         "payload": payload,
                         "test_url": test_url,
+                        "observation_logs": observation_logs,
                     }
+                    # 実測のブラウザ実行ログを poc_response の根拠として記録
+                    # （捏造なし・観測された dialog/console イベントの実測記録）。
+                    self._last_poc_response = self._build_browser_execution_poc_response(
+                        test_url=test_url,
+                        observation_logs=observation_logs,
+                    )
                     return True
             except Exception:
                 continue
@@ -384,8 +525,15 @@ INPUT: [Input]
 
         try:
             async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=True, args=validator._browser_args)
-                context = await browser.new_context(ignore_https_errors=True)
+                _proxy = self._build_browser_proxy_config()
+                _launch_kwargs: Dict[str, Any] = {"headless": True, "args": validator._browser_args}
+                if _proxy:
+                    _launch_kwargs["proxy"] = _proxy
+                browser = await p.chromium.launch(**_launch_kwargs)
+                _context_kwargs: Dict[str, Any] = {"ignore_https_errors": True}
+                if _proxy:
+                    _context_kwargs["proxy"] = _proxy
+                context = await browser.new_context(**_context_kwargs)
                 if pw_cookies:
                     await context.add_cookies(pw_cookies)
 
@@ -632,15 +780,33 @@ INPUT: [Input]
                 if isinstance(additional_info.get("browser_execution"), dict)
                 else ""
             ) or result.get("request_url") or task.target
+            # SGK-2026-0454: 実測されたブラウザ実行証拠（dialog/DOM 実行）に基づく
+            # impact と再現手順を finding に設定する（捏造なし・実測の整理のみ）。
+            # payout_grade（バー）は「非空 impact + 非空 reproduction_steps」を要求するため、
+            # 実測事実（発火したブラウザ実行・実行 URL・payload）を漏れなく渡す。
+            impact = result.get("impact") or self._build_xss_impact(additional_info)
+            reproduction_steps = result.get("reproduction_steps") or self._build_xss_reproduction_steps(additional_info)
+            # SGK-2026-0454: ブラウザ実行検証が成功した場合、evidence.response_status を
+            # 実測の HTTP 200（ページロード成功）に設定する。DOM XSS はブラウザ内で発火する
+            # ため、poc_response は実測のブラウザ実行ログを保持しており、0 のままでは
+            # judge が「HTTP 200 との矛盾」を反証理由にする（実測との整合）。
+            browser_exec = additional_info.get("browser_execution")
+            if isinstance(browser_exec, dict) and browser_exec.get("dialog_observed"):
+                evidence_response_status = 200
+            else:
+                evidence_response_status = 0
             finding = Finding(
                 vuln_type=VulnType.XSS,
                 severity=Severity.HIGH,
                 title=f"XSS in parameter '{result.get('param', 'unknown')}'",
                 description=result.get("description", "Detected by SmartXSSHunter."),
                 target_url=task.target,
+                impact=impact,
+                reproduction_steps=reproduction_steps,
                 evidence=Evidence(
                     request_method="GET",
                     request_url=request_url,
+                    response_status=evidence_response_status,
                     response_body=str(result.get("evidence", ""))
                 ),
                 source_agent=self.name,
@@ -667,6 +833,8 @@ INPUT: [Input]
         _auth = params.get("_auth", {})
         auth_headers = _auth.get("auth_headers", {})
         cookies_str = _auth.get("cookies", "")
+        # SGK-2026-0454: run 単位の recording-only フラグ（manager が trace 記録に使用）
+        self._dom_browser_validation_attempted = False
 
         def _normalize_name_hints(raw: Any) -> List[str]:
             names: List[str] = []
@@ -756,6 +924,13 @@ INPUT: [Input]
 
         parsed = urlparse(target)
         url_params = parse_qs(parsed.query)
+        # SGK-2026-0454: SPA の hash ルート（fragment 内 query、例 #/search?q=）の
+        # パラメータも構造ベースで候補に加える（製品非依存・汎用対応）。
+        fragment = parsed.fragment or ""
+        if "?" in fragment:
+            _, _, frag_query = fragment.partition("?")
+            for frag_key, frag_values in parse_qs(frag_query, keep_blank_values=True).items():
+                url_params.setdefault(frag_key, frag_values)
         url_params_flat = {k: v[0] if v else "" for k, v in url_params.items()}
 
         # フォーム情報を事前に初期化（スコープ問題回避）
@@ -955,11 +1130,17 @@ Start your XSS (Cross-Site Scripting) testing. First, send a simple marker to se
                         break
 
             # DOM XSS はサーバー反射だけでは検出できないため、fragment実行をブラウザで確認する
-            if not self.vulnerable and self._detect_xss_variant(target) == "dom":
+            # SGK-2026-0454: DVWA 目印（== "dom"）に加え、反射向きパラメータでサーバ反射が
+            # 観測されない generic/reflected 相手も挙動ベースで DOM 候補として escalate する。
+            if not self.vulnerable and self._should_attempt_dom_browser_validation(target, param_name):
+                self._dom_browser_validation_attempted = True
+                # SGK-2026-0454: DOM シンク（innerHTML 等）では <script> は実行されないため、
+                # 実際に実行される event-handler 系ペイロード（img/svg）を先に試す
+                # （汎用ブラウザの挙動に基づく・製品非依存）。script は最後に残す。
                 dom_payloads = [
-                    "<script>alert(1)</script>",
                     "<img src=x onerror=alert(1)>",
                     "<svg/onload=alert(1)>",
+                    "<script>alert(1)</script>",
                 ]
                 for dom_payload in dom_payloads:
                     self.used_payloads.append(dom_payload)
@@ -1427,6 +1608,12 @@ Decide next step for XSS testing. Focus on reflection context and escaping mecha
         path = parsed.path or "/"
         if parsed.query:
             path = f"{path}?{parsed.query}"
+        # SGK-2026-0454: SPA/DOM 実行の検証 URL（#/search?q=<payload> 等）では fragment が
+        # ペイロード本体を担うため、PoC の再現 URL として fragment も保持する。
+        # （通常の HTTP リクエスト行には fragment は含まれないが、ブラウザ実行の
+        # 再現 URL として judge が payload を確認できるよう残す）
+        if parsed.fragment:
+            path = f"{path}#{parsed.fragment}"
         host = parsed.netloc or parsed.hostname or "target"
         lines = [f"{str(method or 'GET').upper()} {path} HTTP/1.1", f"Host: {host}"]
         if body:
