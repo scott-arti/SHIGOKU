@@ -187,6 +187,9 @@ INPUT: [Input]
         self._last_poc_response = ""
         # SGK-2026-0454: DOM ブラウザ実行検証へ到達したか（recording-only・判定に影響なし）
         self._dom_browser_validation_attempted = False
+        # SGK-2026-0456: dialog 非観測で DOM mutation のみ観測された最良の証拠。
+        # param ループの打ち切りは dialog 発火のみ（弱い証拠では打ち切らない）。
+        self._best_dom_mutation_evidence: Optional[Dict[str, Any]] = None
 
     def _compute_adaptive_turn_budget(self, quick_mode: bool, candidate_count: int, variant: str) -> int:
         base = 4 if quick_mode else 6
@@ -472,6 +475,17 @@ INPUT: [Input]
         query_and_fragment_url = urlunparse(parsed_target._replace(query=query_encoded, fragment=payload))
         fragment_only_url = urlunparse(parsed_target._replace(fragment=payload))
         test_urls = [query_url, query_and_fragment_url, fragment_only_url]
+
+        # SGK-2026-0456: SPA の hash ルートはサーバ側 URL の path+query をフラグメントへ移した形
+        # （例: /search?q=test&name=x と param=name から http://host/#/search?q=test&name=<payload>）を取る。
+        # 製品非依存（target 自身の構造からのみ導出・特定ルート焼き込み禁止）。フラグメントはサーバへ
+        # 送信されずブラウザ内 DOM ソースになるため、DOM 実行検証の対象として正しい。
+        fragment_path = parsed_target.path or "/"
+        if parsed_target.path and query_encoded:
+            fragment_target_url = urlunparse(
+                parsed_target._replace(path="/", query="", fragment=f"{fragment_path}?{query_encoded}")
+            )
+            test_urls.insert(0, fragment_target_url)
 
         # SGK-2026-0454: SPA の hash ルート（fragment 内に query を持つ URL、例 #/search?q=）を
         # 構造ベースで検出し、fragment 内の query に param を注入した URL を先頭に追加する。
@@ -835,6 +849,8 @@ INPUT: [Input]
         cookies_str = _auth.get("cookies", "")
         # SGK-2026-0454: run 単位の recording-only フラグ（manager が trace 記録に使用）
         self._dom_browser_validation_attempted = False
+        # SGK-2026-0456: run 単位で最良 DOM mutation 証拠をリセット（param 間・run 間の持ち越し防止）
+        self._best_dom_mutation_evidence = None
 
         def _normalize_name_hints(raw: Any) -> List[str]:
             names: List[str] = []
@@ -1150,7 +1166,10 @@ Start your XSS (Cross-Site Scripting) testing. First, send a simple marker to se
                         cookies_str,
                         param_name=param_name,
                     )
-                    if triggered:
+                    if not triggered:
+                        continue
+                    # SGK-2026-0456: dialog 発火は強い証拠 → 従来どおり param ループを打ち切る。
+                    if self._browser_execution_evidence.get("dialog_observed"):
                         self.vulnerable = True
                         self.reflection_observed = True
                         self.evidence = (
@@ -1164,6 +1183,24 @@ Start your XSS (Cross-Site Scripting) testing. First, send a simple marker to se
                         }
                         logger.info("[%s] DOM runtime execution detected via Playwright.", self.name)
                         break
+                    # SGK-2026-0456: dialog 非観測は弱い証拠（dom_mutation_observed /
+                    # event == "dom_sink_reflection" 等の candidate signal）。vulnerable は
+                    # 立てず break もしない — 次の param / payload で実 dialog 発火を探し続ける。
+                    # 全 param を試行しても dialog が発火しなかった場合のみ、ループ後に
+                    # 最良の mutation 結果を採用する（dialog_observed は付けない＝偽陽性なし）。
+                    self.evidence = (
+                        f"DOM sink-like reflection observed via fragment payload: "
+                        f"param={param_name}, payload={dom_payload}"
+                    )
+                    self._best_dom_mutation_evidence = {
+                        "evidence": self.evidence,
+                        "loop_result": {
+                            "status": "completed",
+                            "reason": "dom_runtime_fragment_mutation",
+                            "param": param_name,
+                        },
+                        "browser_execution": dict(self._browser_execution_evidence),
+                    }
 
             if self.vulnerable:
                 break
@@ -1179,6 +1216,16 @@ Start your XSS (Cross-Site Scripting) testing. First, send a simple marker to se
 
             if self.vulnerable:
                 break
+
+        # SGK-2026-0456: 全 param を実 dialog 発火で試行しても発火しなかった場合のみ、
+        # 最良の DOM mutation 結果を採用（従来動作の維持・dialog 非観測なら
+        # dialog_observed は付けない＝偽陽性なし）。
+        if not self.vulnerable and self._best_dom_mutation_evidence:
+            self.vulnerable = True
+            self.reflection_observed = True
+            self.evidence = self._best_dom_mutation_evidence["evidence"]
+            self._browser_execution_evidence = self._best_dom_mutation_evidence["browser_execution"]
+            loop_result = self._best_dom_mutation_evidence["loop_result"]
 
         return {
             "vulnerable": self.vulnerable,

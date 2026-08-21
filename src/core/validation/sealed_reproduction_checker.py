@@ -66,6 +66,7 @@ from src.core.engine.vdp_follow_up_executor import build_request_fingerprint
 from src.core.engine.vdp_readonly_guard import evaluate_readonly_request
 from src.core.security.pii_masker import PIIMasker
 from src.core.validation.finding_validator import ReproductionOutcome
+from src.tools.browser.playwright_validator import PlaywrightValidator
 
 # PII token format is owned by PIIMasker (0439 token_map); reuse its pattern
 # so the residual-check syntax can never drift from the masker.
@@ -96,6 +97,8 @@ _REASON_DISABLED_NO_CLIENT = "reproduction_disabled_no_client"
 _REASON_MARKER_MISMATCH = "reproduction_marker_mismatch"
 _REASON_MARKER_NOT_OBSERVABLE = "reproduction_marker_not_observable_in_replay"
 _REASON_UNKNOWN_CATEGORY = "reproduction_unknown_category"
+_REASON_BROWSER_UNAVAILABLE = "reproduction_browser_unavailable"
+_REASON_BROWSER_DIALOG_OBSERVED = "reproduction_browser_dialog_observed"
 
 
 def _sync_http_get(url: str, *, timeout_seconds: float) -> Tuple[str, int]:
@@ -198,6 +201,7 @@ class SealedReproductionChecker:
         max_replays: int = 5,          # run 全体の再送回数上限
         time_budget_seconds: float = 60.0,  # run 全体の再送時間予算
         timeout_seconds: float = 15.0,      # 1 送信のタイムアウト
+        browser_validator=None,             # PlaywrightValidator 互換。None なら遅延生成
     ) -> None:
         self._network_client = network_client
         self._scope_definition = scope_definition
@@ -205,6 +209,8 @@ class SealedReproductionChecker:
         self._max_replays = max(0, int(max_replays))
         self._time_budget_seconds = max(0.0, float(time_budget_seconds))
         self._timeout_seconds = max(1.0, float(timeout_seconds))
+        self._browser_validator_arg = browser_validator
+        self._browser_validator_instance = None
         self._replays_used = 0
         self._started_at = time.monotonic()
 
@@ -220,7 +226,24 @@ class SealedReproductionChecker:
         if time.monotonic() - self._started_at >= self._time_budget_seconds:
             return ReproductionOutcome("not_run", _REASON_BUDGET_EXHAUSTED)
 
+        # SGK-2026-0455: DOM-variant browser re-execution path. The sealed
+        # HTTP GET replay below cannot carry #fragment payloads (fragments
+        # never reach the server), so a DOM-variant finding is re-verified
+        # by re-loading the PoC URL in a real browser and re-observing the
+        # alert() dialog. The reflected HTTP path stays byte-identical for
+        # every other finding.
         payload = finding_payload(finding)
+        _info = payload.get("additional_info")
+        if not isinstance(_info, dict):
+            _info = {}
+        _browser_execution = _info.get("browser_execution")
+        if (
+            isinstance(_browser_execution, dict)
+            and str(_browser_execution.get("variant") or "").strip().lower() == "dom"
+            and str(_browser_execution.get("test_url") or "").strip()
+        ):
+            return self._check_dom_via_browser(_browser_execution, _info)
+
         evidence = payload.get("evidence")
         if not isinstance(evidence, dict):
             evidence = {}
@@ -314,6 +337,72 @@ class SealedReproductionChecker:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _browser_validator(self) -> Any:
+        """Lazily constructed browser validator (injected stub wins).
+        Construction is cheap (availability check only); the browser is
+        launched at most once per finding by validate_xss_sync."""
+        if self._browser_validator_instance is None:
+            self._browser_validator_instance = (
+                self._browser_validator_arg
+                if self._browser_validator_arg is not None
+                else PlaywrightValidator()
+            )
+        return self._browser_validator_instance
+
+    def _check_dom_via_browser(
+        self, browser_execution: dict, info: dict
+    ) -> ReproductionOutcome:
+        """DOM-variant sealed reproduction: ONE real-browser re-load of the
+        PoC test_url with re-observation of the alert() dialog (fail-closed).
+
+        GET-load only (no form fill / no click / no state change); scope is
+        revalidated against the SEALED target-only snapshot; browser
+        unavailability and transport errors are not_run, never mismatched.
+        """
+        test_url = str(browser_execution.get("test_url") or "").strip()
+        # 1) masked URL resolution (0439 token_map restore) — same guard
+        #    as the HTTP path; an unresolvable URL never reaches the browser.
+        resolved_url = self._resolve_url(test_url)
+        if resolved_url is None:
+            return ReproductionOutcome("not_run", _REASON_MASKED_URL_UNRESOLVABLE)
+        # 2) GET-only probe (the browser load is a GET).
+        if not assert_read_only_probe("GET", resolved_url):
+            return ReproductionOutcome("not_run", _REASON_READ_ONLY_PROBE_REJECTED)
+        # 3) read-only guard: state-changing semantics on a GET are excluded.
+        readonly = evaluate_readonly_request(
+            "GET",
+            action_semantics=str(info.get("action_semantics") or ""),
+            graphql_operation="",
+            body=None,
+            url=resolved_url,
+            content_type="",
+        )
+        if not readonly.allowed:
+            return ReproductionOutcome("not_run", _REASON_STATE_CHANGING_EXCLUDED)
+        # 4) scope revalidation against the SEALED scope snapshot.
+        scope_result = revalidate_scope_for_request(
+            resolved_url, scope_definition=self._scope_definition
+        )
+        if not scope_result.allowed:
+            return ReproductionOutcome("not_run", _REASON_SCOPE_REVALIDATION_BLOCKED)
+        # 5) browser availability (fail-closed — unavailable is not_run).
+        validator = self._browser_validator()
+        if not validator.is_available:
+            return ReproductionOutcome("not_run", _REASON_BROWSER_UNAVAILABLE)
+        # 6) ONE browser re-load: dialog re-observed -> matched; responded
+        #    but no dialog -> mismatched; exception/timeout -> not_run.
+        try:
+            fired = bool(validator.validate_xss_sync(resolved_url, timeout=self._timeout_seconds))
+        except Exception:  # noqa: BLE001 — browser boundary, fail closed
+            fired = None
+        self._replays_used += 1  # browser-load attempt consumed the budget slot
+        if fired is None:
+            return ReproductionOutcome("not_run", _REASON_TRANSPORT_ERROR)
+        if fired:
+            return ReproductionOutcome("matched", _REASON_BROWSER_DIALOG_OBSERVED)
+        # Browser responded but no dialog fired -> the ONLY DOM mismatch path.
+        return ReproductionOutcome("mismatched", _REASON_MARKER_MISMATCH)
 
     def _resolve_url(self, url: str) -> Optional[str]:
         """Restore 0439 tokens via the masker; None when unresolvable."""

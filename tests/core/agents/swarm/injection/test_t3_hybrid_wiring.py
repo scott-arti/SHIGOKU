@@ -1076,3 +1076,360 @@ class TestT3Support:
         assert (
             _resolve_candidate_ledger_path("http://localhost:3000") == expected
         )
+
+
+# ---------------------------------------------------------------------------
+# SGK-2026-0455: resurrection wiring (parked records + browser evidence, T2b)
+# ---------------------------------------------------------------------------
+
+
+class _FakeBrowserValidator:
+    """Sync browser-validator stub (``validate_xss_sync`` interface)."""
+
+    def __init__(
+        self,
+        *,
+        available: bool = True,
+        result: bool = False,
+        error: "Exception | None" = None,
+    ):
+        self.is_available = available
+        self.result = result
+        self.error = error
+        self.calls: list = []
+
+    def validate_xss_sync(self, url: str, timeout: float = 10.0):
+        self.calls.append({"url": url, "timeout": timeout})
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+
+def _dom_evidence_finding(title: str = "Reflected XSS in search") -> Finding:
+    """Payout-grade DOM-variant XSS finding carrying browser execution evidence."""
+    return Finding(
+        vuln_type=VulnType.XSS,
+        severity=Severity.MEDIUM,
+        title=title,
+        description="d",
+        target_url=API_URL,
+        evidence=Evidence(
+            request_method="GET",
+            request_url=f"{API_URL}?q=1",
+            response_status=200,
+            response_body="<script>alert(1)</script>",
+        ),
+        impact="DOM-based execution in the victim's browser",
+        reproduction_steps=[f"GET {API_URL}?q=1"],
+        additional_info={
+            "browser_execution": {
+                "dialog_observed": True,
+                "executor": "playwright",
+                "event": "dom_runtime_execution",
+                "variant": "dom",
+                "parameter": "q",
+                "payload": "<img src=x onerror=alert(1)>",
+                "test_url": f"{API_URL}?q=1",
+            }
+        },
+    )
+
+
+def _dom_mutation_finding(title: str = "Reflected XSS in search") -> Finding:
+    """Payout-grade DOM-variant finding with dom-mutation evidence ONLY
+    (real browser_execution schema: dom_mutation_observed + event
+    "dom_sink_reflection", NO dialog_observed key)."""
+    return Finding(
+        vuln_type=VulnType.XSS,
+        severity=Severity.MEDIUM,
+        title=title,
+        description="d",
+        target_url=API_URL,
+        evidence=Evidence(
+            request_method="GET",
+            request_url=f"{API_URL}?q=1",
+            response_status=200,
+            response_body="<script>alert(1)</script>",
+        ),
+        impact="DOM-based execution in the victim's browser",
+        reproduction_steps=[f"GET {API_URL}?q=1"],
+        additional_info={
+            "browser_execution": {
+                "executor": "playwright",
+                "event": "dom_sink_reflection",
+                "variant": "dom",
+                "parameter": "q",
+                "payload": "<img src=x onerror=alert(1)>",
+                "test_url": f"{API_URL}?q=1",
+                "dom_mutation_observed": True,
+                # 意図的に dialog_observed キー無し（実スキーマ再現）
+            }
+        },
+    )
+
+
+def _parked_record(
+    finding: Finding,
+    *,
+    triggers: list,
+    history: "list | None" = None,
+    finding_id: "str | None" = None,
+) -> CandidateRecord:
+    """A parked ledger record (default: matching the browser-evidence
+    finding's id and trigger vocabulary)."""
+    return CandidateRecord(
+        finding_id=finding_id if finding_id is not None else finding.id,
+        state=LifecycleState.INCONCLUSIVE_PARKED,
+        reason="budget_exhausted",
+        vuln_type="xss",
+        title=finding.title,
+        target_url_masked="",
+        evidence_summary={},
+        first_seen="2026-08-12T00:00:00+00:00",
+        last_investigated="2026-08-12T00:00:00+00:00",
+        budget_used=3,
+        resurrection_count=0,
+        promise_score=0.33,
+        revisit_triggers=list(triggers),
+        resurrection_history=list(history or []),
+    )
+
+
+class TestT3Resurrection:
+    def _ledger(self, tmp_path) -> CandidateLedger:
+        return CandidateLedger(tmp_path / "candidate_ledger.json")
+
+    def _manager(self, *, judge, checker, ledger) -> InjectionManagerAgent:
+        return InjectionManagerAgent(
+            config={"model": "test-model"},
+            hybrid_enabled=True,
+            poc_judge=judge,
+            reproduction_checker=checker,
+            candidate_ledger=ledger,
+        )
+
+    def _real_dom_checker(self, validator):
+        from src.core.agents.swarm.injection.manager import (
+            _build_sealed_reproduction_scope,
+        )
+        from src.core.validation.sealed_reproduction_checker import (
+            SealedReproductionChecker,
+        )
+
+        return SealedReproductionChecker(
+            scope_definition=_build_sealed_reproduction_scope(API_URL),
+            browser_validator=validator,
+        )
+
+    def test_parked_record_resurrected_and_confirmed_with_browser_evidence(
+        self, tmp_path
+    ):
+        """T2b: parked record + ブラウザ証拠 finding → ``revisit``（resurrect_
+        matching）経由で needs_more(budget_used=0) に復活 → DOM 再実行 matched
+        → CONFIRMED まで再判定される。"""
+        ledger = self._ledger(tmp_path)
+        finding = _dom_evidence_finding()
+        ledger.put(
+            _parked_record(
+                finding,
+                triggers=[
+                    ("vuln_type", "xss"),
+                    (
+                        "endpoint",
+                        CandidateLifecycleManager.normalize_endpoint(API_URL),
+                    ),
+                    ("evidence", "browser_execution"),
+                ],
+            )
+        )
+        judge = _FakePoCJudge("positive")
+        validator = _FakeBrowserValidator(result=True)
+        checker = self._real_dom_checker(validator)
+        manager = self._manager(judge=judge, checker=checker, ledger=ledger)
+
+        changed = manager._t3_run_hybrid_pass(
+            SimpleNamespace(target=API_URL), [finding]
+        )
+
+        assert changed is True
+        record = ledger.get(finding.id)
+        assert record is not None
+        assert record.state == LifecycleState.CONFIRMED
+        assert record.reason == "hybrid_confirmed"
+        assert record.resurrection_count == 1
+        assert record.budget_used == 1  # 復活後 (0) + 再判定 (1)
+        assert judge.calls == 1
+        assert validator.calls == [{"url": f"{API_URL}?q=1", "timeout": 15.0}]
+
+    def test_non_matching_parked_record_not_resurrected(self, tmp_path):
+        """T2b: トリガー非一致の parked は復活しない（blind-retry 防止）. """
+        ledger = self._ledger(tmp_path)
+        finding = _dom_evidence_finding()
+        non_matching = _parked_record(
+            finding,
+            triggers=[("vuln_type", "sqli")],
+            finding_id="other-finding-111",
+        )
+        ledger.put(non_matching)
+        judge = _FakePoCJudge("positive")
+        validator = _FakeBrowserValidator(result=True)
+        manager = self._manager(
+            judge=judge,
+            checker=self._real_dom_checker(validator),
+            ledger=ledger,
+        )
+
+        manager._t3_run_hybrid_pass(SimpleNamespace(target=API_URL), [finding])
+
+        after = ledger.get("other-finding-111")
+        assert after is not None
+        assert after.state == LifecycleState.INCONCLUSIVE_PARKED
+        assert after.resurrection_count == 0
+        assert after.budget_used == 3
+
+    def test_resurrection_history_prevents_infinite_resurrection(self, tmp_path):
+        """resurrection_history 消費: 同一トークンでは再復活しない（無限ループ防止）. """
+        ledger = self._ledger(tmp_path)
+        finding = _dom_evidence_finding()
+        consumed = _parked_record(
+            finding,
+            triggers=[("vuln_type", "xss"), ("evidence", "browser_execution")],
+            history=[("vuln_type", "xss"), ("evidence", "browser_execution")],
+        )
+        ledger.put(consumed)
+        judge = _FakePoCJudge("positive")
+        manager = self._manager(
+            judge=judge,
+            checker=_FakeReproductionChecker("matched"),
+            ledger=ledger,
+        )
+
+        manager._t3_run_hybrid_pass(SimpleNamespace(target=API_URL), [finding])
+
+        after = ledger.get(finding.id)
+        assert after is not None
+        assert after.state == LifecycleState.INCONCLUSIVE_PARKED
+        assert after.resurrection_count == 0
+        assert judge.calls == 0  # 復活しない → 判定スキップ
+
+    def test_park_side_adds_browser_evidence_trigger(self, tmp_path):
+        """_park 側: ブラウザ証拠 finding の parked record の revisit_triggers に
+        ("evidence","browser_execution") が載る（語彙追加のみ・基準は不変）. """
+        ledger = self._ledger(tmp_path)
+        finding = _dom_evidence_finding()
+        seed = _seed_record(finding)
+        ledger.put(seed)
+        judge = _FakePoCJudge("inconclusive")
+        manager = self._manager(
+            judge=judge,
+            checker=_FakeReproductionChecker("matched"),
+            ledger=ledger,
+        )
+
+        changed = manager._t3_apply_hybrid_verdict(
+            finding,
+            judge=judge,
+            checker=_FakeReproductionChecker("matched"),
+            lifecycle=CandidateLifecycleManager(),
+            ledger=ledger,
+        )
+
+        assert changed is True
+        record = ledger.get(finding.id)
+        assert record is not None
+        assert record.state == LifecycleState.INCONCLUSIVE_PARKED
+        assert ("evidence", "browser_execution") in record.revisit_triggers
+        assert ("vuln_type", "xss") in record.revisit_triggers
+
+    # --- SGK-2026-0455 (実走行診断): dom_mutation 経由のブラウザ証拠 ---
+
+    def test_dom_mutation_evidence_trigger_non_empty(self):
+        """dom_mutation_observed:true（dialog_observed キー無し）→ trigger 非空."""
+        finding = _dom_mutation_finding()
+        assert InjectionManagerAgent._t3_browser_evidence_trigger(finding) == [
+            ("evidence", "browser_execution")
+        ]
+
+    def test_event_dom_sink_reflection_alone_trigger_non_empty(self):
+        """event=="dom_sink_reflection" のみ（発火フラグ無し）でも証拠あり."""
+        finding = _dom_evidence_finding()
+        finding.additional_info = {
+            "browser_execution": {
+                "executor": "playwright",
+                "event": "dom_sink_reflection",
+                "variant": "dom",
+                "test_url": f"{API_URL}?q=1",
+            }
+        }
+        assert InjectionManagerAgent._t3_browser_evidence_trigger(finding) == [
+            ("evidence", "browser_execution")
+        ]
+
+    def test_no_browser_evidence_trigger_empty(self):
+        """ブラウザ実行証拠の無い finding → trigger 空（復活トリガーにしない）."""
+        finding = _payout_finding()  # additional_info 無し
+        assert InjectionManagerAgent._t3_browser_evidence_trigger(finding) == []
+        finding.additional_info = {"browser_execution": {"event": "navigation_only"}}
+        assert InjectionManagerAgent._t3_browser_evidence_trigger(finding) == []
+
+    def test_dom_mutation_evidence_resurrects_parked_record(self, tmp_path):
+        """T2b改: dom_mutation_observed:true（dialog_observed 無し）finding で
+        parked XSS record が revisit 経由 needs_more(budget_used=0) に復活し、
+        DOM 再実行 matched → CONFIRMED まで再判定される。"""
+        ledger = self._ledger(tmp_path)
+        finding = _dom_mutation_finding()
+        ledger.put(
+            _parked_record(
+                finding,
+                triggers=[
+                    ("vuln_type", "xss"),
+                    (
+                        "endpoint",
+                        CandidateLifecycleManager.normalize_endpoint(API_URL),
+                    ),
+                    ("evidence", "browser_execution"),
+                ],
+            )
+        )
+        judge = _FakePoCJudge("positive")
+        validator = _FakeBrowserValidator(result=True)
+        checker = self._real_dom_checker(validator)
+        manager = self._manager(judge=judge, checker=checker, ledger=ledger)
+
+        changed = manager._t3_run_hybrid_pass(
+            SimpleNamespace(target=API_URL), [finding]
+        )
+
+        assert changed is True
+        record = ledger.get(finding.id)
+        assert record is not None
+        assert record.state == LifecycleState.CONFIRMED
+        assert record.reason == "hybrid_confirmed"
+        assert record.resurrection_count == 1
+        assert record.budget_used == 1  # 復活後 (0) + 再判定 (1)
+        assert judge.calls == 1
+        assert validator.calls == [{"url": f"{API_URL}?q=1", "timeout": 15.0}]
+
+    def test_dom_mutation_non_matching_parked_not_resurrected(self, tmp_path):
+        """トリガー非一致の parked は dom_mutation 証拠でも復活しない."""
+        ledger = self._ledger(tmp_path)
+        finding = _dom_mutation_finding()
+        non_matching = _parked_record(
+            finding,
+            triggers=[("vuln_type", "sqli")],
+            finding_id="other-finding-222",
+        )
+        ledger.put(non_matching)
+        judge = _FakePoCJudge("positive")
+        manager = self._manager(
+            judge=judge,
+            checker=self._real_dom_checker(_FakeBrowserValidator(result=True)),
+            ledger=ledger,
+        )
+
+        manager._t3_run_hybrid_pass(SimpleNamespace(target=API_URL), [finding])
+
+        after = ledger.get("other-finding-222")
+        assert after is not None
+        assert after.state == LifecycleState.INCONCLUSIVE_PARKED
+        assert after.resurrection_count == 0

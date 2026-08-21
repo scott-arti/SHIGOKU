@@ -1232,7 +1232,12 @@ class InjectionManagerAgent(BaseManagerAgent):
                 )
                 return False
 
-        new_record = lifecycle.apply_verdict(record, verdict, finding=finding)
+        new_record = lifecycle.apply_verdict(
+            record,
+            verdict,
+            finding=finding,
+            extra_triggers=self._t3_browser_evidence_trigger(finding),
+        )
         ledger.put(new_record)
 
         # F5 emit は apply_verdict 後の最終ライフサイクル状態（record.state）
@@ -1265,6 +1270,49 @@ class InjectionManagerAgent(BaseManagerAgent):
             _funnel_finding_event(finding, "F6", "reached", reason_code=reason)
         return True
 
+    @staticmethod
+    def _t3_browser_evidence_trigger(finding: Any) -> list:
+        """Browser-evidence token for the candidate ledger trigger
+        vocabulary: ("evidence", "browser_execution") when the finding
+        carries observed browser execution evidence.
+
+        Matches the real browser_execution schema: ``dialog_observed``
+        truthy (dialog fired), ``dom_mutation_observed`` truthy (DOM
+        sink-like reflection observed), or event == "dom_sink_reflection"
+        (the DOM fallback observation path). SGK-2026-0455 schema-fix:
+        a finding may legitimately carry only dom_mutation_observed +
+        event="dom_sink_reflection" with NO dialog_observed key — that is
+        still browser execution evidence and must resurrect a parked
+        record. Empty list otherwise. Vocabulary addition only — the
+        lifecycle threshold is not changed."""
+        payload = finding_payload(finding)
+        info = payload.get("additional_info")
+        if not isinstance(info, dict):
+            return []
+        browser_execution = info.get("browser_execution")
+        if isinstance(browser_execution, dict) and (
+            bool(browser_execution.get("dialog_observed"))
+            or bool(browser_execution.get("dom_mutation_observed"))
+            or str(browser_execution.get("event") or "") == "dom_sink_reflection"
+        ):
+            return [("evidence", "browser_execution")]
+        return []
+
+    def _t3_resurrection_information(self, findings: list, lifecycle: Any) -> list:
+        """new_information tokens for parked-record resurrection: the
+        standard derive_triggers vocabulary (vuln_type/endpoint/capability)
+        of every finding carrying browser execution evidence, plus the
+        dedicated browser-evidence token. Empty -> no resurrection.
+        Order-preserving dedup. Blind-retry prevention is owned by
+        ``revisit`` (resurrection_history consumption) — unchanged."""
+        tokens: list = []
+        for finding in findings:
+            if not self._t3_browser_evidence_trigger(finding):
+                continue
+            tokens.extend(lifecycle.derive_triggers(finding))
+            tokens.append(("evidence", "browser_execution"))
+        return list(dict.fromkeys(tokens))
+
     def _t3_run_hybrid_pass(self, task: Any, findings: list) -> bool:
         """SGK-2026-0445: one T3 hybrid pass over findings.
 
@@ -1288,6 +1336,7 @@ class InjectionManagerAgent(BaseManagerAgent):
         # 循環回避のため関数内 import（validation <=> injection の import ループ）
         from src.core.validation.candidate_lifecycle import (
             CandidateLifecycleManager,
+            LifecycleState,
         )
         from src.core.validation.finding_validator import PoCJudge
         from src.core.validation.sealed_reproduction_checker import (
@@ -1343,6 +1392,25 @@ class InjectionManagerAgent(BaseManagerAgent):
         )
         lifecycle = CandidateLifecycleManager()
         dirty = False
+
+        # SGK-2026-0455: parked records are not terminal forever — when new
+        # browser-execution evidence arrives, records whose triggers
+        # intersect the new information (minus consumed resurrection_history)
+        # are resurrected to needs_more (budget_used=0) and re-judged by the
+        # loop below. Non-matching parked records are never touched
+        # (blind-retry prevention unchanged).
+        _parked = [
+            r
+            for r in ledger.all()
+            if r.state == LifecycleState.INCONCLUSIVE_PARKED
+        ]
+        if _parked:
+            _new_information = self._t3_resurrection_information(findings, lifecycle)
+            if _new_information:
+                for _resurrected in lifecycle.revisit(_parked, _new_information):
+                    ledger.put(_resurrected)
+                    dirty = True
+
         for _f in findings:
             if self._t3_apply_hybrid_verdict(
                 _f,

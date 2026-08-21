@@ -432,6 +432,7 @@ class PoCJudge:
         info = payload.get("additional_info")
         if not isinstance(info, dict):
             info = {}
+        browser_execution = info.get("browser_execution")
         user_data = {
             "vuln_type": payload.get("vuln_type"),
             "evidence": {
@@ -444,6 +445,24 @@ class PoCJudge:
             "poc_response": info.get("poc_response"),
             "impact": payload.get("impact"),
             "reproduction_steps": payload.get("reproduction_steps"),
+            # SGK-2026-0455 C3(b): 実発火証拠（browser_execution）を judge に
+            # 可視化。事実サブフィールドのみを写像し、期待答え・製品名・
+            # 「本物」等のヒントは含めない（カーブフィッティング禁止）。
+            # dict でなければ None（証拠なしを捏造しない・fail-closed）。
+            "browser_execution": (
+                {
+                    "executor": browser_execution.get("executor"),
+                    "event": browser_execution.get("event"),
+                    "variant": browser_execution.get("variant"),
+                    "dom_mutation_observed": browser_execution.get(
+                        "dom_mutation_observed"
+                    ),
+                    "dialog_observed": browser_execution.get("dialog_observed"),
+                    "test_url": browser_execution.get("test_url"),
+                }
+                if isinstance(browser_execution, dict)
+                else None
+            ),
         }
         return json.dumps(user_data, ensure_ascii=False, indent=2)
 

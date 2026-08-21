@@ -236,6 +236,41 @@ class PlaywrightValidator:
             self._last_observation_logs = observed_logs
         return xss_triggered
 
+    def validate_xss_sync(self, url: str, timeout: float = 10.0, cookies: Optional[List[Dict[str, Any]]] = None) -> bool:
+        """Synchronous wrapper around validate_xss (async).
+
+        - No running event loop (plain sync caller): asyncio.run().
+        - A running event loop is present (e.g. the checker's sync check() is
+          called from the async dispatch path): the coroutine runs to
+          completion on a fresh event loop in a worker thread so the running
+          loop is never blocked or deadlocked.
+        Transport failures surface as exceptions — the caller maps them to
+        not_run (fail-closed).
+        """
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(self.validate_xss(url, timeout=timeout, cookies=cookies))
+        import threading
+
+        result: List[Any] = []
+
+        def _worker() -> None:
+            try:
+                result.append(
+                    asyncio.run(self.validate_xss(url, timeout=timeout, cookies=cookies))
+                )
+            except Exception as exc:  # noqa: BLE001 — transport boundary, re-raised below
+                result.append(exc)
+
+        thread = threading.Thread(target=_worker, daemon=True)
+        thread.start()
+        thread.join()
+        value = result[0] if result else None
+        if isinstance(value, Exception):
+            raise value
+        return bool(value)
+
     async def validate_xss_with_form(
         self, 
         url: str, 

@@ -1,4 +1,5 @@
 
+import asyncio
 import pytest
 import sys
 from unittest.mock import MagicMock, AsyncMock, patch
@@ -191,3 +192,21 @@ class TestPlaywrightValidator:
                     
                     assert result is True
                     mock_page.wait_for_response.assert_called()
+
+    # --- SGK-2026-0455: validate_xss_sync (同期ラッパ) ---
+
+    def test_validate_xss_sync_no_running_loop(self, validator, monkeypatch):
+        """Running loop なし（同期 caller）: asyncio.run で完走する。"""
+        async def _fake_validate(url, timeout=10.0, cookies=None):
+            return True
+        monkeypatch.setattr(validator, "validate_xss", _fake_validate)
+        assert validator.validate_xss_sync("http://test.com", timeout=7.0) is True
+
+    @pytest.mark.asyncio
+    async def test_validate_xss_sync_with_running_loop(self, validator, monkeypatch):
+        """Running loop あり: ワーカースレッドの新規ループで完走（デッドロックしない）。"""
+        async def _fake_validate(url, timeout=10.0, cookies=None):
+            await asyncio.sleep(0)
+            return True
+        monkeypatch.setattr(validator, "validate_xss", _fake_validate)
+        assert validator.validate_xss_sync("http://test.com") is True

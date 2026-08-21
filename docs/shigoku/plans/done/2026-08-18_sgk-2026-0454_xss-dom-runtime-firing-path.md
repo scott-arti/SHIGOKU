@@ -8,9 +8,9 @@ related_docs:
 - docs/shigoku/plans/done/2026-08-16_sgk-2026-0453_sqli-impact-demonstration-defense-evasion.md
 - docs/shigoku/reports/2026-08-20_sgk-2026-0454_xss-dom-firing-path_work_report.md
 - docs/shigoku/worklogs/2026-08-20_sgk-2026-0454_xss-dom-firing-path_work_log.md
-- docs/shigoku/plans/2026-08-20_sgk-2026-0455_dom-xss-confirmation-routing.md
+- docs/shigoku/plans/done/2026-08-20_sgk-2026-0455_dom-xss-confirmation-routing.md
 created_at: '2026-08-18'
-updated_at: '2026-08-20'
+updated_at: '2026-08-22'
 tags:
 - shigoku
 - vdp

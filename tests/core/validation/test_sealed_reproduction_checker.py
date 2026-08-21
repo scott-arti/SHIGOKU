@@ -486,3 +486,230 @@ class TestBudgets:
         budget = PoCJudgeBudget(max_calls=10, max_seconds=1.0)
         monkeypatch.setattr(checker_module.time, "monotonic", lambda: 100.0)
         assert budget.acquire() is False
+
+
+# ---------------------------------------------------------------------------
+# SGK-2026-0455: DOM-variant browser re-execution path (T1 / T2)
+# ---------------------------------------------------------------------------
+
+
+class FakeBrowserValidator:
+    """Sync browser-validator stub (``validate_xss_sync`` interface).
+
+    ``available`` controls ``is_available`` (fail-closed gate); ``error``
+    makes the load raise (transport-error mapping); otherwise ``result`` is
+    the dialog-observed outcome of the browser re-execution.
+    """
+
+    def __init__(
+        self,
+        *,
+        available: bool = True,
+        result: bool = False,
+        error: "Exception | None" = None,
+    ):
+        self.is_available = available
+        self.result = result
+        self.error = error
+        self.calls: list = []
+
+    def validate_xss_sync(self, url: str, timeout: float = 10.0):
+        self.calls.append({"url": url, "timeout": timeout})
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+
+_DOM_TEST_URL = "https://target.example/#/results?q=%3Cimg%20src=x%20onerror=alert(1)%3E"
+_DOM_PAYLOAD = "<img src=x onerror=alert(1)>"
+
+
+def make_dom_xss_finding(
+    *,
+    test_url: str = _DOM_TEST_URL,
+    request_url: str = "https://target.example/#/search?q=probe",
+    dialog_observed: bool = True,
+    variant: str = "dom",
+    response_body: str = "",
+    additional_info: "dict | None" = None,
+) -> Finding:
+    """DOM-variant XSS finding carrying ``browser_execution`` evidence."""
+    info = {
+        "browser_execution": {
+            "dialog_observed": dialog_observed,
+            "executor": "playwright",
+            "event": "dom_runtime_execution",
+            "variant": variant,
+            "parameter": "q",
+            "payload": _DOM_PAYLOAD,
+            "test_url": test_url,
+        }
+    }
+    if additional_info:
+        info.update(additional_info)
+    return Finding(
+        vuln_type=VulnType.XSS,
+        severity=Severity.MEDIUM,
+        title="DOM XSS in search results",
+        description="Generic DOM-variant XSS style finding.",
+        target_url="https://target.example/",
+        evidence=Evidence(
+            request_method="GET",
+            request_url=request_url,
+            response_status=200,
+            response_body=response_body,
+        ),
+        reproduction_steps=["Open the URL in a browser", "Observe the alert"],
+        impact="DOM-based execution in the victim's browser.",
+        additional_info=info,
+    )
+
+
+class TestDomBrowserPath:
+    def _checker(self, *, validator=None, **kwargs) -> SealedReproductionChecker:
+        kwargs.setdefault("browser_validator", validator)
+        kwargs.setdefault("scope_definition", TARGET_SCOPE)
+        return SealedReproductionChecker(**kwargs)
+
+    def test_dom_variant_dialog_reobserved_matched(self):
+        """T1: 確定時ブラウザ再実行で dialog 再観測 → matched."""
+        validator = FakeBrowserValidator(result=True)
+        checker = self._checker(validator=validator)
+        outcome = checker.check(make_dom_xss_finding())
+        assert outcome.status == "matched"
+        assert outcome.reason == "reproduction_browser_dialog_observed"
+        assert validator.calls == [{"url": _DOM_TEST_URL, "timeout": 15.0}]
+
+    def test_dom_variant_no_dialog_mismatched(self):
+        """T1: 応答したが dialog 非発火 → mismatched（唯一の DOM mismatch 経路）."""
+        validator = FakeBrowserValidator(result=False)
+        checker = self._checker(validator=validator)
+        outcome = checker.check(make_dom_xss_finding())
+        assert outcome.status == "mismatched"
+        assert outcome.reason == "reproduction_marker_mismatch"
+
+    def test_dom_variant_browser_unavailable_not_run(self):
+        """T1: ブラウザ不能 → not_run（fail-closed。mismatch にしない）."""
+        validator = FakeBrowserValidator(available=False)
+        checker = self._checker(validator=validator)
+        outcome = checker.check(make_dom_xss_finding())
+        assert outcome.status == "not_run"
+        assert outcome.reason == "reproduction_browser_unavailable"
+        assert validator.calls == []
+
+    def test_dom_variant_transport_error_not_run(self):
+        """T1: 送信/観測例外 → not_run（fail-closed・transport_error）."""
+        validator = FakeBrowserValidator(error=RuntimeError("browser crashed"))
+        checker = self._checker(validator=validator)
+        outcome = checker.check(make_dom_xss_finding())
+        assert outcome.status == "not_run"
+        assert outcome.reason == "reproduction_transport_error"
+
+    def test_dom_variant_out_of_scope_not_run(self):
+        """scope 再検証: 封印スコープ外の test_url → not_run（send なし）."""
+        validator = FakeBrowserValidator(result=True)
+        checker = self._checker(validator=validator)
+        outcome = checker.check(
+            make_dom_xss_finding(test_url="https://out-of-scope.example/#/search?q=x")
+        )
+        assert outcome.status == "not_run"
+        assert outcome.reason == "scope_revalidation_blocked"
+        assert validator.calls == []
+
+    def test_dom_variant_scope_definition_none_fails_closed(self):
+        validator = FakeBrowserValidator(result=True)
+        checker = SealedReproductionChecker(
+            browser_validator=validator, scope_definition=None
+        )
+        outcome = checker.check(make_dom_xss_finding())
+        assert outcome.status == "not_run"
+        assert outcome.reason == "scope_revalidation_blocked"
+        assert validator.calls == []
+
+    def test_dom_variant_state_changing_excluded(self):
+        """GET ロードのみ: 状態変更セマンティクスは排除（send なし）."""
+        validator = FakeBrowserValidator(result=True)
+        checker = self._checker(validator=validator)
+        outcome = checker.check(
+            make_dom_xss_finding(additional_info={"action_semantics": "form_submit"})
+        )
+        assert outcome.status == "not_run"
+        assert outcome.reason == "state_changing_excluded"
+        assert validator.calls == []
+
+    def test_dom_variant_budget_consumed_by_browser_attempt(self):
+        """run 全体予算: ブラウザ試行後は _replays_used が消費される."""
+        validator = FakeBrowserValidator(result=True)
+        checker = self._checker(validator=validator, max_replays=1)
+        first = checker.check(make_dom_xss_finding())
+        assert first.status == "matched"
+        second = checker.check(make_dom_xss_finding())
+        assert second.status == "not_run"
+        assert second.reason == "reproduction_budget_exhausted"
+
+    def test_reflected_finding_without_browser_evidence_keeps_http_path(self):
+        """T1 回帰: ブラウザ証拠の無い反射型 finding は既存 HTTP 再送経路."""
+        validator = FakeBrowserValidator(result=True)
+        client = FakeNetworkClient(FakeResponse(200, _SQL_BODY))
+        checker = SealedReproductionChecker(
+            network_client=client,
+            scope_definition=TARGET_SCOPE,
+            browser_validator=validator,
+        )
+        outcome = checker.check(make_sqli_finding())
+        assert outcome.status == "matched"
+        assert outcome.reason == "reproduction_marker_matched:sql_error"
+        assert validator.calls == []  # ブラウザ経路は使われない
+
+    def test_non_dom_variant_with_browser_execution_uses_http_path(self):
+        """variant!=dom（例: reflected）は既存 HTTP 再送経路."""
+        validator = FakeBrowserValidator(result=True)
+        client = FakeNetworkClient(FakeResponse(200, _XSS_BODY))
+        checker = SealedReproductionChecker(
+            network_client=client,
+            scope_definition=TARGET_SCOPE,
+            browser_validator=validator,
+        )
+        outcome = checker.check(make_dom_xss_finding(variant="reflected"))
+        assert outcome.status == "matched"
+        assert outcome.reason == "reproduction_marker_matched:reflected_payload"
+        assert validator.calls == []
+
+    def test_dom_candidate_without_prior_dialog_and_no_fire_never_matches(self):
+        """T2 (偽陽性回帰): ブラウザ実行証拠の無い DOM 候補は、確定時再実行でも
+        dialog 非発火なら matched にならない → confirmed 到達不可."""
+        validator = FakeBrowserValidator(result=False)
+        checker = self._checker(validator=validator)
+        outcome = checker.check(make_dom_xss_finding(dialog_observed=False))
+        assert outcome.status == "mismatched"
+        assert outcome.reason == "reproduction_marker_mismatch"
+
+    def test_dom_finding_without_browser_execution_never_matches(self):
+        """T2 (偽陽性回帰): browser_execution を全く持たない DOM 風 finding は
+        HTTP 再送経路に落ち、body に発火マーカーが無ければ matched にならない."""
+        validator = FakeBrowserValidator(result=True)
+        client = FakeNetworkClient(FakeResponse(200, "OK"))
+        checker = SealedReproductionChecker(
+            network_client=client,
+            scope_definition=TARGET_SCOPE,
+            browser_validator=validator,
+        )
+        finding = Finding(
+            vuln_type=VulnType.XSS,
+            severity=Severity.MEDIUM,
+            title="DOM-ish candidate without browser evidence",
+            description="d",
+            target_url="https://target.example/",
+            evidence=Evidence(
+                request_method="GET",
+                request_url=_DOM_TEST_URL,
+                response_status=200,
+                response_body="OK",
+            ),
+            reproduction_steps=["Open the URL"],
+            impact="Hypothetical DOM execution.",
+            additional_info={},
+        )
+        outcome = checker.check(finding)
+        assert outcome.status != "matched"  # mismatched/not_run — never matched
+        assert validator.calls == []

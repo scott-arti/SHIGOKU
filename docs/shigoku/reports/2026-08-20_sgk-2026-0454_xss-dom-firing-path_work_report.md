@@ -6,10 +6,10 @@ parent_task_id: SGK-2026-0442
 related_docs:
 - docs/shigoku/plans/done/2026-08-18_sgk-2026-0454_xss-dom-runtime-firing-path.md
 - docs/shigoku/worklogs/2026-08-20_sgk-2026-0454_xss-dom-firing-path_work_log.md
-- docs/shigoku/plans/2026-08-20_sgk-2026-0455_dom-xss-confirmation-routing.md
+- docs/shigoku/plans/done/2026-08-20_sgk-2026-0455_dom-xss-confirmation-routing.md
 title: XSSの発火経路是正（DOM実行検証の到達性・ブラウザ導入・プロキシ経由の回復）作業完了報告
 created_at: '2026-08-20'
-updated_at: '2026-08-20'
+updated_at: '2026-08-22'
 tags:
 - shigoku
 - xss
@@ -60,5 +60,5 @@ C4（ブラウザ実行証拠の確定経路是正）は後続 **SGK-2026-0455**
 deferred_tasks:
   - description: DOM XSS のブラウザ実行証拠を phase2 昇格〜確定判定まで運び confirmed=1 にする（バー無改変・製品非依存）
     tracking_task_id: SGK-2026-0455
-    tracking_doc: docs/shigoku/plans/2026-08-20_sgk-2026-0455_dom-xss-confirmation-routing.md
+    tracking_doc: docs/shigoku/plans/done/2026-08-20_sgk-2026-0455_dom-xss-confirmation-routing.md
 ```
