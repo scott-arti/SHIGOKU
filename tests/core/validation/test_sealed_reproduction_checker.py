@@ -522,6 +522,11 @@ class FakeBrowserValidator:
 
 _DOM_TEST_URL = "https://target.example/#/results?q=%3Cimg%20src=x%20onerror=alert(1)%3E"
 _DOM_PAYLOAD = "<img src=x onerror=alert(1)>"
+# SGK-2026-0457: stored 再訪 URL（保存 sink をレンダーする GET）。検出側
+# smart_xss.py:719-727 の stored スキーマ（event=stored_revisit_browser_
+# execution・variant=stored・test_url=再訪 URL）を再現する。
+_STORED_TEST_URL = "https://target.example/product-reviews"
+_STORED_PAYLOAD = "<img src=x onerror=alert(1)>"
 
 
 def make_dom_xss_finding(
@@ -563,6 +568,198 @@ def make_dom_xss_finding(
         impact="DOM-based execution in the victim's browser.",
         additional_info=info,
     )
+
+
+def make_stored_xss_finding(
+    *,
+    test_url: str = _STORED_TEST_URL,
+    request_url: str = "https://target.example/api/product-reviews",
+    dialog_observed: bool = True,
+    variant: str = "stored",
+    response_body: str = "",
+    additional_info: "dict | None" = None,
+) -> Finding:
+    """Stored-variant XSS finding carrying browser revisit evidence.
+
+    Mirrors the detection-side schema (smart_xss.py:719-727): the finding
+    was confirmed by re-visiting the saved sink (``test_url``) in a browser
+    after the POST save, recording ``variant="stored"`` +
+    ``dialog_observed=true``. The ``request_url`` is the save endpoint; the
+    replay must re-load ``test_url`` (the revisit GET), never the save POST.
+    """
+    info = {
+        "browser_execution": {
+            "dialog_observed": dialog_observed,
+            "executor": "playwright",
+            "event": "stored_revisit_browser_execution",
+            "variant": variant,
+            "parameter": "review",
+            "payload": _STORED_PAYLOAD,
+            "test_url": test_url,
+        },
+        "stored_xss_revisit": {
+            "save_request_id": "POST /api/product-reviews HTTP/1.1",
+            "revisit_request_id": "GET /product-reviews HTTP/1.1",
+            "revisit_url": test_url,
+        },
+    }
+    if additional_info:
+        info.update(additional_info)
+    return Finding(
+        vuln_type=VulnType.XSS,
+        severity=Severity.MEDIUM,
+        title="Stored XSS in product reviews",
+        description="Generic stored-variant XSS style finding.",
+        target_url="https://target.example/",
+        evidence=Evidence(
+            request_method="POST",
+            request_url=request_url,
+            response_status=201,
+            response_body=response_body,
+        ),
+        reproduction_steps=[
+            "POST the payload to the save endpoint",
+            "Re-visit the saved page and observe the alert",
+        ],
+        impact="Stored execution in every visitor's browser.",
+        additional_info=info,
+    )
+
+
+class TestStoredBrowserPath:
+    """SGK-2026-0457 T1: variant==\"stored\"・test_url を持つ finding は、
+    DOM と同じ fail-closed 規律で browser 再ロード再検証に委譲される。
+
+    - dialog 再観測 → matched
+    - 非発火 → mismatched（唯一の stored mismatch 経路）
+    - ブラウザ不能 / 例外 / スコープ外 / 状態変更 → not_run（決して
+      mismatched にしない）
+    - run-wide budget 消費・ブラウザ1回・GET ロードのみ（DOM と同一）
+    """
+
+    def _checker(self, *, validator=None, **kwargs) -> SealedReproductionChecker:
+        kwargs.setdefault("browser_validator", validator)
+        kwargs.setdefault("scope_definition", TARGET_SCOPE)
+        return SealedReproductionChecker(**kwargs)
+
+    def test_stored_variant_dialog_reobserved_matched(self):
+        """T1: 再訪 browser 再ロードで dialog 再観測 → matched."""
+        validator = FakeBrowserValidator(result=True)
+        checker = self._checker(validator=validator)
+        outcome = checker.check(make_stored_xss_finding())
+        assert outcome.status == "matched"
+        assert outcome.reason == "reproduction_browser_dialog_observed"
+        # 再訪 test_url（保存 sink の GET レンダー）が reload される。
+        # 保存 POST の request_url が使われないこと（GET 読み取りのみ）。
+        assert validator.calls == [{"url": _STORED_TEST_URL, "timeout": 15.0}]
+
+    def test_stored_variant_no_dialog_mismatched(self):
+        """T1: 応答したが dialog 非発火 → mismatched（唯一の stored mismatch 経路）."""
+        validator = FakeBrowserValidator(result=False)
+        checker = self._checker(validator=validator)
+        outcome = checker.check(make_stored_xss_finding())
+        assert outcome.status == "mismatched"
+        assert outcome.reason == "reproduction_marker_mismatch"
+
+    def test_stored_variant_browser_unavailable_not_run(self):
+        """T1: is_available()==False → not_run（fail-closed・mismatch にしない）."""
+        validator = FakeBrowserValidator(available=False)
+        checker = self._checker(validator=validator)
+        outcome = checker.check(make_stored_xss_finding())
+        assert outcome.status == "not_run"
+        assert outcome.reason == "reproduction_browser_unavailable"
+        assert validator.calls == []
+
+    def test_stored_variant_transport_error_not_run(self):
+        """T1: 例外 → not_run（fail-closed・transport_error）."""
+        validator = FakeBrowserValidator(error=RuntimeError("browser crashed"))
+        checker = self._checker(validator=validator)
+        outcome = checker.check(make_stored_xss_finding())
+        assert outcome.status == "not_run"
+        assert outcome.reason == "reproduction_transport_error"
+
+    def test_stored_variant_out_of_scope_not_run(self):
+        """scope 再検証: 封印スコープ外の再訪 URL → not_run（reload なし）."""
+        validator = FakeBrowserValidator(result=True)
+        checker = self._checker(validator=validator)
+        outcome = checker.check(
+            make_stored_xss_finding(test_url="https://out-of-scope.example/reviews")
+        )
+        assert outcome.status == "not_run"
+        assert outcome.reason == "scope_revalidation_blocked"
+        assert validator.calls == []
+
+    def test_stored_variant_scope_definition_none_fails_closed(self):
+        validator = FakeBrowserValidator(result=True)
+        checker = SealedReproductionChecker(
+            browser_validator=validator, scope_definition=None
+        )
+        outcome = checker.check(make_stored_xss_finding())
+        assert outcome.status == "not_run"
+        assert outcome.reason == "scope_revalidation_blocked"
+        assert validator.calls == []
+
+    def test_stored_variant_state_changing_excluded(self):
+        """GET ロードのみ: 状態変更セマンティクスは排除（reload なし）."""
+        validator = FakeBrowserValidator(result=True)
+        checker = self._checker(validator=validator)
+        outcome = checker.check(
+            make_stored_xss_finding(additional_info={"action_semantics": "form_submit"})
+        )
+        assert outcome.status == "not_run"
+        assert outcome.reason == "state_changing_excluded"
+        assert validator.calls == []
+
+    def test_stored_variant_budget_consumed_by_browser_attempt(self):
+        """run 全体予算: ブラウザ試行後は _replays_used が消費される."""
+        validator = FakeBrowserValidator(result=True)
+        checker = self._checker(validator=validator, max_replays=1)
+        first = checker.check(make_stored_xss_finding())
+        assert first.status == "matched"
+        second = checker.check(make_stored_xss_finding())
+        assert second.status == "not_run"
+        assert second.reason == "reproduction_budget_exhausted"
+
+    def test_stored_candidate_without_prior_dialog_and_no_fire_never_matches(self):
+        """T2 (偽陽性回帰): 検出時に dialog を観測していない stored 候補は、
+        確定時再実行でも dialog 非発火なら matched にならない（confirmed 不可）。"""
+        validator = FakeBrowserValidator(result=False)
+        checker = self._checker(validator=validator)
+        outcome = checker.check(make_stored_xss_finding(dialog_observed=False))
+        assert outcome.status == "mismatched"
+        assert outcome.reason == "reproduction_marker_mismatch"
+
+    def test_stored_finding_without_test_url_never_uses_browser(self):
+        """test_url を持たない stored 風 finding は browser 経路に乗らない
+        （HTTP 再送経路に落ちる・既存挙動不変）。"""
+        validator = FakeBrowserValidator(result=True)
+        client = FakeNetworkClient(FakeResponse(200, _XSS_BODY))
+        checker = SealedReproductionChecker(
+            network_client=client,
+            scope_definition=TARGET_SCOPE,
+            browser_validator=validator,
+        )
+        outcome = checker.check(
+            make_stored_xss_finding(
+                test_url="",
+                additional_info={
+                    "browser_execution": {
+                        "dialog_observed": True,
+                        "executor": "playwright",
+                        "event": "stored_revisit_browser_execution",
+                        "variant": "stored",
+                        "parameter": "review",
+                        "payload": _STORED_PAYLOAD,
+                    }
+                },
+            )
+        )
+        # browser は使われず HTTP 再送経路に落ちる。保存 POST は GET 再送
+        # の fingerprint に一致しないため not_run（send なし・fail-closed）。
+        assert validator.calls == []
+        assert outcome.status == "not_run"
+        assert outcome.reason == "request_fingerprint_mismatch"
+        assert client.calls == []
 
 
 class TestDomBrowserPath:

@@ -465,3 +465,5 @@
 | SGK-2026-0454 | XSSの発火経路是正（DOM実行検証の到達性・ブラウザ導入・プロキシ経由の回復） | done | plan | SGK-2026-0442 | docs/shigoku/plans/done/2026-08-18_sgk-2026-0454_xss-dom-runtime-firing-path.md |
 | SGK-2026-0455 | DOM XSSのブラウザ実行証拠を確定まで運ぶ（confirmation routing是正・バー無改変） | done | plan | SGK-2026-0442 | docs/shigoku/plans/done/2026-08-20_sgk-2026-0455_dom-xss-confirmation-routing.md |
 | SGK-2026-0456 | DOM XSSの発火経路をフラグメント(hash)クライアント側ソースへ拡張（実発火findingを生成し0455経路でC1到達・検出側のみ） | done | plan | SGK-2026-0442 | docs/shigoku/plans/done/2026-08-21_sgk-2026-0456_xss-dom-fragment-firing-path.md |
+| SGK-2026-0457 | 保存型(Stored)XSSを確定まで運ぶ（reproduction gateにvariant==stored分岐追加・再訪browser再ロードでdialog再観測） | done | plan | SGK-2026-0442 | docs/shigoku/plans/done/2026-08-22_sgk-2026-0457_stored-xss-confirmation.md |
+| SGK-2026-0458 | 保存型(Stored)XSSの発火経路を汎用ターゲットへ拡張（検出側・挙動ベース保存sink発見→variant=stored finding生成→0457経路でconfirmed） | active | plan | SGK-2026-0442 | docs/shigoku/plans/2026-08-22_sgk-2026-0458_stored-xss-firing-path.md |

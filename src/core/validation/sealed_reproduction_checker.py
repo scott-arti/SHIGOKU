@@ -226,12 +226,14 @@ class SealedReproductionChecker:
         if time.monotonic() - self._started_at >= self._time_budget_seconds:
             return ReproductionOutcome("not_run", _REASON_BUDGET_EXHAUSTED)
 
-        # SGK-2026-0455: DOM-variant browser re-execution path. The sealed
-        # HTTP GET replay below cannot carry #fragment payloads (fragments
-        # never reach the server), so a DOM-variant finding is re-verified
-        # by re-loading the PoC URL in a real browser and re-observing the
-        # alert() dialog. The reflected HTTP path stays byte-identical for
-        # every other finding.
+        # SGK-2026-0455/0457: DOM/stored-variant browser re-execution path.
+        # The sealed HTTP GET replay below cannot carry #fragment payloads
+        # (fragments never reach the server), nor can it re-render a stored
+        # payload (the save is a POST; a plain GET replay re-sends the probe
+        # request, not the saved page). DOM and stored findings are therefore
+        # re-verified by re-loading their PoC/revisit URL in a real browser
+        # and re-observing the alert() dialog. The reflected HTTP path stays
+        # byte-identical for every other finding.
         payload = finding_payload(finding)
         _info = payload.get("additional_info")
         if not isinstance(_info, dict):
@@ -239,7 +241,8 @@ class SealedReproductionChecker:
         _browser_execution = _info.get("browser_execution")
         if (
             isinstance(_browser_execution, dict)
-            and str(_browser_execution.get("variant") or "").strip().lower() == "dom"
+            and str(_browser_execution.get("variant") or "").strip().lower()
+            in {"dom", "stored"}
             and str(_browser_execution.get("test_url") or "").strip()
         ):
             return self._check_dom_via_browser(_browser_execution, _info)
@@ -353,8 +356,9 @@ class SealedReproductionChecker:
     def _check_dom_via_browser(
         self, browser_execution: dict, info: dict
     ) -> ReproductionOutcome:
-        """DOM-variant sealed reproduction: ONE real-browser re-load of the
-        PoC test_url with re-observation of the alert() dialog (fail-closed).
+        """DOM/stored-variant sealed reproduction: ONE real-browser re-load
+        of the PoC/revisit test_url with re-observation of the alert()
+        dialog (fail-closed).
 
         GET-load only (no form fill / no click / no state change); scope is
         revalidated against the SEALED target-only snapshot; browser

@@ -5606,6 +5606,61 @@ tasks:
   related_docs:
   - docs/shigoku/plans/done/2026-08-21_sgk-2026-0456_xss-dom-fragment-firing-path.md
   - docs/shigoku/reports/2026-08-21_sgk-2026-0456_xss-dom-fragment-firing-path_work_report.md
+- provisional_id: DOC-0518
+  task_id: SGK-2026-0457
+  doc_type: plan
+  title: 保存型(Stored)XSSを確定まで運ぶ
+  primary_doc: docs/shigoku/plans/done/2026-08-22_sgk-2026-0457_stored-xss-confirmation.md
+  status: done
+  provisional: false
+  task_summary: "保存型XSS(payloadを保存sinkへ書込み→別GETレンダーで発火)を確定バーを緩めずconfirmedまで運ぶ。sealed_reproduction_checkerのDOM分岐条件(variant==dom)をvariant in {dom,stored}に拡張し、stored findingは再訪test_urlをbrowser再ロード=GET読み取りでdialog再観測→matched/mismatched/not_run(fail-closed)。DOM経路・反射型HTTP経路は無改変。バー4ファイル(payout_grade/poc_judge/task_queue/finding_validator)exit0・検出側smart_xss無改変。T1(stored分岐ユニット10件)・T2(DOM/HTTP回帰)pass・整合consistent・製品非依存pass/token0。実走行(Juice Shop・Caido8081・T3 hybrid・GET_ONLY無し)でvariant=storedのfindingは0件(全24件dom)だったためC1(confirmed=1)は未達。ユーザー承認(2026-08-22)のもとdoneで閉じC1はSGK-2026-0458(検出側stored発火経路)へdeferred。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/roadmaps/2026-08-12_sgk-2026-0442_confirmation-and-candidate-lifecycle-program.md
+  - docs/shigoku/plans/done/2026-08-20_sgk-2026-0455_dom-xss-confirmation-routing.md
+  - docs/shigoku/plans/done/2026-08-21_sgk-2026-0456_xss-dom-fragment-firing-path.md
+  - docs/shigoku/plans/2026-08-22_sgk-2026-0458_stored-xss-firing-path.md
+  - docs/shigoku/reports/2026-08-22_sgk-2026-0457_stored-xss-confirmation_work_report.md
+  - docs/shigoku/worklogs/2026-08-22_sgk-2026-0457_stored-xss-confirmation_work_log.md
+- provisional_id: DOC-0519
+  task_id: SGK-2026-0457
+  doc_type: work_report
+  title: 保存型(Stored)XSSのreproduction gateにstored分岐を追加 作業完了報告
+  primary_doc: docs/shigoku/reports/2026-08-22_sgk-2026-0457_stored-xss-confirmation_work_report.md
+  status: done
+  provisional: false
+  task_summary: "SGK-2026-0457 完了報告。sealed_reproduction_checkerのstored分岐追加(条件拡張のみ・DOM/HTTP経路byte-identical)を実装し、T1(stored分岐10件)・T2(DOM/HTTP回帰)・バー4ファイルexit0・整合consistent・製品非依存pass/token0で検証。実走行で検出側がvariant=stored findingを生成せず(全24件dom)のためC1は未達。ユーザー承認のもとdoneで閉じ、C1はSGK-2026-0458(検出側stored発火経路・active)へdeferred_tasksで追跡。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/done/2026-08-22_sgk-2026-0457_stored-xss-confirmation.md
+  - docs/shigoku/worklogs/2026-08-22_sgk-2026-0457_stored-xss-confirmation_work_log.md
+  - docs/shigoku/plans/2026-08-22_sgk-2026-0458_stored-xss-firing-path.md
+- provisional_id: DOC-0520
+  task_id: SGK-2026-0457
+  doc_type: work_log
+  title: 保存型(Stored)XSSのreproduction gateにstored分岐を追加 作業ログ
+  primary_doc: docs/shigoku/worklogs/2026-08-22_sgk-2026-0457_stored-xss-confirmation_work_log.md
+  status: done
+  provisional: false
+  task_summary: "SGK-2026-0457 作業ログ。実装(sealed_reproduction_checkerにvariant in {dom,stored}分岐追加・検出側/バー無改変)・検証(T1/T2・48+45+11 passed・バーexit0・製品非依存pass)・実走行(Juice Shop・Caido8081・T3 hybrid・GET_ONLY無し・session_20260822_014604/consistent)でvariant=stored finding 0件を確認し、真因(検出側に挙動ベースの保存sink発見経路が無い)を引用特定。ユーザー承認でC1をSGK-2026-0458へdeferredしdone遷移。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/done/2026-08-22_sgk-2026-0457_stored-xss-confirmation.md
+  - docs/shigoku/reports/2026-08-22_sgk-2026-0457_stored-xss-confirmation_work_report.md
+  - docs/shigoku/plans/2026-08-22_sgk-2026-0458_stored-xss-firing-path.md
+- provisional_id: DOC-0521
+  task_id: SGK-2026-0458
+  doc_type: plan
+  title: 保存型(Stored)XSSの発火経路を汎用ターゲットへ拡張
+  primary_doc: docs/shigoku/plans/2026-08-22_sgk-2026-0458_stored-xss-firing-path.md
+  status: active
+  provisional: false
+  task_summary: "SGK-2026-0457でreproduction gateのstored分岐は完成(検証済み・done)だが、実走行で検出側がJuice Shopに対しvariant=stored findingを生成しなかった(全24件dom・0457実走行)。真因: smart_xss._detect_xss_variantはpathのxss_s(DVWA目印)のみstoredを返しgenericは反射型へ、ThoughtLoopのstored_probe(LLM主導・reflection_url必要)は選択されず、保存sink→再訪レンダー発火を挙動ベース・製品非依存で発見する経路が無い。本タスクは検出側のstored発火経路を汎用化(保存sinkの挙動ベース発見→良性payload保存→再訪browser確認→variant=stored/dialog_observed=true記録)し0457経路でconfirmed=1に到達させる。バー無改変・検出側のみ・製品非依存・焼き込み禁止。C1-C5・T1/T2/T3。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/roadmaps/2026-08-12_sgk-2026-0442_confirmation-and-candidate-lifecycle-program.md
+  - docs/shigoku/plans/done/2026-08-22_sgk-2026-0457_stored-xss-confirmation.md
+  - docs/shigoku/plans/done/2026-08-21_sgk-2026-0456_xss-dom-fragment-firing-path.md
 doc_type_allowed_values:
 - spec
 - roadmap
