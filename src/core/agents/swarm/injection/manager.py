@@ -4238,11 +4238,48 @@ class InjectionManagerAgent(BaseManagerAgent):
                 "impact_probe_records": sqli_impact_records,
             }
 
+    def _same_origin_revisit_candidates(self, target_url: str, limit: int = 20) -> List[str]:
+        """走査済みURL在庫（current_context['url_results']）から同一オリジンURLを最大limit件抽出する。
+
+        SGK-2026-0458: 保存型XSSの再訪「表示URL」候補としてハンターへ渡す。
+        特定パス・製品名・ホスト名の文字列マッチは一切行わない（urlparse の構造比較のみ）。
+        """
+        out: List[str] = []
+        parsed = urlparse(str(target_url or ""))
+        if parsed.scheme not in ("http", "https"):
+            return out
+        origin = (parsed.scheme, parsed.netloc)
+        for entry in self.current_context.get("url_results") or []:
+            if not isinstance(entry, dict):
+                continue
+            raw = str(entry.get("url") or "").strip()
+            if not raw:
+                continue
+            try:
+                p = urlparse(raw)
+            except Exception:
+                continue
+            if (
+                p.scheme in ("http", "https")
+                and (p.scheme, p.netloc) == origin
+                and raw not in out
+            ):
+                out.append(raw)
+                if len(out) >= limit:
+                    break
+        return out
+
     async def run_xss_hunter(self, url: str, params: Dict[str, Any] = None, quick_mode: bool = False, **_kwargs) -> Dict[str, Any]:
         if "xss" not in self.specialists:
             return {"error": "XSS Specialist not available"}
 
         logger.info("[%s] Delegating XSS check to SmartXSSHunter (quick_mode=%s)", self.name, quick_mode)
+
+        # SGK-2026-0458: 同一オリジンの走査済みURL在庫を stored 再訪候補として XSS タスクへ渡す
+        # （追加のみ・既存キーは不変・build_hunter_task 共通経路は触らない）。
+        params = dict(params or {})
+        if not params.get("revisit_candidates"):
+            params["revisit_candidates"] = self._same_origin_revisit_candidates(url)
 
         target_task, detection_mode = build_hunter_task(
             url=url,

@@ -6,7 +6,7 @@ parent_task_id: SGK-2026-0442
 related_docs:
 - docs/shigoku/plans/done/2026-08-22_sgk-2026-0457_stored-xss-confirmation.md
 - docs/shigoku/worklogs/2026-08-22_sgk-2026-0457_stored-xss-confirmation_work_log.md
-- docs/shigoku/plans/2026-08-22_sgk-2026-0458_stored-xss-firing-path.md
+- docs/shigoku/plans/done/2026-08-22_sgk-2026-0458_stored-xss-firing-path.md
 - docs/shigoku/plans/done/2026-08-20_sgk-2026-0455_dom-xss-confirmation-routing.md
 - docs/shigoku/plans/done/2026-08-21_sgk-2026-0456_xss-dom-fragment-firing-path.md
 title: 保存型(Stored)XSSのreproduction gateにstored分岐を追加 作業完了報告
@@ -68,5 +68,5 @@ target: src/core/validation/sealed_reproduction_checker.py,tests/core/validation
 deferred_tasks:
   - description: 検出側の stored 発火経路を製品非依存に拡張（保存 sink の挙動ベース発見 → 再訪 GET レンダーで variant=stored/dialog_observed=true の finding 生成 → 0457 の reproduction stored 分岐で confirmed=1）
     tracking_task_id: SGK-2026-0458
-    tracking_doc: docs/shigoku/plans/2026-08-22_sgk-2026-0458_stored-xss-firing-path.md
+    tracking_doc: docs/shigoku/plans/done/2026-08-22_sgk-2026-0458_stored-xss-firing-path.md
 ```

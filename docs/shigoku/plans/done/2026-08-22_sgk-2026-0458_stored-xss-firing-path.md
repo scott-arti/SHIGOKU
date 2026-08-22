@@ -1,12 +1,15 @@
 ---
 task_id: SGK-2026-0458
 doc_type: plan
-status: active
+status: done
 parent_task_id: SGK-2026-0442
 related_docs:
 - docs/shigoku/roadmaps/2026-08-12_sgk-2026-0442_confirmation-and-candidate-lifecycle-program.md
 - docs/shigoku/plans/done/2026-08-22_sgk-2026-0457_stored-xss-confirmation.md
 - docs/shigoku/plans/done/2026-08-21_sgk-2026-0456_xss-dom-fragment-firing-path.md
+- docs/shigoku/plans/2026-08-22_sgk-2026-0459_active-save-sink-discovery.md
+- docs/shigoku/reports/2026-08-22_sgk-2026-0458_stored-xss-firing-path_work_report.md
+- docs/shigoku/worklogs/2026-08-22_sgk-2026-0458_stored-xss-firing-path_work_log.md
 created_at: '2026-08-22'
 updated_at: '2026-08-22'
 tags:
@@ -48,7 +51,7 @@ SGK-2026-0457 で reproduction gate の stored 分岐（`variant="stored"` の f
 
 ## 完了契約（Fixed completion criteria）
 
-- C1: Juice Shop の保存型 XSS が、Caido(8081) 経由の実走行で `variant="stored"`・`dialog_observed=true` の finding として生成され、SGK-2026-0457 の reproduction stored 分岐（再訪 browser 再ロードで dialog 再観測）を通って **confirmed=1件以上**。正本 session/report を残し、`verify_report_session_consistency` = `consistent`/`rerun_required=false`。
+- C1: Juice Shop の保存型 XSS が、Caido(8081) 経由の実走行で `variant="stored"`・`dialog_observed=true` の finding として生成され、SGK-2026-0457 の reproduction stored 分岐（再訪 browser 再ロードで dialog 再観測）を通って **confirmed=1件以上**。正本 session/report を残し、`verify_report_session_consistency` = `consistent`/`rerun_required=false`。**（ユーザー承認 2026-08-22: 検出側 stored 経路は実装・検証完了だが、実走行で保存 sink（レビュー保存 API）が発見・dispatch されず stored 経路が発火機会を得られなかった。真因は上流の発見・dispatch にあり本タスクのスコープ「検出側のみ」の外。C1 の end-to-end 到達は SGK-2026-0459 へ deferred・本タスクは検出側実装完了で done）**
 - C2: 保存 sink 発見は**製品非依存**（`check_vdp_product_independence.py` verdict=pass・token0・特定 sink/route 焼き込み禁止）。発火しない候補に `dialog_observed` を付けない（偽陽性なし）。
 - C3: 反射型・DOM 型の既存検出経路は退行なし（既存テスト緑・結果不変）。
 - C4: 確定バー無改変（`payout_grade.py`/`poc_judge.md`/`task_queue.py`/`finding_validator.py` の判定ルール本体、および `sealed_reproduction_checker.py` の 0457 実装を変えない）。本タスクは検出側のみ。
@@ -64,6 +67,19 @@ SGK-2026-0457 で reproduction gate の stored 分岐（`variant="stored"` の f
 
 - SGK-2026-0457 の reproduction gate（完成済み・done）。確定バーの変更。
 - 反射型/DOM 型 XSS の再設計（SGK-2026-0454/0455/0456 で完了）。GET-only 強制環境での保存型（設計上ブロックが正しい）。破壊的/機微データ書換の書き込み。
+
+## 実装・実走行判定（2026-08-22・Claude 独立検証）
+
+検出側（A/B/C/D）は DeepSeek 実装、Claude が実物で独立検証した。
+
+- **実装は実在し承認設計どおり**: `smart_xss.py` に良性マーカー保存 → 在庫URL巡回で反射先発見（`_derive_revisit_candidates`）→ `reflection_url` 算出 → 既存 `_validate_stored_runtime_xss` でブラウザ発火確認、の POST ゲート付き経路を追加（+166行）。`manager.py` に `_same_origin_revisit_candidates`（同一オリジン在庫を XSS タスクへ受け渡し・+37行）。**追加のみ・置換なし**。
+- **ユニット**: 新規 `tests/core/agents/swarm/injection/test_smart_xss_stored_revisit.py` を含む `test_smart_xss_stored_revisit.py`＋`test_smart_xss.py`＋`test_smart_xss_logic.py` = **23 passed（exit0）**。既存回帰なし（C3/C5）。
+- **バー無改変（C4）**: `payout_grade.py`/`poc_judge.md`(roles)/`task_queue.py`/`finding_validator.py`/`sealed_reproduction_checker.py` 各 `git diff --quiet HEAD` **exit0**。
+- **製品非依存（C2）**: 変更差分に製品トークン（juice/localhost:3000/reviews/ProductReviews/rest/products/dvwa/xss_s）の追加は **0 件**（Claude が diff を直接スキャン）。
+- **実走行（Caido 8081・`SHIGOKU_T3_HYBRID_ENABLED=1`・GET_ONLY 無し・Juice Shop）**: 正本 `workspace/projects/localhost:3000/sessions/session_20260822_102243.json` / `reports/haddix_report_20260822_102244.md`。整合 **consistent / rerun_required=false**（Claude 実行）。
+- **C1 未達（正直な開示）**: session 直読で `variant="stored"` の finding **0 件**（全 `browser_execution` 20 件が `variant="dom"`）・confirmed=0・`revisit_candidates` 痕跡 0 件。**保存 sink が XSS タスクとして一度も dispatch されなかった**（POST の XSS タスク node 数 0）。`/reviews` は `feedback_review`／`unknown` 扱いで XSS へ渡らず、レビュー保存 API（`/api/ProductReviews` 等）は**発見 URL 一覧 105 件（api/rest 7 件）に一度も現れない**。
+- **真因（root of root・引用特定）**: 動的偵察（Playwright で XHR/Fetch 傍受）は走ったが、**保存 API は「実際にレビューを投稿した瞬間」にしか XHR に現れない**ため受け身の傍受・HTML フォーム解析では発見できない（Juice Shop のレビュー投稿は Angular の XHR で、生 GET の `/reviews` は SPA シェルのみ）。検出側 stored 経路（本タスク完成済み）は保存 sink の住所を受け取れず発火機会を得られなかった。これは**上流の発見・dispatch のギャップ**であり、本タスクのスコープ「検出側のみ」の外。
+- → 検出側の実装・ユニット・バー無改変・製品非依存・整合まで完了。**C1 の end-to-end 到達は「能動的な保存 sink 発見」を SGK-2026-0459 として分離し追跡する**（ユーザー承認済み・2026-08-22）。
 
 ## 実装計画（承認後・実装は DeepSeek / 独立検証は Claude）
 

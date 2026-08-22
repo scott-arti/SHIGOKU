@@ -3,7 +3,8 @@ import logging
 import asyncio
 import re
 from typing import Dict, Any, Tuple, Optional, List
-from urllib.parse import urlparse, parse_qs, urlencode, urlunparse, unquote_plus
+from urllib.parse import urlparse, parse_qs, urlencode, urlunparse, unquote_plus, urljoin
+import secrets
 from http.cookies import SimpleCookie
 from pathlib import Path
 
@@ -732,6 +733,150 @@ INPUT: [Input]
         }
         return True
 
+    def _derive_revisit_candidates(self, target: str, save_url: str) -> List[str]:
+        """保存sinkの再訪「表示URL」候補を構造から導出する（SGK-2026-0458・製品非依存）。
+
+        - target（フォーム発見元ページ）
+        - save_url（保存エンドポイントのGET読み戻し）
+        - context の revisit_candidates（マネージャ走査済み同一オリジンURL在庫・先頭20件）
+        特定パス・製品名・ホスト名の文字列マッチは一切行わない（urlparse の構造比較のみ）。
+        """
+        candidates: List[str] = []
+
+        def _add(url: str) -> None:
+            url = (url or "").strip()
+            if url and url not in candidates:
+                candidates.append(url)
+
+        _add(target)
+        _add(save_url)
+
+        inventory = self.context.get("revisit_candidates") or []
+        if isinstance(inventory, str):
+            inventory = [inventory]
+        parsed_target = urlparse(str(target or ""))
+        same_origin = (parsed_target.scheme, parsed_target.netloc)
+        if isinstance(inventory, (list, tuple)):
+            for raw in inventory:
+                if len(candidates) >= 22:
+                    break
+                try:
+                    p = urlparse(str(raw or ""))
+                except Exception:
+                    continue
+                if p.scheme in ("http", "https") and (p.scheme, p.netloc) == same_origin:
+                    _add(str(raw))
+        return candidates
+
+    async def _attempt_stored_revisit_validation(self, param_name: str) -> bool:
+        """保存型XSSの挙動ベース検証（SGK-2026-0458・製品非依存・追加経路）。
+
+        保存sinkへ良性ランダムマーカーを1回POST → 再訪表示URL候補をGETスイープして
+        マーカー反射を探索 → 最初に反射したURL（reflection_url）へ実イベントハンドラ
+        ペイロードを同じ欄へ再保存 → 既存 _validate_stored_runtime_xss で実dialog発火を確認。
+
+        - POST応答自体にマーカーが反射する場合は既存の反射/同一URL保存経路が担うため
+          False を返す（退行なし）。
+        - マーカー反射のみ・ブラウザ非発火では stored 証拠を付与しない（偽陽性ゼロ・fail-closed）。
+        - 保存POSTは smart_client（AsyncNetworkClient 配下）経由のため、GET-only 強制環境では
+          ReadonlyEnforcedError が発生し、ここではブロックされて素直に False を返す。
+        """
+        target = str(self.context.get("target", "") or "")
+        cookies_str = str(self.context.get("cookies", "") or "")
+        params = dict(self.context.get("params", {}) or {})
+        if not param_name or param_name not in params:
+            return False
+
+        save_url = target
+        forms = self.context.get("forms") or []
+        if isinstance(forms, list):
+            for form in forms:
+                action = str((form or {}).get("action", "") or "")
+                if action and str((form or {}).get("method", "GET")).upper() == "POST":
+                    save_url = urljoin(target, action)
+                    break
+
+        marker = f"sgk{secrets.token_hex(4)}"
+        post_params = dict(params)
+        post_params[param_name] = marker
+
+        content_type = str(self.context.get("content_type", "") or "").lower()
+        auth_headers = self.context.get("auth_headers", {})
+        try:
+            if content_type == "json":
+                resp = await self.smart_client.request(
+                    "POST", target, json=post_params, headers=auth_headers, timeout=60,
+                )
+            else:
+                resp = await self.smart_client.request(
+                    "POST", target, data=post_params, headers=auth_headers, timeout=60,
+                )
+        except Exception:
+            return False
+        resp_body = resp.get("body", "") if isinstance(resp, dict) else ""
+        if marker.lower() in str(resp_body or "").lower():
+            return False
+
+        reflection_url = ""
+        for cand in self._derive_revisit_candidates(target, save_url):
+            if cand == target:
+                continue
+            try:
+                resp = await self.smart_client.request(
+                    "GET", cand, headers=auth_headers, timeout=60,
+                )
+            except Exception:
+                continue
+            cand_body = resp.get("body", "") if isinstance(resp, dict) else ""
+            if marker.lower() in str(cand_body or "").lower():
+                reflection_url = cand
+                break
+        if not reflection_url:
+            return False
+
+        payload = "<img src=x onerror=alert(1)>"
+        fire_params = dict(params)
+        fire_params[param_name] = payload
+        try:
+            if content_type == "json":
+                fire_resp = await self.smart_client.request(
+                    "POST", target, json=fire_params, headers=auth_headers, timeout=60,
+                )
+            else:
+                fire_resp = await self.smart_client.request(
+                    "POST", target, data=fire_params, headers=auth_headers, timeout=60,
+                )
+        except Exception:
+            return False
+        # SGK-2026-0458: 実保存 POST の PoC ペアを記録（証拠品質・捏造なしの実測記録）
+        if isinstance(fire_resp, dict):
+            self._last_poc_request = self._build_poc_request(
+                method="POST", request_url=target, body=urlencode(fire_params)
+            )
+            self._last_poc_response = self._build_poc_response(
+                status=fire_resp.get("status", 0),
+                body=str(fire_resp.get("body", "") or ""),
+                headers=(
+                    fire_resp.get("headers", {})
+                    if isinstance(fire_resp.get("headers"), dict)
+                    else {}
+                ),
+            )
+
+        self.context["reflection_url"] = reflection_url
+        fired = await self._validate_stored_runtime_xss(reflection_url, payload, cookies_str, param_name)
+        if not fired:
+            return False
+        if payload not in self.used_payloads:
+            self.used_payloads.append(payload)
+        self.vulnerable = True
+        self.reflection_observed = True
+        self.evidence = (
+            f"Stored reflection observed at {reflection_url}: "
+            f"param={param_name}, payload={payload}"
+        )
+        return True
+
     async def close(self):
         """リソース解放"""
         if self._dom_xss_verifier is not None:
@@ -920,6 +1065,7 @@ INPUT: [Input]
             "param", "parameter", "payload",
             "discovered_params", "candidate_params", "params_list",
             "reflection_url",
+            "revisit_candidates",
             # SGK-2026-0367: per-URL evidence fields (should not become payload params)
             "url_evidence", "selection_origin", "source_category",
             "phase2_on_empty_phase1", "phase1_force_full_coverage",
@@ -1065,6 +1211,7 @@ INPUT: [Input]
                 "forms": forms if forms else [],
                 "content_type": str(params.get("content_type", "")).lower(),
                 "reflection_url": params.get("reflection_url"),
+                "revisit_candidates": params.get("revisit_candidates"),
             }
 
             # State 初期化
@@ -1083,6 +1230,23 @@ INPUT: [Input]
             self._last_poc_request = ""
             self._last_poc_response = ""
             self.history_messages.append({"role": "system", "content": self.SYSTEM_PROMPT})
+
+            # SGK-2026-0458: 保存sink（POST）の挙動ベース stored 再訪検証。
+            # マネージャから在庫URL（revisit_candidates）が渡され、かつ明示 reflection_url が
+            # 無い場合のみ実行（追加のみ・既存の反射/同一URL保存経路は無改変）。
+            if (
+                method == "POST"
+                and params.get("revisit_candidates")
+                and not params.get("reflection_url")
+            ):
+                stored_fired = await self._attempt_stored_revisit_validation(param_name)
+                if stored_fired:
+                    loop_result = {
+                        "status": "completed",
+                        "reason": "stored_revisit_browser_execution",
+                        "param": param_name,
+                    }
+                    break
 
             initial_prompt = f"""Target URL: {target}
 Method: {method}

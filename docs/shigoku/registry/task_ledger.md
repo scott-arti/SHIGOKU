@@ -466,4 +466,5 @@
 | SGK-2026-0455 | DOM XSSのブラウザ実行証拠を確定まで運ぶ（confirmation routing是正・バー無改変） | done | plan | SGK-2026-0442 | docs/shigoku/plans/done/2026-08-20_sgk-2026-0455_dom-xss-confirmation-routing.md |
 | SGK-2026-0456 | DOM XSSの発火経路をフラグメント(hash)クライアント側ソースへ拡張（実発火findingを生成し0455経路でC1到達・検出側のみ） | done | plan | SGK-2026-0442 | docs/shigoku/plans/done/2026-08-21_sgk-2026-0456_xss-dom-fragment-firing-path.md |
 | SGK-2026-0457 | 保存型(Stored)XSSを確定まで運ぶ（reproduction gateにvariant==stored分岐追加・再訪browser再ロードでdialog再観測） | done | plan | SGK-2026-0442 | docs/shigoku/plans/done/2026-08-22_sgk-2026-0457_stored-xss-confirmation.md |
-| SGK-2026-0458 | 保存型(Stored)XSSの発火経路を汎用ターゲットへ拡張（検出側・挙動ベース保存sink発見→variant=stored finding生成→0457経路でconfirmed） | active | plan | SGK-2026-0442 | docs/shigoku/plans/2026-08-22_sgk-2026-0458_stored-xss-firing-path.md |
+| SGK-2026-0458 | 保存型(Stored)XSSの発火経路を汎用ターゲットへ拡張（検出側・reflection_url動的算出でstored経路を配線・実装/検証完了。実走行C1は上流の保存sink未発見でSGK-2026-0459へdeferred） | done | plan | SGK-2026-0442 | docs/shigoku/plans/done/2026-08-22_sgk-2026-0458_stored-xss-firing-path.md |
+| SGK-2026-0459 | 能動的な保存sink発見（入力欄へ良性マーカーを投稿し書き込みAPI・項目・再訪表示URLを炙り出す発見能力）→0458/0457経路で保存型XSSをconfirmed=1まで到達 | active | plan | SGK-2026-0442 | docs/shigoku/plans/2026-08-22_sgk-2026-0459_active-save-sink-discovery.md |

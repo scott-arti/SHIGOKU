@@ -5619,7 +5619,7 @@ tasks:
   - docs/shigoku/roadmaps/2026-08-12_sgk-2026-0442_confirmation-and-candidate-lifecycle-program.md
   - docs/shigoku/plans/done/2026-08-20_sgk-2026-0455_dom-xss-confirmation-routing.md
   - docs/shigoku/plans/done/2026-08-21_sgk-2026-0456_xss-dom-fragment-firing-path.md
-  - docs/shigoku/plans/2026-08-22_sgk-2026-0458_stored-xss-firing-path.md
+  - docs/shigoku/plans/done/2026-08-22_sgk-2026-0458_stored-xss-firing-path.md
   - docs/shigoku/reports/2026-08-22_sgk-2026-0457_stored-xss-confirmation_work_report.md
   - docs/shigoku/worklogs/2026-08-22_sgk-2026-0457_stored-xss-confirmation_work_log.md
 - provisional_id: DOC-0519
@@ -5634,7 +5634,7 @@ tasks:
   related_docs:
   - docs/shigoku/plans/done/2026-08-22_sgk-2026-0457_stored-xss-confirmation.md
   - docs/shigoku/worklogs/2026-08-22_sgk-2026-0457_stored-xss-confirmation_work_log.md
-  - docs/shigoku/plans/2026-08-22_sgk-2026-0458_stored-xss-firing-path.md
+  - docs/shigoku/plans/done/2026-08-22_sgk-2026-0458_stored-xss-firing-path.md
 - provisional_id: DOC-0520
   task_id: SGK-2026-0457
   doc_type: work_log
@@ -5647,20 +5647,62 @@ tasks:
   related_docs:
   - docs/shigoku/plans/done/2026-08-22_sgk-2026-0457_stored-xss-confirmation.md
   - docs/shigoku/reports/2026-08-22_sgk-2026-0457_stored-xss-confirmation_work_report.md
-  - docs/shigoku/plans/2026-08-22_sgk-2026-0458_stored-xss-firing-path.md
+  - docs/shigoku/plans/done/2026-08-22_sgk-2026-0458_stored-xss-firing-path.md
 - provisional_id: DOC-0521
   task_id: SGK-2026-0458
   doc_type: plan
   title: 保存型(Stored)XSSの発火経路を汎用ターゲットへ拡張
-  primary_doc: docs/shigoku/plans/2026-08-22_sgk-2026-0458_stored-xss-firing-path.md
-  status: active
+  primary_doc: docs/shigoku/plans/done/2026-08-22_sgk-2026-0458_stored-xss-firing-path.md
+  status: done
   provisional: false
-  task_summary: "SGK-2026-0457でreproduction gateのstored分岐は完成(検証済み・done)だが、実走行で検出側がJuice Shopに対しvariant=stored findingを生成しなかった(全24件dom・0457実走行)。真因: smart_xss._detect_xss_variantはpathのxss_s(DVWA目印)のみstoredを返しgenericは反射型へ、ThoughtLoopのstored_probe(LLM主導・reflection_url必要)は選択されず、保存sink→再訪レンダー発火を挙動ベース・製品非依存で発見する経路が無い。本タスクは検出側のstored発火経路を汎用化(保存sinkの挙動ベース発見→良性payload保存→再訪browser確認→variant=stored/dialog_observed=true記録)し0457経路でconfirmed=1に到達させる。バー無改変・検出側のみ・製品非依存・焼き込み禁止。C1-C5・T1/T2/T3。"
+  task_summary: "検出側のstored発火経路を製品非依存に拡張。smart_xss.pyにreflection_url動的算出(良性マーカー保存→同一オリジン在庫revisit_candidates巡回で反射先発見→既存_validate_stored_runtime_xssでブラウザ発火確認・POSTゲート付き・追加のみ)、manager.pyに_same_origin_revisit_candidates(在庫受け渡し)。ユニット23 passed・バー5ファイルexit0・製品非依存(diff製品トークン0)・整合consistent。実走行(Juice Shop・Caido8081・GET_ONLY無し・session_20260822_102243)でvariant=stored 0件・confirmed=0。真因(root of root): 保存API(レビュー保存)は実際に投稿した瞬間にしかXHRに現れず受け身の偵察では発見不能で保存sinkがXSSへdispatchされなかった(発見URL105件にレビュー保存API 0件)。上流の発見・dispatchギャップでスコープ(検出側のみ)外。ユーザー承認(2026-08-22)のもとdoneで閉じC1はSGK-2026-0459(能動的な保存sink発見)へdeferred。"
   parent_task_id: SGK-2026-0442
   related_docs:
   - docs/shigoku/roadmaps/2026-08-12_sgk-2026-0442_confirmation-and-candidate-lifecycle-program.md
   - docs/shigoku/plans/done/2026-08-22_sgk-2026-0457_stored-xss-confirmation.md
   - docs/shigoku/plans/done/2026-08-21_sgk-2026-0456_xss-dom-fragment-firing-path.md
+  - docs/shigoku/plans/2026-08-22_sgk-2026-0459_active-save-sink-discovery.md
+  - docs/shigoku/reports/2026-08-22_sgk-2026-0458_stored-xss-firing-path_work_report.md
+  - docs/shigoku/worklogs/2026-08-22_sgk-2026-0458_stored-xss-firing-path_work_log.md
+- provisional_id: DOC-0522
+  task_id: SGK-2026-0458
+  doc_type: work_report
+  title: 保存型(Stored)XSSの検出側発火経路を製品非依存に拡張 作業完了報告
+  primary_doc: docs/shigoku/reports/2026-08-22_sgk-2026-0458_stored-xss-firing-path_work_report.md
+  status: done
+  provisional: false
+  task_summary: "SGK-2026-0458 完了報告。検出側stored発火経路(reflection_url動的算出・POSTゲート・追加のみ)をDeepSeek実装・Claude独立検証(ユニット23 passed・バー5ファイルexit0・製品非依存diff製品トークン0・整合consistent)。実走行でvariant=stored 0件・confirmed=0。真因は保存API未発見(能動投稿でしかXHRに現れない)でスコープ外。ユーザー承認でdoneで閉じC1はSGK-2026-0459へdeferred_tasksで追跡。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/done/2026-08-22_sgk-2026-0458_stored-xss-firing-path.md
+  - docs/shigoku/worklogs/2026-08-22_sgk-2026-0458_stored-xss-firing-path_work_log.md
+  - docs/shigoku/plans/2026-08-22_sgk-2026-0459_active-save-sink-discovery.md
+- provisional_id: DOC-0523
+  task_id: SGK-2026-0458
+  doc_type: work_log
+  title: 保存型(Stored)XSSの検出側発火経路を製品非依存に拡張 作業ログ
+  primary_doc: docs/shigoku/worklogs/2026-08-22_sgk-2026-0458_stored-xss-firing-path_work_log.md
+  status: done
+  provisional: false
+  task_summary: "SGK-2026-0458 作業ログ。フェーズ0(3入口の閉塞を引用特定)・設計(製品非依存の再訪URL構造導出)・実装(DeepSeek)・独立検証(差分実在確認・ユニット23 passed・バーexit0・製品非依存)・実走行(session_20260822_102243/consistent)でvariant=stored 0件を確認し真因(保存API未発見・受け身偵察の限界)を引用特定。ユーザー承認でC1をSGK-2026-0459へdeferredしdone遷移。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/done/2026-08-22_sgk-2026-0458_stored-xss-firing-path.md
+  - docs/shigoku/reports/2026-08-22_sgk-2026-0458_stored-xss-firing-path_work_report.md
+  - docs/shigoku/plans/2026-08-22_sgk-2026-0459_active-save-sink-discovery.md
+- provisional_id: DOC-0524
+  task_id: SGK-2026-0459
+  doc_type: plan
+  title: 能動的な保存sink発見（保存型XSSを実際に確定まで到達）
+  primary_doc: docs/shigoku/plans/2026-08-22_sgk-2026-0459_active-save-sink-discovery.md
+  status: active
+  provisional: false
+  task_summary: "SGK-2026-0457(確定ゲートstored分岐)とSGK-2026-0458(検出側stored経路)は完成済みだが、実走行で保存sink(レビュー保存API)が発見・dispatchされず発火機会が無かった。真因: 保存APIは状態変更(POST)で実際に投稿した瞬間にしかXHRに現れず受け身の偵察(XHR傍受・HTMLフォーム解析)では発見不能。本タスクは能動的な保存sink発見(入力欄へ良性マーカーを投稿→書き込みAPI・項目・再訪表示URLを炙り出す)を製品非依存に実装し、0458/0457経路で保存型XSSをconfirmed=1まで到達させる。発見側と受け渡しが主・バー無改変・製品非依存・焼き込み禁止・書き込みガード遵守。C1-C6・T1/T2/T3/T4。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/roadmaps/2026-08-12_sgk-2026-0442_confirmation-and-candidate-lifecycle-program.md
+  - docs/shigoku/plans/done/2026-08-22_sgk-2026-0458_stored-xss-firing-path.md
+  - docs/shigoku/plans/done/2026-08-22_sgk-2026-0457_stored-xss-confirmation.md
 doc_type_allowed_values:
 - spec
 - roadmap

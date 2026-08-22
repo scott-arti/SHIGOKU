@@ -6,7 +6,7 @@ parent_task_id: SGK-2026-0442
 related_docs:
 - docs/shigoku/plans/done/2026-08-22_sgk-2026-0457_stored-xss-confirmation.md
 - docs/shigoku/reports/2026-08-22_sgk-2026-0457_stored-xss-confirmation_work_report.md
-- docs/shigoku/plans/2026-08-22_sgk-2026-0458_stored-xss-firing-path.md
+- docs/shigoku/plans/done/2026-08-22_sgk-2026-0458_stored-xss-firing-path.md
 title: 保存型(Stored)XSSのreproduction gateにstored分岐を追加 作業ログ
 created_at: '2026-08-22'
 updated_at: '2026-08-22'

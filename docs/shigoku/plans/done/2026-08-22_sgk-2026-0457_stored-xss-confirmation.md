@@ -7,7 +7,7 @@ related_docs:
 - docs/shigoku/roadmaps/2026-08-12_sgk-2026-0442_confirmation-and-candidate-lifecycle-program.md
 - docs/shigoku/plans/done/2026-08-20_sgk-2026-0455_dom-xss-confirmation-routing.md
 - docs/shigoku/plans/done/2026-08-21_sgk-2026-0456_xss-dom-fragment-firing-path.md
-- docs/shigoku/plans/2026-08-22_sgk-2026-0458_stored-xss-firing-path.md
+- docs/shigoku/plans/done/2026-08-22_sgk-2026-0458_stored-xss-firing-path.md
 - docs/shigoku/reports/2026-08-22_sgk-2026-0457_stored-xss-confirmation_work_report.md
 - docs/shigoku/worklogs/2026-08-22_sgk-2026-0457_stored-xss-confirmation_work_log.md
 created_at: '2026-08-22'
