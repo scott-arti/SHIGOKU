@@ -313,6 +313,74 @@ def _build_sealed_reproduction_scope(target_url: Any) -> Optional["ScopeDefiniti
         allow_post_exploit=False,
     )
 
+
+def _collect_discovery_revisit_urls(save_endpoints: List[Dict[str, Any]], limit: int = 60) -> List[str]:
+    """save_endpoints から discovery 側の再訪候補 URL を収集する（SGK-2026-0458）。
+
+    - 各エンドポイントの url / revisit_urls / source_page を走査し、
+      http/https の文字列 URL のみを、順序保持・重複排除で上限 limit 件まで返す。
+    - 製品名・特定パス・ホスト名リテラルは一切使わない（urlparse の構造確認のみ）。
+    - 空/不正入力は空リスト（save_endpoints 不在時は既存挙動に影響しない）。
+    """
+    out: List[str] = []
+    seen: set[str] = set()
+    for ep in save_endpoints or []:
+        if not isinstance(ep, dict):
+            continue
+        candidates: List[Any] = [ep.get("url")]
+        revisit = ep.get("revisit_urls")
+        if isinstance(revisit, list):
+            candidates.extend(revisit)
+        candidates.append(ep.get("source_page"))
+        for raw in candidates:
+            if len(out) >= limit:
+                return out
+            if not isinstance(raw, str):
+                continue
+            candidate = raw.strip()
+            if not candidate or candidate in seen:
+                continue
+            try:
+                parsed = urlparse(candidate)
+            except Exception:
+                continue
+            if parsed.scheme not in ("http", "https") or not parsed.netloc:
+                continue
+            seen.add(candidate)
+            out.append(candidate)
+    return out
+
+
+def _match_save_endpoint(target_url: Any, save_endpoints: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """構造的 URL 等価（scheme + netloc + path）で save endpoint を照合する（SGK-2026-0458）。
+
+    - query/fragment は無視する（保存 API の書き込み URL はクエリ差異を許容して照合）。
+    - 一致した最初の dict を返し、一致が無ければ None。
+    - 製品名・特定パス・ホスト名リテラルは使わない（urlparse の構造比較のみ）。
+    """
+    try:
+        parsed_target = urlparse(str(target_url or ""))
+    except Exception:
+        return None
+    if parsed_target.scheme not in ("http", "https"):
+        return None
+    target_key = (parsed_target.scheme, parsed_target.netloc, parsed_target.path)
+    for ep in save_endpoints or []:
+        if not isinstance(ep, dict):
+            continue
+        ep_url = ep.get("url")
+        if not isinstance(ep_url, str) or not ep_url.strip():
+            continue
+        try:
+            parsed_ep = urlparse(ep_url.strip())
+        except Exception:
+            continue
+        if parsed_ep.scheme not in ("http", "https"):
+            continue
+        if (parsed_ep.scheme, parsed_ep.netloc, parsed_ep.path) == target_key:
+            return ep
+    return None
+
 @AgentRegistry.register(
     names=["InjectionManager", "InjectionManagerAgent", "injection_manager", "InjectionSwarm"],
     tags=["injection", "sqli", "xss", "command_injection", "lfi", "open_redirect"]
@@ -2865,6 +2933,18 @@ class InjectionManagerAgent(BaseManagerAgent):
         if not isinstance(url_evidence_by_url, dict):
             url_evidence_by_url = {}
 
+        # SGK-2026-0458: discovery 側で収集した save_endpoints（保存型XSSの書き込み API 契約）を
+        # current_context へ供給する。不在/不正時は空となり、以降の配線は全て no-op。
+        save_endpoints = context.get("save_endpoints", task.params.get("save_endpoints", []))
+        if not isinstance(save_endpoints, list):
+            save_endpoints = []
+        # keep only dicts, strings sanitized
+        self.current_context["save_endpoints"] = [e for e in save_endpoints if isinstance(e, dict)]
+        # discovery-side revisit inventory supply: same-origin captured URLs from save endpoints
+        self.current_context["discovery_revisit_urls"] = _collect_discovery_revisit_urls(
+            self.current_context.get("save_endpoints") or []
+        )
+
         # URL に優先度スコアを付ける（Step6: 成立確率順）
         prioritized_targets = prioritize_targets(
             targets,
@@ -2927,6 +3007,16 @@ class InjectionManagerAgent(BaseManagerAgent):
             # quick_mode=False で検出率を維持しつつ、URL 単位 timeout で全体ハングを防ぐ
             for target_url, priority_score, priority_signals in batch:
                 vuln_type = classify_target_url(target_url, category=task_category)
+                # SGK-2026-0458: stored dispatch key — discovery-meta-driven, NOT path-based.
+                # save_endpoint が構造的 URL 一致し、書き込み verb（POST/PUT/PATCH）なら
+                # XSS として dispatch する（classify_target_url のパスロジックは変更しない）。
+                save_ep = _match_save_endpoint(target_url, self.current_context.get("save_endpoints") or [])
+                save_ep_method = ""
+                if save_ep is not None:
+                    save_ep_method = str(save_ep.get("method", "") or "GET").upper()
+                    if save_ep_method in ("POST", "PUT", "PATCH"):
+                        vuln_type = "xss"   # stored dispatch key: discovery-meta-driven, NOT path-based
+                        resolved_method = save_ep_method
                 url_evidence = {}
                 if isinstance(url_evidence_by_url, dict):
                     raw_evidence = url_evidence_by_url.get(target_url, {})
@@ -2965,10 +3055,15 @@ class InjectionManagerAgent(BaseManagerAgent):
                     ",".join(priority_signals[:4]),
                 )
 
-                resolved_method = str(
-                    url_evidence.get("method")
-                    or task.params.get("method", "GET")
-                ).upper()
+                # save_ep が非GET書き込み verb の場合は (c) で設定済みの
+                # resolved_method（= エンドポイントの verb）を維持する。
+                if save_ep_method in ("POST", "PUT", "PATCH"):
+                    resolved_method = save_ep_method
+                else:
+                    resolved_method = str(
+                        url_evidence.get("method")
+                        or task.params.get("method", "GET")
+                    ).upper()
                 ssrf_score = int(url_evidence.get("ssrf_score", 0) or 0)
                 score_breakdown = url_evidence.get("score_breakdown", {})
                 if not isinstance(score_breakdown, dict):
@@ -2989,9 +3084,19 @@ class InjectionManagerAgent(BaseManagerAgent):
                     "category": str(task.params.get("category", "") or ""),
                     "detection_mode": "phase1",
                 }
+                # SGK-2026-0458: stored dispatch — 書き込み API 契約（fields / メタデータ）を
+                # ハンターへ供給する（save_ep 不在 or GET verb の場合は no-op）。
+                if save_ep is not None and save_ep_method in ("POST", "PUT", "PATCH"):
+                    base_params["candidate_params"] = [
+                        f for f in (save_ep.get("fields") or []) if isinstance(f, str) and f
+                    ]
+                    base_params["save_endpoint"] = save_ep
                 # SGK-2026-0367: pass discovered params hints to specialist hunters
+                # (candidate_params は save_endpoint 由来の値が既にあれば上書きしない)
                 _task_ctx = task.params.get("_context", {}) or {}
                 for hint_key in ("discovered_params", "candidate_params", "params_list"):
+                    if hint_key == "candidate_params" and "candidate_params" in base_params:
+                        continue
                     hints = _task_ctx.get(hint_key)
                     if hints:
                         base_params[hint_key] = hints
@@ -4265,6 +4370,26 @@ class InjectionManagerAgent(BaseManagerAgent):
                 and raw not in out
             ):
                 out.append(raw)
+                if len(out) >= limit:
+                    break
+        # SGK-2026-0458: discovery 側の在庫（save_endpoints 由来の再訪候補）も同一オリジン比較で
+        # 合流させる（比較ロジックは上と同じ urlparse 構造比較のみ。limit は維持）。
+        for raw in self.current_context.get("discovery_revisit_urls") or []:
+            if len(out) >= limit:
+                break
+            candidate = str(raw or "").strip()
+            if not candidate or candidate in out:
+                continue
+            try:
+                p = urlparse(candidate)
+            except Exception:
+                continue
+            if (
+                p.scheme in ("http", "https")
+                and (p.scheme, p.netloc) == origin
+                and candidate not in out
+            ):
+                out.append(candidate)
                 if len(out) >= limit:
                     break
         return out

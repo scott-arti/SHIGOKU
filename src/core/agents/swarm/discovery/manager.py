@@ -273,16 +273,33 @@ class DiscoveryManagerAgent(BaseManagerAgent):
             # 認証情報の引き継ぎとCookieの分離
             auth_headers = self.current_context.get("auth_headers", {}).copy() if self.current_context else {}
             cookies_str = auth_headers.pop("Cookie", "")
-            
-            result = await crawler.crawl(url, auth_headers=auth_headers, cookies_str=cookies_str)
+
+            # SGK-2026-0458: crawl へ get_only / active_post を透過する。
+            # get_only は None のまま crawl 側の設定解決（sealed_run_get_only）に任せる。
+            get_only = None  # crawl resolves from settings.sealed_run_get_only
+            try:
+                from src.core.config.settings import get_settings
+
+                active_post = bool(getattr(get_settings(), "recon_active_post_enabled", False))
+            except Exception:
+                active_post = False
+
+            result = await crawler.crawl(
+                url,
+                auth_headers=auth_headers,
+                cookies_str=cookies_str,
+                get_only=get_only,
+                active_post=active_post,
+            )
             
             # 結果を簡略化して履歴に追加（コンテキスト節約）
-            # PlaywrightCrawler の戻り値キー: urls, endpoints, js_files
+            # PlaywrightCrawler の戻り値キー: urls, endpoints, js_files, save_endpoints
             summary = {
                 "status": "completed",
                 "urls_found": len(result.get("urls", [])),
                 "endpoints_found": len(result.get("endpoints", [])),
-                "js_files_found": len(result.get("js_files", []))
+                "js_files_found": len(result.get("js_files", [])),
+                "save_endpoints_found": len(result.get("save_endpoints") or []),
             }
             if hasattr(self, "history"):
                 self.history.append({"role": "user", "content": f"Tool run_playwright_recon result: {json.dumps(summary)}"})

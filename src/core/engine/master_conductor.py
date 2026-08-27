@@ -6108,7 +6108,66 @@ class MasterConductor:
                 len(candidates),
             )
         return candidates
-    
+
+    def _load_run_save_endpoints(self) -> list:
+        """recon pipeline が永続化した save_endpoints sidecar を読み込む（SGK-2026-0458・防御的）。
+
+        - 候補 root: project_manager.project_dir/scans/raw → project_dir →
+          workspace.root/scans/raw → workspace.root → ./workspace
+        - `*_save_endpoints.json` を glob し、mtime 最新を選択して JSON array を返す。
+        - あらゆる失敗は空リスト（不在時は既存挙動に影響しない）。決して raise しない。
+        """
+        import glob as glob_module
+        import json as _json
+        from pathlib import Path
+
+        save_files: list[Path] = []
+
+        candidate_roots: list[Path] = []
+        project_manager = getattr(self, "project_manager", None)
+        if project_manager and hasattr(project_manager, "project_dir") and project_manager.project_dir:
+            project_dir = Path(project_manager.project_dir)
+            candidate_roots.append(project_dir / "scans" / "raw")
+            candidate_roots.append(project_dir)
+        workspace_obj = getattr(self, "workspace", None)
+        workspace_root = getattr(workspace_obj, "root", None)
+        if workspace_root:
+            root_path = Path(workspace_root)
+            candidate_roots.append(root_path / "scans" / "raw")
+            candidate_roots.append(root_path)
+        candidate_roots.append(Path("workspace"))
+
+        seen: set = set()
+        for root in candidate_roots:
+            try:
+                if not root.is_dir():
+                    continue
+                for match in glob_module.glob(str(root / "*_save_endpoints.json")):
+                    path = Path(match)
+                    if path in seen:
+                        continue
+                    seen.add(path)
+                    save_files.append(path)
+            except Exception:
+                continue
+
+        if not save_files:
+            return []
+
+        save_files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        newest = save_files[0]
+        logger.debug("[MC] Loading save_endpoints sidecar: %s", newest)
+        try:
+            raw_data = _json.loads(newest.read_text(encoding="utf-8"))
+        except Exception:
+            logger.warning("[MC] Could not read save_endpoints sidecar %s", newest)
+            return []
+        if not isinstance(raw_data, list):
+            logger.warning("[MC] Expected a JSON array in %s", newest)
+            return []
+        # dict + url 必須のみ採用（不正エントリは無視）
+        return [e for e in raw_data if isinstance(e, dict) and e.get("url")]
+
     def _load_recipe_tasks(self) -> list[Task]:
         """RecipeLoaderからRecipeCandidateを取得し、OptimizedRecipeRunnerで実行"""
         if not self.recipe_loader:
@@ -14677,6 +14736,12 @@ class MasterConductor:
                 }
                 if normalized_category in phase2_on_empty_categories:
                     task_params["phase2_on_empty_phase1"] = self._apply_phase2_on_empty_policy(True)
+
+                # SGK-2026-0458: recon の save_endpoints sidecar を injection タスクへ供給する
+                # （防御的・加算のみ。sidecar 不在時は no-op）。
+                _run_save_endpoints = self._load_run_save_endpoints()
+                if _run_save_endpoints:
+                    task_params["_context"]["save_endpoints"] = _run_save_endpoints
 
                 if forms_by_url:
                     task_params["_context"]["forms_by_url"] = forms_by_url

@@ -1072,6 +1072,8 @@ INPUT: [Input]
             "phase1_stop_on_first_hit", "phase1_early_return_on_findings",
             "api_precision_mode", "balanced_mode", "detection_mode",
             "manager_timeout_seconds", "per_url_timeout_seconds", "target_hints",
+            # SGK-2026-0459: discovery 由来の保存EPメタ（payload 化を防ぐ追加）
+            "save_endpoint",
         }
         payload_params = {k: v for k, v in params.items() if k not in META_KEYS}
         # POSTボディ指定時は body 内キーを注入候補に展開する
@@ -1231,11 +1233,13 @@ INPUT: [Input]
             self._last_poc_response = ""
             self.history_messages.append({"role": "system", "content": self.SYSTEM_PROMPT})
 
-            # SGK-2026-0458: 保存sink（POST）の挙動ベース stored 再訪検証。
+            # SGK-2026-0458: 保存sink（POST/PUT/PATCH）の挙動ベース stored 再訪検証。
             # マネージャから在庫URL（revisit_candidates）が渡され、かつ明示 reflection_url が
             # 無い場合のみ実行（追加のみ・既存の反射/同一URL保存経路は無改変）。
+            # SGK-2026-0459: 起動ゲートの verb を非GET（POST/PUT/PATCH）へ拡張（追加のみ・
+            # 検証本体はマーカー方式で verb 非依存のため不変。GET既定挙動は不変）。
             if (
-                method == "POST"
+                method in ("POST", "PUT", "PATCH")
                 and params.get("revisit_candidates")
                 and not params.get("reflection_url")
             ):

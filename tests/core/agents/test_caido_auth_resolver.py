@@ -210,6 +210,110 @@ def test_host_matches_domain(host, domain, expected):
     assert CaidoSitemapAgent._host_matches_domain(host, normalized) is expected
 
 
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("http://127.0.0.1:5001", 5001),
+        ("http://127.0.0.1:5001/path", 5001),
+        ("127.0.0.1:5001", 5001),
+        ("localhost:5001", 5001),
+        ("[::1]:8888", 8888),
+        ("http://[::1]:8888/", 8888),
+        ("example.com:8443", 8443),
+        ("http://example.com:8080/path?q=1", 8080),
+        ("http://localhost", None),
+        ("localhost", None),
+        ("example.com", None),
+        ("*.example.com", None),
+        ("", None),
+        ("http://example.com:abc/", None),
+    ],
+)
+def test_normalize_domain_port(raw, expected):
+    assert CaidoSitemapAgent._normalize_domain_port(raw) == expected
+
+
+def _caido_node(host, port, path, is_tls=False):
+    return {
+        "node": {
+            "id": f"{host}:{port}:{path}",
+            "host": host,
+            "port": port,
+            "isTls": is_tls,
+            "method": "GET",
+            "path": path,
+            "query": "",
+            "raw": "",
+            "response": {"statusCode": 200},
+        }
+    }
+
+
+def _fetch_harness(monkeypatch, edges, page_info=None):
+    """CaidoSitemapAgent を GraphQL と ingest だけ差し替えたハーネスで返す。"""
+    agent = CaidoSitemapAgent.__new__(CaidoSitemapAgent)
+    info = page_info or {"hasPreviousPage": False, "startCursor": None}
+
+    async def fake_query(_query, variables):
+        return {"requests": {"pageInfo": info, "edges": edges}}
+
+    async def fake_ingest(_url):
+        return None
+
+    monkeypatch.setattr(agent, "_query_graphql", fake_query)
+    monkeypatch.setattr(agent, "_ingest_if_available", fake_ingest)
+    return agent
+
+
+@pytest.mark.asyncio
+async def test_fetch_recent_requests_isolates_target_port(monkeypatch):
+    """混在ポート履歴で target 127.0.0.1:5001 のURLのみ返し、
+    別ポートのループバック履歴（別ローカルサービス）を除外する。"""
+    agent = _fetch_harness(
+        monkeypatch,
+        edges=[
+            _caido_node("127.0.0.1", 5001, "/current"),
+            _caido_node("localhost", 3000, "/other-a"),
+            _caido_node("127.0.0.1", 5002, "/other-port"),
+            _caido_node("127.0.0.1", 5001, "/current-2"),
+        ],
+    )
+
+    contexts = await CaidoSitemapAgent.fetch_recent_requests(agent, domain="http://127.0.0.1:5001", limit=50)
+    urls = [ctx.url for ctx in contexts]
+    assert urls == ["http://127.0.0.1:5001/current", "http://127.0.0.1:5001/current-2"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_recent_requests_loopback_alias_same_port_passes(monkeypatch):
+    """localhost:5001（別名・同ポート）はループバック等価のまま通す。"""
+    agent = _fetch_harness(monkeypatch, edges=[_caido_node("localhost", 5001, "/alias")])
+
+    contexts = await CaidoSitemapAgent.fetch_recent_requests(agent, domain="http://localhost:5001", limit=50)
+    assert [ctx.url for ctx in contexts] == ["http://localhost:5001/alias"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_recent_requests_without_port_accepts_all_ports(monkeypatch):
+    """ポート未指定フィルタ（example.com）は従来どおり全ポート許容（後方互換）。"""
+    agent = _fetch_harness(
+        monkeypatch,
+        edges=[
+            _caido_node("example.com", 80, "/a"),
+            _caido_node("example.com", 8080, "/b"),
+            _caido_node("api.example.com", 443, "/c", is_tls=True),
+        ],
+    )
+
+    contexts = await CaidoSitemapAgent.fetch_recent_requests(agent, domain="example.com", limit=50)
+    urls = [ctx.url for ctx in contexts]
+    assert urls == [
+        "http://example.com/a",
+        "http://example.com:8080/b",
+        "https://api.example.com/c",
+    ]
+
+
 @pytest.mark.asyncio
 async def test_fetch_recent_requests_paginates_until_domain_match(monkeypatch):
     agent = CaidoSitemapAgent.__new__(CaidoSitemapAgent)

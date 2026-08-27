@@ -663,6 +663,23 @@ class Settings(BaseSettings):
     # non-GET/HEAD send at the network boundary; state-changing findings are
     # mapped to needs_human by the injection manager.
     sealed_run_get_only: bool = False
+    # SGK-2026-0459: active save-sink discovery (behavior-based write-endpoint
+    # discovery). All defaults opt-out / practice-host only -> existing runs
+    # byte-identical. Opt-in via SHIGOKU_RECON_ACTIVE_POST_ENABLED=1.
+    recon_active_post_enabled: bool = False
+    active_post_allowed_hosts: List[str] = ["127.0.0.1", "localhost"]
+    active_post_max_writes: int = 5
+    active_post_max_writes_per_page: int = 2
+    active_post_max_reveal_clicks: int = 8
+    active_post_reveal_depth: int = 2
+    active_post_reveal_time_budget_ms: int = 20000
+    # SGK-2026-0459: per-click adaptive reveal wait cap (ms). The post-click
+    # wait polls for a new surface / generic dialog-overlay and exits as soon
+    # as one is observed, instead of a fixed short wait that misses SPA
+    # dialogs which render their content without a load event.
+    active_post_reveal_settle_ms: int = 2500
+    active_post_submit_attempts: int = 3
+    active_post_skip_path_tokens: List[str] = ["/admin", "/users", "/profile", "/account", "/settings", "/password"]
     # SGK-2026-0450: tool-calling 移行・重複排除ガードのオプトイン
     # (default off -> 既存 run は byte-identical。env SHIGOKU_TOOL_CALLING_ENABLED / SHIGOKU_DEDUP_GUARD_ENABLED)
     tool_calling_enabled: bool = False

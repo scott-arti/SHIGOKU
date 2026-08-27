@@ -1815,9 +1815,15 @@ class ReconPipeline:
         """
         logger.info("[Step 3b] Hybrid URL Discovery started")
         
+        # 単一URL対象（完全URL・scheme+port 保持）が指定されている場合は live_subs が空でも
+        # 種URL自身をクロール/Playwright の種にする（:1530 と同型の判定）。
+        single_url_target = (self.state.target or "").startswith("http")
+
         if not live_subs:
-            logger.warning("[Step 3b] No live subdomains available for crawling. Skipping.")
-            return {}
+            if not single_url_target:
+                logger.warning("[Step 3b] No live subdomains available for crawling. Skipping.")
+                return {}
+            logger.info("[Step 3b] No live subdomains; using single URL target as crawl seed.")
 
         proxy_url = settings.get_proxy_url()
         
@@ -1852,8 +1858,12 @@ class ReconPipeline:
                 logger.warning("Failed to load httpx.json for Katana targets: %s", e)
         
         if not katana_targets:
-            logger.info("Falling back to live_subs for Katana targets (Defaulting to http://)")
-            katana_targets = [f"http://{sub}" for sub in live_subs if not sub.startswith("http")]
+            if single_url_target and not live_subs:
+                # 単一URL対象: hostname 再構成でポートを落とさず、scheme+port 保持のまま種にする
+                katana_targets = [self.state.target]
+            else:
+                logger.info("Falling back to live_subs for Katana targets (Defaulting to http://)")
+                katana_targets = [f"http://{sub}" for sub in live_subs if not sub.startswith("http")]
 
         live_subs_file.write_text("\n".join(katana_targets if katana_targets else live_subs))
         
@@ -2110,13 +2120,26 @@ class ReconPipeline:
             from src.core.agents.specialized.caido_sitemap_agent import CaidoSitemapAgent
             caido_agent = CaidoSitemapAgent()
             
-            # ターゲットドメインを特定して履歴検索
+            # ターゲットオリジン (scheme://host[:port]) を特定して履歴検索。
+            # Caido の履歴は全ターゲット横断で蓄積されるため、hostname のみに
+            # 縮約するとループバックの別ポート履歴（別ローカル製品）が混入する。
+            # ポートは落とさず fetch_recent_requests 側のポート照合で隔離する。
             target_domain = self.target.replace("*.", "")
             try:
                 parsed_target = urlparse(target_domain if "://" in target_domain else f"http://{target_domain}")
-                normalized_target_domain = str(parsed_target.hostname or "").strip().lower()
-                if normalized_target_domain:
-                    target_domain = normalized_target_domain
+                origin_host = str(parsed_target.hostname or "").strip().lower()
+                if origin_host:
+                    try:
+                        origin_port = parsed_target.port
+                    except ValueError:
+                        origin_port = None
+                    scheme = parsed_target.scheme or "http"
+                    if origin_port is None:
+                        target_domain = f"{scheme}://{origin_host}"
+                    elif ":" in origin_host:
+                        target_domain = f"{scheme}://[{origin_host}]:{origin_port}"
+                    else:
+                        target_domain = f"{scheme}://{origin_host}:{origin_port}"
             except Exception:
                 pass
             
@@ -2162,7 +2185,7 @@ class ReconPipeline:
         try:
             from urllib.parse import urljoin, urlparse
 
-            crawler = PlaywrightCrawler()
+            crawler = PlaywrightCrawler(proxy=settings.get_proxy_url())
             auth_headers_map = self._get_context_auth_headers()
             cookies_str = str(auth_headers_map.get("Cookie", "") or "")
 
@@ -2207,6 +2230,9 @@ class ReconPipeline:
             )
 
             crawl_errors: list[str] = []
+            # SGK-2026-0458: Playwright crawl が発見した save_endpoints（書き込み API 契約）を
+            # 収集し、後続の injection タスクへ sidecar として渡す。
+            collected_save_endpoints: list[dict] = []
             for target_url in targets_to_playwright:
                 try:
                     p_result = await crawler.crawl(
@@ -2218,6 +2244,9 @@ class ReconPipeline:
                         max_forms_per_page=playwright_max_forms_per_page,
                         max_post_login_actions_per_page=playwright_max_post_login_actions_per_page,
                         max_route_hints_per_page=playwright_max_route_hints_per_page,
+                        # SGK-2026-0458: get_only は crawl 側の設定解決に任せる（None）。
+                        get_only=None,
+                        active_post=getattr(settings, "recon_active_post_enabled", False),
                     )
                     p_errors = p_result.get("errors", [])
                     if isinstance(p_errors, list):
@@ -2225,6 +2254,11 @@ class ReconPipeline:
                             err_str = str(err or "").strip()
                             if err_str:
                                 crawl_errors.append(f"{target_url}: {err_str}")
+                    
+                    # SGK-2026-0458: save_endpoints を収集（dict + url 必須、不正は無視）
+                    for ep in (p_result.get("save_endpoints") or []):
+                        if isinstance(ep, dict) and ep.get("url"):
+                            collected_save_endpoints.append(ep)
                     
                     # 結果を共通フォーマットに変換
                     for url_data in p_result.get("urls", []):
@@ -2374,6 +2408,21 @@ class ReconPipeline:
                     len(crawl_errors),
                     preview,
                 )
+
+            # SGK-2026-0458: save_endpoints sidecar を永続化（空のときは書かない）
+            if collected_save_endpoints:
+                try:
+                    save_ep_file = self._get_path("save_endpoints", "json")
+                    save_ep_file.write_text(
+                        json.dumps(collected_save_endpoints, ensure_ascii=False, indent=2)
+                    )
+                    logger.info(
+                        "Saved %d save_endpoints sidecar entries to %s",
+                        len(collected_save_endpoints),
+                        save_ep_file,
+                    )
+                except Exception as e:
+                    logger.warning("Failed to write save_endpoints sidecar: %s", e)
             
             logger.info("Playwright dynamic recon found %d endpoints", len(playwright_entries))
         except Exception as e:

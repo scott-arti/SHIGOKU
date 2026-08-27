@@ -135,7 +135,39 @@ class PlaywrightValidator:
         except ImportError:
             return None
 
-    async def validate_xss(self, url: str, timeout: float = 10.0, cookies: Optional[List[Dict[str, Any]]] = None) -> bool:
+    async def _maybe_install_get_only_route(self, page, get_only: Optional[bool] = None) -> bool:
+        """get_only 有効時に非 GET/HEAD リクエストを abort する route guard を仕込む（SGK-2026-0458）。
+
+        - get_only 未指定（None）は settings.sealed_run_get_only を参照（既定 off）。
+        - 有効時: page.route("**/*") で GET/HEAD のみ continue、他は abort。
+        - 有効/無効の判定結果を返す（呼び出し側がフォーム送信スキップ等に利用）。
+        - 設定読取・route 登録の失敗は握りつぶす（opt-in であり、既存挙動を壊さない）。
+        """
+        try:
+            from src.core.config.settings import get_settings
+
+            effective = get_only if get_only is not None else bool(
+                getattr(get_settings(), "sealed_run_get_only", False)
+            )
+        except Exception:
+            effective = bool(get_only)
+        if not effective:
+            return False
+
+        async def _guard(route):
+            method = str(route.request.method or "GET").upper()
+            if method in ("GET", "HEAD"):
+                await route.continue_()
+            else:
+                await route.abort()
+
+        try:
+            await page.route("**/*", _guard)
+        except Exception:
+            pass
+        return True
+
+    async def validate_xss(self, url: str, timeout: float = 10.0, cookies: Optional[List[Dict[str, Any]]] = None, get_only: Optional[bool] = None) -> bool:
         """
         URLにアクセスし、alert() ダイアログが出るか、またはコンソールに特定のログが出るか検証する
         
@@ -182,6 +214,7 @@ class PlaywrightValidator:
                     await context.add_cookies(cookies)
                 
                 page = await context.new_page()
+                await self._maybe_install_get_only_route(page, get_only)
                 
                 # ダイアログハンドラ
                 async def handle_dialog(dialog):
@@ -278,7 +311,8 @@ class PlaywrightValidator:
         target_input: str, 
         payload: str, 
         timeout: float = 10.0, 
-        cookies: Optional[List[Dict[str, Any]]] = None
+        cookies: Optional[List[Dict[str, Any]]] = None,
+        get_only: Optional[bool] = None
     ) -> bool:
         """
         URLにアクセスし、特定のフォームにペイロードを入力して送信し、
@@ -314,6 +348,7 @@ class PlaywrightValidator:
                     await context.add_cookies(cookies)
                 
                 page = await context.new_page()
+                get_only_active = await self._maybe_install_get_only_route(page, get_only)
                 
                 # ダイアログハンドラ
                 async def handle_dialog(dialog):
@@ -335,28 +370,32 @@ class PlaywrightValidator:
                 try:
                     await page.goto(url, timeout=timeout * 1000, wait_until="domcontentloaded")
                     await page.wait_for_timeout(1000)
-                    
-                    form_elements = await page.query_selector_all("form")
-                    if form_index < len(form_elements):
-                        target_form = form_elements[form_index]
-                        
-                        input_element = await target_form.query_selector(f"[name='{target_input}']")
-                        if input_element:
-                            await input_element.fill(payload)
-                            
-                            try:
-                                async with page.expect_navigation(timeout=timeout*1000):
-                                    submit_button = await target_form.query_selector("input[type='submit'], button[type='submit']")
-                                    if submit_button:
-                                        await submit_button.click()
-                                    else:
-                                        await input_element.press('Enter')
-                            except PlaywrightError:
-                                pass
-                            
-                            await page.wait_for_timeout(2000)
+
+                    if get_only_active:
+                        # SGK-2026-0458: get_only 有効時はフォーム送信（POST）を実行しない
+                        logger.info("[Headless] get_only mode: skipping form submission")
                     else:
-                        logger.warning(f"[Headless] Form index {form_index} out of bounds.")
+                        form_elements = await page.query_selector_all("form")
+                        if form_index < len(form_elements):
+                            target_form = form_elements[form_index]
+                            
+                            input_element = await target_form.query_selector(f"[name='{target_input}']")
+                            if input_element:
+                                await input_element.fill(payload)
+                                
+                                try:
+                                    async with page.expect_navigation(timeout=timeout*1000):
+                                        submit_button = await target_form.query_selector("input[type='submit'], button[type='submit']")
+                                        if submit_button:
+                                            await submit_button.click()
+                                        else:
+                                            await input_element.press('Enter')
+                                except PlaywrightError:
+                                    pass
+                                
+                                await page.wait_for_timeout(2000)
+                        else:
+                            logger.warning(f"[Headless] Form index {form_index} out of bounds.")
                     
                 except PlaywrightError as e:
                     logger.debug(f"[Headless] Navigation error (expected): {e}")
@@ -372,7 +411,7 @@ class PlaywrightValidator:
             
         return xss_triggered
 
-    async def extract_forms(self, url: str, timeout: float = 10.0, cookies: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
+    async def extract_forms(self, url: str, timeout: float = 10.0, cookies: Optional[List[Dict[str, Any]]] = None, get_only: Optional[bool] = None) -> List[Dict[str, Any]]:
         """
         ページ内の入力フォームを抽出する。
         
@@ -404,6 +443,7 @@ class PlaywrightValidator:
                 if cookies:
                     await context.add_cookies(cookies)
                 page = await context.new_page()
+                await self._maybe_install_get_only_route(page, get_only)
                 
                 await page.goto(url, timeout=timeout * 1000, wait_until="domcontentloaded")
                 
@@ -433,7 +473,7 @@ class PlaywrightValidator:
             
         return forms
 
-    async def validate_dom_reflection(self, url: str, marker: str, timeout: float = 10.0, cookies: Optional[List[Dict[str, Any]]] = None) -> bool:
+    async def validate_dom_reflection(self, url: str, marker: str, timeout: float = 10.0, cookies: Optional[List[Dict[str, Any]]] = None, get_only: Optional[bool] = None) -> bool:
         """
         ブラウザでページを開き、JS実行後の DOM 内に指定したマーカーが存在するか確認する。
         DOM-Based XSS のプローブ検証に使用。
@@ -458,6 +498,7 @@ class PlaywrightValidator:
                 if cookies:
                     await context.add_cookies(cookies)
                 page = await context.new_page()
+                await self._maybe_install_get_only_route(page, get_only)
                 
                 try:
                     await page.goto(url, timeout=timeout * 1000, wait_until="networkidle")
@@ -479,7 +520,8 @@ class PlaywrightValidator:
         original_id: str, 
         test_id: str, 
         timeout: float = 10.0, 
-        cookies: Optional[List[Dict[str, Any]]] = None
+        cookies: Optional[List[Dict[str, Any]]] = None,
+        get_only: Optional[bool] = None
     ) -> dict:
         """
         SPAなどフロントエンドアプリにおけるIDOR（Insecure Direct Object Reference）を検証する。
@@ -510,6 +552,7 @@ class PlaywrightValidator:
                 if cookies:
                     await context.add_cookies(cookies)
                 page = await context.new_page()
+                await self._maybe_install_get_only_route(page, get_only)
                 
                 intercepted_requests = []
                 successful_apis = []
@@ -568,7 +611,8 @@ class PlaywrightValidator:
         target_api: str, 
         method: str, 
         post_data: dict, 
-        cookies: Optional[List[Dict[str, Any]]] = None
+        cookies: Optional[List[Dict[str, Any]]] = None,
+        get_only: Optional[bool] = None
     ) -> bool:
         """
         CSRF攻撃をシミュレートする（別オリジンからのクロスサイトリクエスト）。
@@ -598,6 +642,12 @@ class PlaywrightValidator:
                     await context.add_cookies(cookies)
                     
                 page = await context.new_page()
+                get_only_active = await self._maybe_install_get_only_route(page, get_only)
+                if get_only_active:
+                    # SGK-2026-0458: get_only 有効時は CSRF フォーム送信（POST）を実行しない
+                    logger.info("[Headless] get_only mode: skipping CSRF form submission")
+                    await browser.close()
+                    return False
                 
                 # 攻撃者の罠ページを生成
                 inputs = "".join([f'<input type="hidden" name="{k}" value="{v}">' for k, v in post_data.items()])

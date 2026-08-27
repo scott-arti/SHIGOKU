@@ -184,6 +184,59 @@ async def test_step3b_empty_live_subs_returns_empty(pipeline):
 
 
 @pytest.mark.asyncio
+async def test_step3b_single_url_target_seeds_crawl_when_live_subs_empty(tmp_path):
+    """T-a: live_subs 空＋完全URL対象（scheme+port）は early-return せず、
+    katana_targets／live_subs_for_crawl／Playwright seed にポート込み完全URLが入る。"""
+    target_url = "http://127.0.0.1:12345/"
+    p = ReconPipeline(
+        config={"recon": {"max_concurrent_tasks": 4}},
+        project_manager=None,
+        target="",
+        workspace_root=tmp_path,
+    )
+    p.runner.dev_mode = True
+    p.state.dead_subs = []
+    # run(target) と同型: self.target と state.target の両方に完全URLが入り、
+    # project_name は空のまま（_get_path が URL をファイル名に焼かない）
+    p.target = target_url
+    p.state.target = target_url
+
+    mock_katana = MagicMock()
+    mock_katana.run.return_value = ""
+    mock_gau = MagicMock()
+    mock_gau.run.return_value = ""
+    mock_httpx = MagicMock()
+    mock_httpx.run.return_value = ""
+    mock_playwright = MagicMock()
+    mock_playwright.crawl = AsyncMock(return_value={"urls": [], "endpoints": [], "js_files": [], "errors": []})
+    mock_filter = MagicMock()
+    mock_filter.process_file.return_value = {}
+
+    with patch("src.recon.pipeline.settings") as mock_settings:
+        mock_settings.max_httpx_urls = 500
+        mock_settings.playwright_target_budget = 2
+        mock_settings.get_proxy_url.return_value = None
+        with patch("src.recon.pipeline.KatanaTool", return_value=mock_katana):
+            with patch("src.recon.pipeline.GAUTool", return_value=mock_gau):
+                with patch("src.recon.pipeline.HttpxTool", return_value=mock_httpx):
+                    with patch("src.recon.pipeline.PlaywrightCrawler", return_value=mock_playwright):
+                        with patch("src.recon.pipeline.TaggingFilter", return_value=mock_filter):
+                            await p.step3b_hybrid_url_discovery([])
+
+    # 1) early-return せず Katana が実行された（live_subs 空でもスキップされない）
+    assert mock_katana.run.called
+
+    # 2) live_subs_for_crawl にポート込み完全URL（scheme+port 保持・hostname 再構成なし）が入る
+    live_subs_files = list(tmp_path.glob("*_live_subs_for_crawl.txt"))
+    assert live_subs_files, "live_subs_for_crawl file should be written"
+    assert target_url in live_subs_files[0].read_text(encoding="utf-8")
+
+    # 3) Playwright seed（crawl の第1引数）にポート込み完全URLが渡る
+    assert mock_playwright.crawl.called
+    assert mock_playwright.crawl.call_args[0][0] == target_url
+
+
+@pytest.mark.asyncio
 async def test_step3b_tagging_filter_called(pipeline, tmp_path):
     """Step 3b: TaggingFilter が正しく呼ばれる"""
     

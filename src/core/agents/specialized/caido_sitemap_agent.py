@@ -121,6 +121,34 @@ class CaidoSitemapAgent(BaseAgent):
             host = host[2:]
         return CaidoSitemapAgent._normalize_host_token(host)
 
+    @staticmethod
+    def _normalize_domain_port(domain: Optional[str]) -> Optional[int]:
+        """Extract an explicit port from the domain filter, if present.
+
+        Accepts the same inputs as _normalize_domain_filter:
+        - example.com / example.com:8080 / http://example.com:8080/path
+        - http://127.0.0.1:5001 / localhost:5001 / [::1]:8888
+
+        Returns the explicit port as int, or None when the filter does not
+        specify a port (all ports allowed).
+        """
+        token = str(domain or "").strip().lower()
+        if not token:
+            return None
+
+        if token.startswith("*."):
+            token = token[2:]
+
+        try:
+            parsed = urlparse(token if "://" in token else f"//{token}")
+            port = parsed.port
+        except Exception:
+            return None
+
+        if port is None:
+            return None
+        return int(port)
+
     async def _query_graphql(self, query: str, variables: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Caido GraphQL API にクエリを投げる"""
         if not self.caido_token:
@@ -334,6 +362,20 @@ class CaidoSitemapAgent(BaseAgent):
             # ドメインでのフィルタリング
             if not self._host_matches_domain(host, normalized_domain):
                 continue
+
+            # オリジン隔離: フィルタに明示ポートがある場合、履歴のポート一致を必須にする。
+            # ループバック等価（localhost≡127.0.0.1≡::1）はホスト判定のまま残し、
+            # ポート差（別ポートの過去履歴・別ローカル製品）だけを混入として除外する。
+            # ポート未指定（実ドメイン等）は従来どおり全ポート許容（後方互換）。
+            filter_port = self._normalize_domain_port(domain)
+            if filter_port is not None:
+                node_port = node.get("port")
+                try:
+                    node_port = int(node_port) if node_port is not None else None
+                except (TypeError, ValueError):
+                    node_port = None
+                if node_port != filter_port:
+                    continue
 
             method = node.get("method", "GET")
             path = node.get("path", "/")
