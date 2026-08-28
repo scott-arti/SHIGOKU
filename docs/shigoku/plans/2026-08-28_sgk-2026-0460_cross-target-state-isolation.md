@@ -69,6 +69,22 @@ Caido プロキシ履歴の取り込みが唯一の実効注入源。Caido の�
 - **影響しないもの**: `_normalize_domain_filter` の戻り（host-only）は不変で :181 テスト緑維持。既存 :269-271 テスト（filter=8888 / fixture=8888）は同一ポートにつき緑維持。実ドメイン走行（ポート未指定）は全ポート許容で不変。
 - **新規テスト**（DeepSeek 追加）: 混在ポート fixture（現ターゲット `127.0.0.1:5001` ＋ `localhost:3000`・`127.0.0.1:5002` の履歴）で **5001 のみ返る**こと／ポート未指定フィルタは全件返ること／`localhost:5001`（別名・同ポート）は通ること。
 
+## 追加実装（実 Caido フル走行で判明・C5到達のための _context マージ修正）
+
+2026-08-28 の実走行（`127.0.0.1:5007`）で **C1（混入0）は実地達成**したが、**C5（保存型 confirmed=1）は別要因で未達**と確定（詳細は work_report「実 Caido フル走行・独立検証記録」）。
+
+- 真因（Caido 混入とは独立）: dispatch 時に `src/core/engine/master_conductor.py:7717`
+  `task.params["_context"] = self.accumulated_context.to_dict()` が **_context を丸ごと置換**し、
+  build 時（`master_conductor.py:14742-14744`）注入の `save_endpoints`/`forms_by_url`/`url_evidence_by_url` を破棄。
+  → injection へ save_endpoints 不達 → `candidate_params` 空 → `smart_xss.py:1188` の param ループが空回り →
+  保存型確定 `_attempt_stored_revisit_validation`（smart_xss.py:771）が未呼び出し。
+- 修正（最小・製品非依存・確定バー無改変・DeepSeek 実装 / Claude 検証）:
+  `7717` を「置換」から「マージ」へ（`{**existing, **accumulated}` 相当。accumulated 優先、build 時のみのキー
+  `save_endpoints`/`forms_by_url`/`url_evidence_by_url` を保持）。
+- 必須テスト: build 時に `_context["save_endpoints"]` を持つタスクが dispatch 後も保持することの単体テスト＋
+  実練習台フル走行での `variant="stored"` confirmed=1。
+- 位置づけ: 本修正は完了契約 C5（＝0459 C1c）到達のための実装であり、固定契約の拡張ではない。
+
 ## 完了契約（Fixed completion criteria・暫定）
 
 - C1: 単一ターゲット（ローカル練習台）の走行で、セッションの task/finding に**対象オリジン以外のURLが混入しない**（別ターゲットURLの注入 0）。

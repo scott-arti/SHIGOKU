@@ -7714,7 +7714,8 @@ class MasterConductor:
         with self._state_lock:
             task.state = TaskState.RUNNING
             if not self.accumulated_context.is_empty():
-                task.params["_context"] = self.accumulated_context.to_dict()
+                # SGK-2026-0460: 置換でなくマージ（accumulated 優先・build 時 discovery 契約キー保持）
+                self._merge_accumulated_context(task)
             task = self.context_designer.enrich_task(task, self.context, self.accumulated_context, workspace=self.workspace)
 
         # Phase 4 (SGK-2026-0313): Shadow decision computation (observation only)
@@ -8167,7 +8168,22 @@ class MasterConductor:
             self._mark_pending_hitl_done(task, success=False)
             self._record_task_prioritizer_outcome(task, {"success": False, "error": str(e)})
             return {"success": False, "error": str(e)}
-    
+
+    def _merge_accumulated_context(self, task: Task) -> None:
+        """SGK-2026-0460: dispatch 時に accumulated recon 要約を _context へマージする。
+
+        build 時（SGK-2026-0458）に注入された discovery 契約キー
+        （save_endpoints / forms_by_url / url_evidence_by_url）を保持しつつ、
+        overlap キーは accumulated（新しい recon 要約）を優先する。
+        """
+        _accumulated = self.accumulated_context.to_dict()
+        _existing = task.params.get("_context")
+        if isinstance(_existing, dict):
+            # accumulated（新しい recon 要約）を優先しつつ、build 時のみ入る discovery 契約キーを保持
+            task.params["_context"] = {**_existing, **_accumulated}
+        else:
+            task.params["_context"] = _accumulated
+
     def _emit_task_state_event(self, *, event_type: EventType, task: Task, result: dict | None = None) -> None:
         result = result or {}
         try:

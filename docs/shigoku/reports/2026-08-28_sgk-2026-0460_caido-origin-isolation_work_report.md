@@ -83,3 +83,80 @@ deferred_tasks:
 ## 参考ルール
 
 rules/lessons.md（一ファイル断定回避・worktree 回帰比較）、rules/codingrules.md、rules/task-ledger.md、rules/shigoku-docs.md、rules/python-tests.md、CLAUDE.md §17/§19。
+
+## 実 Caido フル走行・独立検証記録（2026-08-28・Claude）
+
+実 Caido（127.0.0.1:8081・preflight 全通過）経由で、新規練習台 `http://127.0.0.1:5007`（保存型XSS・resume=fresh）に対しフルパイプラインを実走行（`python -m src --target http://127.0.0.1:5007 --mode vulntest --profile bbpt`、`SHIGOKU_RECON_ACTIVE_POST_ENABLED=true`）。ミッション正常完了、セッション `workspace/projects/127.0.0.1:5007/sessions/session_20260828_075102.json`。
+
+### C1（別オリジンURL混入 0）: 達成（実地で証明）
+- セッション全体を独立走査: `localhost:3000`=**0** / `:5002`=**0** / `:3000`=**0** / `juice`(ci)=**0**。
+- 全 http(s) URL のホスト内訳=**`127.0.0.1:5007` のみ 715 件**（他オリジン 0）。
+- recon 統合 `…/scans/raw/20260828_recon_all_urls_for_tagging.json` のホスト内訳=**`127.0.0.1:5007` のみ 18 件**（修正前の同種走行は `localhost:3000`=217/target=69 だった）。
+- 保存sink も full pipeline で捕捉: `…/comment`（POST・fields=["comment"]・marker・revisit_urls 6件）。
+- → Caido オリジン隔離は実パイプラインでも有効。**C1 PASS（実地）**。
+
+### C5（隔離後フル走行 confirmed=1・variant=stored）: 未達 — 別要因を実データで確定
+- セッションに `variant=stored` / `dialog_observed` / `stored_revisit_browser_execution` は不在。保存型XSSは確定に至らず。
+- 真因（Caido 混入とは別・新規判明）: dispatch 時に `src/core/engine/master_conductor.py:7717` が
+  `task.params["_context"] = self.accumulated_context.to_dict()` で **_context を丸ごと置換**し、
+  build 時（`master_conductor.py:14742-14744`）に注入した `save_endpoints`（および `forms_by_url`/`url_evidence_by_url`）を**破棄**していた。
+- 実データ裏取り: セッションの全 15 completed_tasks の `_context` は recon 要約の 6 キー
+  （`discovered_endpoints/auth_tokens/discovered_params/tech_stack/waf_info/critical_findings`）**のみ**で、
+  `save_endpoints` は 1 件も存在しない。
+- 伝播: `save_endpoints` 不達 → injection manager `_match_save_endpoint` が None → `candidate_params`（smart_xss ログ `Candidate params prioritized: []`）が空 →
+  `smart_xss.py:1188` の `for param_name in candidate_params:` ループが空回りし、保存型確定手順
+  `_attempt_stored_revisit_validation`（smart_xss.py:771）が**一度も呼ばれない**。
+
+### 追加実装（C5 到達のための最小修正・DeepSeek 実装 / Claude 検証）
+- `master_conductor.py:7717` を「置換」から「マージ」へ: `task.params["_context"] = {**existing, **accumulated}` 相当。
+  accumulated（新しい recon 要約）を優先しつつ、build 時のみ入る discovery 契約キー
+  （`save_endpoints`/`forms_by_url`/`url_evidence_by_url`）を保持する。製品非依存・加算のみ・確定バー無改変。
+- 必須テスト: build 時に `_context["save_endpoints"]` を入れたタスクが dispatch 後も save_endpoints を保持することの単体テスト＋実練習台でのフル走行 `variant="stored"` confirmed=1。
+- これは 0460 の完了契約 C5（＝0459 C1c）到達のための実装であり、固定契約の拡張ではない。
+
+### 追加実装 完了（2026-08-28・本ターン・実装/検証済み）
+
+**実装（変更行: `src/core/engine/master_conductor.py` 18+/2-）**
+- `master_conductor.py:7716-7717` の「置換」を「マージ」へ変更。マージロジックは private ヘルパー `_merge_accumulated_context(task)`（`_execute_single_task_full_flow` 直後に追加）へ抽出し、dispatch 側は `accumulated_context` 非空時のみ呼び出し（呼び出しガード・`{**existing, **accumulated}` の優先セマンティクスは計画書どおり）。`enrich_task`（context_designer.py）は `_context` を一切触らないことを確認済み（マージ後に破棄されない）。
+- 新規テスト: `tests/core/engine/test_master_conductor_context_merge.py`（4件）
+  - `test_dispatch_merge_preserves_build_time_keys_and_accumulated_wins`（build 時 `save_endpoints`/`forms_by_url`/`url_evidence_by_url` 保持＋overlap キーは accumulated 優先）
+  - `test_dispatch_merge_sets_accumulated_when_context_absent` / `test_dispatch_merge_replaces_non_dict_context`
+  - `test_full_flow_dispatch_merge_keeps_save_endpoints_reachable`（実 `_execute_single_task_full_flow` 経由の配線テスト: 下流スタブのみ・merge/enrich は実コード）
+
+**検証（実コマンド出力・そのまま）**
+- `$ .venv/bin/pytest tests/core/engine/test_master_conductor_context_merge.py -q` → **4 passed in 1.80s**
+- 広域: `tests/core/engine/ tests/core/agents/swarm/injection/` = **1307 passed / 32 failed / 1 error**。失敗32+エラー1は **pristine（変更 stash）ベースラインと同一リスト**（`diff baseline current` = IDENTICAL_FAILURES・33行一致）＝事前既存（`reserved_task_ids` kwarg 不一致・bugbounty bundle preflight・react_redundancy 等）で本変更起因なし。
+- `$ .venv/bin/python scripts/check_vdp_product_independence.py --manifest config/diagnostics/product_independence_manifest_v1.json --denylist config/diagnostics/sealed_product_denylist.txt --changed-files <master_conductor.py, 新テスト>`
+  - 出力: **verdict: pass / reason_codes: [] / total_token_hits: 0**（checks 6/6 ok・changed_files_input=2・files_scanned=2・closure 31・model_templates_scanned 21）
+- `$ git diff --quiet HEAD -- src/core/agents/swarm/injection/payout_grade.py src/prompts/roles/poc_judge.md src/core/engine/task_queue.py src/core/validation/finding_validator.py src/core/validation/sealed_reproduction_checker.py && echo BAR_UNCHANGED` → **BAR_UNCHANGED**（確定バー5ファイル無改変）
+
+**備考（pass 主張の正確性）**: 本ターンの検証はユニット＋配線テスト＋製品非依存＋バー無改変まで。フル走行での `variant="stored"` confirmed=1・整合 consistent（C5）は**未実施**で、ユーザー（Claude）が実 Caido で独立再検証する前提（計画書・deferred どおり）。
+
+## 実 Caido フル再走行（_context マージ修正後・2026-08-28・Claude 独立検証）
+
+修正（`master_conductor.py:7717` 置換→マージ）投入後、同一練習台 `http://127.0.0.1:5007`（resume=fresh）へ実 Caido 経由でフル再走行。セッション `…/sessions/session_20260828_223724.json`、レポート `…/reports/haddix_report_20260828_223725.md`（consistency.status=consistent）。
+
+### C1（混入0）: 再走行でも維持
+- セッション全 URL のホスト内訳=**`127.0.0.1:5007` のみ**。`localhost:3000`/`:5002`/`juice` すべて 0。
+
+### 保存sink→確定鎖: 実際に貫通・本物のブラウザ警告を観測
+- 修正効果（実ログ）: `SmartXSSHunter` の `Candidate params prioritized` が前回の `[]` から **`[comment]`** に変化（save_endpoints が dispatch 後も _context に生存＝マージ修正が有効）。
+- ブラウザ発火（`src.tools.browser.playwright_validator`）: `[Headless] Dialog detected! Type: alert, Message: 1` を複数回観測。
+- 生成 finding（`completed_tasks[9].result.data.findings[0]`, id=1184e6540ea5）: `type=xss`・`severity=high`・`variant=stored`、
+  `additional_info.browser_execution = {dialog_observed:true, executor:playwright, event:stored_revisit_browser_execution, variant:stored, payload:"<img src=x onerror=alert(1)>"}`、
+  `stored_xss_revisit = {save: POST /comment(payload), revisit: GET /}`。reproduction_steps 3段（書込→再訪→alert発火）付き。
+  → **保存型XSSを、書込→別ページ反射→実ブラウザ alert 発火まで、フル製品パイプラインで到達**（製品非依存・確定バー無改変）。
+
+### formal「confirmed=1」: 未達（設計上の shadow 保留・確定バー外の reporting ポリシー）
+- haddix ゲート: `status=fail`（`confirmed_below_minimum, candidate_above_maximum`）。`report_findings_summary.confirmed_count=0 / candidate_count=8`（authoritative）。
+- 当該 XSS 3件は **candidate / reason=insufficient_validation**。同レポートの **Evidence Quality Shadow Verdict** は当該3件を `would_promote=confirmed`（根拠 `browser_evidence`）と判定するが、**「Enforcement is disabled in shadow mode … Switching from shadow to enforcement is a separate, gated change.」**＝ candidate→confirmed の昇格は**意図的に shadow（無効）**。
+- この昇格ロジックは `src/reporting/haddix_evidence_quality.py`（**reporting 層**）にあり、**確定バー5ファイルには含まれない**。よって formal confirmed=1 に到達させるには shadow→enforce の**別ゲート判断**が必要。CLAUDE.md の既知安全保留の趣旨に従い、FAIL を PASS にするための昇格・shadow 解除は**本ターンでは実施しない**（ユーザー判断事項）。
+
+### 完了契約との対応（更新）
+- C1（別オリジン混入0）: **PASS（実走行2回で実証）**。
+- C2/C3/C4: PASS（後方互換・確定バー無改変・token0・新規ユニット緑）。
+- C5（フル走行 confirmed=1・consistent）: **部分達成**。検出・発火・証拠・PoC・consistent は達成。ただし formal confirmed 集計は 0（reporting 層の evidence-quality 昇格が意図的に shadow）。formal confirmed=1 は shadow→enforce の別ゲート判断が前提で、確定バー外の reporting ポリシー変更（未実施・ユーザー判断）。
+
+### 残課題（deferred・追跡）
+- reporting 層 evidence-quality の shadow→enforce 切替可否（browser_evidence を根拠とする candidate→confirmed 昇格の有効化）。確定バー外だが確定集計に直結するため、ポリシー判断としてユーザー承認が必要。
+- candidate param に meta キー（`method`/`url_evidence`/`detection_mode`）が混入する軽微ノイズ（C2 の URL 汚染・別 finding 生成）。保存型の本命 finding（C1）には影響しないが、dispatch の base_params→candidate_params 抽出の精緻化余地。
