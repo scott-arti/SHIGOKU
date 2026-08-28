@@ -5749,7 +5749,7 @@ tasks:
   primary_doc: docs/shigoku/worklogs/2026-08-28_sgk-2026-0460_caido-origin-isolation_work_log.md
   status: active
   provisional: false
-  task_summary: "SGK-2026-0460 作業ログ(Caidoオリジン隔離)。フェーズ0結論の最小修正を実装: caido_sitemap_agent に _normalize_domain_port ヘルパ追加+fetch_recent_requests の host照合直後にポート照合(fail-closed・ポート未指定は全ポート許容・ループバック等価は維持)、pipeline の Caido呼び出しを scheme://host[:port] オリジン化。追加テスト: _normalize_domain_port 14ケース+混在ポート隔離/別名同ポート/全ポート後方互換。43 passed・BAR_UNCHANGED・token0。実走行(C1/C5)はClaude再検証前提。"
+  task_summary: "SGK-2026-0460 作業ログ(Caidoオリジン隔離+ノイズ整理)。1) フェーズ0結論の最小修正: caido_sitemap_agent に _normalize_domain_port ヘルパ追加+fetch_recent_requests の host照合直後にポート照合(fail-closed・ポート未指定は全ポート許容・ループバック等価は維持)、pipeline の Caido呼び出しを scheme://host[:port] オリジン化。2) 2026-08-29: smart_xss.py:1098 url_params_flat に META_KEYS フィルタ追加(C2 メタキー混入ノイズ除去・fragment 由来も一括除外)。追加テスト: _normalize_domain_port 14ケース+混在ポート隔離/別名同ポート/全ポート後方互換、test_smart_xss_logic 2件(メタキー除外+?q=維持)。43 passed・604 passed(injection全緑)・BAR_UNCHANGED・token0。実走行(C1/C5)はClaude再検証前提。"
   parent_task_id: SGK-2026-0442
   related_docs:
   - docs/shigoku/plans/2026-08-28_sgk-2026-0460_cross-target-state-isolation.md
@@ -5761,7 +5761,7 @@ tasks:
   primary_doc: docs/shigoku/reports/2026-08-28_sgk-2026-0460_caido-origin-isolation_work_report.md
   status: active
   provisional: false
-  task_summary: "SGK-2026-0460 作業完了報告(Caidoオリジン隔離)。何: ポート照合(新ヘルパ+host照合直後)+pipeline オリジン化。検証: test_caido_auth_resolver 43 passed(既存含む全緑)・BAR_UNCHANGED・check_vdp_product_independence verdict=pass/token_hits=0・tests/recon 3 failed は pristine HEAD でも同一=事前既存。完了契約: C3/C4 PASS・C1/C5 は実走行未実施(deferred)。未達の正直開示: 実走行未実施・ページング事前チェックはホストのみ(取りこぼし方向)。"
+  task_summary: "SGK-2026-0460 作業完了報告(Caidoオリジン隔離+ノイズ整理)。1) ポート照合(新ヘルパ+host照合直後)+pipeline オリジン化。2) 2026-08-29: smart_xss.py url_params_flat へ META_KEYS フィルタ(C2 メタキー由来候補除去・変更行 1箇所)。検証: test_caido_auth_resolver 43 passed・test_smart_xss_logic 13 passed(新規2含む・修正前FAIL stash実測)・injection全604 passed・BAR_UNCHANGED・check_vdp_product_independence verdict=pass/token_hits=0。完了契約: C1(実走行2回でPASS)・C2(ノイズ除去 本ターンPASS)・C3/C4 PASS・C5(confirmed=1)はreporting層shadow→enforceの別ゲート判断(deferred・ユーザー判断)。実Caidoフル再検証はClaude前提。"
   parent_task_id: SGK-2026-0442
   related_docs:
   - docs/shigoku/plans/2026-08-28_sgk-2026-0460_cross-target-state-isolation.md

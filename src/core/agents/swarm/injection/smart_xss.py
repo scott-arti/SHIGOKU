@@ -1095,7 +1095,14 @@ INPUT: [Input]
             _, _, frag_query = fragment.partition("?")
             for frag_key, frag_values in parse_qs(frag_query, keep_blank_values=True).items():
                 url_params.setdefault(frag_key, frag_values)
-        url_params_flat = {k: v[0] if v else "" for k, v in url_params.items()}
+        # SGK-2026-0460: 内部メタキー（method/url_evidence/detection_mode 等）を
+        # 注入候補から除外。fragment 由来（setdefault で url_params に合流）も
+        # この内包表記で一括除外される。payload_params 側の 1058 META_KEYS と同一基準。
+        url_params_flat = {
+            k: (v[0] if v else "")
+            for k, v in url_params.items()
+            if k not in META_KEYS
+        }
 
         # フォーム情報を事前に初期化（スコープ問題回避）
         forms = params.get("forms", [])

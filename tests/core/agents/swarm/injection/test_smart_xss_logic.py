@@ -544,3 +544,70 @@ async def test_dom_mutation_only_evidence_adopted_after_all_params(monkeypatch):
     assert "dialog_observed" not in result["browser_execution"]
     assert result["loop_result"]["reason"] == "dom_runtime_fragment_mutation"
     assert "DOM sink-like reflection observed via fragment payload" in result["evidence"]
+
+
+# ---------------------------------------------------------------------------
+# SGK-2026-0460: URL クエリ由来の内部メタキー（method/url_evidence/
+# detection_mode 等）を注入候補から除外（url_params_flat の META_KEYS フィルタ）
+# ---------------------------------------------------------------------------
+
+def _setup_meta_keys_hunter(monkeypatch):
+    """ネットワーク・LLM・ブラウザを無効化し、候補パラメータ導出のみ検証する。
+
+    - `_fetch_and_parse_form` を空リスト返却で patch（HTML フォーム解析を無効化）
+    - smart_client.request は非反射の良性応答を返すモック
+    - run_loop を即完了スタブに差し替え（per-param ループは tested_params 収集のみ）
+    """
+    import src.core.agents.swarm.injection.smart_xss as smart_xss_module
+
+    monkeypatch.setattr(
+        smart_xss_module,
+        "_fetch_and_parse_form",
+        AsyncMock(return_value=[]),
+    )
+    hunter = SmartXSSHunter()
+    hunter.smart_client.request = AsyncMock(
+        return_value={"status": 200, "body": "<html>ok</html>", "headers": {}}
+    )
+    monkeypatch.setattr(
+        hunter,
+        "run_loop",
+        AsyncMock(return_value={"status": "completed", "reason": "no_xss", "param": ""}),
+    )
+    monkeypatch.setattr(
+        hunter,
+        "_should_attempt_dom_browser_validation",
+        lambda target, param_name: False,
+    )
+    return hunter
+
+
+@pytest.mark.asyncio
+async def test_run_as_tool_excludes_url_query_meta_keys_from_candidates(monkeypatch):
+    """汚染URLのクエリに method/url_evidence/detection_mode が混入しても、
+    注入候補（tested_params）に復活しない。実パラメータ comment は残る。"""
+    hunter = _setup_meta_keys_hunter(monkeypatch)
+
+    result = await hunter.run_as_tool(
+        "http://h/comment?method=GET&url_evidence=%7B%7D&detection_mode=phase1&comment=1",
+        {},
+    )
+
+    tested = result["tested_params"]
+    assert "method" not in tested
+    assert "url_evidence" not in tested
+    assert "detection_mode" not in tested
+    assert "comment" in tested
+
+
+@pytest.mark.asyncio
+async def test_run_as_tool_keeps_real_url_query_candidates(monkeypatch):
+    """既存の URL クエリXSS（?q=<payload>）の候補導出は壊れない（q は残る）。"""
+    hunter = _setup_meta_keys_hunter(monkeypatch)
+
+    result = await hunter.run_as_tool(
+        "http://h/search?q=test",
+        {},
+    )
+
+    assert "q" in result["tested_params"]

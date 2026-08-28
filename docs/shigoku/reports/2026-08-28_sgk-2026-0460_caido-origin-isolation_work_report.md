@@ -8,7 +8,7 @@ related_docs:
 - docs/shigoku/worklogs/2026-08-28_sgk-2026-0460_caido-origin-isolation_work_log.md
 title: Caido履歴取り込みのオリジン（host:port）隔離 実装 作業完了報告
 created_at: '2026-08-28'
-updated_at: '2026-08-28'
+updated_at: '2026-08-29'
 tags:
 - shigoku
 - vdp
@@ -159,4 +159,59 @@ rules/lessons.md（一ファイル断定回避・worktree 回帰比較）、rule
 
 ### 残課題（deferred・追跡）
 - reporting 層 evidence-quality の shadow→enforce 切替可否（browser_evidence を根拠とする candidate→confirmed 昇格の有効化）。確定バー外だが確定集計に直結するため、ポリシー判断としてユーザー承認が必要。
-- candidate param に meta キー（`method`/`url_evidence`/`detection_mode`）が混入する軽微ノイズ（C2 の URL 汚染・別 finding 生成）。保存型の本命 finding（C1）には影響しないが、dispatch の base_params→candidate_params 抽出の精緻化余地。
+- ~~candidate param に meta キー（`method`/`url_evidence`/`detection_mode`）が混入する軽微ノイズ（C2 の URL 汚染・別 finding 生成）。保存型の本命 finding（C1）には影響しないが、dispatch の base_params→candidate_params 抽出の精緻化余地。~~ → **2026-08-29 解消**（下記）。
+
+## ノイズ整理: url_params_flat の META_KEYS フィルタ（2026-08-29・本ターン・実装/検証済み）
+
+## What（何をしたか）
+
+`src/core/agents/swarm/injection/smart_xss.py:1098` の `url_params_flat` 内包表記に `if k not in META_KEYS` を追加（変更行: `smart_xss.py` 1 箇所・+7/-1）。fragment 由来（`url_params.setdefault` で合流）も一括除外され、`method`/`url_evidence`/`detection_mode` 等の内部メタキーが URL クエリから注入候補へ復活しない。1058 の META_KEYS（payload_params 側と同一基準）をそのまま再利用。
+
+## Why（なぜ）
+
+実走行で汚染 URL `?method=…&url_evidence={}&detection_mode=…` が候補パラメータに展開され、余計な XSS finding（C2）と汚染 URL の自己増殖を生んでいた。payload_params 側（1078）は除外済みだったが URL クエリ側に未適用だった（前回完了報告の残課題）。
+
+## Validation（実コマンド出力・そのまま）
+
+- `$ .venv/bin/pytest tests/core/agents/swarm/injection/test_smart_xss_logic.py -q` → `13 passed in 1.62s`（既存 11＋新規 2）
+- 修正前 stash 実測: `1 failed, 12 passed`（`assert 'method' not in ['method', 'url_evidence', 'detection_mode', 'comment']`）＝新規テストは回帰検出力あり
+- 直接消費者 3 ファイル → `25 passed in 1.87s`／広域 `tests/core/agents/swarm/injection/` → `604 passed in 13.29s`（全緑）
+- `$ .venv/bin/python scripts/check_vdp_product_independence.py --manifest config/diagnostics/product_independence_manifest_v1.json --denylist config/diagnostics/sealed_product_denylist.txt` → `verdict: pass` / `total_token_hits: 0`
+- `$ .venv/bin/python scripts/check_vdp_product_independence.py … --changed-files <smart_xss.py>` → `verdict: pass` / `total_token_hits: 0`（manifest classified・deferred）
+- テストファイル単体は HEAD と同一の事前既存 9 hit（`/#/search`×5・`/vulnerabilities/`×4、全て変更外の既存行）＝追加行スキャン 0 hit・本変更は token 中立
+- `$ git diff --quiet HEAD -- src/core/agents/swarm/injection/payout_grade.py src/prompts/roles/poc_judge.md src/core/engine/task_queue.py src/core/validation/finding_validator.py src/core/validation/sealed_reproduction_checker.py && echo BAR_UNCHANGED` → `BAR_UNCHANGED`
+
+## 追加テスト
+
+- `test_run_as_tool_excludes_url_query_meta_keys_from_candidates`（tests/core/agents/swarm/injection/test_smart_xss_logic.py）
+- `test_run_as_tool_keeps_real_url_query_candidates`（同上）
+
+## 完了契約との対応（更新）
+
+- C2（ノイズ finding 除去）: **PASS（本ターン）**。メタキー由来候補の除去をユニットで実証。既存の URL クエリ XSS 候補（`q` 等）は維持。
+- C3（確定バー5ファイル無改変）: PASS（BAR_UNCHANGED）。C4（token0）: PASS（verdict pass / total_token_hits 0）。
+
+## Risks / 未達
+
+- 実 Caido フル走行での「メタキー由来 finding 消滅・保存型 finding 維持・混入 0 維持」はユーザー（Claude）が実データで独立再検証する前提（本ターン範囲外・ユニット/配線でのみ実証）。
+- 残る deferred は reporting 層 evidence-quality の shadow→enforce のみ（確定バー外・ユーザー判断事項）。
+
+## Next step
+
+1. 実データ再検証（ユーザー担当）: 実 Caido フル走行でメタキー由来 finding 消滅・保存型 finding（variant=stored）維持・混入 0 維持を確認。
+2. 確認後、SGK-2026-0460 の残フェーズ（共有ワークスペース/スプール等の他の永続ストア経路の隔離）へ。
+
+## 参考ルール
+
+## ノイズ整理の独立検証（クリーン走行・2026-08-29・Claude）
+
+初回のフル再走行（`127.0.0.1:5007`）は**練習台の欠陥**（投稿コメントを無制限に追記・毎回未エスケープ表示）で自己増殖ループに陥り、偽 DOM finding 48件・汚染URL 927件・8分超の暴走となり**検証として無効**（SHIGOKU 側の回帰ではない）。練習台を「最新1件のみ保持（追記でなく置換）」へ修正し、汚染履歴のない新ポート `127.0.0.1:5008` でフル再走行（`session_20260829_005742.json`, run_id=95a2ff0f）。
+
+独立検証結果（クリーン）:
+- 混入0: 全URLホストは `127.0.0.1:5008` のみ（836件）。`localhost:3000`/`juice` = 0。
+- メタキーノイズ**消滅**: `comment?method=` 汚染URL=0、`detection_mode=`=0、`url_evidence=`=0（初回confounded走行は 927/848/927）。
+- XSS finding は**ただ1種**: `XSS in parameter comment`・variant=**stored**・dialog=**True**・tested=`[comment]`・url=クリーンな `http://127.0.0.1:5008/comment`。`variant="dom"`=0（偽 name/id 由来 finding なし）。
+- 保存型発火は維持: `stored_revisit_browser_execution`=7、`variant="stored"`=4。
+- ミッション正常完了（約4分・ループなし）。
+
+結論: `smart_xss.py:1098` の META_KEYS フィルタにより、内部ラベル（method/url_evidence/detection_mode）が注入候補・finding・URL から排除された。初回に見えた「汚染URLの上流別源」の疑いは**練習台の自己増殖ループの副産物**であり、クリーン走行では汚染URL 0。ノイズ整理は本修正で解消（deferred の当該項目を解消扱いへ更新）。確定バー無改変・製品非依存 token0・混入0・保存型発火維持。

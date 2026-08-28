@@ -8,7 +8,7 @@ related_docs:
 - docs/shigoku/reports/2026-08-28_sgk-2026-0460_caido-origin-isolation_work_report.md
 title: Caido履歴取り込みのオリジン（host:port）隔離 実装 作業ログ
 created_at: '2026-08-28'
-updated_at: '2026-08-28'
+updated_at: '2026-08-29'
 tags:
 - shigoku
 - vdp
@@ -68,5 +68,25 @@ tags:
 **テスト（新規 4 件・`tests/core/engine/test_master_conductor_context_merge.py`）**: 保持＋accumulated 優先 / 不在時セット / 非 dict 置換 / 実 `_execute_single_task_full_flow` 配線。
 
 **検証結果**: 新規テスト 4 passed（1.80s）／広域 engine+injection 1307 passed・失敗32+エラー1 は pristine ベースラインと IDENTICAL_FAILURES（事前既存）／製品非依存 `--changed-files` 付き verdict pass・total_token_hits 0／BAR_UNCHANGED。フル走行 stored confirmed=1 はユーザー（Claude）実 Caido 再検証待ち。
+
+## 2026-08-29
+
+### ノイズ整理: url_params_flat の META_KEYS フィルタ（C2 メタキー混入の除去）
+
+**真因（確定・前回完了報告の残課題より）**: `smart_xss.py:1078` は payload_params から META_KEYS（`method`/`url_evidence`/`detection_mode` 等）を除外するが、`smart_xss.py:1098` の `url_params_flat`（URL クエリ由来）には未適用だった。汚染 URL `?method=…&url_evidence={}&detection_mode=…` から内部メタキーが候補パラメータに復活し、余計な XSS finding（C2）と汚染 URL の自己増殖を生んでいた。
+
+**実装（最小・1 箇所のみ）**: `src/core/agents/swarm/injection/smart_xss.py:1098` の内包表記に `if k not in META_KEYS` を追加。fragment 由来（`url_params.setdefault` で同一 dict に合流）も一括除外。META_KEYS は同関数 1058 で定義済み・スコープ内。
+
+**追加テスト（`tests/core/agents/swarm/injection/test_smart_xss_logic.py`・2 件）**:
+- `test_run_as_tool_excludes_url_query_meta_keys_from_candidates` — target `http://h/comment?method=GET&url_evidence=%7B%7D&detection_mode=phase1&comment=1` で tested_params に `method`/`url_evidence`/`detection_mode` が含まれず `comment` が残る（修正前は `['method','url_evidence','detection_mode','comment']` で FAIL することを stash 実測で確認）。
+- `test_run_as_tool_keeps_real_url_query_candidates` — 既存 `?q=<payload>` 経路は `q` が候補に残る（回帰なし）。
+
+**検証（実コマンド出力）**:
+- `.venv/bin/pytest tests/core/agents/swarm/injection/test_smart_xss_logic.py -q` → **13 passed in 1.62s**（既存 11＋新規 2）。
+- 修正前 stash 実行: **1 failed**（`assert 'method' not in ['method','url_evidence','detection_mode','comment']`）＝回帰テストとして有効。
+- 直接消費者: `test_smart_xss_stored_revisit.py` / `test_save_endpoint_dispatch.py` / `test_specialist_parameter_hints.py` → **25 passed**。
+- 広域 `tests/core/agents/swarm/injection/` → **604 passed in 13.29s**（全緑・baseline 比較不要）。
+- 製品非依存: `check_vdp_product_independence.py`（デフォルト走査=本番 prefix）→ **verdict: pass / total_token_hits: 0**。`--changed-files`（`smart_xss.py`）→ **verdict: pass / total_token_hits: 0**（manifest classified で deferred）。テストファイルは HEAD と同一の事前既存 9 hit（`/#/search`×5・`/vulnerabilities/`×4・追加行スキャン 0 hit＝本変更は token 中立）。
+- `git diff --quiet HEAD -- payout_grade.py / poc_judge.md / task_queue.py / finding_validator.py / sealed_reproduction_checker.py && echo BAR_UNCHANGED` → **BAR_UNCHANGED**（確定バー5ファイル無改変）。
 
 ## 参考ルール
