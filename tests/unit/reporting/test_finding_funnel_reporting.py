@@ -103,8 +103,14 @@ def _funnel_section() -> dict:
     }
 
 
-def _finding_dict(finding_id: str, *, candidate: bool = True) -> dict:
-    """Raw finding dict whose id resolves to ``finding_id``."""
+def _finding_dict(finding_id: str, *, candidate: bool = True,
+                  endpoint: str = "https://example.com/search") -> dict:
+    """Raw finding dict whose id resolves to ``finding_id``.
+
+    ``endpoint`` lets callers give two findings distinct root-cause signatures
+    (SGK-2026-0464 candidate dedup collapses same class/endpoint/method/param
+    findings), so multi-finding funnel tests use genuinely separate findings.
+    """
     info = {"finding_id": finding_id}
     if not candidate:
         info["hypothesis_id"] = "hyp-001"
@@ -112,7 +118,7 @@ def _finding_dict(finding_id: str, *, candidate: bool = True) -> dict:
         "title": f"XSS in search ({finding_id})",
         "severity": "high",
         "vuln_type": "xss",
-        "target_url": "https://example.com/search",
+        "target_url": endpoint,
         "summary": f"reflected payload for {finding_id}",
         "impact": "session theft",
         "poc_request": "",
@@ -173,7 +179,10 @@ class TestEmbedFindingFunnelIndex:
         difference is the appended machine block."""
         out_a = tmp_path / "haddix_a.md"
         out_b = tmp_path / "haddix_b.md"
-        findings = [_finding_dict("F1"), _finding_dict("F2")]
+        findings = [
+            _finding_dict("F1"),
+            _finding_dict("F2", endpoint="https://example.com/search2"),
+        ]
         generate_haddix_report(
             findings=findings,
             target="https://example.com",
@@ -212,7 +221,7 @@ class TestPerFindingFirstFailure:
         formatter = HaddixSubmissionInternalFormatter()
         formatter.set_target("https://example.com")
         formatter.add_finding_from_dict(_finding_dict("F1"))
-        formatter.add_finding_from_dict(_finding_dict("F2"))
+        formatter.add_finding_from_dict(_finding_dict("F2", endpoint="https://example.com/search2"))
         confirmed, candidates, _ = formatter._get_enforced_split()
         assert confirmed == []
         assert len(candidates) == 2

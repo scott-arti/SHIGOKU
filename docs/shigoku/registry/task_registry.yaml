@@ -5808,6 +5808,20 @@ tasks:
   - docs/shigoku/plans/done/2026-08-30_sgk-2026-0462_canonical-save-endpoints-wiring.md
   - docs/shigoku/reports/2026-08-30_sgk-2026-0463_stored-stage2-redirect-marker-fix_work_report.md
   - docs/shigoku/worklogs/2026-08-30_sgk-2026-0463_stored-stage2-redirect-marker-fix_work_log.md
+- provisional_id: DOC-0533
+  task_id: SGK-2026-0464
+  doc_type: plan
+  title: 候補ノイズ是正（XSS等injection候補のURL単位重複排除→脆弱性署名単位・汚染URL正規化）計画
+  primary_doc: docs/shigoku/plans/done/2026-09-01_sgk-2026-0464_candidate-xss-dedup-url-normalization.md
+  status: done
+  provisional: false
+  task_summary: "SGK-2026-0464 完了(CB-1/2/3達成)。保存型XSS confirmed=1走行(session_20260901_005406)でCandidate189に膨張。真因: 真の脆弱性は(host,path,param,vuln)署名で2種のみ(comment/name)だがhaddix_formatter._candidate_dedup_key(:2144)がauthz/cors/csrfのみ署名を返しXSS等はNone→未重複排除で全件保持、加えて候補URLが内部メタキー＋注入payloadで汚染されpayloadごとに別URL化(94種)。修正(reporting層のみ・最小・+52行): _candidate_dedup_keyのreturn None前にinjection/reflected系14クラスへconfirmed側と同型root-cause署名(class,endpoint(クエリ除去),method,parameter)を追加。CB-1: session再生成で修正なし189/修正あり1(Confirmed1不変・variant=stored保持)＝189→1は本修正の因果。CB-2: 確定バー5無改変・confirmed分類/件数不変・降格なし。CB-3: DVWA再生成が修正なし9/6=修正あり9/6(完全一致=DVWA中立・5候補はauthz/cors/csrf/apiで非該当)・token0・reporting1093緑・新規dedupテスト3緑。Claude実装/検証。deferred(非阻害): 練習台per-id化・URL汚染発生源(smart_xss/manager)の是正は追跡任意。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/done/2026-08-30_sgk-2026-0463_stored-stage2-redirect-marker-fix.md
+  - docs/shigoku/plans/done/2026-08-30_sgk-2026-0462_canonical-save-endpoints-wiring.md
+  - docs/shigoku/reports/2026-09-01_sgk-2026-0464_candidate-xss-dedup-url-normalization_work_report.md
+  - docs/shigoku/worklogs/2026-09-01_sgk-2026-0464_candidate-xss-dedup-url-normalization_work_log.md
 doc_type_allowed_values:
 - spec
 - roadmap

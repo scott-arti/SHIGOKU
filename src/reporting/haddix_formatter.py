@@ -2181,6 +2181,57 @@ class HaddixFormatter:
         if vtype == "csrf" or "csrf" in title or "/csrf/" in target:
             return ("csrf", target)
 
+        # SGK-2026-0464: injection/reflected 系（xss/sqli 等・パラメータベース）は
+        # 従来 None を返し重複排除されず、汚染URL（内部メタキー method/url_evidence/
+        # detection_mode ＋ 注入 payload）が payload ごとに別URL化するため同一脆弱性が
+        # 大量の候補として残っていた。confirmed 側 _confirmed_dedup_key と同型の
+        # root-cause 署名（vuln_class, endpoint(クエリ除去), method, parameter）で
+        # まとめる。authz/cors/csrf は上で return 済みのため非対象（DVWA 5候補は不変）。
+        injection_reflected_classes = {
+            "xss",
+            "sqli",
+            "sql_injection",
+            "command_injection",
+            "rce",
+            "lfi",
+            "path_traversal",
+            "rfi",
+            "ssti",
+            "open_redirect",
+            "crlf_injection",
+            "crlf",
+            "xxe",
+            "ssrf",
+        }
+        if vtype in injection_reflected_classes:
+            parameter = str(info.get("parameter", "") or "").strip().lower()
+            if not parameter:
+                match = re.search(
+                    r"parameter\s+['\"]?([^'\"\s]+)", str(finding.title or ""), re.IGNORECASE
+                )
+                parameter = match.group(1).strip().lower() if match else ""
+            method = ""
+            request_line = str(finding.poc_request or "").splitlines()
+            if request_line:
+                method = request_line[0].split(" ", 1)[0].strip().upper()
+            if not method:
+                delivery = (
+                    info.get("payload_delivery", {})
+                    if isinstance(info.get("payload_delivery"), dict)
+                    else {}
+                )
+                method = str(delivery.get("request_method", "") or "").strip().upper()
+            split = urlsplit(self._normalize_url_string(finding.target_url))
+            netloc = split.netloc.lower()
+            if netloc.startswith("127.0.0.1:"):
+                netloc = netloc.replace("127.0.0.1:", "localhost:", 1)
+            elif netloc == "127.0.0.1":
+                netloc = "localhost"
+            endpoint = urlunsplit(
+                (split.scheme.lower(), netloc, split.path.rstrip("/") or "/", "", "")
+            )
+            return ("injection", vtype, endpoint, method, parameter)
+
         return None
 
     def _canonical_candidate_target(self, value: str) -> str:
