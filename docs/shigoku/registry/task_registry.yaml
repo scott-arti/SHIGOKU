@@ -5694,8 +5694,8 @@ tasks:
   task_id: SGK-2026-0459
   doc_type: plan
   title: 能動的な保存sink発見（保存型XSSを実際に確定まで到達）
-  primary_doc: docs/shigoku/plans/2026-08-22_sgk-2026-0459_active-save-sink-discovery.md
-  status: active
+  primary_doc: docs/shigoku/plans/done/2026-08-22_sgk-2026-0459_active-save-sink-discovery.md
+  status: done
   provisional: false
   task_summary: "SGK-2026-0457(確定ゲートstored分岐)とSGK-2026-0458(検出側stored経路)は完成済みだが、実走行で保存sink(レビュー保存API)が発見・dispatchされず発火機会が無かった。真因: 保存APIは状態変更(POST)で実際に投稿した瞬間にしかXHRに現れず受け身の偵察(XHR傍受・HTMLフォーム解析)では発見不能。本タスクは能動的な保存sink発見(入力欄へ良性マーカーを投稿→書き込みAPI・項目・再訪表示URLを炙り出す)を製品非依存に実装し、0458/0457経路で保存型XSSをconfirmed=1まで到達させる。発見側と受け渡しが主・バー無改変・製品非依存・焼き込み禁止・書き込みガード遵守。C1-C6・T1/T2/T3/T4。"
   parent_task_id: SGK-2026-0442
@@ -5734,8 +5734,8 @@ tasks:
   task_id: SGK-2026-0460
   doc_type: plan
   title: プロジェクト横断の永続状態汚染の隔離 計画書
-  primary_doc: docs/shigoku/plans/2026-08-28_sgk-2026-0460_cross-target-state-isolation.md
-  status: active
+  primary_doc: docs/shigoku/plans/done/2026-08-28_sgk-2026-0460_cross-target-state-isolation.md
+  status: done
   provisional: false
   task_summary: "SGK-2026-0460 計画。単一ターゲット走行が過去の別ターゲット(Juice Shop localhost:3000・旧ポート5001)のURL/タスクを引き込まず完走・判定できるよう横断汚染を隔離する。SGK-2026-0459実走行でNeo4j KG無効化(driver None確認)後も汚染が残り、共有ワークスペース/スプール/run_ledger/backfill seed経由で別ターゲットが注入されフル走行が肥大・中断してconfirmed=1に到達できなかったのが起票理由。フェーズ0で汚染源を引用特定し走行単位の状態隔離を実装。0459の確定能力自体は隔離ハーネスで実証済み(variant=stored・実alert)。"
   parent_task_id: SGK-2026-0442
@@ -5770,8 +5770,8 @@ tasks:
   task_id: SGK-2026-0461
   doc_type: plan
   title: browser_evidenceを根拠とした候補→確定の昇格（shadow→enforce・限定スコープ）計画
-  primary_doc: docs/shigoku/plans/2026-08-29_sgk-2026-0461_browser-evidence-confirm-enforce.md
-  status: active
+  primary_doc: docs/shigoku/plans/done/2026-08-29_sgk-2026-0461_browser-evidence-confirm-enforce.md
+  status: done
   provisional: false
   task_summary: "SGK-2026-0461 計画。実ブラウザでalertが発火したfinding(browser_execution.dialog_observed/dom_mutation_observed)のみ候補→確定へ昇格し、保存型XSSの実発火をformal confirmed=1に計上する。reporting層 haddix_evidence_quality の shadow→enforce を browser_evidence 限定・降格なし・設定切替で有効化。SGK-2026-0459/0460実走行(127.0.0.1:5008 run 95a2ff0f)で保存型は実発火・finding生成まで到達するが証拠品質昇格がshadowのためconfirmed=0だったのが起票理由。ユーザー明示のgate policy変更。DVWA既知安全保留の5候補(browser_evidenceなし)は非影響。確定バー5ファイル無改変・製品非依存token0。フェーズ0でゲート供給経路(report_findings_summary.confirmed_count)の注入点を引用特定→DeepSeek実装/Claude検証(DVWA baseline+gate scripts+実走行)。"
   parent_task_id: SGK-2026-0442

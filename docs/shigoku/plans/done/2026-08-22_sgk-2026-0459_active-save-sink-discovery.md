@@ -1,15 +1,15 @@
 ---
 task_id: SGK-2026-0459
 doc_type: plan
-status: active
+status: done
 parent_task_id: SGK-2026-0442
 related_docs:
 - docs/shigoku/roadmaps/2026-08-12_sgk-2026-0442_confirmation-and-candidate-lifecycle-program.md
 - docs/shigoku/plans/done/2026-08-22_sgk-2026-0458_stored-xss-firing-path.md
 - docs/shigoku/plans/done/2026-08-22_sgk-2026-0457_stored-xss-confirmation.md
-- docs/shigoku/plans/2026-08-28_sgk-2026-0460_cross-target-state-isolation.md
+- docs/shigoku/plans/done/2026-08-28_sgk-2026-0460_cross-target-state-isolation.md
 created_at: '2026-08-22'
-updated_at: '2026-08-28'
+updated_at: '2026-09-01'
 tags:
 - shigoku
 - vdp
@@ -23,6 +23,8 @@ tags:
 ---
 
 # SGK-2026-0459 計画書 — 能動的な保存 sink 発見（保存型 XSS を実際に確定まで到達）
+
+> **完了（2026-09-01）**: 目標 confirmed=1（保存型XSS）を SGK-2026-0462（canonical 経路への save_endpoints 配線）＋ SGK-2026-0463（保存型第2段階のブラウザ発火修正）を経て実走行（report `haddix_report_20260901_005408.md`・session `session_20260901_005406.json`）で達成。確定 finding は variant=stored・dialog_observed=True・hybrid_final_state=confirmed。能動的な保存 sink 発見（save_endpoints サイドカー）が実際に confirmed へ寄与することを実証。詳細は [[2026-08-30_sgk-2026-0463_stored-stage2-redirect-marker-fix]]。
 
 ## 目的（Objective）
 

@@ -1,15 +1,15 @@
 ---
 task_id: SGK-2026-0460
 doc_type: plan
-status: active
+status: done
 parent_task_id: SGK-2026-0442
 related_docs:
-- docs/shigoku/plans/2026-08-22_sgk-2026-0459_active-save-sink-discovery.md
+- docs/shigoku/plans/done/2026-08-22_sgk-2026-0459_active-save-sink-discovery.md
 - docs/shigoku/reports/2026-08-26_sgk-2026-0459_active-save-sink-discovery_work_report.md
 - docs/shigoku/worklogs/2026-08-28_sgk-2026-0460_caido-origin-isolation_work_log.md
 - docs/shigoku/reports/2026-08-28_sgk-2026-0460_caido-origin-isolation_work_report.md
 created_at: '2026-08-28'
-updated_at: '2026-08-28'
+updated_at: '2026-09-01'
 tags:
 - shigoku
 - vdp
@@ -20,6 +20,8 @@ tags:
 ---
 
 # SGK-2026-0460 計画書 — プロジェクト横断の永続状態汚染の隔離
+
+> **完了（2026-09-01）**: 走行単位の状態隔離（Caido オリジン隔離・dispatch時 _context マージ）を実装・検証済み。2026-09-01 の実走行（session_20260901_005406）でも全 finding が対象 `127.0.0.1:5008` のみ（他ターゲット混入0）を確認。当初 deferred だった formal confirmed=1 は SGK-2026-0461/0462/0463 で達成。
 
 ## 目的（Objective）
 

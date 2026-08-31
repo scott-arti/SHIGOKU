@@ -1,7 +1,7 @@
 ---
 task_id: SGK-2026-0461
 doc_type: plan
-status: active
+status: done
 parent_task_id: SGK-2026-0442
 related_docs:
 - docs/shigoku/plans/2026-08-22_sgk-2026-0459_active-save-sink-discovery.md
@@ -19,6 +19,8 @@ tags:
 ---
 
 # SGK-2026-0461 計画書 — browser_evidence を根拠とした候補→確定の昇格（shadow→enforce・限定スコープ）
+
+> **完了（2026-09-01）**: Option B（凍結バー自身の確認・browser_evidence 自動起動＋poc_judge 頑健化）を実装・検証。CB1（保存型XSS formal confirmed=1）は SGK-2026-0463 のブラウザ発火修正後の実走行（report `haddix_report_20260901_005408.md`）で達成（variant=stored・dialog_observed=True・hybrid_final_state=confirmed）。確定バー5ファイル無改変・製品非依存 token0。詳細は [[2026-08-30_sgk-2026-0463_stored-stage2-redirect-marker-fix]]。
 
 ## 目的（Objective）
 
