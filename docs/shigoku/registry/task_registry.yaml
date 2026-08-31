@@ -5766,6 +5766,48 @@ tasks:
   related_docs:
   - docs/shigoku/plans/2026-08-28_sgk-2026-0460_cross-target-state-isolation.md
   - docs/shigoku/worklogs/2026-08-28_sgk-2026-0460_caido-origin-isolation_work_log.md
+- provisional_id: DOC-0530
+  task_id: SGK-2026-0461
+  doc_type: plan
+  title: browser_evidenceを根拠とした候補→確定の昇格（shadow→enforce・限定スコープ）計画
+  primary_doc: docs/shigoku/plans/2026-08-29_sgk-2026-0461_browser-evidence-confirm-enforce.md
+  status: active
+  provisional: false
+  task_summary: "SGK-2026-0461 計画。実ブラウザでalertが発火したfinding(browser_execution.dialog_observed/dom_mutation_observed)のみ候補→確定へ昇格し、保存型XSSの実発火をformal confirmed=1に計上する。reporting層 haddix_evidence_quality の shadow→enforce を browser_evidence 限定・降格なし・設定切替で有効化。SGK-2026-0459/0460実走行(127.0.0.1:5008 run 95a2ff0f)で保存型は実発火・finding生成まで到達するが証拠品質昇格がshadowのためconfirmed=0だったのが起票理由。ユーザー明示のgate policy変更。DVWA既知安全保留の5候補(browser_evidenceなし)は非影響。確定バー5ファイル無改変・製品非依存token0。フェーズ0でゲート供給経路(report_findings_summary.confirmed_count)の注入点を引用特定→DeepSeek実装/Claude検証(DVWA baseline+gate scripts+実走行)。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/2026-08-22_sgk-2026-0459_active-save-sink-discovery.md
+  - docs/shigoku/plans/2026-08-28_sgk-2026-0460_cross-target-state-isolation.md
+  - docs/shigoku/reports/2026-08-29_sgk-2026-0461_option-b-confirm-enforce_work_report.md
+  - docs/shigoku/worklogs/2026-08-29_sgk-2026-0461_option-b-confirm-enforce_work_log.md
+- provisional_id: DOC-0531
+  task_id: SGK-2026-0462
+  doc_type: plan
+  title: canonical VDP経路でsave_endpointsをinjectionタスクへ配線（保存型XSSの第2段階ブラウザ発火を到達）計画
+  primary_doc: docs/shigoku/plans/done/2026-08-30_sgk-2026-0462_canonical-save-endpoints-wiring.md
+  status: done
+  provisional: false
+  task_summary: "SGK-2026-0462 計画。実走行(session_20260830_002046・練習台127.0.0.1:5008)で保存型XSSがConfirmed0/Candidate13(全件real_http・browser_execution_missing)・第2段階マーカーPOST0件と判明。真因はsave_endpointsサイドカーがbuild時のrecon-categoryタスクbuilder(master_conductor.py:14758-14760)でのみ_contextに注入され、canonical VDPのinjectionディスパッチがそこを通らずsave_endpoints未配線→_match_save_endpoint不一致→resolved_method=GET→stored再訪ゲート(smart_xss.py:1248-1252)不成立→ブラウザ発火(_attempt_stored_revisit_validation)スキップ→browser_evidence不在→SGK-2026-0461確認フロー不起動→Confirmed0。修正はdispatch時RUNNING遷移(:7714-7719)でinjectionタスク限定にsave_endpoints(+forms_by_url/url_evidence_by_url)を_load_run_save_endpoints()補填(追加のみ・sidecar不在no-op・accumulated空でも補填・既存尊重)。実装完了:単体7件緑・injectionスイート622緑・実走行(session_20260830_050641)でxss_seedタスクにsave_endpoints実在・method=POST解決・第2段階起動(marker POST+全6revisit URLスイープ)を実証。CB-A/CB-C PASS。CB-Bはdialog未観測(練習台5008の303-redirect×smart_xss markerチェックの検出側相互作用・計画NOT in scope)のためdeferred→SGK-2026-0463へ。確定バー5ファイル無改変・製品非依存token0・DVWA既知安全保留不変・consistency=consistent。Claude実装/検証。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/2026-08-22_sgk-2026-0459_active-save-sink-discovery.md
+  - docs/shigoku/plans/2026-08-28_sgk-2026-0460_cross-target-state-isolation.md
+  - docs/shigoku/plans/2026-08-29_sgk-2026-0461_browser-evidence-confirm-enforce.md
+  - docs/shigoku/reports/2026-08-30_sgk-2026-0462_canonical-save-endpoints-wiring_work_report.md
+  - docs/shigoku/worklogs/2026-08-30_sgk-2026-0462_canonical-save-endpoints-wiring_work_log.md
+- provisional_id: DOC-0532
+  task_id: SGK-2026-0463
+  doc_type: plan
+  title: 保存型XSS第2段階の303-redirect誤早期リターン修正（smart_xss marker チェックと練習台redirect設計の相互作用）計画
+  primary_doc: docs/shigoku/plans/done/2026-08-30_sgk-2026-0463_stored-stage2-redirect-marker-fix.md
+  status: done
+  provisional: false
+  task_summary: "SGK-2026-0463 完了(CB-1達成)。第1修正(allow_redirects=False・DeepSeek)後も実走行dialog未観測→Claude真因再特定: 保存型再訪スイープGET(smart_xss.py:825)がuse_cache既定True(TTL300s)のため、フルパイプラインで事前クロール済みGET /の古いキャッシュ(markerなし)を返し→reflection_url未発見→:834でFalse→ブラウザ段未到達。第2修正(2026-09-01・ユーザー指示BでClaude直接): スイープGETにuse_cache=False付与(書込直後の反射確認は常に実取得・保存型再訪スイープ限定・追加のみ・判定/閾値/fail-closed不変)。実走行(report haddix_report_20260901_005408/session_20260901_005406・retain-all練習台5008・Caido8081): Confirmed:1/Candidate:189・consistent・確定findingはvariant=stored/dialog_observed=True/hybrid_final_state=confirmed(凍結バー3条件AND正当通過)。CB-1/CB-2/CB-3すべて達成: 確定バー5無改変(BAR_UNCHANGED)・製品非依存token0・DVWA既知安全保留不変(candidate_above_maximum/5候補)・stored_revisit単体8緑。SGK-2026-0459/0461の当初目標(保存型XSSをformal confirmed=1)も本走行で実証達成。deferred(非阻害): Candidate189のノイズ(重複)は別途reporting/dedup検討。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/done/2026-08-30_sgk-2026-0462_canonical-save-endpoints-wiring.md
+  - docs/shigoku/reports/2026-08-30_sgk-2026-0463_stored-stage2-redirect-marker-fix_work_report.md
+  - docs/shigoku/worklogs/2026-08-30_sgk-2026-0463_stored-stage2-redirect-marker-fix_work_log.md
 doc_type_allowed_values:
 - spec
 - roadmap

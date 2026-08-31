@@ -1433,3 +1433,246 @@ class TestT3Resurrection:
         assert after is not None
         assert after.state == LifecycleState.INCONCLUSIVE_PARKED
         assert after.resurrection_count == 0
+
+
+# ---------------------------------------------------------------------------
+# SGK-2026-0461 (Option B): browser_evidence 自動検知によるスコープ起動
+# (t3_hybrid_enabled=False の既定OFFでも、browser_evidence を持つ finding
+#  が実在するときだけ T3 確認フローを起動する。kill-switch あり・明示
+#  override 優先・判定対象を browser_evidence finding に限定)
+# ---------------------------------------------------------------------------
+
+
+class TestT3BrowserEvidenceAuto:
+    def _manager(self, *, judge, checker, ledger, hybrid=None):
+        kwargs = {
+            "config": {"model": "test-model"},
+            "poc_judge": judge,
+            "reproduction_checker": checker,
+            "candidate_ledger": ledger,
+        }
+        if hybrid is not None:
+            kwargs["hybrid_enabled"] = hybrid
+        return InjectionManagerAgent(**kwargs)
+
+    def test_auto_off_without_browser_evidence(self, monkeypatch, tmp_path):
+        """browser_evidence の無い finding では既定OFFのまま: 確認フローは
+        起動せず、judge/checker は構築されず、ledger も作られない。"""
+        monkeypatch.setenv("SHIGOKU_WORKSPACE_PROJECTS_DIR", str(tmp_path))
+        manager = InjectionManagerAgent(config={"model": "test-model"})
+        finding = _payout_finding()  # additional_info 無し (no browser evidence)
+        with patch(
+            "src.core.validation.finding_validator.PoCJudge"
+        ) as judge_cls, patch(
+            "src.core.validation.sealed_reproduction_checker.SealedReproductionChecker"
+        ) as checker_cls:
+            changed = manager._t3_run_hybrid_pass(
+                SimpleNamespace(target=API_URL), [finding]
+            )
+
+        assert changed is False
+        judge_cls.assert_not_called()
+        checker_cls.assert_not_called()
+        assert not list(tmp_path.rglob("candidate_ledger.json"))
+
+    def test_auto_on_with_browser_evidence_confirms(self, monkeypatch, tmp_path):
+        """browser_evidence を持つ finding で自動起動 → 従来の 3条件AND 確定
+        経路がそのまま走り、ledger CONFIRMED + F5/F6 hybrid_confirmed が
+        emit される（hybrid_enabled 未指定・既定OFFでも）。"""
+        calls = _spy_funnel_events(monkeypatch)
+        ledger = CandidateLedger(tmp_path / "candidate_ledger.json")
+        finding = _dom_evidence_finding()
+        ledger.put(_seed_record(finding))  # second visit -> CONFIRMED applies
+        judge = _FakePoCJudge("positive")
+        checker = _FakeReproductionChecker("matched")
+        manager = self._manager(judge=judge, checker=checker, ledger=ledger)
+
+        changed = manager._t3_run_hybrid_pass(
+            SimpleNamespace(target=API_URL), [finding]
+        )
+
+        assert changed is True
+        record = ledger.get(finding.id)
+        assert record is not None
+        assert record.state == LifecycleState.CONFIRMED
+        assert record.reason == "hybrid_confirmed"
+        assert finding.additional_info.get("hybrid_final_state") == "confirmed"
+        hybrid = _hybrid_emits(calls, finding.id)
+        assert any(c["reason_code"] == "hybrid_confirmed" for c in hybrid)
+        f6 = [
+            c for c in calls
+            if c["finding_id"] == finding.id and c["stage"] == "F6"
+        ]
+        assert any(c["reason_code"] == "hybrid_confirmed" for c in f6)
+        assert judge.calls == 1
+
+    def test_auto_scopes_to_browser_evidence_findings(self, tmp_path):
+        """自動起動時は判定対象を browser_evidence finding に限定する
+        （browser_evidence の無い finding は judge しない）。"""
+        ledger = CandidateLedger(tmp_path / "candidate_ledger.json")
+        plain = _payout_finding()
+        dom = _dom_evidence_finding()
+        ledger.put(_seed_record(dom))
+        judge = _FakePoCJudge("positive")
+        manager = self._manager(
+            judge=judge,
+            checker=_FakeReproductionChecker("matched"),
+            ledger=ledger,
+        )
+
+        manager._t3_run_hybrid_pass(
+            SimpleNamespace(target=API_URL), [plain, dom]
+        )
+
+        assert judge.called_finding_ids == [dom.id]
+        assert len(judge.called_finding_ids) == 1
+
+    def test_auto_killswitch_disables(self, monkeypatch, tmp_path):
+        """settings.t3_hybrid_browser_evidence_auto=False（kill-switch）では
+        browser_evidence 有りでも確認フローを起動しない。"""
+        ledger = CandidateLedger(tmp_path / "candidate_ledger.json")
+        finding = _dom_evidence_finding()
+        judge = _FakePoCJudge("positive")
+        manager = self._manager(
+            judge=judge,
+            checker=_FakeReproductionChecker("matched"),
+            ledger=ledger,
+        )
+        # manager 構築後に settings を差し替える（LLMClient 初期化が
+        # settings.llm を読むため、構築前 patch は不可）
+        monkeypatch.setattr(
+            "src.core.config.settings.get_settings",
+            lambda: SimpleNamespace(
+                t3_hybrid_enabled=False,
+                t3_hybrid_browser_evidence_auto=False,
+            ),
+        )
+
+        changed = manager._t3_run_hybrid_pass(
+            SimpleNamespace(target=API_URL), [finding]
+        )
+
+        assert changed is False
+        assert judge.calls == 0
+
+    def test_constructor_override_false_disables_auto(self, tmp_path):
+        """明示 override（hybrid_enabled=False）は自動検知より常に優先
+        （fail-closed）。browser_evidence 有りでも起動しない。"""
+        ledger = CandidateLedger(tmp_path / "candidate_ledger.json")
+        finding = _dom_evidence_finding()
+        judge = _FakePoCJudge("positive")
+        manager = self._manager(
+            judge=judge,
+            checker=_FakeReproductionChecker("matched"),
+            ledger=ledger,
+            hybrid=False,
+        )
+
+        changed = manager._t3_run_hybrid_pass(
+            SimpleNamespace(target=API_URL), [finding]
+        )
+
+        assert changed is False
+        assert judge.calls == 0
+
+    def test_auto_pass_builds_checker_with_masker(self, monkeypatch, tmp_path):
+        """自動起動時の自前 checker 構築に masker=get_pii_masker() が配線
+        される（0439 token_map 復元）。network_client / scope_definition /
+        time_budget_seconds は従来どおり。"""
+        ledger = CandidateLedger(tmp_path / "candidate_ledger.json")
+        finding = _dom_evidence_finding()
+        judge = _FakePoCJudge("positive")
+        manager = InjectionManagerAgent(
+            config={"model": "test-model"},
+            poc_judge=judge,
+            candidate_ledger=ledger,
+            # reproduction_checker NOT injected -> manager builds the real one
+        )
+        manager._resolve_request_client = MagicMock(return_value=MagicMock())
+
+        captured = {}
+
+        def spy_checker(**kwargs):
+            captured.update(kwargs)
+            return _FakeReproductionChecker("matched")
+
+        monkeypatch.setattr(
+            "src.core.validation.sealed_reproduction_checker.SealedReproductionChecker",
+            spy_checker,
+        )
+
+        changed = manager._t3_run_hybrid_pass(
+            SimpleNamespace(target=API_URL), [finding]
+        )
+
+        assert changed is True
+        assert captured.get("masker") is not None
+        assert captured.get("network_client") is not None
+        assert captured.get("scope_definition") is not None
+        assert captured.get("time_budget_seconds") == 600
+
+    def test_auto_pass_builds_robust_judge_with_budget(self, monkeypatch, tmp_path):
+        """自動起動時の既定 judge は RobustPoCJudge()（inner 未注入）で、
+        PoCJudgeBudget は (max_calls=6, max_seconds=480) で構築される。"""
+        from src.core.validation.finding_validator import AiJudgement
+
+        ledger = CandidateLedger(tmp_path / "candidate_ledger.json")
+        finding = _dom_evidence_finding()
+        ledger.put(_seed_record(finding))
+        manager = InjectionManagerAgent(
+            config={"model": "test-model"},
+            reproduction_checker=_FakeReproductionChecker("matched"),
+            candidate_ledger=ledger,
+            # poc_judge NOT injected -> RobustPoCJudge default path
+        )
+
+        captured_robust = {}
+        captured_budget = {}
+
+        class _FakeRobustJudge:
+            def __init__(self, inner=None, **kwargs):
+                captured_robust["inner"] = inner
+                captured_robust["kwargs"] = kwargs
+
+            def judge(self, finding):
+                return AiJudgement(
+                    payout_grade=True,
+                    is_real=True,
+                    has_actual_impact=True,
+                    counter_evidence=False,
+                    needs_human=False,
+                    reason_masked="robust-default (test)",
+                )
+
+        class _FakeBudgeted:
+            def __init__(self, judge, budget):
+                self._judge = judge
+
+            def judge(self, finding):
+                return self._judge.judge(finding)
+
+        def _fake_budget_cls(**kwargs):
+            captured_budget.update(kwargs)
+            return object()
+
+        monkeypatch.setattr(
+            "src.core.agents.swarm.injection.poc_judge_robust.RobustPoCJudge",
+            _FakeRobustJudge,
+        )
+        monkeypatch.setattr(
+            "src.core.validation.sealed_reproduction_checker.BudgetedPoCJudge",
+            _FakeBudgeted,
+        )
+        monkeypatch.setattr(
+            "src.core.validation.sealed_reproduction_checker.PoCJudgeBudget",
+            _fake_budget_cls,
+        )
+
+        changed = manager._t3_run_hybrid_pass(
+            SimpleNamespace(target=API_URL), [finding]
+        )
+
+        assert changed is True
+        assert captured_robust["inner"] is None  # RobustPoCJudge() default
+        assert captured_budget.get("max_calls") == 6
+        assert captured_budget.get("max_seconds") == 480

@@ -657,6 +657,11 @@ class Settings(BaseSettings):
     # off). False -> the Phase-2 merge gate behaves exactly as before (no
     # poc_judge calls, no reproduction checker, no candidate ledger).
     t3_hybrid_enabled: bool = False
+    # SGK-2026-0461 (Option B): browser_evidence を持つ finding が実在する
+    # ときのみ T3 確認フローをスコープ起動する（既定 True・kill-switch）。
+    # False にすると browser_evidence 有りでも確認フローは起動しない
+    # （t3_hybrid_enabled=False の既定OFF安全性は不変）。
+    t3_hybrid_browser_evidence_auto: bool = True
     # SGK-2026-0447 B4: sealed run GET-only network-boundary enforcement
     # (default off -> existing runs byte-identical). When on
     # (SHIGOKU_SEALED_RUN_GET_ONLY=1), AsyncNetworkClient blocks every

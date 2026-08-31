@@ -286,3 +286,136 @@ async def test_stored_revisit_not_attempted_without_candidates(monkeypatch):
 
     assert hunter._attempt_stored_revisit_validation.await_count == 0
     assert result["vulnerable"] is False
+
+
+# ---------------------------------------------------------------------------
+# T4（SGK-2026-0463）: marker POST は allow_redirects=False で送られる
+# ---------------------------------------------------------------------------
+
+def _make_redirect_sink_mock(marker_at: Optional[str] = "http://example.com/list"):
+    """3xx 保存sink のモック（SGK-2026-0463）。
+
+    - POST: マーカーを記録し、**303**（marker 非反射）を返す（練習台5008 の
+      `redirect("/", code=303)` 設計の模倣。追従した場合 GET / が保存済み
+      marker を描画する想定）
+    - GET: marker_at の URL のみマーカーを反射する HTML を返す（他は非反射）
+    """
+    calls = []
+    marker_holder: Dict[str, Optional[str]] = {"value": None}
+
+    async def fake_request(method, url, **kwargs):
+        calls.append((method.upper(), url, kwargs))
+        if method.upper() == "POST":
+            body = kwargs.get("json")
+            if body is None:
+                body = kwargs.get("data")
+            marker = _extract_marker(body)
+            if marker is not None:
+                marker_holder["value"] = marker
+            return {"status": 303, "body": ""}
+        marker = marker_holder.get("value") or ""
+        if marker_at and url == marker_at and marker:
+            return {"status": 200, "body": f"<html><div class='entry'>{marker}</div></html>"}
+        return {"status": 200, "body": "<html>no marker</html>"}
+
+    return fake_request, calls
+
+
+@pytest.mark.asyncio
+async def test_stored_revisit_marker_post_uses_allow_redirects_false(monkeypatch):
+    """marker POST は allow_redirects=False で送信される（SGK-2026-0463）。
+
+    3xx 追従（aiohttp 既定 True）だと実効本文 = リダイレクト先ページが保存済み
+    marker を描画し、marker 早期リターンが誤発火するため。fire POST（実
+    payload 再保存）は従来どおり追従可のまま（allow_redirects 指定なし）。"""
+    fake_request, calls = _make_stored_sink_mock()
+    hunter = _setup_hunter(monkeypatch, fake_request)
+    _patch_playwright_validator(monkeypatch, fires=True)
+
+    result = await hunter.run_as_tool(SAVE_URL, dict(STORE_PARAMS))
+    assert result["vulnerable"] is True
+
+    post_calls = [c for c in calls if c[0] == "POST"]
+    assert len(post_calls) == 2
+    # marker POST（1回目）のみ allow_redirects=False
+    assert post_calls[0][2].get("allow_redirects") is False
+    # fire POST（2回目）は現状維持（allow_redirects 指定なし）
+    assert "allow_redirects" not in post_calls[1][2]
+
+
+# ---------------------------------------------------------------------------
+# T5（SGK-2026-0463）: 3xx 保存sink では marker 早期リターンせずスイープへ
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_stored_revisit_303_sink_proceeds_to_sweep(monkeypatch):
+    """POST が 303（marker 非反射）を返す保存sink では、marker 早期リターン
+    せず revisit スイープへ進み、反射 URL 発見 → 実 payload 保存 → dialog
+    観測で stored finding になる（練習台5008 シナリオの単体再現）。"""
+    fake_request, calls = _make_redirect_sink_mock()
+    hunter = _setup_hunter(monkeypatch, fake_request)
+    _patch_playwright_validator(monkeypatch, fires=True)
+
+    result = await hunter.run_as_tool(SAVE_URL, dict(STORE_PARAMS))
+
+    assert result["vulnerable"] is True
+    assert result["reflection_observed"] is True
+
+    browser_execution = result["browser_execution"]
+    assert browser_execution["variant"] == "stored"
+    assert browser_execution["event"] == "stored_revisit_browser_execution"
+    assert browser_execution["dialog_observed"] is True
+    assert browser_execution["test_url"] == "http://example.com/list"
+
+    assert hunter.context["reflection_url"] == "http://example.com/list"
+
+    # marker POST は allow_redirects=False で送られている
+    post_calls = [c for c in calls if c[0] == "POST"]
+    assert len(post_calls) == 2
+    assert post_calls[0][2].get("allow_redirects") is False
+
+    # スイープへ進んでいる（GET 呼び出しあり・反射 URL で停止）
+    get_calls = [c for c in calls if c[0] == "GET"]
+    assert [c[1] for c in get_calls] == [
+        "http://example.com/items",
+        "http://example.com/list",
+    ]
+
+
+# ---------------------------------------------------------------------------
+# T6（SGK-2026-0463）: 200 で marker を反射する sink は従来どおり早期リターン
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_stored_revisit_200_reflecting_sink_early_returns(monkeypatch):
+    """POST 応答 200 自体に marker が反射する sink では従来どおり marker
+    早期リターン（False）し、スイープ・実 payload 保存を行わない（退行なし・
+    fail-closed）。"""
+    calls = []
+
+    async def fake_request(method, url, **kwargs):
+        calls.append((method.upper(), url, kwargs))
+        if method.upper() == "POST":
+            body = kwargs.get("json")
+            if body is None:
+                body = kwargs.get("data")
+            marker = _extract_marker(body)
+            if marker is not None:
+                return {"status": 200, "body": f"<html><div>{marker}</div></html>"}
+        return {"status": 200, "body": "<html>no marker</html>"}
+
+    hunter = _setup_hunter(monkeypatch, fake_request)
+    _patch_playwright_validator(monkeypatch, fires=True)
+
+    result = await hunter.run_as_tool(SAVE_URL, dict(STORE_PARAMS))
+
+    # 早期リターン → stored 経路は走らず、委譲（run_loop モック経由）で fail-closed
+    assert result["vulnerable"] is False
+    assert result["browser_execution"] == {}
+    assert result["evidence"] == ""
+
+    post_calls = [c for c in calls if c[0] == "POST"]
+    assert len(post_calls) == 1  # marker POST のみ（実 payload 再保存なし）
+    get_calls = [c for c in calls if c[0] == "GET"]
+    assert len(get_calls) == 0  # スイープなし
+    assert hunter.context.get("reflection_url") is None

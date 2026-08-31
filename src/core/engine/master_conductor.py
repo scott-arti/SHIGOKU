@@ -24,6 +24,18 @@ from concurrent.futures import TimeoutError as FutureTimeoutError
 
 logger = logging.getLogger(__name__)
 from src.core.utils.async_utils import safe_run_async, safe_run_async_forget, SharedLoopManager
+
+# SGK-2026-0462: injection 系 agent_type の正規名（InjectionManagerAgent の
+# AgentRegistry 登録名と一致）。canonical / 非canonical で分岐せず、
+# この集合に一致するタスクにのみ dispatch 時の discovery 契約キー補填を適用する。
+_INJECTION_DISPATCH_AGENT_TYPES = frozenset(
+    {
+        "InjectionManager",
+        "InjectionManagerAgent",
+        "injection_manager",
+        "InjectionSwarm",
+    }
+)
 # DebugLogger統合（オプショナル）
 try:
     from src.core.debug_logger import get_debug_logger
@@ -7713,6 +7725,9 @@ class MasterConductor:
         # 1. 事前準備 (Enrichment)
         with self._state_lock:
             task.state = TaskState.RUNNING
+            # SGK-2026-0462: injection タスク限定で save_endpoints sidecar を補填。
+            # accumulated_context の空/非空に関わらず実行する（:7716 のスキップ経路でも効く）。
+            self._ensure_injection_dispatch_discovery_context(task)
             if not self.accumulated_context.is_empty():
                 # SGK-2026-0460: 置換でなくマージ（accumulated 優先・build 時 discovery 契約キー保持）
                 self._merge_accumulated_context(task)
@@ -8183,6 +8198,72 @@ class MasterConductor:
             task.params["_context"] = {**_existing, **_accumulated}
         else:
             task.params["_context"] = _accumulated
+
+    def _ensure_injection_dispatch_discovery_context(self, task: Task) -> None:
+        """SGK-2026-0462: dispatch 時に injection タスクの _context へ
+        save_endpoints sidecar を補填する（防御的・加算のみ）。
+
+        recon-category builder（SGK-2026-0458, :14758-14760）を通らない経路
+        （canonical VDP / coverage backfill 等）で build された injection タスクでも、
+        保存型XSS の第2段階（manager の save_ep 一致 → method=POST →
+        _attempt_stored_revisit_validation 起動）を到達させる。
+
+        - 対象: agent_type が injection 系（_INJECTION_DISPATCH_AGENT_TYPES）の
+          タスクのみ。それ以外は何もしない（byte-identical）。
+        - 既存キー尊重: save_endpoints / forms_by_url / url_evidence_by_url が
+          既に存在すれば上書きしない。_context 自体が無い場合は sidecar が
+          非空のときのみ dict として新設する。
+        - sidecar 不在時（_load_run_save_endpoints() == []）は no-op。
+        """
+        agent_type = str(getattr(task, "agent_type", "") or "")
+        if agent_type not in _INJECTION_DISPATCH_AGENT_TYPES:
+            return
+        params = getattr(task, "params", None)
+        if not isinstance(params, dict):
+            return
+        run_save_endpoints = self._load_run_save_endpoints()
+        if not run_save_endpoints:
+            return
+        context = params.get("_context")
+        if not isinstance(context, dict):
+            context = {}
+            params["_context"] = context
+        if not context.get("save_endpoints"):
+            context["save_endpoints"] = list(run_save_endpoints)
+        if not context.get("forms_by_url"):
+            derived_forms: dict[str, list] = {}
+            for ep in run_save_endpoints:
+                if not isinstance(ep, dict):
+                    continue
+                ep_url = str(ep.get("url") or "").strip()
+                if not ep_url:
+                    continue
+                ep_method = str(ep.get("method", "GET") or "GET").upper()
+                ep_fields = ep.get("fields")
+                derived_forms.setdefault(ep_url, []).append(
+                    {
+                        "action": ep_url,
+                        "method": ep_method,
+                        "fields": ep_fields if isinstance(ep_fields, list) else [],
+                    }
+                )
+            if derived_forms:
+                context["forms_by_url"] = derived_forms
+        if not context.get("url_evidence_by_url"):
+            derived_evidence: dict[str, dict] = {}
+            for ep in run_save_endpoints:
+                if not isinstance(ep, dict):
+                    continue
+                ep_url = str(ep.get("url") or "").strip()
+                if not ep_url:
+                    continue
+                derived_evidence[ep_url] = {
+                    "method": str(ep.get("method", "GET") or "GET").upper(),
+                    "source": "save_endpoints_sidecar",
+                    "has_form_tag": bool(ep.get("fields")),
+                }
+            if derived_evidence:
+                context["url_evidence_by_url"] = derived_evidence
 
     def _emit_task_state_event(self, *, event_type: EventType, task: Task, result: dict | None = None) -> None:
         result = result or {}

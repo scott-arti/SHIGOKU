@@ -803,13 +803,19 @@ INPUT: [Input]
         content_type = str(self.context.get("content_type", "") or "").lower()
         auth_headers = self.context.get("auth_headers", {})
         try:
+            # SGK-2026-0463: 保存sink が 3xx（例: 303 → GET /）で転送する設計では、
+            # 追従後の実効本文が保存済み marker を描画し、:817 の marker 早期リターンが
+            # 誤発火する。追従せず「POST 応答自体が marker を反射するか」だけを見る
+            # （挙動変化は 3xx を返す保存sink に限定・追加のみ・fail-closed 維持）。
             if content_type == "json":
                 resp = await self.smart_client.request(
-                    "POST", target, json=post_params, headers=auth_headers, timeout=60,
+                    "POST", target, json=post_params, headers=auth_headers,
+                    timeout=60, allow_redirects=False,
                 )
             else:
                 resp = await self.smart_client.request(
-                    "POST", target, data=post_params, headers=auth_headers, timeout=60,
+                    "POST", target, data=post_params, headers=auth_headers,
+                    timeout=60, allow_redirects=False,
                 )
         except Exception:
             return False
@@ -822,8 +828,12 @@ INPUT: [Input]
             if cand == target:
                 continue
             try:
+                # SGK-2026-0463: 書込直後の再訪反射確認はキャッシュを使ってはならない。
+                # 既定 use_cache=True（TTL 300s）だと、事前クロールで再訪URLが既に
+                # キャッシュ済みの場合、marker POST 後のスイープが古い本文（marker なし）
+                # を返し reflection_url を取り逃す → stored 再訪がブラウザ段へ到達しない。
                 resp = await self.smart_client.request(
-                    "GET", cand, headers=auth_headers, timeout=60,
+                    "GET", cand, headers=auth_headers, timeout=60, use_cache=False,
                 )
             except Exception:
                 continue

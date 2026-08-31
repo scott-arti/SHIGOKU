@@ -1366,6 +1366,25 @@ class InjectionManagerAgent(BaseManagerAgent):
             return [("evidence", "browser_execution")]
         return []
 
+    def _t3_browser_evidence_auto_active(self, findings: list) -> bool:
+        """SGK-2026-0461 (Option B): browser_evidence を持つ finding が
+        実在するときのみ T3 確認フローをスコープ起動する。
+
+        - 明示 override（hybrid_enabled=...）は常に優先（fail-closed）。
+        - kill-switch: settings.t3_hybrid_browser_evidence_auto（既定 True）。
+        - findings 無し / browser_evidence 無し → False（従来 OFF 挙動を維持）。
+        """
+        if self._t3_hybrid_enabled_override is not None:
+            return False
+        try:
+            if not bool(
+                getattr(settings, "t3_hybrid_browser_evidence_auto", True)
+            ):
+                return False
+        except Exception:  # noqa: BLE001 — settings boundary, fail closed
+            return False
+        return any(self._t3_browser_evidence_trigger(f) for f in findings)
+
     def _t3_resurrection_information(self, findings: list, lifecycle: Any) -> list:
         """new_information tokens for parked-record resurrection: the
         standard derive_triggers vocabulary (vuln_type/endpoint/capability)
@@ -1397,28 +1416,52 @@ class InjectionManagerAgent(BaseManagerAgent):
         findings) -> no-op, no validation imports touched (byte-identical).
         Returns True when any ledger record was written.
         """
-        if not self._t3_hybrid_active():
+        explicit_active = self._t3_hybrid_active()
+        if not (explicit_active or self._t3_browser_evidence_auto_active(findings)):
             return False
         if not findings:
             return False
+        # SGK-2026-0461 (Option B): スコープ起動（browser_evidence 自動検知）
+        # のときは判定対象を browser_evidence を持つ finding に限定する
+        # （通常走行を過負荷にしない。明示 t3_hybrid_enabled 時は従来どおり
+        # 全 finding を判定）。
+        if not explicit_active:
+            findings = [
+                f for f in findings if self._t3_browser_evidence_trigger(f)
+            ]
+            if not findings:
+                return False
         # 循環回避のため関数内 import（validation <=> injection の import ループ）
         from src.core.validation.candidate_lifecycle import (
             CandidateLifecycleManager,
             LifecycleState,
         )
-        from src.core.validation.finding_validator import PoCJudge
         from src.core.validation.sealed_reproduction_checker import (
             BudgetedPoCJudge,
             PoCJudgeBudget,
             SealedReproductionChecker,
         )
+        from src.core.agents.swarm.injection.poc_judge_robust import (
+            RobustPoCJudge,
+        )
+        from src.core.security.pii_masker import get_pii_masker
 
         ledger = self._open_candidate_ledger(task)
         if ledger is None:
             return False
         judge = BudgetedPoCJudge(
-            self._t3_poc_judge if self._t3_poc_judge is not None else PoCJudge(),
-            PoCJudgeBudget(),
+            # SGK-2026-0461 (Option B): 既定 judge は RobustPoCJudge
+            # （per-call タイムアウト 90s・JSON 救済・パース失敗時のみの
+            # バウンド付きリトライ。バー無改変・判定緩め無し）。注入済み
+            # judge は従来どおり優先。
+            self._t3_poc_judge
+            if self._t3_poc_judge is not None
+            else RobustPoCJudge(),
+            # SGK-2026-0461 (Option B): 明示予算（11分ループ防止・fail-closed）。
+            # per-call 90s × max 2 試行を前提に、run 全体 6 コール / 480s で
+            # 超過時は JudgeBudgetExhausted → needs_more（決して confirmed
+            # を偽装しない）。
+            PoCJudgeBudget(max_calls=6, max_seconds=480),
         )
         checker = (
             self._t3_reproduction_checker
@@ -1441,6 +1484,9 @@ class InjectionManagerAgent(BaseManagerAgent):
                 scope_definition=_build_sealed_reproduction_scope(
                     getattr(task, "target", None)
                 ),
+                # SGK-2026-0461 (Option B): 0439 token_map 復元を配線
+                # （マスク済 URL を not_run に落とさない。バー無改変）。
+                masker=get_pii_masker(),
                 # SGK-2026-0452 (approved D, user 2026-08-16): the sealed
                 # replay must NOT be starved by the AI judge's own runtime.
                 # The checker is built at pass start and each finding runs
