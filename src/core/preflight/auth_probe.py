@@ -480,11 +480,18 @@ class AuthProbe:
         )
 
         # --- Deterministic classification ---
+        # SGK-2026-0468: pass whether real credentials were sent and whether the
+        # final body looks like JSON, so the classifier can recognize an
+        # authenticated 2xx JSON-API response (flag-gated, default off).
+        has_credentials = bool(auth_headers) or bool(bearer_token) or bool(cookies)
+        is_json_api = final_body.lstrip()[:1] in ("{", "[")
         result = self._classify_deterministic(
             result,
             has_login_markers=has_login_markers,
             has_session_expired_markers=bool(session_expired_markers),
             has_authenticated_markers=bool(authenticated_markers),
+            has_credentials=has_credentials,
+            is_json_api=is_json_api,
         )
 
         logger.debug(
@@ -576,6 +583,8 @@ class AuthProbe:
         has_login_markers: bool,
         has_session_expired_markers: bool,
         has_authenticated_markers: bool,
+        has_credentials: bool = False,     # SGK-2026-0468
+        is_json_api: bool = False,         # SGK-2026-0468
     ) -> AuthProbeResult:
         """Classify *result* using deterministic rules.
 
@@ -591,6 +600,7 @@ class AuthProbe:
         8. has session-expired body markers → SESSION_EXPIRED
         9. is_login_page → LOGIN_PAGE
         10. status_code == 200 AND has authenticated markers AND not is_login_page → AUTHENTICATED
+        10b. status 2xx AND JSON body AND credentials sent AND not login page (flag auth_probe_json_api_enabled, default off) → AUTHENTICATED
         11. Otherwise → UNKNOWN
         """
         # DNS_FAILURE / CONNECTION_FAILURE already set by caller; skip if set.
@@ -649,6 +659,26 @@ class AuthProbe:
         if (
             result.status_code == 200
             and has_authenticated_markers
+            and not result.is_login_page
+        ):
+            result.classification = AuthClassification.AUTHENTICATED
+            return result
+
+        # Rule 10b (SGK-2026-0468): authenticated JSON-API success. A 2xx response
+        # with a JSON body, obtained WITH credentials and not a login page, is a
+        # determinable authenticated state (HTML auth markers are absent on APIs).
+        # Gated by a default-off flag; HTML behavior above is unchanged.
+        _json_api_enabled = False
+        try:
+            from src.core.config.settings import get_settings
+            _json_api_enabled = bool(getattr(get_settings(), "auth_probe_json_api_enabled", False))
+        except Exception:
+            _json_api_enabled = False
+        if (
+            _json_api_enabled
+            and 200 <= result.status_code < 300
+            and is_json_api
+            and has_credentials
             and not result.is_login_page
         ):
             result.classification = AuthClassification.AUTHENTICATED

@@ -78,6 +78,7 @@ from src.core.agents.swarm.injection.manager_internal.api_probe_auth_context imp
 from src.core.agents.swarm.injection.manager_internal.api_probe_auth_matrix import (
     finalize_auth_context_matrix,
 )
+from src.core.agents.swarm.logic.response_comparator import ResponseComparator, ComparisonInput
 from src.core.agents.swarm.injection.manager_internal.api_probe_object_target import (
     build_object_ab_target,
 )
@@ -141,6 +142,21 @@ if TYPE_CHECKING:
     from src.core.validation.candidate_lifecycle import CandidateLifecycleManager
 
 logger = logging.getLogger(__name__)
+
+
+# SGK-2026-0468: generic auth-carrying header names stripped to build a
+# genuinely unauthenticated probe (covers custom-header schemes, not just
+# Authorization/Cookie). Generic names only — no product-specific tokens.
+_UNAUTH_STRIP_HEADER_KEYS = frozenset({
+    "authorization", "proxy-authorization",
+    "cookie",
+    "x-api-key", "api-key", "apikey",
+    "x-auth-token", "auth-token",
+    "x-access-token", "access-token",
+    "x-session-token", "session-token", "session",
+    "token", "bearer", "jwt",
+    "x-csrf-token", "x-xsrf-token",
+})
 
 
 def _decompose_phase2_block_reasons(
@@ -1906,6 +1922,157 @@ class InjectionManagerAgent(BaseManagerAgent):
             }
         )
 
+        # SGK-2026-0467: cross-account BOLA confirmation (authB matrix).
+        # Fires ONLY on real cross-account evidence: authA (primary account)
+        # and authB (second account) both succeed on the same protected
+        # resource while the unauthenticated request is denied, and the two
+        # authenticated bodies are structurally correlated. Opt-in via
+        # idor_cross_account_confirm_enabled (default False); no authB wired
+        # -> complete no-op.
+        _idor_cross_account_enabled = False
+        try:
+            from src.core.config.settings import get_settings
+
+            _idor_cross_account_enabled = bool(
+                getattr(get_settings(), "idor_cross_account_confirm_enabled", False)
+            )
+        except Exception:
+            _idor_cross_account_enabled = False
+        if _idor_cross_account_enabled and auth_b_headers:
+            _cross_auth_b_status = int(locals().get("auth_b_status", 0) or 0)
+            _cross_auth_b_body = str(locals().get("auth_b_body", "") or "")
+            _cross_auth_b_headers_resp = dict(locals().get("auth_b_headers_resp", {}) or {})
+            _matrix_signals = set(auth_context_matrix.get("signals", []) or [])
+            # SGK-2026-0468: 境界（保護されているか）を独自に確認する。共有の
+            # unauth プローブは authorization/cookie のみ剥離するため、独自ヘッダ
+            # 認証（X-Auth-Token 等）だと境界を取り逃す。マトリクスが既に境界を
+            # 示していればそれを使い（追加リクエスト無し）、示していない時だけ、
+            # 広域剥離した真の未認証 GET を 1 回だけ送る。
+            _boundary_observed = "auth_boundary_observed" in _matrix_signals
+            if (
+                not _boundary_observed
+                and auth_status in {200, 201, 202, 204}  # authA(プライマリ)は認証で成功している
+            ):
+                _broad_unauth_headers = {
+                    k: v
+                    for k, v in auth_headers.items()
+                    if k.lower() not in _UNAUTH_STRIP_HEADER_KEYS
+                }
+                # 広域剥離が narrow より多く剥がす（＝独自ヘッダ認証）時だけ追加検証
+                if _broad_unauth_headers != unauth_headers:
+                    try:
+                        _broad_unauth_resp = await request_client.request(
+                            method="GET",
+                            url=url,
+                            headers=_broad_unauth_headers,
+                            timeout=30,
+                            use_cache=False,
+                            allow_redirects=True,
+                        )
+                        _broad_unauth_status = int(getattr(_broad_unauth_resp, "status", 0) or 0)
+                        if _broad_unauth_status not in {200, 201, 202, 204}:
+                            # 真の未認証は拒否＝保護されている
+                            _boundary_observed = True
+                    except Exception:
+                        # プローブ失敗時は境界無し扱い（fail-closed・現行と同挙動）
+                        pass
+
+            if "authA_authB_both_success" in _matrix_signals and _boundary_observed:
+                try:
+                    _cross_comparison = await ResponseComparator().compare(
+                        ComparisonInput(
+                            baseline_status=_cross_auth_b_status,
+                            baseline_body=_cross_auth_b_body,
+                            baseline_headers=_cross_auth_b_headers_resp,
+                            test_status=auth_status,
+                            test_body=auth_body,
+                            test_headers=auth_headers_resp,
+                            original_id="owner",
+                            test_id="cross_account_probe",
+                        )
+                    )
+                except Exception:
+                    _cross_comparison = None
+                _structure_correlated = bool(
+                    _cross_comparison is not None
+                    and (
+                        _cross_comparison.is_vulnerable
+                        or any(
+                            "json_structure_match" in str(signal or "")
+                            for signal in _cross_comparison.signals
+                        )
+                    )
+                )
+                if _structure_correlated:
+                    _cross_authz_diff = build_authz_differential(
+                        scenario="cross_account_bola",
+                        baseline_status=_cross_auth_b_status,  # owner (authB) success -> auth_success
+                        test_status=auth_status,               # different account (authA) success
+                        baseline_body=_cross_auth_b_body,
+                        test_body=auth_body,
+                        baseline_json_like=_cross_auth_b_body.strip().startswith(("{", "[")),
+                        test_json_like=auth_body.strip().startswith(("{", "[")),
+                        length_close=abs(len(auth_body) - len(_cross_auth_b_body))
+                        <= max(120, int(len(_cross_auth_b_body) * 0.2)),
+                        extra_signals=[
+                            "cross_account_read",
+                            "authA_authB_both_success",
+                            "auth_boundary_observed",
+                        ],
+                    )
+                    _cross_impact_text = (
+                        "Cross-account object read: an authenticated request from a different account "
+                        "returned the same protected resource that the owning account returns, while an "
+                        "unauthenticated request is denied."
+                    )
+                    _cross_repro_steps = [
+                        f"GET {url} with no authentication -> denied (status {status}).",
+                        f"GET {url} as the owning account -> {_cross_auth_b_status} (resource returned).",
+                        f"GET {url} as a different account -> {auth_status}, returning the same protected resource.",
+                    ]
+                    _cross_finding = Finding(
+                        vuln_type=VulnType.IDOR,
+                        severity=Severity.HIGH,
+                        title="Cross-Account Object Access (BOLA) Confirmed via Second-Account Comparison",
+                        description=(
+                            "A protected resource owned by one account was readable by a different "
+                            "authenticated account."
+                        ),
+                        target_url=url,
+                        evidence=Evidence(
+                            request_method="GET",
+                            request_url=url,
+                            request_headers=auth_headers,  # authA (different account)
+                            response_status=auth_status,
+                            response_headers=auth_headers_resp,
+                            response_body=auth_body[:500],
+                        ),
+                        source_agent=self.name,
+                        confidence=0.8,
+                        tags=["idor", "bola", "cross_account", "auth_context"],
+                        additional_info={
+                            "parameter": "",
+                            "payload": "",
+                            "payloads_used": [],
+                            "tested_params": tested_params,
+                            "detection_mode": detection_mode,
+                            "comparison_checks": comparison_checks,
+                            "auth_context_matrix": auth_context_matrix,
+                            "detection_class": "cross_account_bola",
+                            "auth_status": _cross_auth_b_status,  # owner
+                            "unauth_status": status,              # denied
+                            "authz_differential": _cross_authz_diff,
+                            # VDP impact markers -> satisfy payout_grade impact condition
+                            "second_account_compared": True,
+                            "cross_account_compared": True,
+                        },
+                    )
+                    _cross_finding.impact = _cross_impact_text
+                    _cross_finding.reproduction_steps = _cross_repro_steps
+                    self.current_context["findings"].append(_cross_finding)
+                    findings_count += 1
+                    _funnel_finding_created(_cross_finding)
+
         # IDOR/BOLA object A/B 比較（ID が特定できる場合のみ）
         object_ab_candidate = build_object_ab_target(url)
         if object_ab_candidate:
@@ -3119,6 +3286,10 @@ class InjectionManagerAgent(BaseManagerAgent):
                     "_auth": {
                         "auth_headers": auth_headers,
                         "cookies": task.params.get("cookies", ""),
+                        # SGK-2026-0467: second account (authB) when supplied.
+                        # Absent -> empty dict, resolve_auth_b_context no-op.
+                        "auth_b_headers": task.params.get("auth_b_headers", {}) or {},
+                        "auth_b_role": task.params.get("auth_b_role", "") or "",
                     },
                     # method 情報を追加（POST/GET の識別に必要）
                     "method": resolved_method,

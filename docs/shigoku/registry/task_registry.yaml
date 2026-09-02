@@ -5836,3 +5836,91 @@ status_allowed_values:
 - done
 - deferred
 - archived
+- provisional_id: DOC-0534
+  task_id: SGK-2026-0465
+  doc_type: spec
+  title: SHIGOKU 検出能力マップ（脆弱性の種類×対応状況の一覧・対象非依存）
+  primary_doc: docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+  status: active
+  provisional: false
+  task_summary: "SHIGOKUが実際に検出できる脆弱性の種類を実装済みエージェント(injection/logic/auth/secret/discovery)に基づき一覧化。Juice Shopは入口の具体例のみで対象固有の期待検知マトリクスは持たない(SGK-2026-0417撤回方針を踏襲)。確度: 保存型XSS=◎実証済/SQLi=◎実証済(SGK-2026-0466)/IDOR=◎実証済(SGK-2026-0467/0468・本物Juice Shop・実2アカウントでcross-account BOLAをpayout_grade確定まで到達。フル自律走行の速度/トークン失効はSGK-2026-0469/0470で追跡)/オープンリダイレクト=○(次ターゲット)。ギャップ: XXE/NoSQLi/ビジネスロジック/既知脆弱部品は専用エンジンなし。実証推奨順: SQLi→IDOR→オープンリダイレクト。"
+  parent_task_id: null
+  related_docs:
+  - docs/shigoku/plans/done/2026-08-30_sgk-2026-0463_stored-stage2-redirect-marker-fix.md
+  - docs/shigoku/plans/done/2026-09-01_sgk-2026-0464_candidate-xss-dedup-url-normalization.md
+  - docs/shigoku/plans/done/2026-09-01_sgk-2026-0466_sqli-confirmed-reverification.md
+- provisional_id: DOC-0535
+  task_id: SGK-2026-0466
+  doc_type: plan
+  title: SQLi の live confirmed=1 を現行コードベースで再実証（検証タスク・コード変更なし）
+  primary_doc: docs/shigoku/plans/done/2026-09-01_sgk-2026-0466_sqli-confirmed-reverification.md
+  status: done
+  provisional: false
+  task_summary: "SGK-2026-0466 完了。SGK-2026-0452 で SQLi は Juice Shop に live confirmed=1 達成済(2026-08-16)。その後の横断状態隔離(0460)・候補重複排除(0464)・保存型XSS一連(0454-0463)の変更後も確定に到達するかをフルパイプライン実走行で再実証(コード変更なし)。run1(SHIGOKU_T3_HYBRID_ENABLED未設定)は SQLi 発火+impact probe 実行まで到達も candidate 止まり(insufficient_validation)＝真因は T3 hybrid pass のゲート settings.t3_hybrid_enabled(既定False)へのフラグ付け忘れ(コード回帰ではなく運用ミス・learnings.md:690の既存lesson該当)。XSS は t3_hybrid_browser_evidence_auto=True で自動確定するため非影響。run2(SHIGOKU_T3_HYBRID_ENABLED=1・他同一)で SQLi confirmed 2件(param q/data)到達: report haddix_report_20260901_061505.md/session session_20260901_061502.json・consistent/rerun_required=false・証拠は error(500 SQLITE_ERROR)+boolean差分+非機微sqlite_version()=3.44.2・機微データ抽出0(SQLi finding全数でpassword/email/hashヒット0)・GET-only。コード変更0で確定バー無改変は自明。能力マップ0465のSQLiを○→◎昇格。deferred(非阻害・SGK-2026-0442追跡): SQLi確定が実行時T3フラグを要する運用モードの既定化検討・CORS候補76件のsafe-holdノイズ。Claude実走行/独立検証。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/done/2026-08-15_sgk-2026-0452_safe-sqli-impact-demonstration.md
+  - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+  - docs/shigoku/reports/2026-09-01_sgk-2026-0466_sqli-confirmed-reverification_work_report.md
+  - docs/shigoku/worklogs/2026-09-01_sgk-2026-0466_sqli-confirmed-reverification_work_log.md
+- provisional_id: DOC-0536
+  task_id: SGK-2026-0467
+  doc_type: plan
+  title: IDOR/BOLA を「別アカウントで実際に見えた」証拠付きで確定へ（事実優先）
+  primary_doc: docs/shigoku/plans/done/2026-09-01_sgk-2026-0467_idor-bola-confirmation-fact-first.md
+  status: done
+  provisional: false
+  task_summary: "能力マップ(SGK-2026-0465)でIDORは△(別アカウントで実際に見えた差分の証拠づくりが弱点)。SQLi(0466)・保存型XSS(0459-0463)と同じ本物証拠でconfirmed=1路線をIDORにも通す。仮説を実装より先に置かない規律で、実走行と製品非依存2ユーザーfixtureにより現状IDORがどこで止まるかを事実確定してから設計。着手前コード精読事実: IDOR確定マーカーauthz_diffはpayout_grade.py:335-343が判定し要件はauthz_differential.signalsにauth_success+unauth_success(未認証アクセス許可型)またはstatus_improved_with_auth。この確定用トークンを出す唯一の生成器build_authz_differential(api_probe_analysis.py)はinjection manager API probe _run_api_minimal_check(manager.py:1740-2080)が本線。logic/idor.py cross-session BOLAはResponseComparator由来signalでこの語彙を出さない(語彙不一致)。IDOR object_abブロック(manager.py:2007-2080)はマーカー満たし得るがimpact/reproduction_stepsを意図的に付けない(2075-2078)→missing_impactでcandidate止まり公算。_VDP_IMPACT_MARKERSにsecond_account_compared/authz_impact_provenあり(0437で使用形跡)。完了条件: run1実JuiceShop診断走行で停止点と真因を実物裏付け(consistent)・2ユーザーfixture(product非依存PASS)で確定経路事実確認・IDOR/BOLAを本物証拠で確定到達or署名レベル真因特定して追跡タスク化・確定バー5無改変・token0・validator0。NOT in scope: 破壊的テスト(状態変更)・JuiceShop固有当てはめ・確定バー改変。完了(2026-09-02): settingsフラグidor_cross_account_confirm_enabled(既定False)gateのcross-account発火ブロック(manager.py)+authB配線(_auth builder透過+master_conductor _resolve_second_account_auth)実装。新規6テスト緑(モックでpayout_grade=True/marker=authz_diff観測)・回帰683passed・確定バー5無改変(exit0)・denylist0。能力マップIDOR △→○昇格。追跡: SGK-2026-0468(カスタムヘッダスキーム対応+実走行E2E再確認)。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+  - docs/shigoku/plans/done/2026-08-10_sgk-2026-0437_authz-gap-closure-e2e-verification_plan.md
+  - docs/shigoku/plans/done/2026-09-01_sgk-2026-0466_sqli-confirmed-reverification.md
+  - docs/shigoku/reports/2026-09-02_sgk-2026-0467_idor-bola-confirmation-fact-first_work_report.md
+  - docs/shigoku/worklogs/2026-09-02_sgk-2026-0467_idor-bola-confirmation-fact-first_work_log.md
+  - docs/shigoku/plans/2026-09-02_sgk-2026-0468_unauth-probe-custom-header-scheme.md
+- provisional_id: DOC-0537
+  task_id: SGK-2026-0468
+  doc_type: plan
+  title: unauth probe のカスタムヘッダスキーム対応検討＋cross-account 確定の実走行 E2E 再確認
+  primary_doc: docs/shigoku/plans/done/2026-09-02_sgk-2026-0468_unauth-probe-custom-header-scheme.md
+  status: done
+  provisional: false
+  task_summary: "SGK-2026-0467 の非阻害追跡2件。(1) unauth probe は Authorization/Cookie のみ剥離するため X-Auth-Token 等のカスタムヘッダ認証では auth_boundary_observed が立たず cross-account 確定が fail-closed サイレント(誤検知なし・機会損失のみ)。既定OFFフラグ gate で auth 判定ヘッダ集合拡張を設計検討(後方互換維持)。(2) multi_session.enabled+authA/authB 登録+SHIGOKU_IDOR_CROSS_ACCOUNT_CONFIRM_ENABLED=1 の実走行で cross-account finding の payout_grade 到達を E2E 再確認。part-1完了(2026-09-02): manager.pyに_UNAUTH_STRIP_HEADER_KEYS追加+cross-accountブロック内で境界を独自算出(広域剥離した真の未認証GETを1回・既存共有unauthプローブ/マトリクス/未認証判定ブロック無改変)。新規3テスト9passed・injection634passed・確定バー5無改変・denylist0。part-2完了(2026-09-03): 本物Juice Shop・実2アカウント(.env資格情報から自動ログイン・値非表示)・実managerコード・実HTTPで GET /rest/basket/{Bのかご} に対し未認証=401/authA(別アカウント)=200/authB(所有者)=200・本文一致 → cross_account_bola finding発火 → evaluate_payout_grade=True/payout_grade_satisfied/marker=authz_diff。証拠workspace/projects/idor_cross_account_real_evidence_20260902.txt(合言葉マスク)。→本物の対象でcross-account BOLAを確定まで実証(能力マップIDOR ○→◎昇格)。part-3完了(2026-09-03): auth_probe.pyにRule 10b(auth_probe_json_api_enabled既定OFF)追加で認証情報付き2xx JSONをAUTHENTICATED判定しJSON API直撃時のAUTH_UNKNOWN走行中止を解消(Rules1-10無改変・preflight189passed・確定バー無改変)。方法②正式フル走行はpreflight通過後、AI逐次判断の低速(~54分でLLM186回/思考42ターン)＋認証トークン失効(~1h)競合が判明しユーザー合意で中止(狙い撃ち高速確定が実戦経路)。deferred(非阻害): SGK-2026-0469(認証付き走査の自動再ログイン/トークン更新)・SGK-2026-0470(AI往復削減の高速化)。反省: 検証中pgrep -afで主認証JWTが一度端末露出(練習アカウント・短命)→以後PIDのみ確認。DeepSeek実装/Claude独立検証。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/done/2026-09-01_sgk-2026-0467_idor-bola-confirmation-fact-first.md
+  - docs/shigoku/reports/2026-09-02_sgk-2026-0467_idor-bola-confirmation-fact-first_work_report.md
+  - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+  - docs/shigoku/reports/2026-09-02_sgk-2026-0468_custom-header-unauth-probe_part1_work_report.md
+  - docs/shigoku/worklogs/2026-09-02_sgk-2026-0468_custom-header-unauth-probe_part1_work_log.md
+  - docs/shigoku/reports/2026-09-03_sgk-2026-0468_cross-account-e2e-and-preflight_work_report.md
+  - docs/shigoku/worklogs/2026-09-03_sgk-2026-0468_cross-account-e2e-and-preflight_work_log.md
+  - docs/shigoku/plans/done/2026-09-03_sgk-2026-0469_authenticated-scan-token-refresh.md
+  - docs/shigoku/plans/2026-09-03_sgk-2026-0470_llm-in-loop-latency-reduction.md
+- provisional_id: DOC-0539
+  task_id: SGK-2026-0469
+  doc_type: plan
+  title: 認証付き走査の自動再ログイン／トークン更新
+  primary_doc: docs/shigoku/plans/done/2026-09-03_sgk-2026-0469_authenticated-scan-token-refresh.md
+  status: done
+  provisional: false
+  task_summary: "SGK-2026-0468 part-2 実走行で判明した実戦上の弱点: 認証が必要な対象を長時間の自律走行にかけるとセッショントークン(例JWT ~1h)が途中失効し以降の認証リクエストが壊れ確定に届かない。完了(2026-09-03): 既存 reauth パイプライン(SGK-2026-0280)を再利用する設計に精読で確定(本番はlogin_request writerゼロ・唯一の読込master_conductor.py:944)し、設定式ログインレシピsettings.auth_recipe(AuthRecipeSettings・enabled既定OFF/env SHIGOKU_AUTH_RECIPE__ENABLED・値は$VAR env参照+fail-safe drop)からlogin_requestを構築しaccumulated_context.auth_tokens['login_request']へ注入(_maybe_seed_auth_recipe_login_request・dispatch直前・idempotent)。JSONログインはdata=経路互換のためbody JSON文字列+Content-Type。token_path dot-path抽出(正規表現経路不変)+token_header/format発火+既存消费者context_designerが読む'bearer'キー併発火で実配線成立。秘密規律: reauth paramsセッション永続化面にflag gateでredact_secrets_deep+recipe資格キー深さ再帰マスク(JSON文字列body内も)、log_redactor extra keysはrecipe有効時のみ。fixture汎用POST /login追加。新規20テスト緑・auth59緑・settings/log_redactor109緑・reauth suiteの1件failureはclean HEAD再現=非起因・確定バー5無改変exit0・denylist追加行0・credential pattern0・製品トークン0・flag OFF byte-identical。deferred(非阻害): 実走行での失効跨ぎ再ログインE2EはSGK-2026-0470実走行時に統合検証。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/done/2026-09-02_sgk-2026-0468_unauth-probe-custom-header-scheme.md
+  - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+  - docs/shigoku/reports/2026-09-03_sgk-2026-0469_auth-recipe-login-replay_work_report.md
+  - docs/shigoku/worklogs/2026-09-03_sgk-2026-0469_auth-recipe-login-replay_work_log.md
+- provisional_id: DOC-0540
+  task_id: SGK-2026-0470
+  doc_type: plan
+  title: AI 逐次判断の遅延削減（フル走行の高速化）
+  primary_doc: docs/shigoku/plans/2026-09-03_sgk-2026-0470_llm-in-loop-latency-reduction.md
+  status: active
+  provisional: false
+  task_summary: "SGK-2026-0468 part-2 実走行で遅さの主因を定量化: ~1時間でLLM呼び出し186回・思考ループ42ターン。時間の大半は一手ごとのLLMネット往復(各数秒)で標的応答はミリ秒。実戦の使い勝手と認証トークン失効(SGK-2026-0469)との競合を悪化。対象候補: LLM委任の分類/優先度付けの決定論置換(精度維持)・同型判断のキャッシュ/思考ターンのバッチ化と上限最適化・狙い撃ち時の不要な広域クロール/エンジン抑制モード。完了条件案: 代表シナリオでLLM呼び出し回数/総時間を有意削減しconfirmed/candidateの質を非回帰・確定バー無改変・token0・validator0。NOT in scope: 確定バー改変・網羅性を犠牲にした見かけ高速化(カーブフィッティング禁止)・認証寿命管理(0469)。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/done/2026-09-02_sgk-2026-0468_unauth-probe-custom-header-scheme.md
+  - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md

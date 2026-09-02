@@ -138,6 +138,39 @@ def _extract_token_from_body(body: str, patterns: list[re.Pattern[str]]) -> Opti
     return None
 
 
+def _try_parse_json(body: str):
+    """Parse *body* as JSON, returning None on any failure."""
+    try:
+        return json.loads(body)
+    except Exception:
+        return None
+
+
+def _extract_token_path(parsed, path: str) -> Optional[str]:
+    """Walk a dot-path (e.g. ``authentication.token``) through parsed JSON.
+
+    Supports dict keys and integer list indexes. Missing/None/empty segments
+    return None so the caller falls back to the existing regex path.
+    """
+    current = parsed
+    for part in str(path or "").strip().split("."):
+        part = part.strip()
+        if not part:
+            continue
+        if isinstance(current, dict) and part in current:
+            current = current[part]
+        elif isinstance(current, list) and part.isdigit():
+            index = int(part)
+            if index < 0 or index >= len(current):
+                return None
+            current = current[index]
+        else:
+            return None
+    if isinstance(current, str) and current:
+        return current
+    return None
+
+
 def _extract_cookies_from_response(response: Any) -> dict[str, str]:
     """Extract Set-Cookie cookies from a NetworkResponse (or dict)."""
     cookies: dict[str, str] = {}
@@ -492,7 +525,17 @@ class AutoReauthSpecialist(Specialist):
 
         # Extract tokens and cookies from login response
         body = resp.text if hasattr(resp, "text") else str(getattr(resp, "body", ""))
-        new_access_token = _extract_token_from_body(body, _ACCESS_TOKEN_PATTERNS)
+        # SGK-2026-0469: cfg-recipe dot-path extraction (preferred when the
+        # login_request carries token_path). Missing/None -> regex fallback
+        # (the existing path is untouched).
+        new_access_token = None
+        token_path = login_request.get("token_path")
+        if token_path:
+            parsed_body = _try_parse_json(body)
+            if parsed_body is not None:
+                new_access_token = _extract_token_path(parsed_body, str(token_path))
+        if not new_access_token:
+            new_access_token = _extract_token_from_body(body, _ACCESS_TOKEN_PATTERNS)
         new_refresh_token = _extract_token_from_body(body, _REFRESH_TOKEN_PATTERNS)
         new_cookies = _extract_cookies_from_response(resp)
 
@@ -507,6 +550,26 @@ class AutoReauthSpecialist(Specialist):
             tokens["access_token"] = new_access_token
         if new_refresh_token:
             tokens["refresh_token"] = new_refresh_token
+        # SGK-2026-0469: config-recipe token format. When the login_request
+        # carries token_header/token_format (set by the recipe seeding path),
+        # also emit the formatted header value under token_header so the
+        # refreshed token is actually usable, plus the raw token under
+        # "bearer" (the named-key consumer context_designer.enrich_task turns
+        # auth_tokens["bearer"] into "Authorization: Bearer <token>" on
+        # subsequent tasks). Additive: login_requests without these extra
+        # keys keep the historical new_tokens shape.
+        token_header = login_request.get("token_header")
+        if new_access_token and token_header:
+            token_header = str(token_header).strip()
+            token_format = str(login_request.get("token_format") or "").strip()
+            if token_format:
+                try:
+                    tokens[token_header] = token_format.format(token=new_access_token)
+                except Exception:
+                    tokens[token_header] = new_access_token
+            else:
+                tokens[token_header] = new_access_token
+            tokens["bearer"] = new_access_token
 
         evidence: dict[str, Any] = {
             "login_url": url,

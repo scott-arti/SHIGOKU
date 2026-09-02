@@ -96,6 +96,34 @@ class MultiSessionSettings(BaseModel):
     sessions: List[UserSessionConfig] = Field(default_factory=list)
 
 
+# SGK-2026-0469: config-driven login recipe (automatic re-login / token
+# refresh on 401). Default OFF -> existing AutoReauthSpecialist login-replay
+# behavior is byte-identical. Opt-in via env SHIGOKU_AUTH_RECIPE__ENABLED=1.
+# Values never hold plaintext secrets: body/header values may reference
+# environment variables with "$NAME" / "${NAME}" and are resolved at runtime;
+# missing env vars cause the referencing key to be dropped (fail-safe skip).
+class AuthRecipeSettings(BaseModel):
+    """設定式ログインレシピ（自動再ログイン用）"""
+
+    enabled: bool = False
+    login_url: str = ""
+    method: str = "POST"
+    content_type: str = "json"          # "json" | "form"
+    body: Dict[str, str] = Field(default_factory=dict)   # values may reference "$VAR" env
+    headers: Dict[str, str] = Field(default_factory=dict)
+    token_path: str = ""                # dot-path into response JSON, e.g. "authentication.token"
+    token_header: str = "Authorization"
+    token_format: str = "Bearer {token}"  # format of resulting header value
+
+    @field_validator("content_type")
+    @classmethod
+    def _validate_content_type(cls, value: str) -> str:
+        normalized = str(value or "json").strip().lower()
+        if normalized not in {"json", "form"}:
+            raise ValueError("content_type must be 'json' or 'form'")
+        return normalized
+
+
 # ===== LLM Config Unification (Phase 1) =====
 
 class LLMProviderSettings(BaseModel):
@@ -697,6 +725,13 @@ class Settings(BaseSettings):
     # トークン抽出の実証プローブ）のオプトイン (default off -> 既存 run は
     # byte-identical。env SHIGOKU_SQLI_IMPACT_PROBE_ENABLED)
     sqli_impact_probe_enabled: bool = False
+    # SGK-2026-0467: cross-account BOLA confirmation (authB matrix). Default OFF.
+    # env SHIGOKU_IDOR_CROSS_ACCOUNT_CONFIRM_ENABLED
+    idor_cross_account_confirm_enabled: bool = False
+    # SGK-2026-0468: classify an authenticated 2xx JSON-API response as
+    # AUTHENTICATED in the preflight auth probe (so JSON API endpoints can be
+    # targeted directly). Default OFF. env SHIGOKU_AUTH_PROBE_JSON_API_ENABLED
+    auth_probe_json_api_enabled: bool = False
     # SGK-2026-0453: SQLi 防御回避カタログ（妨害検知 / 汎用すり抜け変形 /
     # boolean オラクル抽出フォールバック）のオプトイン (default off -> 既存
     # run は byte-identical。env SHIGOKU_SQLI_EVASION_CATALOG_ENABLED。
@@ -746,6 +781,7 @@ class Settings(BaseSettings):
     caido: CaidoSettings = Field(default_factory=CaidoSettings)
     preflight: PreflightSettings = Field(default_factory=PreflightSettings)
     multi_session: MultiSessionSettings = Field(default_factory=MultiSessionSettings)
+    auth_recipe: AuthRecipeSettings = Field(default_factory=AuthRecipeSettings)
     parallelism: ParallelismSettings = Field(default_factory=ParallelismSettings)
     vdp: VdpModeSettings = Field(default_factory=VdpModeSettings)
     diagnostics: DiagnosticsSettings = Field(default_factory=DiagnosticsSettings)

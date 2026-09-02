@@ -10,7 +10,7 @@ MasterConductor: 動的リプラン司令塔
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional, Any, Callable
+from typing import Optional, Any, Callable, Tuple, Dict
 import copy
 import time
 import json
@@ -854,6 +854,183 @@ class MasterConductor:
             self._pending_event_follow_ups.extend(released)
             logger.debug("Reauth recovery: deferred %d task(s) to main thread", len(released))
 
+    # ------------------------------------------------------------------
+    # SGK-2026-0469: config-driven login recipe (settings.auth_recipe)
+    # ------------------------------------------------------------------
+    # Additive + gated (auth_recipe.enabled, default False). When enabled, a
+    # login_request is built from the recipe and injected into
+    # accumulated_context.auth_tokens["login_request"] so the EXISTING
+    # AutoReauthSpecialist strategy-2 login replay re-authenticates on 401.
+    # No new reauth mechanism is introduced; when the flag is OFF these
+    # helpers are strict no-ops and the existing flow is byte-identical.
+
+    def _auth_recipe_settings(self):
+        """Return ``settings.auth_recipe`` or None.
+
+        Lazy because MasterConductor test paths build instances via
+        ``__new__`` (skipping __init__) — guarded with getattr/hasattr so a
+        missing ``settings`` never raises.
+        """
+        settings = getattr(self, "settings", None)
+        if settings is None:
+            try:
+                from src.core.config.settings import get_settings
+                settings = get_settings()
+            except Exception:
+                settings = None
+        if settings is None:
+            return None
+        return getattr(settings, "auth_recipe", None)
+
+    def _auth_recipe_enabled(self) -> bool:
+        recipe = self._auth_recipe_settings()
+        return bool(getattr(recipe, "enabled", False))
+
+    def _resolve_auth_recipe_env_value(self, value):
+        """Resolve a ``$NAME`` / ``${NAME}`` env reference (full-string match).
+
+        Non-matching values are returned verbatim. If the referenced env var
+        is missing, returns None -> the caller drops that key fail-safe
+        (never logs or persists the value).
+        """
+        import os as _os
+        import re as _re
+        value = str(value or "")
+        if not value:
+            return ""
+        match = _re.fullmatch(
+            r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))",
+            value,
+        )
+        if not match:
+            return value
+        env_name = match.group(1) or match.group(2)
+        resolved = _os.environ.get(env_name)
+        return resolved
+
+    def _auth_recipe_base_url(self, target: str):
+        """Base for absolutizing a relative login_url.
+
+        Used base: the ORIGIN of the expired request URL (the ``url`` carried
+        by the SESSION_EXPIRED event) — i.e. the server that returned the 401.
+        e.g. ``https://app.example/api/data`` -> ``https://app.example``.
+        Falls back to None (seeding skipped) when no origin is derivable.
+        """
+        from urllib.parse import urlparse as _urlparse
+        parsed = _urlparse(str(target or ""))
+        if parsed.scheme in ("http", "https") and parsed.netloc:
+            return f"{parsed.scheme}://{parsed.netloc}"
+        return None
+
+    def _absolutize_auth_recipe_login_url(self, login_url: str, target: str):
+        from urllib.parse import urljoin as _urljoin, urlparse as _urlparse
+        parsed = _urlparse(login_url)
+        if parsed.scheme and parsed.netloc:
+            return login_url  # already absolute
+        base = self._auth_recipe_base_url(target)
+        if not base:
+            return None
+        return _urljoin(base, login_url)
+
+    def _build_auth_recipe_login_request(self, recipe, target: str):
+        """Build the ``login_request`` dict from the recipe (env resolved)."""
+        login_url = str(getattr(recipe, "login_url", "") or "").strip()
+        if not login_url:
+            logger.warning(
+                "[MC] SGK-2026-0469: auth_recipe enabled but login_url is empty; skipping seeding"
+            )
+            return None
+        absolute_url = self._absolutize_auth_recipe_login_url(login_url, target)
+        if not absolute_url:
+            logger.warning(
+                "[MC] SGK-2026-0469: cannot absolutize login_url against the expired-url origin; skipping seeding"
+            )
+            return None
+
+        content_type = str(getattr(recipe, "content_type", "json") or "json").lower()
+        headers = dict(getattr(recipe, "headers", {}) or {})
+
+        # Resolve body values; missing env vars drop the key (fail-safe).
+        resolved_body: dict[str, str] = {}
+        for key, value in dict(getattr(recipe, "body", {}) or {}).items():
+            resolved = self._resolve_auth_recipe_env_value(value)
+            if resolved is None:
+                logger.warning(
+                    "[MC] SGK-2026-0469: env var referenced by login recipe body key %r is unset; dropping this key (fail-safe)",
+                    key,
+                )
+                continue
+            resolved_body[str(key)] = resolved
+
+        if content_type == "form":
+            body = resolved_body
+            expected_content_type = "application/x-www-form-urlencoded"
+        else:  # "json" (default)
+            body = json.dumps(resolved_body)
+            expected_content_type = "application/json"
+
+        # setdefault so user-configured headers are never clobbered.
+        headers.setdefault("Content-Type", expected_content_type)
+
+        login_request: dict[str, Any] = {
+            "method": str(getattr(recipe, "method", "POST") or "POST"),
+            "url": absolute_url,
+            "headers": headers,
+            "body": body,
+        }
+        # Additive extra keys consumed by AutoReauthSpecialist._try_login_replay
+        # (the specialist ignores unknown keys — verified in reauth_specialist.py).
+        token_path = str(getattr(recipe, "token_path", "") or "").strip()
+        if token_path:
+            login_request["token_path"] = token_path
+        token_header = str(getattr(recipe, "token_header", "") or "").strip()
+        if token_header:
+            login_request["token_header"] = token_header
+        token_format = str(getattr(recipe, "token_format", "") or "").strip()
+        if token_format:
+            login_request["token_format"] = token_format
+        return login_request
+
+    def _maybe_seed_auth_recipe_login_request(self, target: str) -> None:
+        """Seed the recipe login_request into auth_tokens (idempotent, gated).
+
+        No-op unless auth_recipe.enabled and ``login_request`` is still unset.
+        Narrow fail-safe try/except ensures a recipe misconfiguration can
+        never break the existing reauth flow.
+        """
+        try:
+            auth_tokens = getattr(self.accumulated_context, "auth_tokens", None)
+            if not isinstance(auth_tokens, dict):
+                return
+            if auth_tokens.get("login_request") is not None:
+                return  # already seeded (idempotent)
+            recipe = self._auth_recipe_settings()
+            if not recipe or not getattr(recipe, "enabled", False):
+                return
+            login_request = self._build_auth_recipe_login_request(recipe, target)
+            if not login_request:
+                return
+            auth_tokens["login_request"] = login_request
+            # SGK-2026-0469 (2c): recipe body keys are user-defined and can
+            # carry credentials; register them into the log redactor ONLY
+            # while the recipe is enabled (default redaction is unchanged).
+            try:
+                from src.core.logging import log_redactor
+                log_redactor.register_auth_recipe_secret_keys()
+            except Exception as _reg_err:
+                logger.debug(
+                    "[MC] SGK-2026-0469: log redactor extra-key registration skipped: %s",
+                    _reg_err,
+                )
+            logger.info(
+                "[MC] SGK-2026-0469: seeded config-driven login_request for reauth login replay"
+            )
+        except Exception as _seed_err:
+            logger.warning(
+                "[MC] SGK-2026-0469: auth recipe seeding skipped (fail-safe): %s",
+                _seed_err,
+            )
+
     async def _handle_session_expired(self, event: Event) -> None:
         """
         401 Unauthorized検出時に実行されるコールバック。
@@ -941,6 +1118,11 @@ class MasterConductor:
 
         # 3. 再認証タスクをディスパッチ (AuthManagerAgent -> AutoReauthSpecialist)
         try:
+            # SGK-2026-0469: seed the config-driven login_request (additive,
+            # gated on settings.auth_recipe.enabled; idempotent) before
+            # dispatch so the EXISTING AutoReauthSpecialist login replay can
+            # re-authenticate on 401.
+            self._maybe_seed_auth_recipe_login_request(url)
             login_req = self.accumulated_context.auth_tokens.get("login_request")
 
             await dispatcher.dispatch(
@@ -4038,6 +4220,7 @@ class MasterConductor:
             run_ledger_payload=self.run_ledger_recorder.prepare_for_session(spool_dir=spool_dir),
             session_id=getattr(getattr(self, '_current_session', None), 'session_id', None),
             run_id=self.run_ledger_recorder.run_id,
+            auth_recipe_enabled=self._auth_recipe_enabled(),
         )
 
             # --- SGK-2026-0440 Lane B: finding-funnel telemetry (additive) ---
@@ -10535,6 +10718,32 @@ class MasterConductor:
 
         return headers
 
+    def _resolve_second_account_auth(self) -> Tuple[Dict[str, Any], str]:
+        """SGK-2026-0467: pick a second account (authB) from registered
+        workspace user sessions when >= 2 exist. Additive: no sessions or a
+        single session -> ({}, ""), so existing single-session runs are
+        byte-identical."""
+        try:
+            sessions = getattr(getattr(self, "workspace", None), "user_sessions", None) or {}
+        except Exception:
+            sessions = {}
+        if not isinstance(sessions, dict) or len(sessions) < 2:
+            return {}, ""
+        try:
+            primary = dict(self._get_context_auth_headers() or {})
+        except Exception:
+            primary = {}
+        for role_name, session_data in sessions.items():
+            if not isinstance(session_data, dict) or not session_data:
+                continue
+            candidate = session_data.get("headers") if isinstance(session_data.get("headers"), dict) else session_data
+            if not isinstance(candidate, dict) or not candidate:
+                continue
+            if candidate == primary:
+                continue
+            return dict(candidate), str(role_name or "").strip()
+        return {}, ""
+
     def _get_context_cookie_string(self) -> str:
         return str(self._get_context_auth_headers().get("Cookie", "") or "")
 
@@ -15242,6 +15451,10 @@ class MasterConductor:
                 }
                 if task_auth_headers:
                     api_task_params["auth_headers"] = task_auth_headers
+                _auth_b_headers, _auth_b_role = self._resolve_second_account_auth()
+                if _auth_b_headers:
+                    api_task_params["auth_b_headers"] = _auth_b_headers
+                    api_task_params["auth_b_role"] = _auth_b_role
                 if not api_phase2_on_empty:
                     logger.info(
                         "[MC] API/Injection backfill seeds are low-signal; using phase1-only mode for target(s): %s",
@@ -15972,6 +16185,7 @@ class MasterConductor:
             completed_tasks=self.completed_tasks,
             context=self.context,
             pending_hitl=getattr(self, "pending_hitl", []),
+            auth_recipe_enabled=self._auth_recipe_enabled(),
         )
         self._current_session.pending_targets = pending_targets
         self._current_session.completed_targets = completed_targets
@@ -16120,7 +16334,10 @@ class MasterConductor:
 
     def _serialize_task_queue(self) -> list[str]:
         """タスクキューをJSON文字列リストにシリアライズ"""
-        return serialize_legacy_session_task_queue(self.task_queue)
+        return serialize_legacy_session_task_queue(
+            self.task_queue,
+            auth_recipe_enabled=self._auth_recipe_enabled(),
+        )
     
     def _deserialize_task_queue(self, serialized: list[str]) -> tuple[list[Task], list[str]]:
         """

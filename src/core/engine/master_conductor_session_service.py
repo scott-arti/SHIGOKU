@@ -10,6 +10,82 @@ from src.core.utils.json_utils import safe_json_loads
 from src.reporting.attack_review_builder import build_all_review_fields
 from src.core.models.vdp_contract import redact_secrets_deep, VDP_CONTRACT_SCHEMA_VERSION
 
+# ---------------------------------------------------------------------------
+# SGK-2026-0469: gated persistence redaction for reauth task params.
+# ---------------------------------------------------------------------------
+# A config-driven login recipe (settings.auth_recipe) places resolved
+# credential values into the reauth task params ("login_request" + the full
+# "auth_tokens" copy) and those params are serialized verbatim by every
+# session-persistence surface below. When auth_recipe.enabled we deep-redact
+# those two entries with the canonical ``redact_secrets_deep`` and additionally
+# mask values under recipe credential key names ("user"/"username"/"email"/
+# "login"/"pass"/"passwd"/"password") — recipe body keys are user-defined, and
+# the canonical key set deliberately excludes them. Gated: enabled=False -> the
+# same ``params`` object is returned and the session payload is byte-identical.
+_RECIPE_CREDENTIAL_KEYS: frozenset[str] = frozenset({
+    "user", "username", "email", "login", "pass", "passwd", "password",
+})
+
+
+def _mask_recipe_credential_values(value: Any) -> Any:
+    """Recursively mask values under recipe-credential key names.
+
+    Also walks JSON-encoded strings (login_request body for content_type
+    ``json`` is a serialized string) so dict keys nested inside a JSON string
+    are protected too. Gated by the caller (auth_recipe.enabled only).
+    """
+    if isinstance(value, dict):
+        return {
+            k: (
+                "[REDACTED]"
+                if str(k).lower() in _RECIPE_CREDENTIAL_KEYS
+                else _mask_recipe_credential_values(v)
+            )
+            for k, v in value.items()
+        }
+    if isinstance(value, list):
+        return [_mask_recipe_credential_values(item) for item in value]
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except Exception:
+            return value
+        if isinstance(parsed, (dict, list)):
+            return json.dumps(_mask_recipe_credential_values(parsed), ensure_ascii=False)
+        return value
+    return value
+
+
+def redact_reauth_params_for_persistence(
+    params: dict, auth_recipe_enabled: bool = False
+) -> dict:
+    """SGK-2026-0469: deep-redact reauth task params for disk persistence.
+
+    When *auth_recipe_enabled* the ``login_request`` and ``auth_tokens``
+    entries are passed through ``redact_secrets_deep`` (canonical) plus the
+    recipe-credential-key mask, so credential values never persist in
+    plaintext at any depth. When disabled, *params* is returned unchanged
+    (session payloads byte-identical to prior behavior).
+    """
+    if not auth_recipe_enabled:
+        return params
+    result = dict(params)
+    for key in ("login_request", "auth_tokens"):
+        value = result.get(key)
+        if value is None:
+            continue
+        value = redact_secrets_deep(value)
+        value = _mask_recipe_credential_values(value)
+        result[key] = value
+    return result
+
+
+def _persistence_params(params: Any, auth_recipe_enabled: bool) -> Any:
+    """Shallow wrapper: redact only dict params, leave others verbatim."""
+    if auth_recipe_enabled and isinstance(params, dict):
+        return redact_reauth_params_for_persistence(params, True)
+    return params
+
 
 def resolve_running_task_resume_policy(
     running_count: int,
@@ -89,6 +165,7 @@ def build_async_session_payload(
     target_system_profile: dict | None = None,
     attack_review_trail: dict | None = None,
     scenario_candidates: list | None = None,
+    auth_recipe_enabled: bool = False,
 ):
     payload = {
         "task_queue": [
@@ -98,7 +175,7 @@ def build_async_session_payload(
                 "agent_type": task.agent_type,
                 "action": task.action,
                 "phase": task.phase,
-                "params": task.params,
+                "params": _persistence_params(task.params, auth_recipe_enabled),
                 "state": task.state.value if hasattr(task.state, "value") else str(task.state),
                 "priority": task.priority,
                 "parent_id": task.parent_id,
@@ -114,7 +191,7 @@ def build_async_session_payload(
                 "agent_type": task.agent_type,
                 "action": task.action,
                 "phase": task.phase,
-                "params": task.params,
+                "params": _persistence_params(task.params, auth_recipe_enabled),
                 "state": task.state.value if hasattr(task.state, "value") else str(task.state),
                 "error": task.error,
                 "result": task.result,
@@ -198,6 +275,7 @@ def build_checkpoint_session_state(
     completed_tasks,
     context,
     pending_hitl,
+    auth_recipe_enabled: bool = False,
 ):
     completed_targets = [task.id for task in completed_tasks]
     metadata = {
@@ -211,17 +289,33 @@ def build_checkpoint_session_state(
         "pending_hitl": copy.deepcopy(pending_hitl),
     }
     return (
-        serialize_legacy_session_task_queue(task_queue),
+        serialize_legacy_session_task_queue(task_queue, auth_recipe_enabled=auth_recipe_enabled),
         completed_targets,
         metadata,
     )
 
 
-def serialize_legacy_session_task_queue(task_queue) -> list[str]:
-    return [
-        safe_json_dumps(task.to_dict())
-        for task in task_queue
-    ]
+def serialize_legacy_session_task_queue(
+    task_queue,
+    auth_recipe_enabled: bool = False,
+) -> list[str]:
+    if not auth_recipe_enabled:
+        return [
+            safe_json_dumps(task.to_dict())
+            for task in task_queue
+        ]
+    # SGK-2026-0469: when the login recipe is enabled, redact a deep copy of
+    # each task's params before serialization so credential values never
+    # persist in plaintext. The in-memory Task objects are left untouched.
+    redacted_queue: list[str] = []
+    for task in task_queue:
+        task_copy = copy.deepcopy(task)
+        if isinstance(task_copy.params, dict):
+            task_copy.params = redact_reauth_params_for_persistence(
+                task_copy.params, True
+            )
+        redacted_queue.append(safe_json_dumps(task_copy.to_dict()))
+    return redacted_queue
 
 
 def restore_legacy_resume_session_state(session) -> dict:

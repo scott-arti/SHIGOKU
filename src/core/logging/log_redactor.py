@@ -118,6 +118,30 @@ _REDACT_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 # LogRedactor
 # ---------------------------------------------------------------------------
 
+# SGK-2026-0469: credential key names that a config-driven login recipe
+# (settings.auth_recipe) body may use ("user"/"username"/"email"/"login"/"pass").
+# They are added to redaction ONLY via register_auth_recipe_secret_keys(),
+# which the MasterConductor auth-recipe seed path calls — i.e. only when
+# auth_recipe.enabled. When the set is empty (default) the redactor behaves
+# byte-identically to before this task.
+_EXTRA_SECRET_KEYS: set[str] = set()
+_RECIPE_EXTRA_SECRET_KEYS: frozenset[str] = frozenset({
+    "user",
+    "username",
+    "email",
+    "login",
+    "pass",
+})
+
+
+def register_auth_recipe_secret_keys() -> None:
+    """SGK-2026-0469: enable redaction of recipe credential key names.
+
+    Idempotent. Callers MUST invoke this only when settings.auth_recipe.enabled
+    so that default runs keep the historical redaction behavior.
+    """
+    _EXTRA_SECRET_KEYS.update(_RECIPE_EXTRA_SECRET_KEYS)
+
 
 class LogRedactor:
     """One-way redaction engine for log values.
@@ -195,9 +219,13 @@ class LogRedactor:
     def _redact_dict(self, d: dict) -> dict:
         """Redact a dict, fully redacting values under secret-bearing keys."""
         result: dict = {}
+        # SGK-2026-0469: module-level extra keys (registered only when
+        # settings.auth_recipe.enabled). Empty set (default) -> identical to
+        # the historical frozenset-only behavior.
+        extra_keys = _EXTRA_SECRET_KEYS
         for k, v in d.items():
             key_lower = str(k).lower()
-            if key_lower in self._SECRET_KEYS:
+            if key_lower in self._SECRET_KEYS or key_lower in extra_keys:
                 result[k] = "[REDACTED]"
             else:
                 result[k] = self.redact(v)
