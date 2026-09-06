@@ -728,6 +728,14 @@ class Settings(BaseSettings):
     # SGK-2026-0467: cross-account BOLA confirmation (authB matrix). Default OFF.
     # env SHIGOKU_IDOR_CROSS_ACCOUNT_CONFIRM_ENABLED
     idor_cross_account_confirm_enabled: bool = False
+    # SGK-2026-0470: judge candidates once per root-cause signature within a T3
+    # pass (skip re-judging near-identical candidates). Default OFF.
+    # env SHIGOKU_T3_PREJUDGE_DEDUP_ENABLED
+    t3_prejudge_dedup_enabled: bool = False
+    # SGK-2026-0470: skip re-judging a needs_more candidate whose judged
+    # evidence is unchanged since the last judge (no new evidence). Default OFF.
+    # env SHIGOKU_T3_SKIP_UNCHANGED_REJUDGE_ENABLED
+    t3_skip_unchanged_rejudge_enabled: bool = False
     # SGK-2026-0468: classify an authenticated 2xx JSON-API response as
     # AUTHENTICATED in the preflight auth probe (so JSON API endpoints can be
     # targeted directly). Default OFF. env SHIGOKU_AUTH_PROBE_JSON_API_ENABLED

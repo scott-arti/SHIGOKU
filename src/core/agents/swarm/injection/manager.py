@@ -7,7 +7,7 @@ import random
 import re
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple, TYPE_CHECKING
-from urllib.parse import urlparse, parse_qs, urlencode, urlunparse, urlsplit
+from urllib.parse import urlparse, parse_qs, urlencode, urlunparse, urlsplit, urlunsplit
 
 from src.core.agents.swarm.base_manager import BaseManagerAgent
 from src.core.agents.swarm.base import Specialist, Task
@@ -1265,6 +1265,22 @@ class InjectionManagerAgent(BaseManagerAgent):
         if record is not None and record.state != LifecycleState.NEEDS_MORE:
             return False  # already terminal/parked: skip judgement entirely
 
+        # SGK-2026-0470 (Lever 2, default OFF): a needs_more record whose
+        # judged evidence is unchanged since the last judge is NOT re-judged
+        # (no new evidence -> re-rolling identical judge input cannot
+        # legitimately flip the verdict; the record stays as-is). Evidence
+        # changed -> the normal judge path below runs and the fingerprint is
+        # restamped before the ledger write.
+        if self._t3_skip_unchanged_rejudge_enabled():
+            _cur_fp = self._judge_evidence_fingerprint(finding)
+            _old_fp = (
+                (record.evidence_summary or {}).get("judge_fingerprint")
+                if record is not None
+                else None
+            )
+            if _old_fp and _old_fp == _cur_fp:
+                return False  # no new evidence: keep the record as-is
+
         try:
             verdict = validate_finding(
                 finding,
@@ -1322,6 +1338,17 @@ class InjectionManagerAgent(BaseManagerAgent):
             finding=finding,
             extra_triggers=self._t3_browser_evidence_trigger(finding),
         )
+        # SGK-2026-0470 (Lever 2, default OFF): stamp the judged-evidence
+        # fingerprint on the record so the NEXT pass can skip an unchanged
+        # re-judge. Extra key inside the existing evidence_summary dict only
+        # (schema untouched — save/load round-trips the dict whole).
+        if (
+            self._t3_skip_unchanged_rejudge_enabled()
+            and isinstance(getattr(new_record, "evidence_summary", None), dict)
+        ):
+            new_record.evidence_summary["judge_fingerprint"] = (
+                self._judge_evidence_fingerprint(finding)
+            )
         ledger.put(new_record)
 
         # F5 emit は apply_verdict 後の最終ライフサイクル状態（record.state）
@@ -1415,6 +1442,382 @@ class InjectionManagerAgent(BaseManagerAgent):
             tokens.extend(lifecycle.derive_triggers(finding))
             tokens.append(("evidence", "browser_execution"))
         return list(dict.fromkeys(tokens))
+
+    # ------------------------------------------------------------------
+    # SGK-2026-0470: poc_judge 往復削減（呼び出し側のみ・バー無改変）
+    # ------------------------------------------------------------------
+
+    def _t3_prejudge_dedup_enabled(self) -> bool:
+        """SGK-2026-0470 (Lever 1) gate: settings flag, default False.
+
+        False -> the T3 judge loop keeps every finding (byte-identical).
+        """
+        try:
+            return bool(getattr(settings, "t3_prejudge_dedup_enabled", False))
+        except Exception:  # noqa: BLE001 — settings boundary, fail closed
+            return False
+
+    def _t3_skip_unchanged_rejudge_enabled(self) -> bool:
+        """SGK-2026-0470 (Lever 2) gate: settings flag, default False.
+
+        False -> a needs_more record is re-judged on every pass
+        (byte-identical)."""
+        try:
+            return bool(
+                getattr(settings, "t3_skip_unchanged_rejudge_enabled", False)
+            )
+        except Exception:  # noqa: BLE001 — settings boundary, fail closed
+            return False
+
+    @staticmethod
+    def _judge_evidence_fingerprint(finding: Any) -> str:
+        """SGK-2026-0470 (Lever 2): sha256 of the judged-evidence projection.
+
+        Mirrors ``PoCJudge._build_user_payload`` (finding_validator.py — read
+        only, never imported here) field for field: vuln_type, evidence
+        (request_method / request_url / response_status / response_body),
+        poc_request, poc_response, impact, reproduction_steps and
+        browser_execution (executor / event / variant /
+        dom_mutation_observed / dialog_observed / test_url) — so the
+        fingerprint changes exactly when the AI judge's input would change.
+        Canonical JSON (sort_keys, ensure_ascii=False) -> sha256 digest ->
+        fixed-width lowercase-letters token. The letters-only form is
+        required because the candidate ledger masks EVERY persisted string
+        (0444 recursive masker): a raw hex digest contains 0-led digit runs
+        that the PHONE_JP pattern mangles on save, which would silently
+        break the cross-pass skip after a ledger reload. Letters only are
+        immune to every masker pattern and round-trip verbatim.
+        A finding that cannot be projected yields "" (falsy -> the skip
+        guard never fires and the record is re-judged as before: fail-safe).
+        """
+        import hashlib
+
+        payload = finding_payload(finding)
+        evidence = payload.get("evidence")
+        if not isinstance(evidence, dict):
+            evidence = {}
+        info = payload.get("additional_info")
+        if not isinstance(info, dict):
+            info = {}
+        browser_execution = info.get("browser_execution")
+        projection = {
+            "vuln_type": payload.get("vuln_type"),
+            "evidence": {
+                "request_method": evidence.get("request_method"),
+                "request_url": evidence.get("request_url"),
+                "response_status": evidence.get("response_status"),
+                "response_body": evidence.get("response_body"),
+            },
+            "poc_request": info.get("poc_request"),
+            "poc_response": info.get("poc_response"),
+            "impact": payload.get("impact"),
+            "reproduction_steps": payload.get("reproduction_steps"),
+            "browser_execution": (
+                {
+                    "executor": browser_execution.get("executor"),
+                    "event": browser_execution.get("event"),
+                    "variant": browser_execution.get("variant"),
+                    "dom_mutation_observed": browser_execution.get(
+                        "dom_mutation_observed"
+                    ),
+                    "dialog_observed": browser_execution.get("dialog_observed"),
+                    "test_url": browser_execution.get("test_url"),
+                }
+                if isinstance(browser_execution, dict)
+                else None
+            ),
+        }
+        try:
+            canonical = json.dumps(projection, sort_keys=True, ensure_ascii=False)
+            digest = hashlib.sha256(canonical.encode("utf-8")).digest()
+            return InjectionManagerAgent._digest_to_letters(digest)
+        except (TypeError, ValueError):
+            return ""
+
+    @staticmethod
+    def _digest_to_letters(digest: bytes) -> str:
+        """sha256 digest -> 55-char lowercase-letters token (base-26).
+
+        ``26**55 > 2**256`` so the encoding is lossless and fixed-width.
+        Letters-only keeps the value invisible to every PII-masker pattern
+        (see ``_judge_evidence_fingerprint`` for why that matters).
+        """
+        alphabet = "abcdefghijklmnopqrstuvwxyz"
+        value = int.from_bytes(digest, "big")
+        chars = []
+        for _ in range(55):
+            value, remainder = divmod(value, 26)
+            chars.append(alphabet[remainder])
+        return "".join(reversed(chars))
+
+    # SGK-2026-0464-shaped root-cause signature vocabulary (report-side
+    # branch sets, mirrored for the raw-finding judge loop; additive only).
+    _PREJUDGE_AUTHZ_CLASSES = frozenset({
+        "access_control",
+        "endpoint_bfla",
+        "idor_bola",
+        "broken_access_control",
+        "authorization_bypass",
+        "unauthenticated_api_access",
+    })
+    _PREJUDGE_INJECTION_CLASSES = frozenset({
+        "xss", "sqli", "sql_injection", "command_injection", "rce",
+        "lfi", "path_traversal", "rfi", "ssti", "open_redirect",
+        "crlf_injection", "crlf", "xxe", "ssrf",
+    })
+    _PREJUDGE_SEVERITY_RANK = {
+        "critical": 5, "high": 4, "medium": 3, "low": 2, "info": 1,
+    }
+
+    @classmethod
+    def _prejudge_url(cls, finding: Any, payload: dict) -> str:
+        """URL the judge sees: evidence.request_url, else target_url."""
+        evidence = payload.get("evidence")
+        if isinstance(evidence, dict) and str(
+            evidence.get("request_url") or ""
+        ).strip():
+            return str(evidence.get("request_url") or "")
+        return str(payload.get("target_url") or "")
+
+    @classmethod
+    def _prejudge_normalize_url(cls, url: str) -> str:
+        """Local port of the report-side URL normalization (broken
+        ``http:/``/``https:/`` forms fixed, scheme lowercased)."""
+        if not url:
+            return ""
+        normalized = str(url).strip()
+        if normalized.startswith("http:/") and not normalized.startswith("http://"):
+            normalized = normalized.replace("http:/", "http://", 1)
+        if normalized.startswith("https:/") and not normalized.startswith("https://"):
+            normalized = normalized.replace("https:/", "https://", 1)
+        split = urlsplit(normalized)
+        if split.scheme and split.netloc:
+            return urlunsplit(
+                (
+                    split.scheme.lower(),
+                    split.netloc,
+                    split.path or "/",
+                    split.query,
+                    split.fragment,
+                )
+            )
+        return normalized
+
+    @staticmethod
+    def _prejudge_normalize_netloc(netloc: str) -> str:
+        """127.0.0.1[:port] -> localhost[:port] (identical to 0464)."""
+        normalized = netloc.lower()
+        if normalized.startswith("127.0.0.1:"):
+            return normalized.replace("127.0.0.1:", "localhost:", 1)
+        if normalized == "127.0.0.1":
+            return "localhost"
+        return normalized
+
+    @classmethod
+    def _prejudge_canonical_target(cls, url: str) -> str:
+        """0464 ``_canonical_candidate_target`` port: scheme/netloc lower,
+        127.0.0.1[:port] -> localhost, query kept sorted, fragment dropped."""
+        from urllib.parse import parse_qsl  # stdlib only; helper is OFF-gated
+
+        normalized = cls._prejudge_normalize_url(url)
+        split = urlsplit(normalized)
+        if not split.scheme or not split.netloc:
+            return normalized.strip().lower()
+        query = urlencode(
+            sorted(parse_qsl(split.query, keep_blank_values=True)), doseq=True
+        )
+        return urlunsplit(
+            (
+                split.scheme.lower(),
+                cls._prejudge_normalize_netloc(split.netloc),
+                split.path or "/",
+                query,
+                "",
+            )
+        ).lower()
+
+    @classmethod
+    def _prejudge_endpoint(cls, url: str) -> str:
+        """0464 injection-branch endpoint port: query/fragment stripped,
+        scheme/netloc lower, 127.0.0.1[:port] -> localhost, path
+        rstrip("/") or "/"."""
+        normalized = cls._prejudge_normalize_url(url)
+        split = urlsplit(normalized)
+        if not split.scheme or not split.netloc:
+            return normalized.strip().lower()
+        return urlunsplit(
+            (
+                split.scheme.lower(),
+                cls._prejudge_normalize_netloc(split.netloc),
+                split.path.rstrip("/") or "/",
+                "",
+                "",
+            )
+        )
+
+    @classmethod
+    def _prejudge_dedup_key(cls, finding: Any) -> Optional[Tuple[Any, ...]]:
+        """SGK-2026-0470 (Lever 1): root-cause signature of one finding.
+
+        Same branches and shape as the report-side SGK-2026-0464
+        ``_candidate_dedup_key`` (authz / cors / csrf / injection family),
+        computed on the raw finding payload. ``None`` -> no dedup branch
+        applies; the caller keeps the finding individually (fail-safe).
+        """
+        payload = finding_payload(finding)
+        info = payload.get("additional_info")
+        if not isinstance(info, dict):
+            info = {}
+        vtype = str(payload.get("vuln_type") or "").strip().lower()
+        title = str(payload.get("title") or "").strip().lower()
+        url = cls._prejudge_url(finding, payload)
+
+        authz = info.get("authz_differential")
+        if not isinstance(authz, dict):
+            authz = {}
+        detection_class = normalize_detection_class_token(
+            info.get("detection_class")
+        )
+        if not detection_class:
+            detection_class = infer_detection_class_for_finding(finding, info)
+        if (
+            authz
+            or vtype in cls._PREJUDGE_AUTHZ_CLASSES
+            or detection_class in cls._PREJUDGE_AUTHZ_CLASSES
+        ):
+            scenario = str(
+                authz.get("scenario")
+                or info.get("scenario")
+                or detection_class
+                or vtype
+                or "access_control"
+            ).strip().lower().replace("-", "_")
+            if "unauthenticated" in scenario and "api" in scenario:
+                scenario = "unauthenticated_api_access"
+            return (
+                "authz",
+                cls._prejudge_canonical_target(url),
+                detection_class or "access_control",
+                scenario,
+            )
+
+        if vtype in {"cors", "cors_misconfiguration"} or "cors" in title:
+            cors_class = str(
+                info.get("misconfiguration")
+                or info.get("cors_classification")
+                or info.get("classification")
+                or ""
+            ).strip().lower()
+            return ("cors", cls._prejudge_canonical_target(url), cors_class)
+
+        if vtype == "csrf" or "csrf" in title or "/csrf/" in url:
+            return ("csrf", cls._prejudge_canonical_target(url))
+
+        if vtype in cls._PREJUDGE_INJECTION_CLASSES:
+            parameter = str(info.get("parameter", "") or "").strip().lower()
+            if not parameter:
+                match = re.search(
+                    r"parameter\s+['\"]?([^'\"\s]+)",
+                    str(payload.get("title") or ""),
+                    re.IGNORECASE,
+                )
+                parameter = match.group(1).strip().lower() if match else ""
+            method = ""
+            request_line = str(info.get("poc_request") or "").splitlines()
+            if request_line:
+                method = request_line[0].split(" ", 1)[0].strip().upper()
+            if not method:
+                delivery = info.get("payload_delivery")
+                if isinstance(delivery, dict):
+                    method = str(
+                        delivery.get("request_method", "") or ""
+                    ).strip().upper()
+            return (
+                "injection",
+                vtype,
+                cls._prejudge_endpoint(url),
+                method,
+                parameter,
+            )
+
+        return None
+
+    @classmethod
+    def _prejudge_strength(cls, finding: Any) -> Tuple[int, int, float]:
+        """0464 ``_candidate_strength`` port on the raw finding payload:
+        (severity_rank, has_poc, confidence). has_poc=0 when poc_request or
+        poc_response is missing (mirrors the 0464 missing-PoC rule on the
+        judge-facing fields)."""
+        payload = finding_payload(finding)
+        severity = str(payload.get("severity") or "").strip().lower()
+        rank = cls._PREJUDGE_SEVERITY_RANK.get(severity, 0)
+        info = payload.get("additional_info")
+        if not isinstance(info, dict):
+            info = {}
+        has_poc = 1 if (
+            str(info.get("poc_request") or "").strip()
+            and str(info.get("poc_response") or "").strip()
+        ) else 0
+        try:
+            confidence = float(payload.get("confidence") or 0.0)
+        except (TypeError, ValueError):
+            confidence = 0.0
+        return (rank, has_poc, confidence)
+
+    @classmethod
+    def _prejudge_order_rep_first(cls, findings: list) -> list:
+        """SGK-2026-0470 (Lever 1, confirm-gated): reorder findings so the
+        strongest representative of each root-cause signature comes first —
+        NOTHING is discarded. The caller skips same-signature findings only
+        after one of them is CONFIRMED; a signature that never confirms is
+        judged member by member (a confirmed must never be dropped because a
+        needs_more twin sat in front of it).
+
+        Groups are emitted at the first appearance of their signature, each
+        group stably sorted by ``_prejudge_strength`` descending (ties keep
+        input order, so the representative is the first max-strength member
+        — identical selection to the old discard path); signature-less
+        findings keep their original position. Caller gates on the settings
+        flag — the OFF path never reaches this.
+        """
+        groups: Dict[Tuple[Any, ...], list] = {}
+        for finding in findings:
+            key = cls._prejudge_dedup_key(finding)
+            if key is None:
+                continue
+            groups.setdefault(key, []).append(finding)
+        ordered: Dict[Tuple[Any, ...], list] = {
+            key: sorted(
+                members,
+                key=lambda f: cls._prejudge_strength(f),
+                reverse=True,
+            )
+            for key, members in groups.items()
+        }
+        result: list = []
+        emitted: set = set()
+        for finding in findings:
+            key = cls._prejudge_dedup_key(finding)
+            if key is None:
+                result.append(finding)
+            elif key not in emitted:
+                emitted.add(key)
+                result.extend(ordered[key])
+        return result
+
+    @staticmethod
+    def _t3_record_confirmed(finding: Any, ledger: Any) -> bool:
+        """SGK-2026-0470 (Lever 1, confirm-gated): True when the finding's
+        ledger record is CONFIRMED after this pass's verdict. Fail-safe:
+        missing/blank id or missing record -> False (the signature is then
+        never treated as settled)."""
+        from src.core.validation.candidate_lifecycle import LifecycleState
+
+        fid = str(getattr(finding, "id", "") or "")
+        if not fid:
+            return False
+        rec = ledger.get(fid)
+        return rec is not None and rec.state == LifecycleState.CONFIRMED
 
     def _t3_run_hybrid_pass(self, task: Any, findings: list) -> bool:
         """SGK-2026-0445: one T3 hybrid pass over findings.
@@ -1541,7 +1944,24 @@ class InjectionManagerAgent(BaseManagerAgent):
                     ledger.put(_resurrected)
                     dirty = True
 
+        # SGK-2026-0470 (Lever 1, default OFF, confirm-gated): the strongest
+        # representative of each root-cause signature is judged first. Only
+        # when a signature CONFIRMS are the remaining same-signature
+        # findings skipped (redundant). A signature that does not confirm
+        # (e.g. needs_more) never drops the others — every member is judged
+        # (a confirmed must never be discarded because a same-strength
+        # needs_more sat in front of it; control A/B regression, run
+        # 04f64975). Signature-less findings are always judged. OFF -> the
+        # list is untouched and the loop below is byte-identical.
+        _prejudge_on = self._t3_prejudge_dedup_enabled()
+        if _prejudge_on:
+            findings = self._prejudge_order_rep_first(findings)
+            _confirmed_sigs = set()
         for _f in findings:
+            if _prejudge_on:
+                _sig = self._prejudge_dedup_key(_f)
+                if _sig is not None and _sig in _confirmed_sigs:
+                    continue  # 同一 root-cause が既に確定: 冗長ゆえ判定省略
             if self._t3_apply_hybrid_verdict(
                 _f,
                 judge=judge,
@@ -1550,6 +1970,10 @@ class InjectionManagerAgent(BaseManagerAgent):
                 ledger=ledger,
             ):
                 dirty = True
+            if _prejudge_on:
+                _sig = self._prejudge_dedup_key(_f)
+                if _sig is not None and self._t3_record_confirmed(_f, ledger):
+                    _confirmed_sigs.add(_sig)
         if dirty:
             try:
                 ledger.save()

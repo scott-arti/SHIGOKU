@@ -5916,11 +5916,13 @@ status_allowed_values:
   task_id: SGK-2026-0470
   doc_type: plan
   title: AI 逐次判断の遅延削減（フル走行の高速化）
-  primary_doc: docs/shigoku/plans/2026-09-03_sgk-2026-0470_llm-in-loop-latency-reduction.md
-  status: active
+  primary_doc: docs/shigoku/plans/done/2026-09-03_sgk-2026-0470_llm-in-loop-latency-reduction.md
+  status: done
   provisional: false
   task_summary: "SGK-2026-0468 part-2 実走行で遅さの主因を定量化: ~1時間でLLM呼び出し186回・思考ループ42ターン。時間の大半は一手ごとのLLMネット往復(各数秒)で標的応答はミリ秒。実戦の使い勝手と認証トークン失効(SGK-2026-0469)との競合を悪化。対象候補: LLM委任の分類/優先度付けの決定論置換(精度維持)・同型判断のキャッシュ/思考ターンのバッチ化と上限最適化・狙い撃ち時の不要な広域クロール/エンジン抑制モード。完了条件案: 代表シナリオでLLM呼び出し回数/総時間を有意削減しconfirmed/candidateの質を非回帰・確定バー無改変・token0・validator0。NOT in scope: 確定バー改変・網羅性を犠牲にした見かけ高速化(カーブフィッティング禁止)・認証寿命管理(0469)。"
   parent_task_id: SGK-2026-0442
   related_docs:
   - docs/shigoku/plans/done/2026-09-02_sgk-2026-0468_unauth-probe-custom-header-scheme.md
   - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+  - docs/shigoku/reports/2026-09-07_sgk-2026-0470_llm-in-loop-latency-reduction_work_report.md
+  - docs/shigoku/worklogs/2026-09-07_sgk-2026-0470_llm-in-loop-latency-reduction_work_log.md
