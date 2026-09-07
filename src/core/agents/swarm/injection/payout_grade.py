@@ -48,6 +48,11 @@ so the payout-grade marker vocabulary stays in sync with the detectors:
 - authz_diff         -> ``additional_info.authz_differential`` proving
                         unauthenticated success vs authenticated success
                         (manager.py api probes)
+- open_redirect      -> ``external_redirect`` (OpenRedirectSpecialist
+                        open_redirect.py): the observed Location header of a
+                        3xx response points at the injected attacker-managed
+                        host (``additional_info.injected_host``) that is
+                        external to the target itself
 
 Nothing here lowers any existing evidence threshold: the gate is purely
 additive and every missing piece fails the candidate closed.
@@ -191,11 +196,82 @@ _MARKER_CATEGORIES: Dict[str, str] = {
     "os_command_injection": "command_execution",
     "rce": "command_execution",
     "ssrf": "ssrf_callback",
+    "open_redirect": "external_redirect",
     "api": "authz_diff",
     "broken_access_control": "authz_diff",
     "idor": "authz_diff",
     "mass_assignment": "authz_diff",
 }
+
+# ---------------------------------------------------------------------------
+# open_redirect (OpenRedirectSpecialist): external Location redirect marker.
+#
+# The specialist injects a unique per-run attacker-managed host
+# (shigoku-verify-<uuid>.evil.com) and records it as
+# ``additional_info.injected_host``. The marker fires ONLY when the observed
+# Location header of a 3xx response points at that external host; every
+# ambiguity (no 3xx, internal/relative Location, missing attacker host,
+# self-redirect to the target's own host) fails closed to None.
+# ---------------------------------------------------------------------------
+
+_REDIRECT_STATUSES: frozenset = frozenset({301, 302, 303, 307, 308})
+
+
+def _redirect_host(value: Any) -> str:
+    """Lowercased netloc of a URL-ish string ("" when absent).
+
+    Relative locations behave correctly: ``//attacker.example/`` yields the
+    host (external), ``/internal/path`` yields "" (no host, i.e. internal).
+    Host-less values that are not URLs also yield "" so nothing can fire on
+    ambiguous input (fail-closed).
+    """
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        parsed = urlparse(text)
+    except ValueError:
+        return ""
+    return parsed.netloc.lower()
+
+
+def _external_attacker_host(info: Dict[str, Any]) -> str:
+    """The attacker-managed host the specialist injected (lowercased).
+
+    Priority: ``additional_info.injected_host`` -> the host of
+    ``additional_info.redirect_to`` -> the host of ``additional_info.payload``.
+    Empty when nothing resolves to a host (fail-closed).
+    """
+    injected = str(info.get("injected_host") or "").strip()
+    if injected:
+        # injected_host はホスト名（例 shigoku-verify-<uuid>.evil.com）が正形。
+        # URL 形で入っていた場合のみ netloc を取り、それ以外はそのまま使う。
+        return _redirect_host(injected) or injected.lower()
+    for key in ("redirect_to", "payload"):
+        host = _redirect_host(info.get(key))
+        if host:
+            return host
+    return ""
+
+
+def _external_redirect_observed(
+    *, info: Dict[str, Any], location: str, self_url: str
+) -> bool:
+    """True ONLY when ``location`` points at the injected attacker host AND
+    that host is external to ``self_url``'s own host (fail-closed: any one
+    missing piece -> False)."""
+    attacker_host = _external_attacker_host(info)
+    if not attacker_host:
+        return False
+    location_host = _redirect_host(location)
+    if not location_host or location_host != attacker_host:
+        return False
+    self_host = _redirect_host(self_url)
+    if self_host and location_host == self_host:
+        # 対象自身のホストへの自己リダイレクトは外部ではない
+        return False
+    return True
+
 
 # Read-only methods allowed for Phase-2 verification probes (GET-only
 # design; HEAD/OPTIONS are accepted as read-only companions).
@@ -341,6 +417,32 @@ def _match_firing_marker(
                 or "status_improved_with_auth" in signals
             ):
                 return "authz_diff"
+        return None
+
+    if vuln_type == "open_redirect":
+        # 発火は「本物のみ」: 3xx かつ Location が注入した攻撃者管理ホストを
+        # 指し、かつ外部（対象自身のホストでない）。1 つでも欠ければ None。
+        status = evidence.get("response_status")
+        if not (
+            isinstance(status, int)
+            and not isinstance(status, bool)
+            and status in _REDIRECT_STATUSES
+        ):
+            return None
+        headers = evidence.get("response_headers")
+        if not isinstance(headers, dict):
+            headers = {}
+        location = str(
+            headers.get("Location")
+            or headers.get("location")
+            or info.get("redirect_to")
+            or ""
+        )
+        if not location:
+            return None
+        self_url = str(evidence.get("request_url") or "").strip()
+        if _external_redirect_observed(info=info, location=location, self_url=self_url):
+            return "external_redirect"
         return None
 
     return None  # unknown category

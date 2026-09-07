@@ -5,7 +5,7 @@ URL パラメータのリダイレクト機能に対する攻撃を実行する�
 """
 
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 
 from src.core.agents.swarm.base import Specialist, Task
@@ -16,6 +16,27 @@ import asyncio
 from playwright.async_api import async_playwright
 
 logger = logging.getLogger(__name__)
+
+
+def _request_host_is(verify_host: str, url_value: str) -> bool:
+    """URL（リクエスト先/リダイレクト先 Location）の“ホスト”が verify_host
+    と一致するか判定する（部分文字列ではなくホスト一致）。
+
+    攻撃者ホスト名が他 URL のクエリ等に部分文字列として現れても誤発火
+    しない（例: exploit_url 自身のクエリにペイロードが載るだけでは
+    遷移とみなさない）。スキーム相対 ``//<attacker>/...`` は hostname を
+    返すため一致する。相対パス ``/x`` や空・パース不能は False
+    （内部遷移・判定不能は遷移とみなさない・fail-closed）。
+    """
+    text = str(url_value or "").strip()
+    host = str(verify_host or "").strip().lower()
+    if not text or not host:
+        return False
+    try:
+        req_host = (urlparse(text).hostname or "").lower()
+    except ValueError:
+        return False
+    return bool(req_host) and req_host == host
 
 
 class OpenRedirectSpecialist(Specialist):
@@ -30,7 +51,9 @@ class OpenRedirectSpecialist(Specialist):
     timeout_seconds = 180
     is_aggressive = False  # リダイレクトは比較的安全
     
-    # 攻撃ペイロードテンプレート（{uuid} を置換して使用）
+    # 攻撃ペイロードテンプレート（{uuid} を置換して使用）。
+    # 素朴テンプレートに加え、許可リスト回避形（攻撃者ホスト + 観測した
+    # 元パラメータ値）を _build_payloads が動的生成する。
     REDIRECT_PAYLOAD_TEMPLATES = [
         "https://shigoku-verify-{uuid}.evil.com/",
         "//shigoku-verify-{uuid}.evil.com/",
@@ -125,6 +148,7 @@ class OpenRedirectSpecialist(Specialist):
             result = await self._test_redirect_param(target_url, param_name, cookies_header=cookies_header)
             
             if result.get("vulnerable"):
+                exploit_url = result.get("exploit_url", "")
                 findings.append(Finding(
                     vuln_type=VulnType.OPEN_REDIRECT,
                     severity=Severity.MEDIUM,
@@ -134,7 +158,7 @@ class OpenRedirectSpecialist(Specialist):
                     target_url=target_url,
                     evidence=Evidence(
                         request_method="GET",
-                        request_url=result.get("exploit_url", ""),
+                        request_url=exploit_url,
                         response_status=result.get("response_status", 0),
                         response_headers=result.get("response_headers", {}),
                         response_body=f"Redirect location: {result.get('redirect_location', '')}",
@@ -142,12 +166,22 @@ class OpenRedirectSpecialist(Specialist):
                     source_agent=self.name,
                     confidence=0.85,
                     tags=["open_redirect", "url_manipulation"],
+                    reproduction_steps=[
+                        f"GET {exploit_url}",
+                        f"応答 {result.get('response_status', 0)} / Location: {result.get('redirect_location', '')}",
+                        "ヘッドレスブラウザで上記URLを開き、攻撃者管理ホストへの遷移を確認",
+                    ],
+                    impact=(
+                        "認証済み利用者を攻撃者が管理する外部URLへ誘導可能。"
+                        "フィッシング/資格情報・OAuthトークン窃取の起点となる。"
+                    ),
                     additional_info={
                         "parameter": param_name,
                         "payload": result.get("payload", ""),
                         "payloads_used": [result.get("payload", "")] if result.get("payload") else [],
                         "tested_params": [param_name],
                         "redirect_to": result.get("redirect_location", ""),
+                        "injected_host": result.get("verify_host", ""),
                     }
                 ))
         
@@ -182,6 +216,39 @@ class OpenRedirectSpecialist(Specialist):
         
         return list(set(redirect_params))
 
+    def _build_payloads(self, original_value: str) -> List[Tuple[str, str]]:
+        """試行するペイロード列を (payload, verify_host) のタプル列で返す。
+
+        各試行の verify_host はユニークな shigoku-verify-<uuid>.evil.com
+        で、payload と必ず対になる（発火判定が verify_host を見るため）。
+
+        1. 素朴テンプレート（REDIRECT_PAYLOAD_TEMPLATES・既存順）: 素朴な
+           オープンリダイレクトを従来どおり検出する。
+        2. 許可リスト回避テンプレート: original_value（アプリが当該
+           パラメータで実際に使っている正規値・runtime 観測値）が非空の
+           ときだけ生成する。攻撃者ホストを基点に original_value を部分
+           文字列として付すため、飛び先許可リストの部分文字列チェックを
+           通して攻撃者ホストへ 302 させられる（ハードコード禁止: 正規値
+           は必ず runtime のパラメータ値から取る）。
+        """
+        payloads: List[Tuple[str, str]] = []
+        for template in self.REDIRECT_PAYLOAD_TEMPLATES:
+            test_id = str(uuid.uuid4())[:8]
+            verify_host = f"shigoku-verify-{test_id}.evil.com"
+            payloads.append((template.format(uuid=test_id), verify_host))
+
+        original = str(original_value or "").strip()
+        if original:
+            for suffix in (
+                f"/?_ok={original}",
+                f"/#{original}",
+                f"/{original}",
+            ):
+                test_id = str(uuid.uuid4())[:8]
+                verify_host = f"shigoku-verify-{test_id}.evil.com"
+                payloads.append((f"https://{verify_host}{suffix}", verify_host))
+        return payloads
+
     async def _test_redirect_param(
         self, 
         target_url: str, 
@@ -198,18 +265,19 @@ class OpenRedirectSpecialist(Specialist):
             "exploit_url": "",
             "response_status": 0,
             "response_headers": {},
+            "verify_host": "",
             "method": "HYBRID", # Reflection + Browser
         }
         
         parsed = urlparse(target_url)
         # 既存のパラメータを保持しつつターゲットのみ置換
         base_params = parse_qs(parsed.query)
-        
-        for template in self.REDIRECT_PAYLOAD_TEMPLATES:
-            test_id = str(uuid.uuid4())[:8]
-            verify_host = f"shigoku-verify-{test_id}.evil.com"
-            payload = template.format(uuid=test_id)
-            
+
+        # 元の正規値（アプリがこのパラメータで使っている値）を観測。空なら
+        # 素朴ペイロードのみ試行する（許可リスト回避形は生成しない）。
+        original_value = (base_params.get(param_name) or [""])[0]
+
+        for payload, verify_host in self._build_payloads(original_value):
             # ペイロードを注入
             current_params = base_params.copy()
             current_params[param_name] = [payload]
@@ -249,10 +317,18 @@ class OpenRedirectSpecialist(Specialist):
                     cookies_header=cookies_header,
                 )
 
-                # Playwright で取り切れないケース向けフォールバック
+                # Playwright で取り切れないケース向けフォールバック。
+                # 確定根拠は「実際に攻撃者ホストへリダイレクトした」事実のみ:
+                # 3xx かつ Location の“ホスト”が verify_host と一致する場合
+                # だけ確定する（部分文字列判定は不可: Location のクエリ等に
+                # 攻撃者ホスト名が現れるだけで誤確定し得る）。本文への反射
+                # （reflection_found）単独では確定しない（実対象では 406
+                # エラーページ本文に攻撃者ホスト名が反射するだけで、リダイ
+                # レクトは発生しない。本文反射で確定すると誤検知し、後続の
+                # 本物ペイロードに到達できない）。
                 if not is_confirmed and (
-                    (status in [301, 302, 303, 307, 308] and verify_host in location.lower())
-                    or reflection_found
+                    status in (301, 302, 303, 307, 308)
+                    and _request_host_is(verify_host, location)
                 ):
                     is_confirmed = True
                 
@@ -264,6 +340,7 @@ class OpenRedirectSpecialist(Specialist):
                         "exploit_url": exploit_url,
                         "response_status": status,
                         "response_headers": headers,
+                        "verify_host": verify_host,
                     })
                     logger.info("[!!!] Open Redirect CONFIRMED via Playwright: %s -> %s", exploit_url, verify_host)
                     break
@@ -312,10 +389,13 @@ class OpenRedirectSpecialist(Specialist):
                 
                 page = await context.new_page()
                 
-                # イベントリスナー: リクエストまたはナビゲーションで verify_host を検知
+                # イベントリスナー: リクエストまたはナビゲーションで
+                # 攻撃者ホスト“へ”遷移したことを検知する（部分文字列では
+                # なくホスト一致。最初に開く exploit_url のクエリに攻撃者
+                # ホスト名が含まれるだけでは誤発火しない）。
                 def handle_request(request):
                     nonlocal is_redirected
-                    if verify_host in request.url:
+                    if _request_host_is(verify_host, request.url):
                         is_redirected = True
                 
                 page.on("request", handle_request)

@@ -5926,3 +5926,30 @@ status_allowed_values:
   - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
   - docs/shigoku/reports/2026-09-07_sgk-2026-0470_llm-in-loop-latency-reduction_work_report.md
   - docs/shigoku/worklogs/2026-09-07_sgk-2026-0470_llm-in-loop-latency-reduction_work_log.md
+- provisional_id: DOC-0541
+  task_id: SGK-2026-0471
+  doc_type: plan
+  title: オープンリダイレクトを本物確定（◎）まで到達させる
+  primary_doc: docs/shigoku/plans/done/2026-09-07_sgk-2026-0471_open-redirect-confirmation.md
+  status: done
+  provisional: false
+  task_summary: "検出能力マップ(SGK-2026-0465)でオープンリダイレクトは○(対応エンジンあり・IDORの次)。実物観測(2026-09-07・自作最小脆弱サーバ・既存OpenRedirectSpecialist・GET-only)で、検出は機能(Playwrightが攻撃者ホスト遷移を捉えFinding生成・毎回ユニークホストshigoku-verify-<uuid>)する一方、◎に届かない理由が2つ確定: A(凍結)=payout_grade._MARKER_CATEGORIESにopen_redirect未登録でunknown_category自動却下→validator NEEDS_MORE止まり、B(非凍結open_redirect.py)=Findingのimpact=''/reproduction_steps=[]でA修正後もmissing_impact却下。補足事実: 機械フロア再現性ゲートはstatus>0で302有効・SealedReproductionCheckerは本文のみ照合(_send_getがヘッダ破棄)ゆえ再現でLocationヘッダ確認の最小追加要・poc_judgeは種別非依存で改変不要・実製品の許可リスト付きredirectは素朴ペイロードを406拒否(許可リスト回避は別課題deferred)。実装(ユーザー明示承認2026-09-07): B=impact/reproduction_steps充実+攻撃者ホスト安定フィールド、A①=_MARKER_CATEGORIESにopen_redirect:external_redirect追加+_match_firing_marker分岐(3xx&注入攻撃者ホストがLocationに出現&外部のみ発火・相乗り禁止)、A②=sealed_reproduction_checkerのexternal_redirect経路でLocationヘッダ確認しmatched/mismatched/not_run。凍結5のうち2(payout_grade/sealed_reproduction_checker)に承認済み改変・残り3(poc_judge/task_queue/finding_validator)は無改変維持。完了条件: 本物発火でpayout_grade=True/marker=external_redirect・偽陽性ケースfail-closed・再現matched・validator CONFIRMED到達・凍結残り3無改変・token0・validator0・実対象or観測台でE2E ◎実証。NOT in scope: 許可リスト回避ペイロード(別deferred)・確定バー敷居低下/curve-fitting禁止。実装DeepSeek/opencode・Claude独立検証。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+  - docs/shigoku/plans/done/2026-09-03_sgk-2026-0470_llm-in-loop-latency-reduction.md
+  - docs/shigoku/reports/2026-09-07_sgk-2026-0471_open-redirect-confirmation_work_report.md
+  - docs/shigoku/worklogs/2026-09-07_sgk-2026-0471_open-redirect-confirmation_work_log.md
+  - docs/shigoku/plans/2026-09-07_sgk-2026-0472_open-redirect-allowlist-enum-and-chains.md
+- provisional_id: DOC-0542
+  task_id: SGK-2026-0472
+  doc_type: plan
+  title: オープンリダイレクト検出の賢さ強化（許可リスト値の能動獲得・多段連鎖）
+  primary_doc: docs/shigoku/plans/2026-09-07_sgk-2026-0472_open-redirect-allowlist-enum-and-chains.md
+  status: active
+  provisional: false
+  task_summary: "SGK-2026-0471のdeferred(非阻害)。0471は許可リストで守られた実対象(Juice Shop /redirect?to=)に対し、アプリ自身がそのパラメータで使う正規値をruntime観測できている場合に、正規値を部分文字列として付す許可リスト回避ペイロードで◎到達を実証した。本タスクは残り: 正規値未観測ケースやより堅い許可リストにも対応するため、クロール由来の正規値の能動獲得(recon→open_redirect配線)・追加バイパス構造の実測選別・多段リダイレクト連鎖の確定経路を扱う。確定バー(A①/A②)は0471のものを流用し無改変。完了条件案: 正規値未提供でもクロール由来値で許可リスト付き実対象のopen redirectを◎にするE2E1件・token0・偽陽性fail-closed。NOT in scope: 確定バー改変/敷居低下・他種別。実装DeepSeek/opencode・Claude独立検証。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/done/2026-09-07_sgk-2026-0471_open-redirect-confirmation.md
+  - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md

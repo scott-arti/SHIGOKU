@@ -16,12 +16,14 @@ Guard column (all existing assets reused, nothing modified):
 - transport: ``network_client=None`` -> not_run; otherwise ONE GET with
   use_cache=False, retries=0, auto_waf_bypass=False, allow_redirects=False,
   explicit timeout (executor ``_send_read_request`` contract :1090-1155).
-- marker comparison: the replay response body is evaluated against the
+- marker comparison: the replay response is evaluated against the
   existing payout-grade marker vocabulary (``_MARKER_CATEGORIES`` and the
   per-category patterns in payout_grade.py — imported, never duplicated, no
-  new markers). Same-category firing -> matched; response present but no
-  same-category firing -> mismatched; no response / timeout / error ->
-  not_run (never mismatched).
+  new markers). Body markers are detected on the replay response body;
+  ``external_redirect`` (open_redirect) is header-observable and is instead
+  re-confirmed from the Location header of a 3xx replay response. Same
+  category firing -> matched; response present but no same-category firing
+  -> mismatched; no response / timeout / error -> not_run (never mismatched).
 - mask: 0439 token_map restore when available; an unresolvable masked URL ->
   not_run (fail-closed, no send).
 - budget: one replay per finding; run-wide replay cap (default 5) + time
@@ -53,10 +55,12 @@ from src.core.agents.swarm.injection.payout_grade import (
     _CMD_INDICATORS,
     _LFI_PATTERNS,
     _MARKER_CATEGORIES,
+    _REDIRECT_STATUSES,
     _SQL_ERROR_PATTERNS,
     _SSRF_INDICATORS,
     _SSRF_METADATA_PATTERNS,
     _XSS_MARKERS,
+    _external_redirect_observed,
     assert_read_only_probe,
     evaluate_payout_grade,
     finding_payload,
@@ -84,6 +88,10 @@ _BODY_OBSERVABLE_MARKERS = frozenset({
 # authz_diff is intentionally NOT body-observable: its proof lives in
 # additional_info.authz_differential and requires two accounts.
 _NON_BODY_MARKERS = frozenset({"authz_diff"})
+# external_redirect is observable in ONE replay GET, but via the Location
+# HEADER of a 3xx response (an open-redirect replay response often has an
+# empty body) — never a body marker and never treated as non-observable.
+_HEADER_OBSERVABLE_MARKERS = frozenset({"external_redirect"})
 
 # Stable fail-closed reason codes.
 _REASON_BUDGET_EXHAUSTED = "reproduction_budget_exhausted"
@@ -101,32 +109,48 @@ _REASON_BROWSER_UNAVAILABLE = "reproduction_browser_unavailable"
 _REASON_BROWSER_DIALOG_OBSERVED = "reproduction_browser_dialog_observed"
 
 
-def _sync_http_get(url: str, *, timeout_seconds: float) -> Tuple[str, int]:
+def _sync_http_get(url: str, *, timeout_seconds: float) -> Tuple[str, int, str]:
     """Synchronous GET fallback (existing pattern: exploit_verifier.py:176).
 
     Used when the injected client's ``request`` is a coroutine function
     (AsyncNetworkClient) and the synchronous Protocol cannot await it.
     Redirects are never followed; explicit timeout; env proxies apply by
     default (same as the existing requests pattern). Transport failures
-    raise — the caller maps them to not_run.
+    raise — the caller maps them to not_run. Returns ``(body, status,
+    location)``; ``location`` is the Location header value or "" when the
+    response carries none (header case is handled by requests' case
+    insensitive mapping).
     """
     response = requests.get(
         url, timeout=int(timeout_seconds), allow_redirects=False, verify=False
     )
-    return response.text, int(response.status_code or 0)
+    location = ""
+    headers = getattr(response, "headers", None) or {}
+    get = getattr(headers, "get", None)
+    if callable(get):
+        location = str(get("Location") or get("location") or "")
+    return response.text, int(response.status_code or 0), location
 
 
-def _extract_response(resp: Any) -> Tuple[str, int]:
-    """Project a NetworkResponse-like object to ``(body, status)``.
+def _extract_response(resp: Any) -> Tuple[str, int, str]:
+    """Project a NetworkResponse-like object to ``(body, status, location)``.
 
     ``body`` is normalized to str (bytes decoded with replacement);
-    a missing status is projected as 0 (transport failure semantics).
+    a missing status is projected as 0 (transport failure semantics);
+    ``location`` is the Location header value or "" when the response has no
+    (or no readable) headers.
     """
     status = int(getattr(resp, "status", 0) or 0)
     body = getattr(resp, "body", "") or ""
     if isinstance(body, bytes):
         body = body.decode("utf-8", errors="replace")
-    return str(body), status
+    location = ""
+    headers = getattr(resp, "headers", None)
+    if headers is not None:
+        get = getattr(headers, "get", None)
+        if callable(get):
+            location = str(get("Location") or get("location") or "")
+    return str(body), status, location
 
 
 def _detect_marker_in_response(category: str, body: str) -> Optional[str]:
@@ -319,15 +343,22 @@ class SealedReproductionChecker:
         if self._network_client is None:
             return ReproductionOutcome("not_run", _REASON_DISABLED_NO_CLIENT)
         try:
-            body, status = self._send_get(resolved_url)
+            body, status, location = self._send_get(resolved_url)
         except Exception:  # noqa: BLE001 — transport boundary, fail closed
-            body, status = None, 0
+            body, status, location = None, 0, ""
         # 9) budget consumed for the replay attempt (send attempted).
         self._replays_used += 1
 
         # 8) firing-marker comparison on the replay response.
-        if body is None or status <= 0 or not body:
-            # 応答なし/空/異常 → not_run（mismatch にしない・fail-closed）
+        if body is None or status <= 0:
+            # 応答なし/異常 → not_run（mismatch にしない・fail-closed）
+            return ReproductionOutcome("not_run", _REASON_TRANSPORT_ERROR)
+        if expected_marker == "external_redirect":
+            # ヘッダ経由マーカー（open_redirect）: 3xx の Location ヘッダで
+            # 照合する。リダイレクト応答はボディが空でも観測可能。
+            return self._check_external_redirect_replay(payload, status, location)
+        if not body:
+            # 応答が空 → not_run（mismatch にしない・fail-closed）
             return ReproductionOutcome("not_run", _REASON_TRANSPORT_ERROR)
         fired = _detect_marker_in_response(expected_marker, body)
         if fired is not None:
@@ -340,6 +371,34 @@ class SealedReproductionChecker:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _check_external_redirect_replay(
+        self, payload: dict, status: int, location: str
+    ) -> ReproductionOutcome:
+        """external_redirect (open_redirect) の再現照合: 再送応答の 3xx と
+        Location ヘッダで、元 Finding の攻撃者ホスト再出現 + 外部（対象
+        自身のホストでない）を確認する（fail-closed・payout_grade と同一
+        意味論を共有ヘルパーで利用）。
+
+        - 3xx かつ攻撃者ホスト再出現（外部）→ matched
+        - 応答あり・非再出現 → mismatched（唯一の mismatch 経路）
+        """
+        if status not in _REDIRECT_STATUSES:
+            return ReproductionOutcome("mismatched", _REASON_MARKER_MISMATCH)
+        evidence = payload.get("evidence")
+        if not isinstance(evidence, dict):
+            evidence = {}
+        self_url = str(evidence.get("request_url") or "").strip()
+        info = payload.get("additional_info")
+        if not isinstance(info, dict):
+            info = {}
+        if _external_redirect_observed(
+            info=info, location=location, self_url=self_url
+        ):
+            return ReproductionOutcome(
+                "matched", "reproduction_marker_matched:external_redirect"
+            )
+        return ReproductionOutcome("mismatched", _REASON_MARKER_MISMATCH)
 
     def _browser_validator(self) -> Any:
         """Lazily constructed browser validator (injected stub wins).
@@ -434,19 +493,24 @@ class SealedReproductionChecker:
         if marker:
             return marker
         evidence_marker = evidence.get("marker")
-        if evidence_marker in _BODY_OBSERVABLE_MARKERS or evidence_marker in _NON_BODY_MARKERS:
+        if (
+            evidence_marker in _BODY_OBSERVABLE_MARKERS
+            or evidence_marker in _NON_BODY_MARKERS
+            or evidence_marker in _HEADER_OBSERVABLE_MARKERS
+        ):
             return evidence_marker
         vuln_type = str(payload.get("vuln_type") or "").strip().lower()
         return _MARKER_CATEGORIES.get(vuln_type)
 
-    def _send_get(self, url: str) -> Tuple[str, int]:
+    def _send_get(self, url: str) -> Tuple[str, int, str]:
         """Send ONE sealed GET through the injected client.
 
         A synchronously-callable client ``request`` is used directly with
         the executor send contract kwargs. An async client (coroutine
         function) cannot be awaited from the synchronous Protocol
         (run_until_complete/asyncio.run forbidden) — the existing
-        synchronous requests pattern is used instead.
+        synchronous requests pattern is used instead. Returns
+        ``(body, status, location)``.
         """
         request = getattr(self._network_client, "request", None)
         if request is None:
