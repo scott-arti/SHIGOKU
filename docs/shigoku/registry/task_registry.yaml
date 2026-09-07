@@ -5940,16 +5940,33 @@ status_allowed_values:
   - docs/shigoku/plans/done/2026-09-03_sgk-2026-0470_llm-in-loop-latency-reduction.md
   - docs/shigoku/reports/2026-09-07_sgk-2026-0471_open-redirect-confirmation_work_report.md
   - docs/shigoku/worklogs/2026-09-07_sgk-2026-0471_open-redirect-confirmation_work_log.md
-  - docs/shigoku/plans/2026-09-07_sgk-2026-0472_open-redirect-allowlist-enum-and-chains.md
+  - docs/shigoku/plans/done/2026-09-07_sgk-2026-0472_open-redirect-allowlist-enum-and-chains.md
 - provisional_id: DOC-0542
   task_id: SGK-2026-0472
   doc_type: plan
   title: オープンリダイレクト検出の賢さ強化（許可リスト値の能動獲得・多段連鎖）
-  primary_doc: docs/shigoku/plans/2026-09-07_sgk-2026-0472_open-redirect-allowlist-enum-and-chains.md
-  status: active
+  primary_doc: docs/shigoku/plans/done/2026-09-07_sgk-2026-0472_open-redirect-allowlist-enum-and-chains.md
+  status: done
   provisional: false
   task_summary: "SGK-2026-0471のdeferred(非阻害)。0471は許可リストで守られた実対象(Juice Shop /redirect?to=)に対し、アプリ自身がそのパラメータで使う正規値をruntime観測できている場合に、正規値を部分文字列として付す許可リスト回避ペイロードで◎到達を実証した。本タスクは残り: 正規値未観測ケースやより堅い許可リストにも対応するため、クロール由来の正規値の能動獲得(recon→open_redirect配線)・追加バイパス構造の実測選別・多段リダイレクト連鎖の確定経路を扱う。確定バー(A①/A②)は0471のものを流用し無改変。完了条件案: 正規値未提供でもクロール由来値で許可リスト付き実対象のopen redirectを◎にするE2E1件・token0・偽陽性fail-closed。NOT in scope: 確定バー改変/敷居低下・他種別。実装DeepSeek/opencode・Claude独立検証。"
   parent_task_id: SGK-2026-0442
   related_docs:
+  - docs/shigoku/plans/done/2026-09-07_sgk-2026-0472_open-redirect-allowlist-enum-and-chains.md
+  - docs/shigoku/reports/2026-09-07_sgk-2026-0472_crawled-redirect-values_work_report.md
+  - docs/shigoku/worklogs/2026-09-07_sgk-2026-0472_crawled-redirect-values_work_log.md
+  - docs/shigoku/plans/2026-09-07_sgk-2026-0473_open-redirect-value-heuristic-param-crawl-bypass.md
+  - docs/shigoku/plans/done/2026-09-07_sgk-2026-0471_open-redirect-confirmation.md
+  - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+- provisional_id: DOC-0543
+  task_id: SGK-2026-0473
+  doc_type: plan
+  title: 名前非該当リダイレクトパラメータでのクロール由来回避（値ヒューリスティック検出の拡張）
+  primary_doc: docs/shigoku/plans/2026-09-07_sgk-2026-0473_open-redirect-value-heuristic-param-crawl-bypass.md
+  status: active
+  provisional: false
+  task_summary: "SGK-2026-0472のdeferred(非阻害)。0472はクロール在庫から拾った正規値でリダイレクト名パラメータ(redirect/url/next等)の空値ケースの許可リスト回避◎に到達できるようにした(制御対象でフル判定経路CONFIRMED実証)。だがJuice Shopの/redirect?to=のtoは_find_redirect_paramsの名前リスト非該当で値がhttp/https///のときだけ検出され、検出時点でoriginal_value非空=0471経路になり、空/空白/非URL値では検出自体されない。よって0472のoriginal空+クロール値分岐はtoでは構造的に発火しない。本タスクはこのギャップを埋め、to等の名前非該当パラメータでもクロール由来値で回避◎に到達させる(クロール観測パラメータ名の受け渡し/非許可値で弾かれた際のクロール値追加試行等を実測選別)。確定バー(A①/A②)無改変流用・token0・偽陽性fail-closed。NOT in scope: 確定バー改変・許可リスト値の推測/総当り・追加バイパス構造/多段連鎖・他種別。実装DeepSeek/opencode・Claude独立検証。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/done/2026-09-07_sgk-2026-0472_open-redirect-allowlist-enum-and-chains.md
   - docs/shigoku/plans/done/2026-09-07_sgk-2026-0471_open-redirect-confirmation.md
   - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md

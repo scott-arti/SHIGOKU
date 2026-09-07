@@ -53,7 +53,9 @@ class OpenRedirectSpecialist(Specialist):
     
     # 攻撃ペイロードテンプレート（{uuid} を置換して使用）。
     # 素朴テンプレートに加え、許可リスト回避形（攻撃者ホスト + 観測した
-    # 元パラメータ値）を _build_payloads が動的生成する。
+    # 正規値）を _build_payloads が動的生成する。正規値は検査対象 URL 自身
+    # の元パラメータ値、またはクロール在庫由来の値（task.params 経由）から
+    # runtime で取得する（ハードコードしない）。
     REDIRECT_PAYLOAD_TEMPLATES = [
         "https://shigoku-verify-{uuid}.evil.com/",
         "//shigoku-verify-{uuid}.evil.com/",
@@ -123,6 +125,17 @@ class OpenRedirectSpecialist(Specialist):
         findings = []
         target_url = task.target
         cookies_header = ""
+        # SGK-2026-0472: クロール由来の正規値（manager が同一オリジンの走査
+        # 済み在庫から収集した redirect 系パラメータの値）を task.params から
+        # 読む。検査対象 URL 自身に正規値が無い場合の許可リスト回避ペイロード
+        # 材料として使う（無ければ空＝従来挙動）。
+        crawled_values: List[str] = []
+        if isinstance(task.params, dict):
+            cv = task.params.get("allowlisted_redirect_values")
+            if isinstance(cv, list):
+                crawled_values = [
+                    str(v) for v in cv if isinstance(v, str) and v.strip()
+                ]
         if isinstance(task.params, dict):
             auth = task.params.get("_auth", {})
             if isinstance(auth, dict):
@@ -145,7 +158,12 @@ class OpenRedirectSpecialist(Specialist):
         
         # 各リダイレクトパラメータに対して攻撃を実行
         for param_name in redirect_params:
-            result = await self._test_redirect_param(target_url, param_name, cookies_header=cookies_header)
+            result = await self._test_redirect_param(
+                target_url,
+                param_name,
+                cookies_header=cookies_header,
+                crawled_values=crawled_values,
+            )
             
             if result.get("vulnerable"):
                 exploit_url = result.get("exploit_url", "")
@@ -216,7 +234,11 @@ class OpenRedirectSpecialist(Specialist):
         
         return list(set(redirect_params))
 
-    def _build_payloads(self, original_value: str) -> List[Tuple[str, str]]:
+    def _build_payloads(
+        self,
+        original_value: str,
+        crawled_values: Optional[List[str]] = None,
+    ) -> List[Tuple[str, str]]:
         """試行するペイロード列を (payload, verify_host) のタプル列で返す。
 
         各試行の verify_host はユニークな shigoku-verify-<uuid>.evil.com
@@ -224,12 +246,17 @@ class OpenRedirectSpecialist(Specialist):
 
         1. 素朴テンプレート（REDIRECT_PAYLOAD_TEMPLATES・既存順）: 素朴な
            オープンリダイレクトを従来どおり検出する。
-        2. 許可リスト回避テンプレート: original_value（アプリが当該
-           パラメータで実際に使っている正規値・runtime 観測値）が非空の
-           ときだけ生成する。攻撃者ホストを基点に original_value を部分
-           文字列として付すため、飛び先許可リストの部分文字列チェックを
-           通して攻撃者ホストへ 302 させられる（ハードコード禁止: 正規値
-           は必ず runtime のパラメータ値から取る）。
+        2. 許可リスト回避テンプレート: 正規値（アプリが当該リダイレクトで
+           実際に使う飛び先・runtime 観測値）が非空のときだけ生成する。
+           攻撃者ホストを基点に正規値を部分文字列として付すため、飛び先
+           許可リストの部分文字列チェックを通して攻撃者ホストへ 302
+           させられる（ハードコード禁止: 正規値は必ず runtime から取る）。
+           - original_value（検査対象 URL 自身の元パラメータ値）が非空なら
+             それを優先する（SGK-2026-0471 挙動・回帰禁止）。
+           - original_value が空のときだけ、crawled_values（SGK-2026-0472:
+             クロール在庫由来の正規値）を部分文字列に流用する。過剰試行を
+             避けるため crawled_values は先頭 3 件に制限する。
+           正規値がどちらも無い場合は素朴テンプレートのみ（0471 不変）。
         """
         payloads: List[Tuple[str, str]] = []
         for template in self.REDIRECT_PAYLOAD_TEMPLATES:
@@ -238,11 +265,22 @@ class OpenRedirectSpecialist(Specialist):
             payloads.append((template.format(uuid=test_id), verify_host))
 
         original = str(original_value or "").strip()
+        legit_sources: List[str] = []
         if original:
+            # 対象 URL 自身の正規値を従来どおり優先する
+            legit_sources = [original]
+        elif crawled_values:
+            legit_sources = [
+                str(v).strip()
+                for v in crawled_values
+                if isinstance(v, str) and str(v).strip()
+            ][:3]
+
+        for legit in legit_sources:
             for suffix in (
-                f"/?_ok={original}",
-                f"/#{original}",
-                f"/{original}",
+                f"/?_ok={legit}",
+                f"/#{legit}",
+                f"/{legit}",
             ):
                 test_id = str(uuid.uuid4())[:8]
                 verify_host = f"shigoku-verify-{test_id}.evil.com"
@@ -254,6 +292,7 @@ class OpenRedirectSpecialist(Specialist):
         target_url: str, 
         param_name: str,
         cookies_header: str = "",
+        crawled_values: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
         特定のパラメータに対してハイブリッド（反射＋Playwright）テストを実行
@@ -274,10 +313,11 @@ class OpenRedirectSpecialist(Specialist):
         base_params = parse_qs(parsed.query)
 
         # 元の正規値（アプリがこのパラメータで使っている値）を観測。空なら
-        # 素朴ペイロードのみ試行する（許可リスト回避形は生成しない）。
+        # クロール由来の正規値（crawled_values）が有ればそれを部分文字列に
+        # 流用し、どちらも無ければ素朴ペイロードのみ試行する。
         original_value = (base_params.get(param_name) or [""])[0]
 
-        for payload, verify_host in self._build_payloads(original_value):
+        for payload, verify_host in self._build_payloads(original_value, crawled_values):
             # ペイロードを注入
             current_params = base_params.copy()
             current_params[param_name] = [payload]

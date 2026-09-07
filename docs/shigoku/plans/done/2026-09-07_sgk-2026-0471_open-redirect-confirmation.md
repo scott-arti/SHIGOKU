@@ -8,7 +8,7 @@ related_docs:
 - docs/shigoku/plans/done/2026-09-03_sgk-2026-0470_llm-in-loop-latency-reduction.md
 - docs/shigoku/reports/2026-09-07_sgk-2026-0471_open-redirect-confirmation_work_report.md
 - docs/shigoku/worklogs/2026-09-07_sgk-2026-0471_open-redirect-confirmation_work_log.md
-- docs/shigoku/plans/2026-09-07_sgk-2026-0472_open-redirect-allowlist-enum-and-chains.md
+- docs/shigoku/plans/done/2026-09-07_sgk-2026-0472_open-redirect-allowlist-enum-and-chains.md
 created_at: '2026-09-07'
 updated_at: '2026-09-07'
 tags:

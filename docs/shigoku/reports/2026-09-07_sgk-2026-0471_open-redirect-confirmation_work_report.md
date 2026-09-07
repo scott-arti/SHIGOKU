@@ -6,7 +6,7 @@ parent_task_id: SGK-2026-0442
 related_docs:
 - docs/shigoku/plans/done/2026-09-07_sgk-2026-0471_open-redirect-confirmation.md
 - docs/shigoku/worklogs/2026-09-07_sgk-2026-0471_open-redirect-confirmation_work_log.md
-- docs/shigoku/plans/2026-09-07_sgk-2026-0472_open-redirect-allowlist-enum-and-chains.md
+- docs/shigoku/plans/done/2026-09-07_sgk-2026-0472_open-redirect-allowlist-enum-and-chains.md
 - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
 created_at: '2026-09-07'
 updated_at: '2026-09-07'

@@ -459,6 +459,15 @@ class InjectionManagerAgent(BaseManagerAgent):
         "cookies",
     }
 
+    # SGK-2026-0472: クロール在庫のクエリから「redirect 系パラメータの値」
+    # を拾うための名前ヒント（補助）。エンジン側 REDIRECT_PARAM_NAMES と
+    # 完全一致させる必要はなく、値が http(s):// や // や / で始まる判定が
+    # 必須（`to` のような名前非該当パラメータは値ヒューリスティックで拾う）。
+    REDIRECT_VALUE_NAME_HINTS = (
+        "redirect", "redir", "url", "next", "return", "goto",
+        "dest", "destination", "target", "location",
+    )
+
     def __init__(
         self,
         config: Optional[Dict[str, Any]] = None,
@@ -5035,6 +5044,69 @@ class InjectionManagerAgent(BaseManagerAgent):
                     break
         return out
 
+    def _crawled_redirect_values(self, target_url: str, limit: int = 10) -> List[str]:
+        """クロール済み在庫から、redirect 系パラメータの“値”（=アプリが
+        実際に飛ばしている正規の飛び先候補）を同一オリジン分だけ収集する。
+
+        SGK-2026-0472: 検査対象 URL 自身に正規値が無いケースでも、走査済み
+        URL（current_context['url_results'] / discovery_revisit_urls）の
+        クエリに載っている正規値を許可リスト回避ペイロードの部分文字列へ
+        流用できるようにする。判定は engine の _find_redirect_params と同等
+        （パラメータ名が redirect 系の名前ヒントを含む OR 値が
+        "http://"/"https://"//"/"/ で始まる）で、比較は urlparse の構造比較
+        のみ。製品名・特定ホスト・特定パスのリテラルは一切使わない。
+        空文字は除外・順序保持で重複排除・limit 件まで。在庫が無い/解析不能
+        は空リストを返す（在庫不在時に既存挙動へ影響しない）。
+        """
+        out: List[str] = []
+        parsed = urlparse(str(target_url or ""))
+        if parsed.scheme not in ("http", "https"):
+            return out
+        origin = (parsed.scheme, parsed.netloc)
+
+        def _collect_from(raw_url: Any) -> None:
+            if len(out) >= limit:
+                return
+            raw = str(raw_url or "").strip()
+            if not raw:
+                return
+            try:
+                p = urlparse(raw)
+            except (ValueError, TypeError):
+                return
+            if p.scheme not in ("http", "https") or (p.scheme, p.netloc) != origin:
+                return
+            try:
+                query = parse_qs(p.query)
+            except (ValueError, TypeError):
+                return
+            for name in query:
+                name_hit = any(
+                    hint in name.lower() for hint in self.REDIRECT_VALUE_NAME_HINTS
+                )
+                for value in query[name]:
+                    if not isinstance(value, str):
+                        continue
+                    stripped = value.strip()
+                    if not stripped or stripped in out:
+                        continue
+                    value_hit = stripped.startswith(("http://", "https://", "//", "/"))
+                    if name_hit or value_hit:
+                        out.append(stripped)
+                        if len(out) >= limit:
+                            return
+
+        for entry in self.current_context.get("url_results") or []:
+            if len(out) >= limit:
+                break
+            if isinstance(entry, dict):
+                _collect_from(entry.get("url"))
+        for raw in self.current_context.get("discovery_revisit_urls") or []:
+            if len(out) >= limit:
+                break
+            _collect_from(raw)
+        return out
+
     async def run_xss_hunter(self, url: str, params: Dict[str, Any] = None, quick_mode: bool = False, **_kwargs) -> Dict[str, Any]:
         if "xss" not in self.specialists:
             return {"error": "XSS Specialist not available"}
@@ -5105,6 +5177,16 @@ class InjectionManagerAgent(BaseManagerAgent):
             return {"error": "Redirect Specialist not available"}
 
         logger.info("[%s] Delegating Open Redirect check to specialist (quick_mode=%s)", self.name, quick_mode)
+
+        # SGK-2026-0472: 同一オリジンのクロール済み在庫から redirect 系パラ
+        # メータの正規値（アプリが実際に使っている飛び先）を収集し、検査対象
+        # URL 自身に正規値が無い場合の許可リスト回避ペイロード材料として
+        # エンジンへ渡す（XSS の revisit_candidates と同じ流儀・追加のみ・
+        # 既存キーは不変・build_hunter_task 共通経路は触らない）。在庫が無け
+        # れば空リスト（既存挙動不変）。
+        params = dict(params or {})
+        if not params.get("allowlisted_redirect_values"):
+            params["allowlisted_redirect_values"] = self._crawled_redirect_values(url)
 
         target_task, detection_mode = build_hunter_task(
             url=url,
