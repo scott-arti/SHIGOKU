@@ -108,6 +108,16 @@ _REASON_UNKNOWN_CATEGORY = "reproduction_unknown_category"
 _REASON_BROWSER_UNAVAILABLE = "reproduction_browser_unavailable"
 _REASON_BROWSER_DIALOG_OBSERVED = "reproduction_browser_dialog_observed"
 
+# SGK-2026-0474: file_content_leak の excerpt 再出現照合に使う最小長
+# （正規化後）。これ未満/空/空白のみの抜粋は excerpt 一致に使わない
+# （fail-closed・従来の _LFI_PATTERNS 経路のみに落ちる）。
+_MIN_EXCERPT_MATCH_LENGTH = 24
+
+
+def _collapse_whitespace(text: str) -> str:
+    """連続空白を単一スペースに潰す（excerpt 再出現の安定照合用）。"""
+    return re.sub(r"\s+", " ", str(text or "")).strip()
+
 
 def _sync_http_get(url: str, *, timeout_seconds: float) -> Tuple[str, int, str]:
     """Synchronous GET fallback (existing pattern: exploit_verifier.py:176).
@@ -361,6 +371,12 @@ class SealedReproductionChecker:
             # 応答が空 → not_run（mismatch にしない・fail-closed）
             return ReproductionOutcome("not_run", _REASON_TRANSPORT_ERROR)
         fired = _detect_marker_in_response(expected_marker, body)
+        if fired is None and expected_marker == "file_content_leak":
+            # SGK-2026-0474: _LFI_PATTERNS 非一致でも、元 Finding の
+            # file_marker_excerpt（パス方式で取得した機密本文の抜粋）が
+            # 再送本文に再出現すれば同一カテゴリ発火として matched にする。
+            # 空/短すぎ抜粋は excerpt 経路では matched にしない（fail-closed）。
+            fired = self._match_file_marker_excerpt(payload, body)
         if fired is not None:
             return ReproductionOutcome(
                 "matched", f"reproduction_marker_matched:{fired}"
@@ -371,6 +387,30 @@ class SealedReproductionChecker:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _match_file_marker_excerpt(self, payload: dict, body: str) -> Optional[str]:
+        """SGK-2026-0474: 元 Finding の file_marker_excerpt 再出現照合。
+
+        - payload（= finding payload）の additional_info.file_marker_excerpt
+          を取得する。
+        - 空/空白のみ/正規化後に _MIN_EXCERPT_MATCH_LENGTH 未満 → None
+          （excerpt 経路では matched にしない・fail-closed）。
+        - ガード通過時のみ、再送本文（空白正規化）への再出現で
+          "file_content_leak" を返す。本文経路のみ（_NON_BODY_MARKERS /
+          _HEADER_OBSERVABLE_MARKERS には入れない）。
+        """
+        info = payload.get("additional_info")
+        if not isinstance(info, dict):
+            info = {}
+        excerpt = str(info.get("file_marker_excerpt") or "")
+        if not excerpt.strip():
+            return None
+        normalized_excerpt = _collapse_whitespace(excerpt)
+        if len(normalized_excerpt) < _MIN_EXCERPT_MATCH_LENGTH:
+            return None
+        if normalized_excerpt in _collapse_whitespace(body):
+            return "file_content_leak"
+        return None
 
     def _check_external_redirect_replay(
         self, payload: dict, status: int, location: str

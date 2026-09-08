@@ -5962,7 +5962,7 @@ status_allowed_values:
   doc_type: plan
   title: 名前非該当リダイレクトパラメータでのクロール由来回避（値ヒューリスティック検出の拡張）
   primary_doc: docs/shigoku/plans/2026-09-07_sgk-2026-0473_open-redirect-value-heuristic-param-crawl-bypass.md
-  status: active
+  status: deferred
   provisional: false
   task_summary: "SGK-2026-0472のdeferred(非阻害)。0472はクロール在庫から拾った正規値でリダイレクト名パラメータ(redirect/url/next等)の空値ケースの許可リスト回避◎に到達できるようにした(制御対象でフル判定経路CONFIRMED実証)。だがJuice Shopの/redirect?to=のtoは_find_redirect_paramsの名前リスト非該当で値がhttp/https///のときだけ検出され、検出時点でoriginal_value非空=0471経路になり、空/空白/非URL値では検出自体されない。よって0472のoriginal空+クロール値分岐はtoでは構造的に発火しない。本タスクはこのギャップを埋め、to等の名前非該当パラメータでもクロール由来値で回避◎に到達させる(クロール観測パラメータ名の受け渡し/非許可値で弾かれた際のクロール値追加試行等を実測選別)。確定バー(A①/A②)無改変流用・token0・偽陽性fail-closed。NOT in scope: 確定バー改変・許可リスト値の推測/総当り・追加バイパス構造/多段連鎖・他種別。実装DeepSeek/opencode・Claude独立検証。"
   parent_task_id: SGK-2026-0442
@@ -5970,3 +5970,18 @@ status_allowed_values:
   - docs/shigoku/plans/done/2026-09-07_sgk-2026-0472_open-redirect-allowlist-enum-and-chains.md
   - docs/shigoku/plans/done/2026-09-07_sgk-2026-0471_open-redirect-confirmation.md
   - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+- provisional_id: DOC-0544
+  task_id: SGK-2026-0474
+  doc_type: plan
+  title: LFI/パストラバーサルを本物確定（◎）まで到達させる（パス方式対応）
+  primary_doc: docs/shigoku/plans/done/2026-09-08_sgk-2026-0474_lfi-path-based-confirmation.md
+  status: done
+  provisional: false
+  task_summary: "検出能力マップ0465でLFIは△〜○。SQLi/IDOR/オープンリダイレクト同様、実対象Juice Shopで◎へ引き上げる。実測: 確定バーはLFI対応済み(payout_grade file_content_leakはfile_marker_excerptでも発火)だが、(1)smart_lfiはパラメータ方式のみでJuice Shopのパス方式ヌルバイトLFI(/ftp/<file>%2500.md)に構造的に噴かない、(2)Finding impact/repro空でmissing_impact落ち、(3)再現チェッカー(凍結)はfile_content_leakを_LFI_PATTERNS(/etc/passwd定型)だけで照合し.bak(JSON/MD)は再現不成立。対応: B(smart_lfi非凍結)=パス方式トラバーサル/ヌルバイト検出+差分成功判定(クリーン不可→バイパス取得可のときだけexcerpt)+impact/repro+誤検知ガード。A(sealed_reproduction_checker凍結・ユーザー明示承認)=file_content_leak再現照合をexcerpt再出現でも成立(最小長ガード・fail-closed)。payout_grade/poc_judge/task_queue/finding_validatorは無改変。完了条件: 実Juice Shop /ftpでフル判定CONFIRMED・token0・偽陽性fail-closed。実装DeepSeek/opencode・Claude独立検証。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/done/2026-09-08_sgk-2026-0474_lfi-path-based-confirmation.md
+  - docs/shigoku/reports/2026-09-08_sgk-2026-0474_lfi-path-based-confirmation_work_report.md
+  - docs/shigoku/worklogs/2026-09-08_sgk-2026-0474_lfi-path-based-confirmation_work_log.md
+  - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+  - docs/shigoku/plans/done/2026-09-07_sgk-2026-0471_open-redirect-confirmation.md

