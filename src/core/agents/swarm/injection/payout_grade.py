@@ -62,6 +62,14 @@ so the payout-grade marker vocabulary stays in sync with the detectors:
                         captured (``additional_info.credentialed_body_excerpt``).
                         `*` / null / no-reflection / no-credentials /
                         public-data CORS never fires (fail-closed)
+- jwt_alg_none       -> ``jwt_forgery_accepted`` (AuthNinja
+                        auth/auth_ninja.py): the server accepted an UNSIGNED
+                        alg=none forgery carrying an engine-fabricated
+                        identity — proved by a differential (the forged
+                        identity is absent in the unauth baseline response
+                        and reflected in the forged-token response).
+                        Signed/already-accepted / no-differential never
+                        fires (fail-closed)
 
 Nothing here lowers any existing evidence threshold: the gate is purely
 additive and every missing piece fails the candidate closed.
@@ -215,6 +223,10 @@ _MARKER_CATEGORIES: Dict[str, str] = {
     # manager.py:1713 also matches "cors").
     "cors": "cors_credentialed_reflection",
     "cors_misconfiguration": "cors_credentialed_reflection",
+    # SGK-2026-0476: JWT alg=none 無署名偽造の受理。
+    # (VulnType.JWT_ALG_NONE.value == VulnType.JWT_NONE_ALG.value ==
+    # "jwt_alg_none")
+    "jwt_alg_none": "jwt_forgery_accepted",
 }
 
 # ---------------------------------------------------------------------------
@@ -549,6 +561,28 @@ def _match_firing_marker(
         ):
             return "cors_credentialed_reflection"
         return None
+
+    if vuln_type == "jwt_alg_none":
+        # 発火は「無署名偽造トークンの受理の本物のみ」(SGK-2026-0476):
+        # (1) jwt_alg が "none"（無署名/未検証。RS256/HS256 等の署名検証
+        #     済みトークンでは発火しない）、
+        # (2) unauth_baseline_absent が真（トークン無しでは fabricate
+        #     identity が非出現＝盗んだ有効セッションの再生ではなく無署名
+        #     偽造の受理である差分証明）、
+        # (3) forged_identity が非空 かつ 応答に反映（additional_info の
+        #     forged_identity_reflected フラグ、または evidence.response_body /
+        #     poc_response への forged_identity 文字列出現）。
+        # 1 つでも欠ければ None（fail-closed・既存マーカーには相乗りしない）。
+        if str(info.get("jwt_alg") or "").strip().lower() != "none":
+            return None
+        if not bool(info.get("unauth_baseline_absent")):
+            return None
+        forged_identity = str(info.get("forged_identity") or "").strip()
+        if not forged_identity:
+            return None
+        if not (bool(info.get("forged_identity_reflected")) or forged_identity in body):
+            return None
+        return "jwt_forgery_accepted"
 
     return None  # unknown category
 

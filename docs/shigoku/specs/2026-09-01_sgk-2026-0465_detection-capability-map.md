@@ -38,7 +38,7 @@ updated_at: '2026-09-09'
 | 反射型/DOM型XSS | 検索欄・URLパラメータ経由 | `smart_xss` | ○ 配線済み・発火経路は保存型と共通 |
 | SQLインジェクション | ログインの `' OR 1=1--`・商品検索 | `smart_sqli`（エラーベース＋影響実証） | ◎ 本物の証拠付きで確定まで実証済み（現行コードベースで確定2件・param q/data・error(500)＋boolean差分＋非機微`sqlite_version()`抽出・GET-only・機微抽出0。SGK-2026-0466 で再実証） |
 | アクセス制御欠陥 / IDOR | 他人のカゴ・他人の注文の閲覧 | `logic/idor` + `response_comparator` + API probe authB マトリクス | ◎ 本物の対象で cross-account BOLA を確定まで実証（**実 Juice Shop・実2アカウント・実コード・実 HTTP** で「Aのログインで Bのかごが見えた」→ payout_grade=True・SGK-2026-0468 part-2）。狙い撃ちの高速確定が実戦経路。**注**: フル自律走行での自動発見は速度（AI逐次判断）＋認証トークン失効の制約あり → SGK-2026-0469/0470 で追跡（確定の実力とは別問題） |
-| 認証の弱さ / JWT | 弱いパスワード・admin ログイン・トークン細工 | `auth/auth_ninja` + 再認証 | △〜○ 突破試行は可・決め手の証拠は今後 |
+| 認証の弱さ / JWT | 弱いパスワード・admin ログイン・トークン細工 | `auth/auth_ninja` + 再認証 | ◎ 本物の対象で確定まで実証（**実 Juice Shop** で JWT alg=none 無署名偽造トークンをサーバが受理＝完全な認証バイパスを確定。fabricated identity を GET のみで反映・トークン無しとの差分で証明・確定バー新マーカー jwt_forgery_accepted・SGK-2026-0476）。署名検証サーバでは fail-closed で正しく非確定。弱い admin パスワード（admin123）もログイン成功を実測 |
 | CORS 設定ミス | 任意オリジンからの読み取り | `smart_cors` | ○ 本物確定能力あり（**認証付きオリジン反映＋ACAC:true＋機微データ越境読み取り**を確定バーの新マーカー cors_credentialed_reflection で確定・制御対象でフル判定 CONFIRMED を実証・SGK-2026-0475）。**実 Juice Shop は `ACAO:*`（反映なし・認証なし）＝公開データのみのため fail-closed で正しく非確定**（偽◎を出さない。`*` を確定に上げるのは禁止 curve-fit） |
 | オープンリダイレクト | `?to=` で外部へ誘導 | `open_redirect` | ◎ 本物の対象で確定まで実証（**実 Juice Shop `/redirect?to=`** の許可リスト回避で攻撃者ホストへ 302→payout_grade=True/external_redirect→再現 matched→CONFIRMED。SGK-2026-0471）。クロール由来の正規値取得も実装（許可リスト付き対象で名前該当パラメータ空値ケースをフル判定 CONFIRMED・SGK-2026-0472）。名前非該当パラメータ（`to` 等）のクロール由来回避は実利低のため deferred（SGK-2026-0473） |
 | SSRF / コマンド系 | サーバに外部アクセスさせる | `smart_ssrf` / `smart_cmd_ssrf` | △ 確証には外部受信(OOB)経路の整備が要る |
@@ -63,5 +63,6 @@ updated_at: '2026-09-09'
 3. ~~**オープンリダイレクト**~~ — ✅ 実証済み（SGK-2026-0471 実 Juice Shop `/redirect?to=` で ◎・SGK-2026-0472 クロール由来値取得追加。`to` 等の名前非該当は実利低で SGK-2026-0473 に deferred）
 4. ~~**LFI / パストラバーサル**~~ — ✅ 実証済み（SGK-2026-0474・**実 Juice Shop `/ftp` パス方式ヌルバイト漏洩で ◎**。パス方式検出＋差分成功判定＋誤検知ガードを追加）
 5. ~~**CORS 設定ミス**~~ — ✅ 本物確定能力を構築（SGK-2026-0475・制御対象で認証付きオリジン反映を ◎ 実証。**実 Juice Shop は `ACAO:*` のため fail-closed で正しく非確定**＝偽◎を出さない）
+6. ~~**認証/JWT（alg=none 偽造）**~~ — ✅ 実証済み（SGK-2026-0476・**実 Juice Shop で無署名偽造トークン受理＝認証バイパスを ◎**。署名検証サーバでは正しく非確定）
 
 いずれも「試して当てる」だけでなく、XSS と同じく「証拠を残して確定に上げる」経路の整備が中心課題となる。

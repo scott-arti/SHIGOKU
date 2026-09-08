@@ -6001,3 +6001,19 @@ status_allowed_values:
   - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
   - docs/shigoku/plans/done/2026-09-07_sgk-2026-0471_open-redirect-confirmation.md
   - docs/shigoku/plans/done/2026-09-08_sgk-2026-0474_lfi-path-based-confirmation.md
+- provisional_id: DOC-0546
+  task_id: SGK-2026-0476
+  doc_type: plan
+  title: JWT alg=none 偽造受理を本物確定（◎）まで到達させる
+  primary_doc: docs/shigoku/plans/done/2026-09-09_sgk-2026-0476_jwt-alg-none-forgery-confirmation.md
+  status: done
+  provisional: false
+  task_summary: "検出能力マップ0465で認証/JWTは△〜○。実Juice Shopで本物の認証バイパス(JWT alg=none偽造受理)を◎確定できる状態へ。実測: 実Juice Shopは無署名(alg=none)偽造トークンの偽造identityをGETのみで受理(token無し=空との差分で確定)。確定バーにauth/jwt無し=マーカー新設要(オープンリダイレクト/CORS同型)。AuthNinja._check_none_algは常にFalseのスタブ=サーバ側受理確証が未実装。実装: B(auth_ninja非凍結)=baseline無しGET→fabricated identity載せたalg=none GET→本文反映の差分成立時のみvulnerable+impact/repro+forged_identity/forged_token/auth_endpoint証拠。A①payout_grade(凍結・承認)=jwt_alg_none→jwt_forgery_accepted(alg=none+forged反映+baseline不在のみ発火・fail-closed)。A②sealed_reproduction(凍結・承認)=forged_token再送でforged_identity再出現の再現。残り3凍結無改変。token0。fabricated identityはexample系。実装DeepSeek/opencode(fixer→makoraはrepo opencode.json一時上書きで回避)・Claude独立検証(実Juice Shop E2E+署名検証サーバで正しい非確定)。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/done/2026-09-09_sgk-2026-0476_jwt-alg-none-forgery-confirmation.md
+  - docs/shigoku/reports/2026-09-09_sgk-2026-0476_jwt-alg-none-forgery-confirmation_work_report.md
+  - docs/shigoku/worklogs/2026-09-09_sgk-2026-0476_jwt-alg-none-forgery-confirmation_work_log.md
+  - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+  - docs/shigoku/plans/done/2026-09-07_sgk-2026-0471_open-redirect-confirmation.md
+  - docs/shigoku/plans/done/2026-09-09_sgk-2026-0475_cors-credentialed-reflection-confirmation.md

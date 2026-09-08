@@ -25,7 +25,11 @@ Guard column (all existing assets reused, nothing modified):
   ``cors_credentialed_reflection`` (cors) is header-observable AND needs an
   Origin-attached replay — it is re-confirmed from the
   Access-Control-Allow-Origin/Access-Control-Allow-Credentials headers of a
-  dedicated Origin-carrying sealed GET (``_check_cors_replay``). Same
+  dedicated Origin-carrying sealed GET (``_check_cors_replay``);
+  ``jwt_forgery_accepted`` (jwt_alg_none, SGK-2026-0476) is observable in
+  ONE replay GET carrying the original forged token — it is re-confirmed by
+  re-observing the forged identity in the replay body of a dedicated
+  forged-token GET (``_check_jwt_forgery_replay``). Same
   category firing -> matched; response present but no same-category firing
   -> mismatched; no response / timeout / error -> not_run (never mismatched).
 - mask: 0439 token_map restore when available; an unresolvable masked URL ->
@@ -190,6 +194,22 @@ def _sync_http_get_with_origin(
     )
     acao, acac = _extract_cors_headers(response)
     return int(response.status_code or 0), acao, acac
+
+
+def _sync_http_get_with_headers(
+    url: str, *, headers: dict, timeout_seconds: float
+) -> Tuple[int, str]:
+    """Synchronous header-carrying GET fallback (JWT replay; same pattern as
+    ``_sync_http_get_with_origin`` — requests fallback for async injected
+    clients). Returns ``(status, body)``."""
+    response = requests.get(
+        url,
+        headers=headers,
+        timeout=int(timeout_seconds),
+        allow_redirects=False,
+        verify=False,
+    )
+    return int(response.status_code or 0), response.text
 
 
 def _extract_response(resp: Any) -> Tuple[str, int, str]:
@@ -402,6 +422,11 @@ class SealedReproductionChecker:
             # SGK-2026-0475: cors はヘッダ観測型かつ Origin 付き再送が必須
             # → 専用再現パス（_send_get 本文経路は他種別のまま不変）。
             return self._check_cors_replay(payload, resolved_url)
+        if expected_marker == "jwt_forgery_accepted":
+            # SGK-2026-0476: jwt 偽造受理は forged_token を Authorization/
+            # Cookie に付けた封印 GET 再送で forged_identity の再出現を
+            # 観測する専用再現パス（_send_get 本文経路は他種別のまま不変）。
+            return self._check_jwt_forgery_replay(payload, resolved_url)
 
         # 7) sealed send (ONE GET; hidden communication disabled).
         if self._network_client is None:
@@ -572,6 +597,78 @@ class SealedReproductionChecker:
         acao, acac = _extract_cors_headers(resp)
         status = int(getattr(resp, "status", 0) or 0)
         return status, acao, acac
+
+    def _check_jwt_forgery_replay(
+        self, payload: dict, url: str
+    ) -> ReproductionOutcome:
+        """jwt_forgery_accepted (JWT alg=none 偽造受理) の再現照合 (SGK-2026-0476)。
+
+        元 Finding の additional_info.forged_token を ``Authorization: Bearer``
+        と ``Cookie: token=`` に付けた封印 GET を対象 URL（＝元
+        evidence.request_url・forged 送信先 auth_endpoint）へ再送し、再送応答
+        本文に forged_identity（エンジン fabricate 値）が再出現すれば matched。
+
+        - matched: forged_identity 再出現（reproduction_marker_matched:...）
+        - mismatched: 応答あり・非再出現（唯一の mismatch 経路）
+        - not_run: client None / forged_token・forged_identity 欠落 / 送信不能
+          （fail-closed 不変）
+        """
+        if self._network_client is None:
+            return ReproductionOutcome("not_run", _REASON_DISABLED_NO_CLIENT)
+        info = payload.get("additional_info")
+        if not isinstance(info, dict):
+            info = {}
+        forged_token = str(info.get("forged_token") or "").strip()
+        forged_identity = str(info.get("forged_identity") or "").strip()
+        if not forged_token or not forged_identity:
+            # 再送に必要な偽造トークン/identity が無い → 送信しない（fail-closed）
+            return ReproductionOutcome("not_run", _REASON_UNKNOWN_CATEGORY)
+        headers: dict = {
+            "Authorization": f"Bearer {forged_token}",
+            "Cookie": f"token={forged_token}",
+        }
+        try:
+            status, body = self._send_get_jwt(url, headers=headers)
+        except Exception:  # noqa: BLE001 — transport boundary, fail closed
+            self._replays_used += 1  # 再送試行は予算を消費
+            return ReproductionOutcome("not_run", _REASON_TRANSPORT_ERROR)
+        self._replays_used += 1  # 再送試行は予算を消費
+        if status <= 0:
+            return ReproductionOutcome("not_run", _REASON_TRANSPORT_ERROR)
+        if forged_identity in body:
+            return ReproductionOutcome(
+                "matched", "reproduction_marker_matched:jwt_forgery_accepted"
+            )
+        # 応答あり・forged_identity 非再出現 → mismatched（唯一の mismatch 経路）
+        return ReproductionOutcome("mismatched", _REASON_MARKER_MISMATCH)
+
+    def _send_get_jwt(self, url: str, *, headers: dict) -> Tuple[int, str]:
+        """Send ONE sealed forged-token GET through the injected client (same
+        sync/async branching as ``_send_get``/``_send_get_cors``; the existing
+        body-marker send paths stay untouched). Returns ``(status, body)``."""
+        request = getattr(self._network_client, "request", None)
+        if request is None:
+            raise RuntimeError("network client has no request()")
+        if inspect.iscoroutinefunction(request):
+            return _sync_http_get_with_headers(
+                url, headers=headers, timeout_seconds=self._timeout_seconds
+            )
+        resp = request(
+            "GET",
+            url,
+            headers=headers,
+            use_cache=False,
+            retries=0,
+            auto_waf_bypass=False,
+            allow_redirects=False,
+            timeout=int(self._timeout_seconds),
+            use_proxy=True,
+        )
+        body = getattr(resp, "body", "") or ""
+        if isinstance(body, bytes):
+            body = body.decode("utf-8", errors="replace")
+        status = int(getattr(resp, "status", 0) or 0)
+        return status, str(body)
 
     def _browser_validator(self) -> Any:
         """Lazily constructed browser validator (injected stub wins).
