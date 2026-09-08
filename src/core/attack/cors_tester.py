@@ -24,6 +24,24 @@ class CORSResult:
     acac_header: str = ""  # Access-Control-Allow-Credentials
     misconfiguration: str = ""
     severity: str = "medium"
+    status: int = 0  # 実観測 HTTP status（vulnerable 時は常に設定）
+    body_excerpt: str = ""  # 認証付き越境応答本文の抜粋（credentialed reflection 時のみ）
+
+
+# 認証付き越境本文の抜粋境界（SGK-2026-0475）:
+# - 短すぎる本文（定型 "ok" 等の stub/公開応答）は「機微データを読めた」
+#   証拠として使わない（fail-closed）。
+# - 十分に長い本文は決定論的に上限へ切り詰めて保持する（安定・有界）。
+_CREDENTIALED_EXCERPT_MIN_LENGTH = 32
+_CREDENTIALED_EXCERPT_MAX_LENGTH = 2048
+
+
+def _credentialed_body_excerpt(body_text) -> str:
+    """認証付き越境応答本文の安定した抜粋（空/短すぎは ""・fail-closed）。"""
+    text = str(body_text or "").strip()
+    if len(text) < _CREDENTIALED_EXCERPT_MIN_LENGTH:
+        return ""
+    return text[:_CREDENTIALED_EXCERPT_MAX_LENGTH]
 
 
 class CORSTester:
@@ -130,7 +148,7 @@ class CORSTester:
 
         if vulnerable:
             sev = "high" if acac.lower() == "true" else "medium"
-            return CORSResult(
+            result = CORSResult(
                 url=url,
                 test_origin=origin,
                 vulnerable=True,
@@ -138,7 +156,18 @@ class CORSTester:
                 acac_header=acac,
                 misconfiguration=misconfiguration,
                 severity=sev,
+                status=int(response.status_code or 0),
             )
+            # SGK-2026-0475: 「認証付きオリジン反映の本物」のときだけ、認証
+            # コンテキスト付きで読めた越境応答本文の抜粋を証拠として保持する。
+            # `*`/null/反映なし/認証なし（acac!=true または auth 無し）では
+            # 抜粋を残さない（fail-closed・public-data CORS は確定に上げない）。
+            if (
+                misconfiguration == "origin_reflection_with_credentials"
+                and self.auth_headers
+            ):
+                result.body_excerpt = _credentialed_body_excerpt(response.text)
+            return result
         return None
     
     def _is_vulnerable(

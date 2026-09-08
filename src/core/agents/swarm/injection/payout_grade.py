@@ -53,6 +53,15 @@ so the payout-grade marker vocabulary stays in sync with the detectors:
                         3xx response points at the injected attacker-managed
                         host (``additional_info.injected_host``) that is
                         external to the target itself
+- cors               -> ``cors_credentialed_reflection`` (SmartCORSHunter
+                        smart_cors.py / CORSTester cors_tester.py): the
+                        observed Access-Control-Allow-Origin header reflects
+                        the sent attacker test_origin (hostname match) with
+                        Access-Control-Allow-Credentials: true AND a
+                        credentialed cross-origin response body excerpt was
+                        captured (``additional_info.credentialed_body_excerpt``).
+                        `*` / null / no-reflection / no-credentials /
+                        public-data CORS never fires (fail-closed)
 
 Nothing here lowers any existing evidence threshold: the gate is purely
 additive and every missing piece fails the candidate closed.
@@ -201,6 +210,11 @@ _MARKER_CATEGORIES: Dict[str, str] = {
     "broken_access_control": "authz_diff",
     "idor": "authz_diff",
     "mass_assignment": "authz_diff",
+    # SGK-2026-0475: both spellings occur in the codebase
+    # (VulnType.CORS_MISCONFIGURATION.value == "cors_misconfiguration";
+    # manager.py:1713 also matches "cors").
+    "cors": "cors_credentialed_reflection",
+    "cors_misconfiguration": "cors_credentialed_reflection",
 }
 
 # ---------------------------------------------------------------------------
@@ -271,6 +285,69 @@ def _external_redirect_observed(
         # 対象自身のホストへの自己リダイレクトは外部ではない
         return False
     return True
+
+
+# ---------------------------------------------------------------------------
+# cors (SmartCORSHunter / CORSTester): credentialed origin reflection marker.
+#
+# The tester sends an attacker-controlled test_origin and records the
+# observed Access-Control-Allow-Origin / Access-Control-Allow-Credentials
+# values plus (for origin reflection WITH credentials) an excerpt of the
+# credentialed cross-origin response body. The firing marker requires ALL
+# of: (1) acao reflects the test_origin by hostname (never `*`, `null`,
+# empty, or the target's own origin), (2) acac == true (case-insensitive),
+# (3) a non-empty ``credentialed_body_excerpt`` proving sensitive
+# cross-origin content was actually read. Anything else fails closed to
+# None — wildcard/null/unauthenticated CORS stays below the confirmation
+# bar (public-data CORS is a known safe hold, never promoted).
+# ---------------------------------------------------------------------------
+
+
+def _origin_host(value: Any) -> str:
+    """Lowercased urlparse ``hostname`` of an origin/URL-ish string ("" when
+    absent or unparseable).
+
+    Host-only comparison: scheme and port never matter (``*`` / ``null`` /
+    bare tokens have no hostname and yield "")."""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        return (urlparse(text).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+def _acao_reflects_test_origin(
+    *, acao: str, test_origin: str, self_url: str
+) -> bool:
+    """True ONLY when ``acao`` reflects ``test_origin`` by hostname AND the
+    reflected host is not the target's own host (fail-closed: `*`, `null`,
+    empty, self-origin, or any missing piece -> False)."""
+    acao_host = _origin_host(acao)
+    test_host = _origin_host(test_origin)
+    if not acao_host or not test_host or acao_host != test_host:
+        return False
+    self_host = _origin_host(self_url)
+    if self_host and test_host == self_host:
+        # 対象自身のオリジンへの「反映」は攻撃者オリジンではない
+        return False
+    return True
+
+
+def _evidence_header(headers: Any, name: str) -> str:
+    """Case-insensitive single-header lookup on an evidence headers dict.
+
+    Auxiliary source only — canonical marker values live in
+    additional_info; the evidence headers are consulted only when the
+    additional_info value is missing/empty."""
+    if not isinstance(headers, dict):
+        return ""
+    lowered = name.lower()
+    for key, value in headers.items():
+        if str(key).lower() == lowered:
+            return str(value or "")
+    return ""
 
 
 # Read-only methods allowed for Phase-2 verification probes (GET-only
@@ -443,6 +520,34 @@ def _match_firing_marker(
         self_url = str(evidence.get("request_url") or "").strip()
         if _external_redirect_observed(info=info, location=location, self_url=self_url):
             return "external_redirect"
+        return None
+
+    if vuln_type in {"cors", "cors_misconfiguration"}:
+        # 発火は「認証付きオリジン反映の本物のみ」(SGK-2026-0475):
+        # acao がテストオリジンにホスト一致で反映（`*`/null/空/対象自身の
+        # オリジンは不可）＋ acac==true ＋ 認証付き越境応答本文の抜粋
+        # （credentialed_body_excerpt）非空。1 つでも欠ければ None
+        # （fail-closed・public-data CORS を確定に上げない）。
+        headers_ev = evidence.get("response_headers")
+        acao = str(
+            info.get("acao")
+            or _evidence_header(headers_ev, "Access-Control-Allow-Origin")
+            or ""
+        ).strip()
+        acac = str(
+            info.get("acac")
+            or _evidence_header(headers_ev, "Access-Control-Allow-Credentials")
+            or ""
+        ).strip()
+        excerpt = str(info.get("credentialed_body_excerpt") or "").strip()
+        test_origin = str(info.get("test_origin") or "").strip()
+        if not excerpt or acac.lower() != "true" or not test_origin:
+            return None
+        self_url = str(evidence.get("request_url") or "").strip()
+        if _acao_reflects_test_origin(
+            acao=acao, test_origin=test_origin, self_url=self_url
+        ):
+            return "cors_credentialed_reflection"
         return None
 
     return None  # unknown category

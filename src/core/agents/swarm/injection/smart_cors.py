@@ -72,6 +72,15 @@ class SmartCORSHunter(Specialist):
                     "acac": r.acac_header,
                     "misconfiguration": r.misconfiguration,
                     "severity": r.severity,
+                    # SGK-2026-0475: 実観測 status と認証付き越境本文の抜粋。
+                    # excerpt は origin_reflection_with_credentials のときだけ
+                    # 非空（fail-closed: wildcard/null/認証なしは空のまま）。
+                    "response_status": r.status,
+                    "credentialed_body_excerpt": (
+                        r.body_excerpt
+                        if r.misconfiguration == "origin_reflection_with_credentials"
+                        else ""
+                    ),
                 }
                 for r in vuln
             ],
@@ -90,15 +99,32 @@ class SmartCORSHunter(Specialist):
             poc = CORSTester.generate_poc_html(
                 target_url, r["test_origin"], r["misconfiguration"]
             )
+            # SGK-2026-0475: excerpt は origin_reflection_with_credentials の
+            # ときだけ採用（fail-closed）。response_status は実観測値（無ければ
+            # 従来の 200 既定を維持）。
+            misconfiguration = str(r.get("misconfiguration") or "")
+            excerpt = (
+                str(r.get("credentialed_body_excerpt") or "")
+                if misconfiguration == "origin_reflection_with_credentials"
+                else ""
+            )
+            status = r.get("response_status")
+            if not (
+                isinstance(status, int)
+                and not isinstance(status, bool)
+                and status > 0
+            ):
+                status = 200
             evidence = Evidence(
                 request_method="GET",
                 request_url=target_url,
                 request_headers={"Origin": r["test_origin"]},
-                response_status=200,
+                response_status=status,
                 response_headers={
                     "Access-Control-Allow-Origin": r.get("acao", ""),
                     "Access-Control-Allow-Credentials": r.get("acac", ""),
                 },
+                response_body=excerpt,
             )
             findings.append(Finding(
                 target_url=target_url,
@@ -131,6 +157,7 @@ class SmartCORSHunter(Specialist):
                     "acao": r.get("acao", ""),
                     "acac": r.get("acac", ""),
                     "misconfiguration": r["misconfiguration"],
+                    "credentialed_body_excerpt": excerpt,
                     "tested_params": [],
                     "poc_html": poc,
                     "poc_request": (
@@ -138,7 +165,7 @@ class SmartCORSHunter(Specialist):
                         f"Origin: {r['test_origin']}\n"
                     ),
                     "poc_response": (
-                        f"HTTP/1.1 200 OK\n"
+                        f"HTTP/1.1 {status}\n"
                         f"Access-Control-Allow-Origin: {r.get('acao', '')}\n"
                         f"Access-Control-Allow-Credentials: {r.get('acac', '')}\n"
                     ),

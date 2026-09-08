@@ -21,7 +21,11 @@ Guard column (all existing assets reused, nothing modified):
   per-category patterns in payout_grade.py — imported, never duplicated, no
   new markers). Body markers are detected on the replay response body;
   ``external_redirect`` (open_redirect) is header-observable and is instead
-  re-confirmed from the Location header of a 3xx replay response. Same
+  re-confirmed from the Location header of a 3xx replay response;
+  ``cors_credentialed_reflection`` (cors) is header-observable AND needs an
+  Origin-attached replay — it is re-confirmed from the
+  Access-Control-Allow-Origin/Access-Control-Allow-Credentials headers of a
+  dedicated Origin-carrying sealed GET (``_check_cors_replay``). Same
   category firing -> matched; response present but no same-category firing
   -> mismatched; no response / timeout / error -> not_run (never mismatched).
 - mask: 0439 token_map restore when available; an unresolvable masked URL ->
@@ -60,6 +64,7 @@ from src.core.agents.swarm.injection.payout_grade import (
     _SSRF_INDICATORS,
     _SSRF_METADATA_PATTERNS,
     _XSS_MARKERS,
+    _acao_reflects_test_origin,
     _external_redirect_observed,
     assert_read_only_probe,
     evaluate_payout_grade,
@@ -91,7 +96,13 @@ _NON_BODY_MARKERS = frozenset({"authz_diff"})
 # external_redirect is observable in ONE replay GET, but via the Location
 # HEADER of a 3xx response (an open-redirect replay response often has an
 # empty body) — never a body marker and never treated as non-observable.
-_HEADER_OBSERVABLE_MARKERS = frozenset({"external_redirect"})
+# cors_credentialed_reflection (SGK-2026-0475) is likewise observable in
+# ONE replay GET via the ACAO/ACAC headers — but the replay must carry the
+# original test_origin as an Origin header (dedicated _check_cors_replay).
+_HEADER_OBSERVABLE_MARKERS = frozenset({
+    "external_redirect",
+    "cors_credentialed_reflection",
+})
 
 # Stable fail-closed reason codes.
 _REASON_BUDGET_EXHAUSTED = "reproduction_budget_exhausted"
@@ -140,6 +151,45 @@ def _sync_http_get(url: str, *, timeout_seconds: float) -> Tuple[str, int, str]:
     if callable(get):
         location = str(get("Location") or get("location") or "")
     return response.text, int(response.status_code or 0), location
+
+
+def _extract_cors_headers(resp: Any) -> Tuple[str, str]:
+    """Project ACAO/ACAC header values from a NetworkResponse-like object
+    (case-insensitive). Returns ``("", "")`` when headers are unreadable."""
+    acao = ""
+    acac = ""
+    headers = getattr(resp, "headers", None)
+    if headers is not None:
+        get = getattr(headers, "get", None)
+        if callable(get):
+            acao = str(
+                get("Access-Control-Allow-Origin")
+                or get("access-control-allow-origin")
+                or ""
+            )
+            acac = str(
+                get("Access-Control-Allow-Credentials")
+                or get("access-control-allow-credentials")
+                or ""
+            )
+    return acao, acac
+
+
+def _sync_http_get_with_origin(
+    url: str, *, headers: dict, timeout_seconds: float
+) -> Tuple[int, str, str]:
+    """Synchronous Origin-carrying GET fallback (CORS replay; same pattern
+    as ``_sync_http_get`` — requests fallback for async injected clients).
+    Returns ``(status, acao, acac)``."""
+    response = requests.get(
+        url,
+        headers=headers,
+        timeout=int(timeout_seconds),
+        allow_redirects=False,
+        verify=False,
+    )
+    acao, acac = _extract_cors_headers(response)
+    return int(response.status_code or 0), acao, acac
 
 
 def _extract_response(resp: Any) -> Tuple[str, int, str]:
@@ -348,6 +398,10 @@ class SealedReproductionChecker:
             # authz_diff cannot be re-verified by one sealed GET (its proof
             # needs two accounts) — never refute speculatively, fail closed.
             return ReproductionOutcome("not_run", _REASON_MARKER_NOT_OBSERVABLE)
+        if expected_marker == "cors_credentialed_reflection":
+            # SGK-2026-0475: cors はヘッダ観測型かつ Origin 付き再送が必須
+            # → 専用再現パス（_send_get 本文経路は他種別のまま不変）。
+            return self._check_cors_replay(payload, resolved_url)
 
         # 7) sealed send (ONE GET; hidden communication disabled).
         if self._network_client is None:
@@ -439,6 +493,85 @@ class SealedReproductionChecker:
                 "matched", "reproduction_marker_matched:external_redirect"
             )
         return ReproductionOutcome("mismatched", _REASON_MARKER_MISMATCH)
+
+    def _check_cors_replay(
+        self, payload: dict, url: str
+    ) -> ReproductionOutcome:
+        """cors_credentialed_reflection (CORS) の再現照合 (SGK-2026-0475)。
+
+        元 Finding の additional_info.test_origin を Origin ヘッダに付けた
+        封印 GET を対象 URL へ再送し（元 evidence.request_headers の
+        Origin 以外のヘッダ＝認証情報があれば併せて付与）、再送応答の
+        ACAO が test_origin にホスト一致で反映 かつ ACAC が真なら matched。
+
+        - matched: 反映＋ACAC true（reproduction_marker_matched:...）
+        - mismatched: 応答あり・非反映/ACAC 非真（唯一の mismatch 経路）
+        - not_run: client None / 送信不能 / 例外（fail-closed 不変）
+        """
+        if self._network_client is None:
+            return ReproductionOutcome("not_run", _REASON_DISABLED_NO_CLIENT)
+        info = payload.get("additional_info")
+        if not isinstance(info, dict):
+            info = {}
+        test_origin = str(info.get("test_origin") or "").strip()
+        if not test_origin:
+            # 再送に必要な Origin が無い → 送信しない（fail-closed）
+            return ReproductionOutcome("not_run", _REASON_UNKNOWN_CATEGORY)
+        evidence = payload.get("evidence")
+        if not isinstance(evidence, dict):
+            evidence = {}
+        headers: dict = {"Origin": test_origin}
+        request_headers = evidence.get("request_headers")
+        if isinstance(request_headers, dict):
+            for key, value in request_headers.items():
+                if str(key).lower() != "origin":
+                    headers[str(key)] = str(value)
+        try:
+            status, acao, acac = self._send_get_cors(url, headers=headers)
+        except Exception:  # noqa: BLE001 — transport boundary, fail closed
+            self._replays_used += 1  # 再送試行は予算を消費
+            return ReproductionOutcome("not_run", _REASON_TRANSPORT_ERROR)
+        self._replays_used += 1  # 再送試行は予算を消費
+        if status <= 0:
+            return ReproductionOutcome("not_run", _REASON_TRANSPORT_ERROR)
+        self_url = str(evidence.get("request_url") or "")
+        if (
+            _acao_reflects_test_origin(
+                acao=acao, test_origin=test_origin, self_url=self_url
+            )
+            and acac.lower() == "true"
+        ):
+            return ReproductionOutcome(
+                "matched", "reproduction_marker_matched:cors_credentialed_reflection"
+            )
+        return ReproductionOutcome("mismatched", _REASON_MARKER_MISMATCH)
+
+    def _send_get_cors(self, url: str, *, headers: dict) -> Tuple[int, str, str]:
+        """Send ONE sealed Origin-carrying GET through the injected client
+        (same sync/async branching as ``_send_get``; ``_send_get`` itself
+        stays untouched for the other body-marker paths). Returns
+        ``(status, acao, acac)``."""
+        request = getattr(self._network_client, "request", None)
+        if request is None:
+            raise RuntimeError("network client has no request()")
+        if inspect.iscoroutinefunction(request):
+            return _sync_http_get_with_origin(
+                url, headers=headers, timeout_seconds=self._timeout_seconds
+            )
+        resp = request(
+            "GET",
+            url,
+            headers=headers,
+            use_cache=False,
+            retries=0,
+            auto_waf_bypass=False,
+            allow_redirects=False,
+            timeout=int(self._timeout_seconds),
+            use_proxy=True,
+        )
+        acao, acac = _extract_cors_headers(resp)
+        status = int(getattr(resp, "status", 0) or 0)
+        return status, acao, acac
 
     def _browser_validator(self) -> Any:
         """Lazily constructed browser validator (injected stub wins).

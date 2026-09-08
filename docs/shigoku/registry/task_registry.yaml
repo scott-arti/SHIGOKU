@@ -5985,3 +5985,19 @@ status_allowed_values:
   - docs/shigoku/worklogs/2026-09-08_sgk-2026-0474_lfi-path-based-confirmation_work_log.md
   - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
   - docs/shigoku/plans/done/2026-09-07_sgk-2026-0471_open-redirect-confirmation.md
+- provisional_id: DOC-0545
+  task_id: SGK-2026-0475
+  doc_type: plan
+  title: CORS誤設定を本物確定（◎）できる能力を構築（認証付きオリジン反映）
+  primary_doc: docs/shigoku/plans/done/2026-09-09_sgk-2026-0475_cors-credentialed-reflection-confirmation.md
+  status: done
+  provisional: false
+  task_summary: "検出能力マップ0465でCORSは△(機微データ漏えいまで示さないと確定に上げない)。本物の高影響CORS(攻撃者オリジン反映+ACAC:true+機微データ越境読み取り)を◎確定できる能力を構築。実測でJuice ShopのCORSは全EPが ACAO:* (反映なし・ACACなし)=公開データのみの低影響で本物バグ非実在、CLAUDE.md既知セーフホールドでも非確定=`*`を◎にするのは禁止curve-fit。よって◎実証は認可済み制御対象(反映+ACAC:true+認証付き機微データ)で行い、Juice Shopの`*`はfail-closedで正しく非確定を実証。確定バー: payout_grade._MARKER_CATEGORIESにcors無し=マーカー新設要(オープンリダイレクト同型)。実装: A①payout_grade(凍結・承認)=cors_credentialed_reflectionマーカー(反映+acac==true+credentialed_body_excerpt非空のみ発火・*/null/非認証は不発火)。A②sealed_reproduction_checker(凍結・承認)=Origin付き再送のヘッダ再現(_check_cors_replay)。B(smart_cors/cors_tester非凍結)=認証付き越境応答本文の抜粋を証拠化+実status。残り3凍結(poc_judge/task_queue/finding_validator)無改変。token0。実装DeepSeek/opencode(fixer→makoraはrepo opencode.json一時上書きで回避)・Claude独立検証。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/done/2026-09-09_sgk-2026-0475_cors-credentialed-reflection-confirmation.md
+  - docs/shigoku/reports/2026-09-09_sgk-2026-0475_cors-credentialed-reflection-confirmation_work_report.md
+  - docs/shigoku/worklogs/2026-09-09_sgk-2026-0475_cors-credentialed-reflection-confirmation_work_log.md
+  - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+  - docs/shigoku/plans/done/2026-09-07_sgk-2026-0471_open-redirect-confirmation.md
+  - docs/shigoku/plans/done/2026-09-08_sgk-2026-0474_lfi-path-based-confirmation.md
