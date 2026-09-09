@@ -464,6 +464,16 @@ def _match_firing_marker(
         # together with vulnerable + a captured reflection.
         if bool(info.get("reflection_observed")):
             return "reflected_payload"
+        # SGK-2026-0477: 実ブラウザ発火は本文反映より強い発火証拠。DOM XSS は
+        # ペイロードが URL フラグメント由来で HTTP 本文に出ないため、本文マーカー/
+        # reflection_observed が無くても、additional_info.browser_execution の
+        # dialog_observed=true（実際に alert/script が実行された）で発火と確定する。
+        # dialog 非観測（DOM mutation のみ等）の弱い証拠では発火しない（fail-closed）。
+        browser_execution = info.get("browser_execution")
+        if isinstance(browser_execution, dict) and bool(
+            browser_execution.get("dialog_observed")
+        ):
+            return "reflected_payload"
         return None
 
     if vuln_type == "lfi":

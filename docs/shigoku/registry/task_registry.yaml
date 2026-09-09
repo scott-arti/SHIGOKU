@@ -6017,3 +6017,18 @@ status_allowed_values:
   - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
   - docs/shigoku/plans/done/2026-09-07_sgk-2026-0471_open-redirect-confirmation.md
   - docs/shigoku/plans/done/2026-09-09_sgk-2026-0475_cors-credentialed-reflection-confirmation.md
+- provisional_id: DOC-0547
+  task_id: SGK-2026-0477
+  doc_type: plan
+  title: 反射型/DOM型XSS を実ブラウザ発火で本物確定（◎）まで到達させる
+  primary_doc: docs/shigoku/plans/done/2026-09-09_sgk-2026-0477_xss-browser-execution-confirmation.md
+  status: done
+  provisional: false
+  task_summary: "検出能力マップ0465で反射型/DOM型XSSは○(配線済み・発火経路は保存型と共通)。実Juice Shopで◎へ。実測: 実Juice ShopのsearchにDOM XSS(innerHTML sink)が実在し実ブラウザでalert発火。再現チェッカーはDOM/stored browser再実行を既に具備(0455/0457)・エンジンsmart_xssもbrowser_execution/impact/repro/status設定済み=A②とB改変不要。唯一の壁: payout_grade._match_firing_markerのxss分岐(459-467)が本文_XSS_MARKERS or reflection_observedのみで実ブラウザ発火(browser_execution.dialog_observed)を認めず、DOM XSSはフラグメント由来で本文に出ず発火せずpayout_grade=False(実測確定)。実装: A(payout_grade凍結・承認)=xss分岐にbrowser_execution.dialog_observed真(実スクリプト実行)でreflected_payload発火を追加(本文反映より強い証拠=能力追加・敷居低下でない・fail-closed)。残り凍結4+smart_xss無改変。token0。実装DeepSeek/opencode(fixer→makoraはrepo opencode.json一時上書きで回避)・Claude独立検証(実Juice Shop DOM XSS E2E+dialog非観測で非確定)。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/done/2026-09-09_sgk-2026-0477_xss-browser-execution-confirmation.md
+  - docs/shigoku/reports/2026-09-09_sgk-2026-0477_xss-browser-execution-confirmation_work_report.md
+  - docs/shigoku/worklogs/2026-09-09_sgk-2026-0477_xss-browser-execution-confirmation_work_log.md
+  - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+  - docs/shigoku/plans/done/2026-09-09_sgk-2026-0476_jwt-alg-none-forgery-confirmation.md
