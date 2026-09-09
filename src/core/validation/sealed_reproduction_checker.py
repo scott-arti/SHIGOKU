@@ -29,7 +29,15 @@ Guard column (all existing assets reused, nothing modified):
   ``jwt_forgery_accepted`` (jwt_alg_none, SGK-2026-0476) is observable in
   ONE replay GET carrying the original forged token — it is re-confirmed by
   re-observing the forged identity in the replay body of a dedicated
-  forged-token GET (``_check_jwt_forgery_replay``). Same
+  forged-token GET (``_check_jwt_forgery_replay``);
+  ``command_execution`` (SGK-2026-0478) from a POST form injection is
+  observable in ONE replay of the ORIGINAL form POST — findings carrying a
+  validated ``command_replay`` descriptor (read-only allowlisted command
+  only, ``_check_command_execution_replay``) are re-sent with the original
+  method + ``body_params``; the GET-only relaxation is limited to this
+  non-destructive POST replay, and descriptors that are missing or carry a
+  non-allowlisted command fall back to the unchanged GET body-marker path.
+  Same
   category firing -> matched; response present but no same-category firing
   -> mismatched; no response / timeout / error -> not_run (never mismatched).
 - mask: 0439 token_map restore when available; an unresolvable masked URL ->
@@ -128,6 +136,18 @@ _REASON_BROWSER_DIALOG_OBSERVED = "reproduction_browser_dialog_observed"
 # （fail-closed・従来の _LFI_PATTERNS 経路のみに落ちる）。
 _MIN_EXCERPT_MATCH_LENGTH = 24
 
+# SGK-2026-0478: command_execution の封印 POST 再送で許容する読み取り専用
+# コマンドの許可リスト。smart_cmd_ssrf.py の READONLY_COMMAND_ALLOWLIST と
+# 同一値（validation 層は swarm エンジンを import しないため local 定義）。
+# 許可外コマンドの記述子は POST 再送しない（fail-closed・GET フォールバック）。
+_READONLY_COMMANDS: frozenset = frozenset({
+    "id", "whoami", "uname", "pwd", "hostname", "groups",
+})
+
+# SGK-2026-0478: command_execution POST 再送で扱う form body の Content-Type
+# （smart_cmd_ssrf が command_replay に記録する値と同一）。
+_FORM_CONTENT_TYPE = "application/x-www-form-urlencoded"
+
 
 def _collapse_whitespace(text: str) -> str:
     """連続空白を単一スペースに潰す（excerpt 再出現の安定照合用）。"""
@@ -204,6 +224,24 @@ def _sync_http_get_with_headers(
     clients). Returns ``(status, body)``."""
     response = requests.get(
         url,
+        headers=headers,
+        timeout=int(timeout_seconds),
+        allow_redirects=False,
+        verify=False,
+    )
+    return int(response.status_code or 0), response.text
+
+
+def _sync_http_post_form(
+    url: str, *, data: dict, headers: dict, timeout_seconds: float
+) -> Tuple[int, str]:
+    """Synchronous form-POST fallback (command_execution replay; same
+    requests fallback pattern as ``_sync_http_get_with_headers`` — used when
+    the injected client's ``request`` is a coroutine function). Redirects are
+    never followed. Returns ``(status, body)``."""
+    response = requests.post(
+        url,
+        data=data,
         headers=headers,
         timeout=int(timeout_seconds),
         allow_redirects=False,
@@ -363,6 +401,21 @@ class SealedReproductionChecker:
         resolved_url = self._resolve_url(url)
         if resolved_url is None:
             return ReproductionOutcome("not_run", _REASON_MASKED_URL_UNRESOLVABLE)
+
+        # 2.5) SGK-2026-0478: command_execution 専用の POST 再現パス。
+        #      additional_info.command_replay（読み取り専用コマンド限定の
+        #      フォーム再送記述子）を持つ finding は GET-only ガードより
+        #      前に分岐する — POST フォームへの注入は GET 再送では再現
+        #      できないため。記述子なし/許可外コマンド/command_execution
+        #      以外は、下記 3) 以降の従来 GET-only 経路へ byte-identical
+        #      にフォールバックする（非回帰）。GET-only ガードの緩和は
+        #      この非破壊コマンド POST 再送に限る。
+        cmd_replay = self._command_replay_descriptor(payload)
+        if (
+            cmd_replay is not None
+            and self._expected_marker(payload, evidence) == "command_execution"
+        ):
+            return self._check_command_execution_replay(payload, resolved_url, cmd_replay)
 
         # 3) GET-only probe (the sealed re-send is always a GET).
         if not assert_read_only_probe("GET", resolved_url):
@@ -656,6 +709,156 @@ class SealedReproductionChecker:
         resp = request(
             "GET",
             url,
+            headers=headers,
+            use_cache=False,
+            retries=0,
+            auto_waf_bypass=False,
+            allow_redirects=False,
+            timeout=int(self._timeout_seconds),
+            use_proxy=True,
+        )
+        body = getattr(resp, "body", "") or ""
+        if isinstance(body, bytes):
+            body = body.decode("utf-8", errors="replace")
+        status = int(getattr(resp, "status", 0) or 0)
+        return status, str(body)
+
+    def _command_replay_descriptor(self, payload: dict) -> Optional[dict]:
+        """additional_info.command_replay の検証済みコピー（無効なら None）。
+
+        - readonly_command が読み取り専用許可リスト（id/whoami/uname/pwd/
+          hostname/groups）に含まれること。
+        - method が GET 系でないこと（GET 系 in-band は従来の GET 再送で
+          再現できるため、この専用パスは使わない）。
+        - body_params が非空 dict、url/content_type が非空文字列、
+          content_type が form-urlencoded であること。
+
+        検証を満たさない記述子は None → check() は従来の GET-only 経路へ
+        フォールバックする（fail-closed・POST 再送しない）。
+        """
+        info = payload.get("additional_info")
+        if not isinstance(info, dict):
+            return None
+        replay = info.get("command_replay")
+        if not isinstance(replay, dict):
+            return None
+        readonly_command = str(replay.get("readonly_command") or "").strip()
+        if readonly_command not in _READONLY_COMMANDS:
+            return None
+        method = str(replay.get("method") or "").strip().upper()
+        if method in {"", "GET", "HEAD", "OPTIONS"}:
+            return None
+        body_params = replay.get("body_params")
+        if not isinstance(body_params, dict) or not body_params:
+            return None
+        url = str(replay.get("url") or "").strip()
+        content_type = str(replay.get("content_type") or "").strip()
+        if not url or content_type != _FORM_CONTENT_TYPE:
+            return None
+        return {
+            "method": method,
+            "url": url,
+            "body_params": {str(key): value for key, value in body_params.items()},
+            "readonly_command": readonly_command,
+            "content_type": content_type,
+        }
+
+    def _check_command_execution_replay(
+        self, payload: dict, url: str, replay: dict
+    ) -> ReproductionOutcome:
+        """command_execution の専用再現パス（SGK-2026-0478・POST フォーム）。
+
+        元 Finding の command_replay 記述子（読み取り専用コマンド限定）に
+        従い、元 method（POST 等）＋ body_params（注入を含むフォーム値
+        一式）で同一フォームを再送し、再送応答本文に _CMD_INDICATORS
+        （uid= 等）が再出現すれば matched。
+
+        - matched: 本文指標再出現（reproduction_marker_matched:command_execution）
+        - mismatched: 応答あり・非再出現（唯一の mismatch 経路）
+        - not_run: client None / スコープ再検証不可 / fingerprint 不一致 /
+          空応答 / 送信不能・例外（fail-closed 不変）
+        """
+        if self._network_client is None:
+            return ReproductionOutcome("not_run", _REASON_DISABLED_NO_CLIENT)
+        # 封印スコープは専用パスでも再検証する（GET-only ガードより前に
+        # 分岐するため、ここで封印 fail-closed を維持する）。
+        scope_result = revalidate_scope_for_request(
+            url, scope_definition=self._scope_definition
+        )
+        if not scope_result.allowed:
+            return ReproductionOutcome("not_run", _REASON_SCOPE_REVALIDATION_BLOCKED)
+        # request identity: 再送 method は元 finding の evidence.request_method
+        # と一致しなければ送信しない（従来 GET 経路の fingerprint 契約と同義）。
+        evidence = payload.get("evidence")
+        if not isinstance(evidence, dict):
+            evidence = {}
+        param_names = _param_names_from_url(url)
+        original_fp = build_request_fingerprint(
+            str(evidence.get("request_method") or ""),
+            url,
+            param_names,
+        )
+        replay_fp = build_request_fingerprint(replay["method"], url, param_names)
+        if original_fp != replay_fp:
+            return ReproductionOutcome("not_run", _REASON_REQUEST_FINGERPRINT_MISMATCH)
+        # 認証ヘッダ/Cookie は元 evidence.request_headers を再利用
+        # （_check_cors_replay と同一契約）。長さ/転送系ヘッダは再送に
+        # 不要なため含めない。
+        headers: dict = {}
+        request_headers = evidence.get("request_headers")
+        if isinstance(request_headers, dict):
+            for key, value in request_headers.items():
+                if str(key).lower() not in {
+                    "content-length",
+                    "transfer-encoding",
+                    "host",
+                    "connection",
+                }:
+                    headers[str(key)] = str(value)
+        headers.setdefault("Content-Type", replay["content_type"])
+        try:
+            status, body = self._send_post_form(
+                replay["method"],
+                url,
+                data=replay["body_params"],
+                headers=headers,
+            )
+        except Exception:  # noqa: BLE001 — transport boundary, fail closed
+            self._replays_used += 1  # 再送試行は予算を消費
+            return ReproductionOutcome("not_run", _REASON_TRANSPORT_ERROR)
+        self._replays_used += 1  # 再送試行は予算を消費
+        if status <= 0:
+            return ReproductionOutcome("not_run", _REASON_TRANSPORT_ERROR)
+        if not body:
+            # 空応答は判定不能（mismatch にしない・fail-closed）
+            return ReproductionOutcome("not_run", _REASON_TRANSPORT_ERROR)
+        fired = _detect_marker_in_response("command_execution", body)
+        if fired is not None:
+            return ReproductionOutcome(
+                "matched", f"reproduction_marker_matched:{fired}"
+            )
+        # 応答あり・同一カテゴリの発火マーカー非検出 → mismatched（唯一の
+        # mismatch 経路）
+        return ReproductionOutcome("mismatched", _REASON_MARKER_MISMATCH)
+
+    def _send_post_form(
+        self, method: str, url: str, *, data: dict, headers: dict
+    ) -> Tuple[int, str]:
+        """Send ONE sealed form POST through the injected client (same
+        sync/async branching as ``_send_get_cors``/``_send_get_jwt``; the
+        existing body-marker send paths stay untouched). Returns
+        ``(status, body)``."""
+        request = getattr(self._network_client, "request", None)
+        if request is None:
+            raise RuntimeError("network client has no request()")
+        if inspect.iscoroutinefunction(request):
+            return _sync_http_post_form(
+                url, data=data, headers=headers, timeout_seconds=self._timeout_seconds
+            )
+        resp = request(
+            method,
+            url,
+            data=data,
             headers=headers,
             use_cache=False,
             retries=0,

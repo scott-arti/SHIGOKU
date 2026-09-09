@@ -32,6 +32,131 @@ BLOCKED_COMMANDS = frozenset([
     "mv /", "cp /dev/null", "> /dev/", ">> /dev/"
 ])
 
+# SGK-2026-0478: command_replay 記述子（封印 POST 再送）で許容する読み取り
+# 専用コマンドの許可リスト。sealed_reproduction_checker.py の
+# _READONLY_COMMANDS と同一値（validation 層は swarm エンジンを import し
+# ないため両モジュールに local 定義する）。注入・再送はこのリスト内の
+# コマンドのみ（破壊的コマンドは対象外・fail-closed）。
+READONLY_COMMAND_ALLOWLIST = frozenset({
+    "id", "whoami", "uname", "pwd", "hostname", "groups",
+})
+
+# SGK-2026-0478: in-band POST 確定 Finding の impact 文（実測出力の整理のみ・
+# 非空で payout_grade の impact 条件を満たす）。
+_INBAND_CMD_IMPACT = (
+    "注入パラメータ経由で任意 OS コマンドを実行可能。"
+    "サーバ完全掌握(RCE)の起点。"
+)
+
+# SGK-2026-0478: フォーム POST 再送の Content-Type（_build_poc_request が
+# POST body に記録する値と同一）。
+_CMD_REPLAY_CONTENT_TYPE = "application/x-www-form-urlencoded"
+
+
+def _extract_readonly_command(payload: Any) -> Optional[str]:
+    """ペイロード文字列に含まれる読み取り専用コマンド（許可リスト内）を返す。
+
+    ワード境界で照合するため "127.0.0.1;id" 等の連結注入から "id" のみを
+    取り出せる。許可リスト外（破壊的コマンド等）は None（fail-closed・
+    command_replay を付けない）。
+    """
+    text = str(payload or "")
+    for command in sorted(READONLY_COMMAND_ALLOWLIST, key=len, reverse=True):
+        if re.search(
+            rf"(?<![A-Za-z0-9]){re.escape(command)}(?![A-Za-z0-9])", text
+        ):
+            return command
+    return None
+
+
+def _build_cmd_replay_descriptor(
+    *, delivery: Dict[str, Any], payload: str
+) -> Optional[Dict[str, Any]]:
+    """SGK-2026-0478: 封印再現のための構造化再送記述子 command_replay。
+
+    - method が GET 系（GET/HEAD/OPTIONS）の in-band は従来の GET 再送で
+      再現できるため記述子を付けない（GET-based 経路は byte-identical）。
+    - body_params（実際に送信したフォーム値一式）が無い場合は付けない。
+    - readonly_command が許可リスト外なら付けない（fail-closed・封印側も
+      POST 再送しない）。
+    """
+    method = str(delivery.get("request_method") or "").strip().upper()
+    if method in {"GET", "HEAD", "OPTIONS", ""}:
+        return None
+    body_params = delivery.get("body_params")
+    if not isinstance(body_params, dict) or not body_params:
+        return None
+    readonly_command = _extract_readonly_command(payload)
+    if readonly_command is None:
+        return None
+    request_url = str(delivery.get("request_url") or "").strip()
+    if not request_url:
+        return None
+    return {
+        "method": method,
+        "url": request_url,
+        "body_params": {str(key): value for key, value in body_params.items()},
+        "readonly_command": readonly_command,
+        "content_type": _CMD_REPLAY_CONTENT_TYPE,
+    }
+
+
+def _build_inband_cmd_reproduction_steps(
+    param: str, method: str, payload: str
+) -> List[str]:
+    """SGK-2026-0478: in-band 確定 Finding の再現手順（実測の整理のみ）。"""
+    return [
+        f"対象フォームのパラメータ '{param}' を method={method} で送信する"
+        "（認証セッションを使用）。",
+        f"パラメータ値に読み取り専用コマンドを注入する: {payload}",
+        "応答本文に OS コマンド出力の指標（uid= 等）が返ることを確認する。",
+    ]
+
+
+def _inband_cmd_artifacts(
+    result: Dict[str, Any], delivery: Dict[str, Any]
+) -> Dict[str, Any]:
+    """SGK-2026-0478: in-band OS コマンド実行の Finding 付加情報を組み立てる。
+
+    応答本文にコマンド出力の指標（payout_grade._CMD_INDICATORS と同一語彙）
+    が含まれ、method が POST 系でフォーム値（body_params）が記録されている
+    場合のみ impact / reproduction_steps / command_replay を返す。指標なし
+    （ブラインド等）・GET 系・条件不成立は {}（従来どおり impact/repro を
+    付けない = GET-based 経路 byte-identical・fail-closed）。
+    """
+    from src.core.agents.swarm.injection.payout_grade import _CMD_INDICATORS
+
+    method = str(delivery.get("request_method") or "").strip().upper()
+    if method in {"GET", "HEAD", "OPTIONS", ""}:
+        return {}
+    evidence_body = str(delivery.get("response_body") or "")
+    if not any(
+        indicator in evidence_body.lower() for indicator in _CMD_INDICATORS
+    ):
+        return {}
+    cmd_evidence = result.get("command_execution_evidence")
+    if not isinstance(cmd_evidence, dict):
+        cmd_evidence = {}
+    payload = str(cmd_evidence.get("payload") or "")
+    if not payload:
+        payloads_used = result.get("payloads_used")
+        if isinstance(payloads_used, list) and payloads_used:
+            payload = str(payloads_used[-1] or "")
+    if not payload:
+        return {}
+    replay = _build_cmd_replay_descriptor(delivery=delivery, payload=payload)
+    artifacts = {
+        "impact": _INBAND_CMD_IMPACT,
+        "reproduction_steps": _build_inband_cmd_reproduction_steps(
+            param=str(result.get("param") or "unknown"),
+            method=method,
+            payload=payload,
+        ),
+    }
+    if replay is not None:
+        artifacts["command_replay"] = replay
+    return artifacts
+
 
 async def _fetch_and_parse_form(
     url: str,
@@ -314,6 +439,35 @@ CRITICAL RULES:
             vuln_type = VulnType.OS_COMMAND_INJECTION if result.get("vuln_type") == "cmd" else VulnType.SSRF
             tested_param = result.get("param")
             delivery = result.get("delivery_evidence", {}) if isinstance(result.get("delivery_evidence"), dict) else {}
+            delivery_headers = delivery.get("request_headers")
+            if not isinstance(delivery_headers, dict):
+                delivery_headers = {}
+            # SGK-2026-0478: in-band POST 確定時のみ impact / reproduction_steps
+            # と command_replay 記述子を付与（GET-based・ブラインドは {} のまま
+            # = 従来経路 byte-identical・fail-closed）。
+            inband = {}
+            if vuln_type == VulnType.OS_COMMAND_INJECTION and delivery:
+                inband = _inband_cmd_artifacts(result, delivery)
+            additional_info = {
+                "parameter": tested_param,
+                "tested_params": [tested_param] if tested_param else [],
+                "payload": result.get("payloads_used", [""])[-1] if result.get("payloads_used") else "",
+                "blind_correlation": result.get("blind_correlation", {}),
+                "execution_profile": dict(result.get("execution_profile", {}) or {}),
+                "command_execution_evidence": result.get("command_execution_evidence", {}),
+                "poc_request": str(delivery.get("poc_request", "") or ""),
+                "poc_response": str(delivery.get("poc_response", "") or ""),
+                "payload_delivery": {
+                    "status": int(delivery.get("response_status", 0) or 0),
+                    "delivered": bool(delivery.get("delivered", False)),
+                    "request_url": str(delivery.get("request_url", "") or ""),
+                    "content_type": str(delivery.get("content_type", "") or ""),
+                    "body_length": int(delivery.get("body_length", 0) or 0),
+                },
+            }
+            command_replay = inband.get("command_replay")
+            if isinstance(command_replay, dict):
+                additional_info["command_replay"] = command_replay
             finding = Finding(
                 vuln_type=vuln_type,
                 severity=Severity.CRITICAL,
@@ -323,29 +477,16 @@ CRITICAL RULES:
                 evidence=Evidence(
                     request_method=str(delivery.get("request_method", "") or ""),
                     request_url=str(delivery.get("request_url", "") or task.target),
+                    request_headers=dict(delivery_headers),
                     response_status=int(delivery.get("response_status", 0) or 0),
                     response_body=str(delivery.get("response_body", "") or result.get("evidence", ""))
                 ),
                 source_agent=self.name,
                 confidence=0.9,
                 tags=["cmd_injection", "ssrf", "smart_agent"],
-                additional_info={
-                    "parameter": tested_param,
-                    "tested_params": [tested_param] if tested_param else [],
-                    "payload": result.get("payloads_used", [""])[-1] if result.get("payloads_used") else "",
-                    "blind_correlation": result.get("blind_correlation", {}),
-                    "execution_profile": dict(result.get("execution_profile", {}) or {}),
-                    "command_execution_evidence": result.get("command_execution_evidence", {}),
-                    "poc_request": str(delivery.get("poc_request", "") or ""),
-                    "poc_response": str(delivery.get("poc_response", "") or ""),
-                    "payload_delivery": {
-                        "status": int(delivery.get("response_status", 0) or 0),
-                        "delivered": bool(delivery.get("delivered", False)),
-                        "request_url": str(delivery.get("request_url", "") or ""),
-                        "content_type": str(delivery.get("content_type", "") or ""),
-                        "body_length": int(delivery.get("body_length", 0) or 0),
-                    },
-                }
+                impact=str(inband.get("impact") or ""),
+                reproduction_steps=list(inband.get("reproduction_steps") or []),
+                additional_info=additional_info,
             )
             findings.append(finding)
 
@@ -869,9 +1010,17 @@ Start your Command Injection / SSRF testing.
 
     @staticmethod
     def _delivery_evidence_from_observation(obs: Dict[str, Any]) -> Dict[str, Any]:
+        obs_headers = obs.get("request_headers")
+        if not isinstance(obs_headers, dict):
+            obs_headers = {}
+        obs_body_params = obs.get("body_params")
+        if not isinstance(obs_body_params, dict):
+            obs_body_params = {}
         return {
             "request_method": obs.get("request_method", ""),
             "request_url": obs.get("request_url", ""),
+            "request_headers": dict(obs_headers),
+            "body_params": dict(obs_body_params),
             "response_status": obs.get("status", 0),
             "response_body": obs.get("body_snippet", ""),
             "poc_request": obs.get("poc_request", ""),
@@ -1168,8 +1317,10 @@ Decide next step for Command Injection / SSRF testing.
                     await asyncio.sleep(delay_seconds)
 
                 request_start = time.perf_counter()
+                form_params: Dict[str, Any] = {}
                 if method == "POST":
                     ordered_payload = dict(self._ordered_params_for_attempt(params, attempt.get("ordered_keys", [])))
+                    form_params = ordered_payload
                     resp = await self.smart_client.request(
                         "POST",
                         target,
@@ -1217,6 +1368,8 @@ Decide next step for Command Injection / SSRF testing.
                         "race_attempts": int(attempt.get("attempt", 1) or 1),
                         "request_method": method,
                         "request_url": request_url,
+                        "request_headers": dict(auth_headers) if isinstance(auth_headers, dict) else {},
+                        "body_params": dict(form_params),
                         "poc_request": poc_request,
                         "poc_response": poc_response,
                         "content_type": str(headers.get("Content-Type", headers.get("content-type", "")) or ""),
@@ -1263,6 +1416,8 @@ Decide next step for Command Injection / SSRF testing.
                     "race_attempts": int(attempt.get("attempt", 1) or 1),
                     "request_method": method,
                     "request_url": request_url,
+                    "request_headers": dict(auth_headers) if isinstance(auth_headers, dict) else {},
+                    "body_params": dict(form_params),
                     "poc_request": poc_request,
                     "poc_response": poc_response,
                     "content_type": str(headers.get("Content-Type", headers.get("content-type", "")) or ""),
