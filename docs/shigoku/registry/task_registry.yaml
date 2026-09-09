@@ -6032,3 +6032,34 @@ status_allowed_values:
   - docs/shigoku/worklogs/2026-09-09_sgk-2026-0477_xss-browser-execution-confirmation_work_log.md
   - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
   - docs/shigoku/plans/done/2026-09-09_sgk-2026-0476_jwt-alg-none-forgery-confirmation.md
+- provisional_id: DOC-0548
+  task_id: SGK-2026-0478
+  doc_type: plan
+  title: コマンドインジェクション（in-band）を本物確定（◎）まで到達させる
+  primary_doc: docs/shigoku/plans/done/2026-09-09_sgk-2026-0478_command-injection-inband-confirmation.md
+  status: done
+  provisional: false
+  task_summary: "検出能力マップ0465でSSRF/コマンド系は△。実DVWAで本物のin-band OSコマンドインジェクションを◎確定へ。実測: DVWA /vulnerabilities/exec/ はPOST専用でip=127.0.0.1;idがuid=33(www-data)をin-band返却(GET注入は不発・認証=session+security=lowクッキー)。確定バーはcommand_execution対応済(本文_CMD_INDICATORS uid=等で発火)。エンジンsmart_cmd_ssrfはフォーム/auth/POST対応だがFinding impact/repro未設定。再現チェッカーはGET-only再送でPOST注入を再現できない=◎に届かない壁。実装: B(smart_cmd_ssrf非凍結)=認証付きPOSTで非破壊コマンド注入(;id等)のin-band uid=証拠化+impact/repro+command_replay記述子(method/url/body_params/readonly_command)。A(sealed_reproduction_checker凍結・承認)=command_execution専用_check_command_execution_replayでcommand_replay(読み取り専用許可リストid/whoami/uname/pwd/hostname/groups)を元method(POST)+body_params再送しuid=再出現でmatched・許可外/記述子なしはGETフォールバック/not_run・GET-onlyガードはcommand_executionの非破壊POST再送のみ緩め他マーカーはbyte-identical。残り4凍結(payout_grade/poc_judge/task_queue/finding_validator)無改変。token0。実装DeepSeek/opencode(fixer→makoraはrepo opencode.json一時上書きで回避)・Claude独立検証(実DVWA E2E+in-band非出力で非確定+他マーカー非回帰)。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/done/2026-09-09_sgk-2026-0478_command-injection-inband-confirmation.md
+  - docs/shigoku/reports/2026-09-09_sgk-2026-0478_command-injection-inband-confirmation_work_report.md
+  - docs/shigoku/worklogs/2026-09-09_sgk-2026-0478_command-injection-inband-confirmation_work_log.md
+  - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+  - docs/shigoku/plans/done/2026-09-08_sgk-2026-0474_lfi-path-based-confirmation.md
+  - docs/shigoku/plans/done/2026-09-09_sgk-2026-0477_xss-browser-execution-confirmation.md
+- provisional_id: DOC-0549
+  task_id: SGK-2026-0479
+  doc_type: plan
+  title: XSS 実行証拠を合言葉往復で独立検証可能にする
+  primary_doc: docs/shigoku/plans/done/2026-09-10_sgk-2026-0479_xss-nonce-roundtrip-evidence.md
+  status: done
+  provisional: false
+  task_summary: "反射/DOM型XSSは0477で◎(機械フロア+実対象再現は本物)。だが本物のAI審査(poc_judge実LLM)を通すとDOM XSS findingは3回中2回で非承認。理由は証拠が弱いのではなく提示するresponse_body/poc_responseが実レスポンスや実行時生ログでなくスキャナ自身が書いた要約(DOM runtime execution observed/dialog=alert message=1)で自己申告に見えるという指摘(実測poc_judge reason)。実測: 発火後page.content()に注入文字列は残らない(生DOM不採用)。合言葉往復は成立(alert('SGK<nonce>')注入でブラウザdialog messageが注入nonceと完全一致=攻撃者選択の乱数が実行結果に出る=テンプレ捏造不可の実行証拠)。両ブラウザ経路とも既にdialog message捕捉済(browser_pool XSSVerificationResult.evidence dialog_message/playwright_validator _last_observation_logs)=インフラ改変不要。実装(smart_xss.py非凍結のみ): (1)検証ペイロードをrun/param単位ランダムnonce入りalert('<nonce>')に、(2)発火後observed dialog message==nonce検証しbrowser_executionにnonce/observed_dialog_message/nonce_match記録、(3)_build_browser_execution_poc_response+evidence.response_body+impact/reproに往復証拠を生提示。凍結5(payout_grade/sealed_reproduction_checker/poc_judge/task_queue/finding_validator)無改変=payout_gradeはdialog_observedで従来発火・再現は同nonce URL再ナビゲート。token0。実装DeepSeek/opencode(fixer→makoraはrepo opencode.json一時上書きで回避)・Claude独立検証(実Juice Shop DOM XSSの実poc_judge通過率改善+fail-closed+非回帰)。バーは下げず証拠の見せ方を本物の強さへ底上げ。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/done/2026-09-10_sgk-2026-0479_xss-nonce-roundtrip-evidence.md
+  - docs/shigoku/reports/2026-09-10_sgk-2026-0479_xss-nonce-roundtrip-evidence_work_report.md
+  - docs/shigoku/worklogs/2026-09-10_sgk-2026-0479_xss-nonce-roundtrip-evidence_work_log.md
+  - docs/shigoku/plans/done/2026-09-09_sgk-2026-0477_xss-browser-execution-confirmation.md
+  - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md

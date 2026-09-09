@@ -191,6 +191,9 @@ INPUT: [Input]
         # SGK-2026-0456: dialog 非観測で DOM mutation のみ観測された最良の証拠。
         # param ループの打ち切りは dialog 発火のみ（弱い証拠では打ち切らない）。
         self._best_dom_mutation_evidence: Optional[Dict[str, Any]] = None
+        # SGK-2026-0479: 実行毎の合言葉(nonce)。param ループ開始時に再生成され、
+        # 注入ペイロードの alert() 引数と往復検証（nonce_match）に使われる。
+        self._current_xss_nonce: str = ""
 
     def _compute_adaptive_turn_budget(self, quick_mode: bool, candidate_count: int, variant: str) -> int:
         base = 4 if quick_mode else 6
@@ -364,11 +367,18 @@ INPUT: [Input]
         *,
         test_url: str,
         observation_logs: List[Dict[str, str]],
+        nonce: str = "",
+        observed_message: str = "",
+        nonce_match: bool = False,
     ) -> str:
         """ブラウザ実行の実測観測ログを構造化した PoC レスポンスを構築する。
 
         捏造なし：validate_xss で実測された dialog/console イベントのみを記載する。
         judge が「実測のブラウザ実行証拠」を評価できる形（リクエスト URL + 観測ログ）。
+
+        SGK-2026-0479: nonce が渡された場合、注入合言葉とブラウザが返した dialog
+        message の往復記録（[Runtime execution proof (nonce round-trip)]）を追記する。
+        nonce が空の場合は従来どおり観測ログのみを返す（後方互換）。
         """
         lines = ["HTTP/1.1 200", "Content-Type: text/html; charset=UTF-8", ""]
         lines.append("[Browser runtime observation]")
@@ -384,6 +394,12 @@ INPUT: [Input]
                     lines.append(f"console: {entry.get('message', '')}")
         else:
             lines.append("dialog_fired: true")
+        if nonce:
+            lines.append("")
+            lines.append("[Runtime execution proof (nonce round-trip)]")
+            lines.append(f"injected_nonce: {nonce}")
+            lines.append(f"observed_dialog_message: {observed_message}")
+            lines.append(f"nonce_match: {'true' if nonce_match else 'false'}")
         return "\n".join(lines)
 
     @staticmethod
@@ -512,6 +528,18 @@ INPUT: [Input]
                     # SGK-2026-0454: 実測されたブラウザ実行ログ（dialog/console 発火）を
                     # 証拠として保持。judge が「実測のブラウザ実行」を評価できるようにする。
                     observation_logs = list(getattr(validator, "_last_observation_logs", []) or [])
+                    # SGK-2026-0479: 最初の dialog ログ message を observed とし、
+                    # 注入 nonce との往復一致（nonce_match）を browser_execution に記録する。
+                    nonce = str(getattr(self, "_current_xss_nonce", "") or "")
+                    observed_message = next(
+                        (
+                            str(entry.get("message", "") or "")
+                            for entry in observation_logs
+                            if entry.get("type") == "dialog"
+                        ),
+                        "",
+                    )
+                    nonce_match = bool(nonce and observed_message and observed_message == nonce)
                     self._browser_execution_evidence = {
                         "dialog_observed": True,
                         "executor": "playwright",
@@ -521,12 +549,18 @@ INPUT: [Input]
                         "payload": payload,
                         "test_url": test_url,
                         "observation_logs": observation_logs,
+                        "nonce": nonce,
+                        "observed_dialog_message": observed_message,
+                        "nonce_match": nonce_match,
                     }
                     # 実測のブラウザ実行ログを poc_response の根拠として記録
                     # （捏造なし・観測された dialog/console イベントの実測記録）。
                     self._last_poc_response = self._build_browser_execution_poc_response(
                         test_url=test_url,
                         observation_logs=observation_logs,
+                        nonce=nonce,
+                        observed_message=observed_message,
+                        nonce_match=nonce_match,
                     )
                     return True
             except Exception:
@@ -618,6 +652,15 @@ INPUT: [Input]
 
         return False
 
+    def _generate_xss_nonce(self) -> str:
+        """SGK-2026-0479: 実行毎の合言葉(nonce)を生成する（英数字のみ・製品非依存）。
+
+        alert('<nonce>') として注入し、ブラウザが返した dialog message との往復一致
+        （nonce_match）を「実ブラウザ実行の生証拠」として提示する。攻撃者(=この
+        スキャナ)が選んだ乱数が実行結果にそのまま返る＝テンプレ捏造では作れない。
+        """
+        return "sgk" + secrets.token_hex(6)
+
     def _record_browser_verification_result(self, result: Any, *, variant: str, event: str) -> bool:
         evidence = getattr(result, "evidence", {}) or {}
         if not isinstance(evidence, dict):
@@ -625,6 +668,11 @@ INPUT: [Input]
         if evidence.get("method") == "static_reflection":
             return False
 
+        # SGK-2026-0479: 注入 nonce とブラウザが返した dialog message の往復一致を記録。
+        # observed_dialog_message が nonce と一致した場合のみ nonce_match=True（捏造しない）。
+        nonce = str(getattr(self, "_current_xss_nonce", "") or "")
+        observed_message = evidence.get("dialog_message")
+        nonce_match = bool(nonce and observed_message and str(observed_message) == nonce)
         self._browser_execution_evidence = {
             "dialog_observed": True,
             "executor": "browser_pool",
@@ -633,7 +681,10 @@ INPUT: [Input]
             "parameter": getattr(result, "parameter", ""),
             "payload": getattr(result, "payload", ""),
             "test_url": evidence.get("test_url", getattr(result, "url", "")),
-            "dialog_message": evidence.get("dialog_message"),
+            "dialog_message": observed_message,
+            "nonce": nonce,
+            "observed_dialog_message": observed_message,
+            "nonce_match": nonce_match,
         }
         return True
 
@@ -688,6 +739,18 @@ INPUT: [Input]
         if not executed:
             return False
 
+        # SGK-2026-0479: 発火観測ログの最初の dialog message と注入 nonce の往復を記録。
+        observation_logs = list(getattr(validator, "_last_observation_logs", []) or [])
+        nonce = str(getattr(self, "_current_xss_nonce", "") or "")
+        observed_message = next(
+            (
+                str(entry.get("message", "") or "")
+                for entry in observation_logs
+                if entry.get("type") == "dialog"
+            ),
+            "",
+        )
+        nonce_match = bool(nonce and observed_message and observed_message == nonce)
         self._browser_execution_evidence = {
             "dialog_observed": True,
             "executor": "playwright",
@@ -696,6 +759,9 @@ INPUT: [Input]
             "parameter": param_name,
             "payload": payload,
             "test_url": test_url,
+            "nonce": nonce,
+            "observed_dialog_message": observed_message,
+            "nonce_match": nonce_match,
         }
         return True
 
@@ -717,6 +783,18 @@ INPUT: [Input]
         if not executed:
             return False
 
+        # SGK-2026-0479: 発火観測ログの最初の dialog message と注入 nonce の往復を記録。
+        observation_logs = list(getattr(validator, "_last_observation_logs", []) or [])
+        nonce = str(getattr(self, "_current_xss_nonce", "") or "")
+        observed_message = next(
+            (
+                str(entry.get("message", "") or "")
+                for entry in observation_logs
+                if entry.get("type") == "dialog"
+            ),
+            "",
+        )
+        nonce_match = bool(nonce and observed_message and observed_message == nonce)
         self._browser_execution_evidence = {
             "dialog_observed": True,
             "executor": "playwright",
@@ -725,6 +803,9 @@ INPUT: [Input]
             "parameter": param_name,
             "payload": payload,
             "test_url": target,
+            "nonce": nonce,
+            "observed_dialog_message": observed_message,
+            "nonce_match": nonce_match,
         }
         self._stored_xss_revisit_evidence = {
             "save_request_id": self._last_poc_request,
@@ -844,7 +925,9 @@ INPUT: [Input]
         if not reflection_url:
             return False
 
-        payload = "<img src=x onerror=alert(1)>"
+        # SGK-2026-0479: 発火 payload は param ループで生成済みの nonce を alert() に仕込む。
+        # ブラウザが返す dialog message が nonce と一致すること（往復）を実行証拠にする。
+        payload = f"<img src=x onerror=alert('{self._current_xss_nonce}')>"
         fire_params = dict(params)
         fire_params[param_name] = payload
         try:
@@ -960,10 +1043,24 @@ INPUT: [Input]
             # ため、poc_response は実測のブラウザ実行ログを保持しており、0 のままでは
             # judge が「HTTP 200 との矛盾」を反証理由にする（実測との整合）。
             browser_exec = additional_info.get("browser_execution")
+            # SGK-2026-0479: dialog 発火時は、要約文だけでなく nonce 往復の生事実を
+            # evidence.response_body の生記録として残す（自己申告に見える要約への依存を下げる）。
+            # browser_execution が無い / dialog 非観測のときは従来どおり要約のみ（fail-closed）。
+            evidence_summary = str(result.get("evidence", "") or "")
             if isinstance(browser_exec, dict) and browser_exec.get("dialog_observed"):
                 evidence_response_status = 200
+                roundtrip_record = (
+                    f"[XSS runtime execution] test_url={browser_exec.get('test_url', '')} "
+                    f"injected_nonce={browser_exec.get('nonce', '')} "
+                    f"observed_dialog_message={browser_exec.get('observed_dialog_message', '')} "
+                    f"nonce_match={browser_exec.get('nonce_match', False)}"
+                )
+                evidence_response_body = (
+                    f"{roundtrip_record}\n{evidence_summary}" if evidence_summary else roundtrip_record
+                )
             else:
                 evidence_response_status = 0
+                evidence_response_body = evidence_summary
             finding = Finding(
                 vuln_type=VulnType.XSS,
                 severity=Severity.HIGH,
@@ -976,7 +1073,7 @@ INPUT: [Input]
                     request_method="GET",
                     request_url=request_url,
                     response_status=evidence_response_status,
-                    response_body=str(result.get("evidence", ""))
+                    response_body=evidence_response_body
                 ),
                 source_agent=self.name,
                 confidence=0.9,
@@ -1233,6 +1330,10 @@ INPUT: [Input]
                 "revisit_candidates": params.get("revisit_candidates"),
             }
 
+            # SGK-2026-0479: param 毎に fresh な合言葉(nonce)を生成する。注入ペイロードの
+            # alert('<nonce>') に埋め込み、ブラウザ dialog message との往復一致を実行証拠にする。
+            self._current_xss_nonce = self._generate_xss_nonce()
+
             # State 初期化
             self.vulnerable = False
             self.evidence = ""
@@ -1284,11 +1385,13 @@ Start your XSS (Cross-Site Scripting) testing. First, send a simple marker to se
                 method == "POST" and isinstance(params.get("body"), dict)
             )
             if not skip_deterministic_precheck:
+                # SGK-2026-0479: alert(1) の代わりに実行毎の nonce を引数へ仕込む
+                # （反射検出は payload 全体が本文に反映されるかで判定するため nonce 入りでも成立）。
                 deterministic_payloads = [
-                    "\"><script>alert(1)</script>",
-                    "<img src=x onerror=alert(1)>",
-                    "<svg/onload=alert(1)>",
-                    "javascript:alert(1)",
+                    f"\"><script>alert('{self._current_xss_nonce}')</script>",
+                    f"<img src=x onerror=alert('{self._current_xss_nonce}')>",
+                    f"<svg/onload=alert('{self._current_xss_nonce}')>",
+                    f"javascript:alert('{self._current_xss_nonce}')",
                 ]
                 precheck_obs = {"status": 0, "diff": "none", "body_snippet": ""}
                 for deterministic_payload in deterministic_payloads:
@@ -1338,10 +1441,12 @@ Start your XSS (Cross-Site Scripting) testing. First, send a simple marker to se
                 # SGK-2026-0454: DOM シンク（innerHTML 等）では <script> は実行されないため、
                 # 実際に実行される event-handler 系ペイロード（img/svg）を先に試す
                 # （汎用ブラウザの挙動に基づく・製品非依存）。script は最後に残す。
+                # SGK-2026-0479: alert(1) を alert('<nonce>') に置換（dialog message が
+                # 注入 nonce と一致したことを往復証拠にする）。
                 dom_payloads = [
-                    "<img src=x onerror=alert(1)>",
-                    "<svg/onload=alert(1)>",
-                    "<script>alert(1)</script>",
+                    f"<img src=x onerror=alert('{self._current_xss_nonce}')>",
+                    f"<svg/onload=alert('{self._current_xss_nonce}')>",
+                    f"<script>alert('{self._current_xss_nonce}')</script>",
                 ]
                 for dom_payload in dom_payloads:
                     self.used_payloads.append(dom_payload)

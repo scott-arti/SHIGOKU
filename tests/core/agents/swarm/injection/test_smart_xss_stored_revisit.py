@@ -22,7 +22,19 @@ from unittest.mock import AsyncMock
 from src.core.agents.swarm.injection.smart_xss import SmartXSSHunter
 
 MARKER_RE = re.compile(r"sgk[0-9a-fA-F]{8}")
-XSS_PAYLOAD = "<img src=x onerror=alert(1)>"
+# SGK-2026-0479: 発火 payload は alert(1) ではなく、実行毎の nonce 入り
+# <img src=x onerror=alert('<nonce>')> になる（nonce = sgk + 12 hex）。
+NONCE_RE = re.compile(r"^sgk[0-9a-f]{12}$")
+NONCE_PAYLOAD_RE = re.compile(r"^<img src=x onerror=alert\('(sgk[0-9a-f]{12})'\)>$")
+# POST body（dict の文字列化）内に nonce 入り payload が含まれることの確認用（非アンカー）
+NONCE_PAYLOAD_IN_BODY_RE = re.compile(r"<img src=x onerror=alert\('(sgk[0-9a-f]{12})'\)>")
+
+
+def _extract_payload_nonce(payload) -> str:
+    """発火 payload に埋め込まれた nonce を取り出し、形式も検証する。"""
+    match = NONCE_PAYLOAD_RE.fullmatch(str(payload or ""))
+    assert match, f"payload must embed a fresh nonce: {payload!r}"
+    return match.group(1)
 
 SAVE_URL = "http://example.com/api/save"
 REVISIT_CANDIDATES = [
@@ -165,7 +177,12 @@ async def test_stored_revisit_marker_sweep_fires_browser_execution(monkeypatch):
     assert browser_execution["event"] == "stored_revisit_browser_execution"
     assert browser_execution["dialog_observed"] is True
     assert browser_execution["test_url"] == "http://example.com/list"
-    assert browser_execution["payload"] == XSS_PAYLOAD
+    # SGK-2026-0479: 発火 payload には実行毎の nonce が埋め込まれ、browser_execution の
+    # nonce と一致する（往復記録の片割れ。stub は dialog message を返さないため
+    # nonce_match は False のまま・捏造なし）。
+    payload_nonce = _extract_payload_nonce(browser_execution["payload"])
+    assert NONCE_RE.fullmatch(payload_nonce)
+    assert browser_execution["nonce"] == payload_nonce
 
     # ループは stored_revisit_browser_execution で break
     assert result["loop_result"]["reason"] == "stored_revisit_browser_execution"
@@ -184,11 +201,11 @@ async def test_stored_revisit_marker_sweep_fires_browser_execution(monkeypatch):
         "http://example.com/list",
     ]
 
-    # 実ペイロードが同じ欄へ再 POST されている
+    # 実ペイロード（nonce 入り）が同じ欄へ再 POST されている
     second_post_body = post_calls[1][2].get("json")
     if second_post_body is None:
         second_post_body = post_calls[1][2].get("data")
-    assert XSS_PAYLOAD in str(second_post_body)
+    assert NONCE_PAYLOAD_IN_BODY_RE.search(str(second_post_body)) is not None
 
 
 # ---------------------------------------------------------------------------
