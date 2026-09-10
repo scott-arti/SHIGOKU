@@ -6063,3 +6063,19 @@ status_allowed_values:
   - docs/shigoku/worklogs/2026-09-10_sgk-2026-0479_xss-nonce-roundtrip-evidence_work_log.md
   - docs/shigoku/plans/done/2026-09-09_sgk-2026-0477_xss-browser-execution-confirmation.md
   - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+- provisional_id: DOC-0550
+  task_id: SGK-2026-0480
+  doc_type: plan
+  title: ファイルアップロード（任意ファイル設置＋Web取得）を実DVWAで本物確定（◎）
+  primary_doc: docs/shigoku/plans/done/2026-09-10_sgk-2026-0480_file-upload-retrieval-confirmation.md
+  status: done
+  provisional: false
+  task_summary: "検出能力マップ0465でファイルアップロードは△。実DVWAで任意ファイルアップロード+Web取得を◎(非破壊・良性非実行ファイルのみ・PHP/.htaccess/RCEはしない)。実測(書き込み承認済): DVWA /vulnerabilities/upload/(multipart field uploaded+MAX_FILE_SIZE+Upload)に良性マーカー入りテキストをアップロード→応答が../../hackable/uploads/<name>+success→GET /hackable/uploads/<name>で一意マーカーが本文出現。エンジンFileUploadSpecialist+FileUploadTesterは既にアップロード+取得確認(_verify_retrievalがmarker in bodyでretrieved/retrieval_url設定)。壁: (1)payout_grade._MARKER_CATEGORIESにfile_upload無し=unknown_category、(2)一意マーカー未記録+impact/repro未設定、(3)再現にfile_upload経路無し。実装: A(payout_grade凍結・承認)=file_upload→uploaded_file_retrieved追加(upload_allowed+retrieved+retrieval_marker+retrieval_url真で発火・fail-closed)。A(sealed_reproduction_checker凍結・承認)=_check_file_upload_retrievalでretrieval_urlをGETのみ再読しretrieval_marker再出現でmatched(GET-onlyガード緩和不要・他マーカーbyte-identical)。B(非凍結file_upload/file_upload_tester/payload_manager)=get_probe_payloadに実行毎一意マーカー(良性非実行)+retrieval_marker記録+retrieved時impact/repro/response_body。残り凍結3(poc_judge/task_queue/finding_validator)無改変。token0。実装DeepSeek/opencode(fixer→makoraはrepo opencode.json一時上書きで回避)・Claude独立検証(実DVWAアップロード/取得E2E+fail-closed+実poc_judge+非回帰)。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/done/2026-09-10_sgk-2026-0480_file-upload-retrieval-confirmation.md
+  - docs/shigoku/reports/2026-09-10_sgk-2026-0480_file-upload-retrieval-confirmation_work_report.md
+  - docs/shigoku/worklogs/2026-09-10_sgk-2026-0480_file-upload-retrieval-confirmation_work_log.md
+  - docs/shigoku/plans/done/2026-09-09_sgk-2026-0478_command-injection-inband-confirmation.md
+  - docs/shigoku/plans/done/2026-09-10_sgk-2026-0479_xss-nonce-roundtrip-evidence.md
+  - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md

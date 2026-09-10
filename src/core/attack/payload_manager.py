@@ -4,6 +4,7 @@ PayloadManager: ファイルアップロード攻撃用のペイロードを生�
 
 import logging
 import random
+import secrets
 import string
 from dataclasses import dataclass
 from typing import List, Dict
@@ -17,6 +18,9 @@ class UploadPayload:
     content: bytes
     mime_type: str
     technique: str  # e.g., "Direct Upload", "MIME Type Bypass"
+    # SGK-2026-0480: 実行毎の一意マーカー（probe の content にそのまま含まれる）。
+    # 空文字なら後段は content から復元する（従来ペイロード互換・非回帰）。
+    marker: str = ""
 
 class PayloadManager:
     """
@@ -109,13 +113,24 @@ class PayloadManager:
         )
 
     def get_probe_payload(self) -> UploadPayload:
-        """パス特定のための無害な画像ペイロード"""
+        """パス特定のための無害な画像ペイロード（実行毎に一意マーカー入り）。
+
+        SGK-2026-0480: アップロード→Web 取得の本物証跡を独立検証できるよう、
+        content に実行毎の一意マーカー（SHIGOKU_PROBE_<16hex>）をそのまま
+        含める。良性・非実行のまま（PHP/.htaccess は使わない）。
+        """
+        marker = self._random_marker()
         return UploadPayload(
             filename=f"probe_{self._random_id()}.jpg",
-            content=b"SHIGOKU_PROBE_IMAGE_DATA",
+            content=marker.encode(),
             mime_type="image/jpeg",
-            technique="Safe Canary Upload Probe"
+            technique="Safe Canary Upload Probe",
+            marker=marker,
         )
+
+    def _random_marker(self) -> str:
+        """実行毎の一意マーカー: SHIGOKU_PROBE_ + 16 hex（secrets）。"""
+        return "SHIGOKU_PROBE_" + secrets.token_hex(8)
 
     def _random_id(self, length: int = 6) -> str:
         return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))

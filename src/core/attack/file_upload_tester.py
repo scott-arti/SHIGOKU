@@ -84,6 +84,8 @@ class UploadResult:
     retrieved: bool = False
     retrieval_url: str = ""
     retrieval_status: int = 0
+    # SGK-2026-0480: 取得本文で実際に一致した一意マーカー（retrieved=True 時のみ設定）。
+    retrieval_marker: str = ""
     delivery_telemetry: Dict[str, Any] = field(default_factory=dict)
 
 class FileUploadTester:
@@ -175,7 +177,7 @@ class FileUploadTester:
     ) -> List[SuggestedPath]:
         """アップロード応答本文から、保存先らしいファイルパスを抽出する。
 
-        DVWA 専用の固定パスではなく、実アプリでもよくある
+        特定製品固有の固定パスではなく、実アプリでもよくある
         "uploaded to ../path/file.ext" 形式の本文を利用する。
         """
         if not filename or not response_body or filename not in response_body:
@@ -270,7 +272,9 @@ class FileUploadTester:
 
         取得確認は安全な読み取りだけで、PHP 実行や .htaccess 効果確認は行わない。
         """
-        marker = payload.content.decode(errors="ignore")
+        # SGK-2026-0480: 一意マーカーは UploadPayload.marker が正（probe）。
+        # 空（従来ペイロード互換）の場合は content から復元する（非回帰）。
+        marker = payload.marker if payload.marker else payload.content.decode(errors="ignore")
         for suggested in result.suggested_paths[:8]:
             try:
                 resp = await self.client.request("GET", suggested.url, headers=auth_headers, timeout=15)
@@ -289,7 +293,33 @@ class FileUploadTester:
                 result.retrieved = True
                 result.retrieval_url = suggested.url
                 result.retrieval_status = status
+                # 実際に本文で一致したマーカーを記録する（SGK-2026-0480）。
+                result.retrieval_marker = marker
+                # マーカーを含む取得本文の抜粋（evidence.response_body 用）。
+                result.delivery_telemetry["retrieval_body_excerpt"] = self._excerpt_around(
+                    body, marker
+                )
                 return
+
+    @staticmethod
+    def _excerpt_around(body: str, marker: str, *, radius: int = 60) -> str:
+        """marker を含む本文抜粋（有界・長大本文でも切り詰める）。
+
+        marker 非出現時は先頭 2*radius 文字のみ返す（呼び出し側が marker を
+        確認済みなので実用上は使われない）。
+        """
+        text = str(body or "")
+        if not marker or marker not in text:
+            return text[: (radius * 2)]
+        idx = text.index(marker)
+        start = max(0, idx - radius)
+        end = min(len(text), idx + len(marker) + radius)
+        excerpt = text[start:end]
+        if start > 0:
+            excerpt = "..." + excerpt
+        if end < len(text):
+            excerpt = excerpt + "..."
+        return excerpt
 
     def _is_success(self, status: int, body: str, baseline: str) -> bool:
         """アップロードが成功したかどうかの判定（Ver.1: 緩め）"""

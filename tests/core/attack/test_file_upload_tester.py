@@ -56,7 +56,12 @@ async def test_file_upload_tester_extra_params(extra_params_input):
     # Check fields in FormData
     fields = {f[0]['name']: f[2] for f in sent_data._fields}
     
-    assert fields[param_name] == b"SHIGOKU_PROBE_IMAGE_DATA"
+    # SGK-2026-0480: probe content carries a per-run unique marker
+    # (SHIGOKU_PROBE_<16hex>), not the old fixed string.
+    probe_content = fields[param_name]
+    assert isinstance(probe_content, bytes)
+    assert probe_content.startswith(b"SHIGOKU_PROBE_")
+    assert len(probe_content) > len(b"SHIGOKU_PROBE_")
     assert fields["submit"] == "UploadNow"
     assert fields["token"] == "secret123"
     assert "Upload" not in fields  # Ensure hardcoded "Upload" is gone

@@ -37,7 +37,12 @@ Guard column (all existing assets reused, nothing modified):
   method + ``body_params``; the GET-only relaxation is limited to this
   non-destructive POST replay, and descriptors that are missing or carry a
   non-allowlisted command fall back to the unchanged GET body-marker path.
-  Same
+  ``uploaded_file_retrieved`` (SGK-2026-0480, file_upload) is observable by
+  re-reading the stored file — the finding's original evidence method is the
+  upload POST, so the sealed replay is ONE pure GET to the recorded
+  ``file_upload_evidence.retrieval_url`` re-observing the recorded
+  ``retrieval_marker`` (``_check_file_upload_retrieval``; GET-only relaxation
+  is NOT needed — the re-read itself is a GET). Same
   category firing -> matched; response present but no same-category firing
   -> mismatched; no response / timeout / error -> not_run (never mismatched).
 - mask: 0439 token_map restore when available; an unresolvable masked URL ->
@@ -101,6 +106,9 @@ _BODY_OBSERVABLE_MARKERS = frozenset({
     "file_content_leak",
     "command_execution",
     "ssrf_callback",
+    # SGK-2026-0480: uploaded_file_retrieved (file_upload) は retrieval_url
+    # への単一 GET 再読の応答本文で観測できる（専用 _check_file_upload_retrieval）。
+    "uploaded_file_retrieved",
 })
 # authz_diff is intentionally NOT body-observable: its proof lives in
 # additional_info.authz_differential and requires two accounts.
@@ -417,6 +425,15 @@ class SealedReproductionChecker:
         ):
             return self._check_command_execution_replay(payload, resolved_url, cmd_replay)
 
+        # 2.7) SGK-2026-0480: file_upload 専用の再現パス。アップロード POST の
+        #      再送ではなく、additional_info.file_upload_evidence.retrieval_url
+        #      への純 GET 再読（記録済み retrieval_marker の再出現確認）で
+        #      再現する。evidence.request_method は POST（アップロード）のため
+        #      従来の GET-only/fingerprint ガード（evidence.request_url 前提）
+        #      より前に分岐する。GET-only ガードの緩和は不要（再送は GET のみ）。
+        if self._expected_marker(payload, evidence) == "uploaded_file_retrieved":
+            return self._check_file_upload_retrieval(payload, _info)
+
         # 3) GET-only probe (the sealed re-send is always a GET).
         if not assert_read_only_probe("GET", resolved_url):
             return ReproductionOutcome("not_run", _REASON_READ_ONLY_PROBE_REJECTED)
@@ -722,6 +739,74 @@ class SealedReproductionChecker:
             body = body.decode("utf-8", errors="replace")
         status = int(getattr(resp, "status", 0) or 0)
         return status, str(body)
+
+    def _check_file_upload_retrieval(
+        self, payload: dict, info: dict
+    ) -> ReproductionOutcome:
+        """uploaded_file_retrieved (file_upload) の再現照合 (SGK-2026-0480)。
+
+        アップロードは POST（書き込み）であり封印再送の対象ではないため、
+        元 Finding の additional_info.file_upload_evidence.retrieval_url へ
+        **純 GET 再読**し、記録済み retrieval_marker（実行毎の一意マーカー）
+        が再送応答本文に再出現すれば matched。
+
+        - matched: retrieval_marker 再出現（reproduction_marker_matched:...）
+        - mismatched: 応答あり・非再出現（唯一の mismatch 経路）
+        - not_run: client None / retrieval_url・retrieval_marker 欠落 /
+          masked URL 復元不能 / GET-only 拒否 / scope 再検証不可 / 送信不能・
+          例外 / 空応答（fail-closed・mismatch にしない）
+        """
+        if self._network_client is None:
+            return ReproductionOutcome("not_run", _REASON_DISABLED_NO_CLIENT)
+        upload_evidence = info.get("file_upload_evidence")
+        if not isinstance(upload_evidence, dict):
+            # 再現に必要な記述子が無い → 送信しない（fail-closed）
+            return ReproductionOutcome("not_run", _REASON_UNKNOWN_CATEGORY)
+        retrieval_url = str(upload_evidence.get("retrieval_url") or "").strip()
+        retrieval_marker = str(upload_evidence.get("retrieval_marker") or "").strip()
+        if not retrieval_url or not retrieval_marker:
+            # 再現に必要な記述子が無い → 送信しない（fail-closed）
+            return ReproductionOutcome("not_run", _REASON_UNKNOWN_CATEGORY)
+        # masked URL 復元（0439 token_map restore）— 復元不能なら送信しない。
+        resolved_url = self._resolve_url(retrieval_url)
+        if resolved_url is None:
+            return ReproductionOutcome("not_run", _REASON_MASKED_URL_UNRESOLVABLE)
+        # GET-only probe（再読は常に GET）。
+        if not assert_read_only_probe("GET", resolved_url):
+            return ReproductionOutcome("not_run", _REASON_READ_ONLY_PROBE_REJECTED)
+        # read-only guard: state-changing semantics on a GET are excluded
+        # （既存 dom/cors 経路と同じガードを踏襲）。
+        readonly = evaluate_readonly_request(
+            "GET",
+            action_semantics=str(info.get("action_semantics") or ""),
+            graphql_operation="",
+            body=None,
+            url=resolved_url,
+            content_type="",
+        )
+        if not readonly.allowed:
+            return ReproductionOutcome("not_run", _REASON_STATE_CHANGING_EXCLUDED)
+        # scope revalidation against the SEALED scope snapshot.
+        scope_result = revalidate_scope_for_request(
+            resolved_url, scope_definition=self._scope_definition
+        )
+        if not scope_result.allowed:
+            return ReproductionOutcome("not_run", _REASON_SCOPE_REVALIDATION_BLOCKED)
+        try:
+            body, status, _location = self._send_get(resolved_url)
+        except Exception:  # noqa: BLE001 — transport boundary, fail closed
+            self._replays_used += 1  # 再送試行は予算を消費
+            return ReproductionOutcome("not_run", _REASON_TRANSPORT_ERROR)
+        self._replays_used += 1  # 再送試行は予算を消費
+        if status <= 0 or not body:
+            # 応答なし/異常/空 → not_run（mismatch にしない・fail-closed）
+            return ReproductionOutcome("not_run", _REASON_TRANSPORT_ERROR)
+        if retrieval_marker in body:
+            return ReproductionOutcome(
+                "matched", "reproduction_marker_matched:uploaded_file_retrieved"
+            )
+        # 応答あり・マーカー非再出現 → mismatched（唯一の mismatch 経路）
+        return ReproductionOutcome("mismatched", _REASON_MARKER_MISMATCH)
 
     def _command_replay_descriptor(self, payload: dict) -> Optional[dict]:
         """additional_info.command_replay の検証済みコピー（無効なら None）。

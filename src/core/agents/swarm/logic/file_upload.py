@@ -142,6 +142,47 @@ class FileUploadSpecialist(Specialist):
                     response_headers["Content-Type"] = content_type
                 confidence = 0.9 if res.retrieved else 0.7
 
+                file_upload_evidence: Dict[str, Any] = {
+                    "upload_allowed": True,
+                    "retrieved": bool(res.retrieved),
+                    "retrieval_url": res.retrieval_url,
+                    "retrieval_status": res.retrieval_status,
+                    "execution_observed": False,
+                    "safe_canary": bool(task.params.get("safe_only", False)),
+                    "mime_type": res.mime_type,
+                    "technique": res.technique,
+                }
+                impact = ""
+                reproduction_steps: List[str] = []
+                if res.retrieved and res.retrieval_marker:
+                    # SGK-2026-0480: 設置＋Web 取得の本物証跡（一意マーカー往復）。
+                    # retrieved でない/marker 無しは impact/repro/retrieval_marker を
+                    # 付けない（fail-closed・従来の非確定 finding のまま byte-identical）。
+                    file_upload_evidence["retrieval_marker"] = res.retrieval_marker
+                    retrieval_excerpt = ""
+                    if isinstance(res.delivery_telemetry, dict):
+                        retrieval_excerpt = str(res.delivery_telemetry.get("retrieval_body_excerpt") or "")
+                    response_body += (
+                        f"\n\nRetrieval URL: {res.retrieval_url}\n"
+                        f"Retrieval Status: {res.retrieval_status}\n"
+                        f"Retrieval Marker: {res.retrieval_marker}"
+                    )
+                    if retrieval_excerpt:
+                        response_body += f"\nRetrieval Body Excerpt: {retrieval_excerpt}"
+                    impact = (
+                        "認証境界内で任意の非実行ファイルをサーバへ設置し、"
+                        "Web から取得できる。悪性ファイル設置・保存型攻撃・"
+                        "情報設置の起点になり得る。"
+                    )
+                    reproduction_steps = [
+                        "アップロード対象エンドポイントへ、実行毎に一意なマーカー"
+                        "（SHIGOKU_PROBE_<random>）を含む良性・非実行ファイルを"
+                        "multipart/form-data で送信する。",
+                        "アップロード応答から保存先 URL を特定する。",
+                        "保存先 URL を GET し、応答本文に同一の一意マーカーが"
+                        "出現することを確認する。",
+                    ]
+
                 findings.append(Finding(
                     vuln_type=VulnType.FILE_UPLOAD,
                     severity=Severity.HIGH,
@@ -158,18 +199,11 @@ class FileUploadSpecialist(Specialist):
                     target_url=task.target,
                     source_agent=self.name,
                     confidence=confidence,
+                    impact=impact,
+                    reproduction_steps=reproduction_steps,
                     additional_info={
                         "payload": res.filename,
-                        "file_upload_evidence": {
-                            "upload_allowed": True,
-                            "retrieved": bool(res.retrieved),
-                            "retrieval_url": res.retrieval_url,
-                            "retrieval_status": res.retrieval_status,
-                            "execution_observed": False,
-                            "safe_canary": bool(task.params.get("safe_only", False)),
-                            "mime_type": res.mime_type,
-                            "technique": res.technique,
-                        },
+                        "file_upload_evidence": file_upload_evidence,
                         "payload_delivery": res.delivery_telemetry,
                     },
                 ))

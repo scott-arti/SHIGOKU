@@ -70,6 +70,16 @@ so the payout-grade marker vocabulary stays in sync with the detectors:
                         and reflected in the forged-token response).
                         Signed/already-accepted / no-differential never
                         fires (fail-closed)
+- file_upload         -> ``uploaded_file_retrieved`` (FileUploadSpecialist
+                        file_upload.py / FileUploadTester
+                        file_upload_tester.py): a benign non-executable file
+                        carrying a per-run unique marker was stored and the
+                        marker was re-observed from its retrieval URL
+                        (``additional_info.file_upload_evidence`` must be
+                        complete: upload_allowed true AND retrieved true AND
+                        retrieval_marker non-empty AND retrieval_url
+                        non-empty). Missing-any-piece never fires
+                        (fail-closed)
 
 Nothing here lowers any existing evidence threshold: the gate is purely
 additive and every missing piece fails the candidate closed.
@@ -227,6 +237,10 @@ _MARKER_CATEGORIES: Dict[str, str] = {
     # (VulnType.JWT_ALG_NONE.value == VulnType.JWT_NONE_ALG.value ==
     # "jwt_alg_none")
     "jwt_alg_none": "jwt_forgery_accepted",
+    # SGK-2026-0480: unrestricted file upload（良性・非実行ファイルの設置＋
+    # Web 取得）。発火は file_upload_evidence の完備（upload_allowed 真＋
+    # retrieved 真＋retrieval_marker 非空＋retrieval_url 非空）でのみ。
+    "file_upload": "uploaded_file_retrieved",
 }
 
 # ---------------------------------------------------------------------------
@@ -593,6 +607,25 @@ def _match_firing_marker(
         if not (bool(info.get("forged_identity_reflected")) or forged_identity in body):
             return None
         return "jwt_forgery_accepted"
+
+    if vuln_type == "file_upload":
+        # 発火は「設置＋Web 取得の本物のみ」(SGK-2026-0480): アップロードした
+        # 一意マーカー入り良性ファイルが Web から取得できた証跡
+        # file_upload_evidence が、upload_allowed 真 かつ retrieved 真 かつ
+        # retrieval_marker 非空(str) かつ retrieval_url 非空(str) のときのみ。
+        # 1 つでも欠落すれば None（fail-closed・取得不可は確定に上げない）。
+        upload_evidence = info.get("file_upload_evidence")
+        if not isinstance(upload_evidence, dict):
+            return None
+        if upload_evidence.get("upload_allowed") is not True:
+            return None
+        if upload_evidence.get("retrieved") is not True:
+            return None
+        retrieval_marker = str(upload_evidence.get("retrieval_marker") or "").strip()
+        retrieval_url = str(upload_evidence.get("retrieval_url") or "").strip()
+        if not retrieval_marker or not retrieval_url:
+            return None
+        return "uploaded_file_retrieved"
 
     return None  # unknown category
 
