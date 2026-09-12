@@ -78,6 +78,7 @@ from src.core.agents.swarm.injection.payout_grade import (
     _LFI_PATTERNS,
     _MARKER_CATEGORIES,
     _REDIRECT_STATUSES,
+    _SECRET_EXPOSURE_PATTERNS,
     _SQL_ERROR_PATTERNS,
     _SSRF_INDICATORS,
     _SSRF_METADATA_PATTERNS,
@@ -110,6 +111,10 @@ _BODY_OBSERVABLE_MARKERS = frozenset({
     # SGK-2026-0480: uploaded_file_retrieved (file_upload) は retrieval_url
     # への単一 GET 再読の応答本文で観測できる（専用 _check_file_upload_retrieval）。
     "uploaded_file_retrieved",
+    # SGK-2026-0483: secret_exposed (secret_leak) は取得元URL（evidence.request_url）
+    # への単一 GET 再読の応答本文に資格情報代入パターンが再出現すれば観測できる
+    # （汎用 GET 経路 + _detect_marker_in_response の secret_exposed 分岐）。
+    "secret_exposed",
 })
 # authz_diff is intentionally NOT body-observable: its proof lives in
 # additional_info.authz_differential and requires two accounts.
@@ -340,6 +345,14 @@ def _detect_marker_in_response(category: str, body: str) -> Optional[str]:
             return "ssrf_callback"
         if any(re.search(p, body, re.IGNORECASE) for p in _SSRF_METADATA_PATTERNS):
             return "ssrf_callback"
+        return None
+
+    if category == "secret_exposed":
+        # SGK-2026-0483: 再取得した応答本文に資格情報代入パターンが再出現すれば
+        # 同一カテゴリ発火。ライブ再取得本文はここで照合するだけで永続しない
+        # （値は残さない・照合はキー側パターン）。
+        if any(p.search(body) for p in _SECRET_EXPOSURE_PATTERNS):
+            return "secret_exposed"
         return None
 
     return None  # authz_diff / unknown: not observable in a single response

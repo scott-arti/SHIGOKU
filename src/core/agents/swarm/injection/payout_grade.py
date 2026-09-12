@@ -183,6 +183,24 @@ _SSRF_METADATA_PATTERNS: tuple = (
     r"computeMetadata",
 )
 
+# SGK-2026-0483: credential-bearing assignment patterns for enumerated
+# secret exposure (secret/manager.py SecretExposure). These match the KEY
+# side of an env/config assignment (``NAME=...`` / ``NAME: ...``) or a PEM
+# private-key header, so detection survives value redaction — the served
+# credential VALUE is never required (and must never be persisted); the
+# presence of a credential-bearing assignment in a publicly served file IS
+# the exposure. Anchored per-line (MULTILINE) to avoid matching prose.
+_SECRET_EXPOSURE_PATTERNS: tuple = (
+    re.compile(
+        r"(?im)^[ \t]*(?:export[ \t]+)?[A-Za-z0-9_.]*"
+        r"(?:PASSWORD|PASSWD|SECRET|API[_-]?KEY|ACCESS[_-]?KEY|PRIVATE[_-]?KEY|TOKEN|CREDENTIAL)"
+        r"[A-Za-z0-9_.]*[ \t]*[=:]"
+    ),
+    re.compile(
+        r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----"
+    ),
+)
+
 # Authz differential signals that prove unauthenticated success against an
 # authenticated baseline (manager.py api probes, api_probe_analysis.py).
 _AUTHZ_PROOF_SIGNALS: frozenset = frozenset(
@@ -241,6 +259,11 @@ _MARKER_CATEGORIES: Dict[str, str] = {
     # Web 取得）。発火は file_upload_evidence の完備（upload_allowed 真＋
     # retrieved 真＋retrieval_marker 非空＋retrieval_url 非空）でのみ。
     "file_upload": "uploaded_file_retrieved",
+    # SGK-2026-0483: enumerated secret exposure（公開URLで資格情報を含む
+    # ファイルが配信される）。発火は secret_exposure_evidence の完備
+    # （retrieved_url 非空＋response_status=200＋served_body に資格情報
+    # 代入パターン一致）でのみ。
+    "secret_leak": "secret_exposed",
 }
 
 # ---------------------------------------------------------------------------
@@ -620,6 +643,35 @@ def _match_firing_marker(
         if not (bool(info.get("forged_identity_reflected")) or forged_identity in body):
             return None
         return "jwt_forgery_accepted"
+
+    if vuln_type == "secret_leak":
+        # 発火は「列挙系シークレット露出の本物のみ」(SGK-2026-0483):
+        # additional_info.secret_exposure_evidence が、
+        #  (1) retrieved_url 非空（in-scope で配信された取得元URL）、
+        #  (2) response_status == 200（実際に配信された）、
+        #  (3) served_body 非空 かつ 資格情報代入パターン一致
+        #      （_SECRET_EXPOSURE_PATTERNS。値は redact 済みでもキー側で一致）
+        # のすべてを満たすときのみ。1 つでも欠ければ None（fail-closed・
+        # 資格情報を含まない公開ファイルは確定に上げない）。served_body の
+        # 秘密値は呼び出し側で redact 済み（値は不要・照合はキー側）。
+        sec = info.get("secret_exposure_evidence")
+        if isinstance(sec, dict):
+            retrieved_url = str(sec.get("retrieved_url") or "").strip()
+            status = sec.get("response_status")
+            served_body = str(sec.get("served_body") or "")
+            status_ok = (
+                isinstance(status, int)
+                and not isinstance(status, bool)
+                and status == 200
+            )
+            if (
+                retrieved_url
+                and status_ok
+                and served_body
+                and any(p.search(served_body) for p in _SECRET_EXPOSURE_PATTERNS)
+            ):
+                return "secret_exposed"
+        return None
 
     if vuln_type == "file_upload":
         # 発火は「設置＋Web 取得の本物のみ」(SGK-2026-0480): アップロードした
