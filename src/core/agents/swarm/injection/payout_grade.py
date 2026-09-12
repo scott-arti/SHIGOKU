@@ -505,6 +505,19 @@ def _match_firing_marker(
         return None
 
     if vuln_type == "ssrf":
+        # SGK-2026-0482: in-band SSRF. The server fetched an attacker-chosen
+        # URL and reflected its response body, where that URL is NOT directly
+        # reachable by the client (server-side network vantage differential).
+        # All three structured signals must be present (fail-closed); this is
+        # additive and independent of the OOB/metadata ssrf_callback paths.
+        inband = info.get("ssrf_inband_evidence")
+        if isinstance(inband, dict):
+            if (
+                str(inband.get("fetched_url") or "").strip()
+                and str(inband.get("server_reflected_body") or "").strip()
+                and inband.get("client_direct_unreachable") is True
+            ):
+                return "ssrf_inband"
         if any(marker in body_lower for marker in _SSRF_INDICATORS):
             return "ssrf_callback"
         if any(re.search(p, body, re.IGNORECASE) for p in _SSRF_METADATA_PATTERNS):

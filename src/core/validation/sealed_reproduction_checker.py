@@ -65,6 +65,7 @@ wiring catches the exception and maps it to ai_judge=None -> needs_more).
 from __future__ import annotations
 
 import inspect
+import json
 import re
 import time
 from typing import Any, Optional, Tuple
@@ -258,6 +259,25 @@ def _sync_http_post_form(
     return int(response.status_code or 0), response.text
 
 
+def _sync_http_post_json(
+    url: str, *, data: str, headers: dict, timeout_seconds: float
+) -> Tuple[int, str]:
+    """Synchronous JSON-POST fallback (in-band SSRF replay; same requests
+    fallback pattern as ``_sync_http_post_form`` — used when the injected
+    client's ``request`` is a coroutine function). Redirects are never
+    followed. ``data`` is a pre-serialized JSON string. Returns
+    ``(status, body)``."""
+    response = requests.post(
+        url,
+        data=data,
+        headers=headers,
+        timeout=int(timeout_seconds),
+        allow_redirects=False,
+        verify=False,
+    )
+    return int(response.status_code or 0), response.text
+
+
 def _extract_response(resp: Any) -> Tuple[str, int, str]:
     """Project a NetworkResponse-like object to ``(body, status, location)``.
 
@@ -433,6 +453,15 @@ class SealedReproductionChecker:
         #      より前に分岐する。GET-only ガードの緩和は不要（再送は GET のみ）。
         if self._expected_marker(payload, evidence) == "uploaded_file_retrieved":
             return self._check_file_upload_retrieval(payload, _info)
+
+        # 2.8) SGK-2026-0482: in-band SSRF 専用再現パス。トリガとなる元 POST(JSON)
+        #      を封印スコープ内の対象エンドポイントへ再送し、応答に取得本文が
+        #      in-band 反映される（reflect_key 値が再び非空）ことを再観測する。
+        #      probe_url（内部/スコープ外ホスト）へはクライアントから直接送信
+        #      しない（差分は元 finding の payout-grade 証拠として確定済み）。
+        #      トリガ先のみ接触するため GET-only ガードより前に分岐する。
+        if self._expected_marker(payload, evidence) == "ssrf_inband":
+            return self._check_inband_ssrf_replay(payload, _info)
 
         # 3) GET-only probe (the sealed re-send is always a GET).
         if not assert_read_only_probe("GET", resolved_url):
@@ -957,6 +986,106 @@ class SealedReproductionChecker:
             body = body.decode("utf-8", errors="replace")
         status = int(getattr(resp, "status", 0) or 0)
         return status, str(body)
+
+    def _check_inband_ssrf_replay(
+        self, payload: dict, info: dict
+    ) -> ReproductionOutcome:
+        """in-band SSRF の専用再現パス（SGK-2026-0482・POST(JSON) 再送）。
+
+        元 Finding の ssrf_inband_replay 記述子に従い、トリガとなる元 POST を
+        同一 body（URL 値フィールドに probe_url を含む）で再送し、応答に取得
+        本文が in-band 反映される（reflect_key 値が再び非空）なら matched。
+
+        - matched: reflect_key 値の再出現（reproduction_marker_matched:ssrf_inband）
+        - mismatched: 応答あり・反映非再出現（唯一の mismatch 経路）
+        - not_run: client None / スコープ再検証不可 / fingerprint 不一致 /
+          記述子不正 / 空応答・送信不能（fail-closed 不変）
+        """
+        replay = info.get("ssrf_inband_replay")
+        if not isinstance(replay, dict):
+            return ReproductionOutcome("not_run", _REASON_UNKNOWN_CATEGORY)
+        method = str(replay.get("method") or "").strip().upper()
+        url = str(replay.get("url") or "").strip()
+        body = replay.get("body")
+        reflect_key = str(replay.get("reflect_key") or "").strip()
+        if method in {"", "GET", "HEAD", "OPTIONS"} or not url or not isinstance(body, dict):
+            return ReproductionOutcome("not_run", _REASON_UNKNOWN_CATEGORY)
+        if self._network_client is None:
+            return ReproductionOutcome("not_run", _REASON_DISABLED_NO_CLIENT)
+        # 封印スコープはトリガ先（in-scope endpoint）で再検証する。
+        scope_result = revalidate_scope_for_request(
+            url, scope_definition=self._scope_definition
+        )
+        if not scope_result.allowed:
+            return ReproductionOutcome("not_run", _REASON_SCOPE_REVALIDATION_BLOCKED)
+        evidence = payload.get("evidence")
+        if not isinstance(evidence, dict):
+            evidence = {}
+        param_names = _param_names_from_url(url)
+        original_fp = build_request_fingerprint(
+            str(evidence.get("request_method") or ""), url, param_names
+        )
+        replay_fp = build_request_fingerprint(method, url, param_names)
+        if original_fp != replay_fp:
+            return ReproductionOutcome("not_run", _REASON_REQUEST_FINGERPRINT_MISMATCH)
+        headers: dict = {}
+        request_headers = evidence.get("request_headers")
+        if isinstance(request_headers, dict):
+            for key, value in request_headers.items():
+                if str(key).lower() not in {
+                    "content-length", "transfer-encoding", "host", "connection",
+                }:
+                    headers[str(key)] = str(value)
+        headers.setdefault("Content-Type", "application/json")
+        try:
+            status, resp_body = self._send_post_json(method, url, body=body, headers=headers)
+        except Exception:  # noqa: BLE001 — transport boundary, fail closed
+            self._replays_used += 1
+            return ReproductionOutcome("not_run", _REASON_TRANSPORT_ERROR)
+        self._replays_used += 1
+        if status <= 0 or not resp_body:
+            return ReproductionOutcome("not_run", _REASON_TRANSPORT_ERROR)
+        reflected = ""
+        if reflect_key:
+            try:
+                parsed = json.loads(resp_body)
+                value = parsed.get(reflect_key) if isinstance(parsed, dict) else None
+                if value is not None:
+                    reflected = value if isinstance(value, str) else json.dumps(value)
+            except (ValueError, TypeError):
+                reflected = ""
+        else:
+            reflected = resp_body
+        if reflected.strip():
+            return ReproductionOutcome(
+                "matched", "reproduction_marker_matched:ssrf_inband"
+            )
+        return ReproductionOutcome("mismatched", _REASON_MARKER_MISMATCH)
+
+    def _send_post_json(
+        self, method: str, url: str, *, body: dict, headers: dict
+    ) -> Tuple[int, str]:
+        """Send ONE sealed JSON POST through the injected client (same
+        sync/async branching as ``_send_post_form``). Returns ``(status, body)``."""
+        request = getattr(self._network_client, "request", None)
+        if request is None:
+            raise RuntimeError("network client has no request()")
+        payload_text = json.dumps(body)
+        if inspect.iscoroutinefunction(request):
+            return _sync_http_post_json(
+                url, data=payload_text, headers=headers,
+                timeout_seconds=self._timeout_seconds,
+            )
+        resp = request(
+            method, url, data=payload_text, headers=headers,
+            use_cache=False, retries=0, auto_waf_bypass=False,
+            allow_redirects=False, timeout=int(self._timeout_seconds), use_proxy=True,
+        )
+        resp_body = getattr(resp, "body", "") or getattr(resp, "text", "") or ""
+        if isinstance(resp_body, bytes):
+            resp_body = resp_body.decode("utf-8", errors="replace")
+        status = int(getattr(resp, "status", 0) or 0)
+        return status, str(resp_body)
 
     def _browser_validator(self) -> Any:
         """Lazily constructed browser validator (injected stub wins).

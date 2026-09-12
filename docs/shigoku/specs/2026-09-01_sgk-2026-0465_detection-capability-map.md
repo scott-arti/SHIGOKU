@@ -11,7 +11,7 @@ related_docs:
 - docs/shigoku/plans/done/2026-09-03_sgk-2026-0469_authenticated-scan-token-refresh.md
 - docs/shigoku/plans/2026-09-03_sgk-2026-0470_llm-in-loop-latency-reduction.md
 created_at: '2026-09-01'
-updated_at: '2026-09-11'
+updated_at: '2026-09-13'
 ---
 
 # SHIGOKU 検出能力マップ（脆弱性の種類 × 対応状況）
@@ -42,7 +42,7 @@ updated_at: '2026-09-11'
 | CORS 設定ミス | 任意オリジンからの読み取り | `smart_cors` | ○ 本物確定能力あり（**認証付きオリジン反映＋ACAC:true＋機微データ越境読み取り**を確定バーの新マーカー cors_credentialed_reflection で確定・制御対象でフル判定 CONFIRMED を実証・SGK-2026-0475）。**実 Juice Shop は `ACAO:*`（反映なし・認証なし）＝公開データのみのため fail-closed で正しく非確定**（偽◎を出さない。`*` を確定に上げるのは禁止 curve-fit） |
 | オープンリダイレクト | `?to=` で外部へ誘導 | `open_redirect` | ◎ 本物の対象で確定まで実証（**実 Juice Shop `/redirect?to=`** の許可リスト回避で攻撃者ホストへ 302→payout_grade=True/external_redirect→再現 matched→CONFIRMED。SGK-2026-0471）。クロール由来の正規値取得も実装（許可リスト付き対象で名前該当パラメータ空値ケースをフル判定 CONFIRMED・SGK-2026-0472）。名前非該当パラメータ（`to` 等）のクロール由来回避は実利低のため deferred（SGK-2026-0473） |
 | コマンドインジェクション | `ping` 等のOSコマンド実行 | `smart_cmd_ssrf` | ◎ 本物の対象で確定まで実証（**実 DVWA** `/vulnerabilities/exec/`(POST) に読み取り専用コマンド注入→本文 `uid=33(www-data)` in-band→payout_grade=True/command_execution→再現チェッカーが DVWA へ非破壊コマンドを再POSTし uid= 再観測→CONFIRMED。SGK-2026-0478。指標なしは fail-closed で非確定）。**実エンジン自走＋実 AI 審査(poc_judge)まで通した完全3ゲートで CONFIRMED を実証**（実 poc_judge 通過率 7/8＝有効回答は全承認・生の `uid=` 証拠を評価。まれな非承認は「教育用ターゲット」判断による外れ値でありターゲット正当性の話＝本物対象では非該当・SGK-2026-0479 の検証で確認） |
-| SSRF | サーバに外部アクセスさせる | `smart_ssrf` / `smart_cmd_ssrf` | △ 確証には外部受信(OOB)経路の整備が要る（エンジン未接続・Juice Shop 到達性未確証・crAPI が有力候補） |
+| SSRF | サーバに外部アクセスさせる | `smart_ssrf` / `smart_cmd_ssrf` | ◎ **in-band SSRF（内部到達・応答本文反映）を実対象で完全3ゲート確定**（**実 crAPI** の認証付き POST でリクエスト内の URL 値フィールドをサーバが取得し応答本文を in-band 反映→内部専用サービス MailHog(`mailhog:8025`) の UI を反映（クライアントはこの内部ホスト名を解決できず直接到達不可＝サーバ視点到達の差分）→payout_grade=True/新マーカー `ssrf_inband`→再現チェッカーがトリガ POST を封印スコープ内で再送し反映を再観測→matched→CONFIRMED、かつ**実 poc_judge 4/4 承認**（生の poc_request/poc_response＋内部サービス到達を評価）。SGK-2026-0482。OOB 基盤は不要。反映なし/クライアント直接到達可は fail-closed）。**OOB/DNS blind SSRF の外部受信基盤は未整備**（別タスク・in-band で ◎ 到達済み）。既存 `ssrf_callback`（OOB/クラウドメタデータ）は非回帰で併存 |
 | LFI / パストラバーサル | `/ftp` 配下のファイル取得 | `smart_lfi` | ◎ 本物の対象で確定まで実証（**実 Juice Shop** のパス方式ヌルバイト漏洩でクリーン403→バイパス200→file_content_leak→再現matched→CONFIRMED。パラメータ方式に加えパス方式検出＋差分成功判定を追加・SGK-2026-0474） |
 | 秘密情報の露出 | ソースマップ・機密ファイル・暗号鍵 | `secret/sourcemap` | △ ソースマップ系は対応・列挙系は偵察併用 |
 | ファイルアップロード悪用 | 不正な種類/サイズのファイル | `logic/file_upload` | ◎ **アップロード経由の保存型XSS（実害）を実対象で完全3ゲート確定**（**実 DVWA** に良性 HTML（`<img src=x onerror=alert('<nonce>')>`）をアップロード→取得URLを nonce 往復GETで確定→実ブラウザで dialog message==nonce（実行確定）→payout_grade=True/reflected_payload→再現チェッカーが取得URLを実ブラウザ再ロードし dialog 再観測→matched→CONFIRMED、かつ**実 poc_judge 4/4 承認**。証拠を「生の配信応答本文（nonce ペイロードを含む実バイト列）」で見せる底上げ（SGK-2026-0479 と同型）で通過率 1/4→4/4・バー非低下。SGK-2026-0481。dialog 非発火/nonce 不一致は fail-closed）。**設置＋取得のみ**（良性・非実行ファイルの unrestricted upload with retrieval）は機械フロア＋実対象再現で確定するが、それ単体は実害未証明のため実 poc_judge 非承認＝○（SGK-2026-0480・uploaded_file_retrieved マーカー・取得不可は fail-closed） |

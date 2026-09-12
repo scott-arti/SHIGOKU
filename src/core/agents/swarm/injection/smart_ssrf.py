@@ -4,6 +4,7 @@ Smart SSRF Hunter - 決定論的 SSRF スペシャリスト
 LLM を使用せず SSRFTester のレスポンス判定で SSRF を検出する。
 """
 import asyncio
+import json
 import logging
 from itertools import islice
 from typing import Dict, Any, List, Optional
@@ -13,6 +14,9 @@ from src.core.agents.swarm.base import Specialist, Task
 from src.core.models.finding import Finding, VulnType, Severity, Evidence
 
 logger = logging.getLogger(__name__)
+
+# in-band SSRF 応答本文の証跡を保持する最大長（生本文を審査へ渡すが上限を設ける）。
+_INBAND_BODY_CAP = 4000
 
 META_KEYS = {
     "_auth", "method", "content_type", "task_id",
@@ -43,8 +47,175 @@ class SmartSSRFHunter(Specialist):
         self.last_tested_params: list = []
 
     async def execute(self, task: Task, quick_mode: bool = False) -> List[Finding]:
-        result = await self.run_as_tool(task.target, task.params or {})
+        # SGK-2026-0482: in-band SSRF 専用経路（opt-in）。サーバに任意 URL を
+        # 取得させ、その応答本文を in-band で返す型を、製品非依存のパラメータで
+        # 検出する。従来の GET クエリ走査経路は ssrf_inband 未指定時そのまま。
+        params = task.params or {}
+        if isinstance(params.get("ssrf_inband"), dict):
+            return await self._execute_inband_ssrf(task, params["ssrf_inband"])
+        result = await self.run_as_tool(task.target, params)
         return self._convert_to_findings(result, task.target)
+
+    async def _execute_inband_ssrf(
+        self, task: Task, spec: Dict[str, Any]
+    ) -> List[Finding]:
+        """URL 値フィールドを持つ（認証付き）リクエストでサーバに任意 URL を
+        取得させ、応答本文が in-band 反映されるかを検証する。
+
+        実害の正当な証拠 = 「クライアントが直接到達できない URL を、サーバが
+        取得して本文を返す」差分（内部ネットワークへのサーバ視点到達）。
+        反映本文が空、またはクライアントが probe_url に直接到達できてしまう
+        場合は Finding を出さない（fail-closed・偽◎なし）。非破壊（サーバに
+        読み取り GET を行わせるのみ）。
+        """
+        endpoint = str(spec.get("endpoint") or task.target or "").strip()
+        method = str(spec.get("method") or "POST").strip().upper()
+        url_field = str(spec.get("url_field") or "").strip()
+        probe_url = str(spec.get("probe_url") or "").strip()
+        reflect_key = str(spec.get("reflect_key") or "").strip()
+        headers = dict(spec.get("headers") or {})
+        body_template = spec.get("body_template")
+        if not isinstance(body_template, dict):
+            body_template = {}
+        if not (endpoint and url_field and probe_url):
+            return []
+
+        client = self._inband_client()
+        if client is None:
+            return []
+
+        body = {**body_template, url_field: probe_url}
+        send_headers = {**headers, "Content-Type": "application/json"}
+        try:
+            resp = await client.request(
+                method, endpoint, headers=send_headers,
+                data=json.dumps(body), timeout=20,
+            )
+        except Exception as exc:  # noqa: BLE001 — network boundary, fail closed
+            logger.debug("[%s] in-band SSRF request failed: %s", self.name, exc)
+            return []
+        status = int(getattr(resp, "status", 0) or 0)
+        resp_text = str(getattr(resp, "text", "") or getattr(resp, "body", "") or "")
+        reflected = self._extract_reflected_body(resp_text, reflect_key)
+        if not reflected:
+            return []
+
+        # 差分: スキャナ自身が probe_url に直接到達できるか。到達できなければ
+        # 「サーバ視点でのみ到達＝in-band SSRF」の実害証拠。
+        client_direct_unreachable = await self._client_cannot_reach(client, probe_url, headers)
+        if not client_direct_unreachable:
+            return []
+
+        roundtrip_body = (
+            "[In-band SSRF server-side fetch reflected]\n"
+            f"trigger_endpoint={endpoint}\n"
+            f"fetched_url={probe_url}\n"
+            f"client_direct_unreachable=True\n"
+            f"server_response_status={status}\n"
+            "--- raw server-reflected body of fetched_url ---\n"
+            f"{reflected[:_INBAND_BODY_CAP]}"
+        )
+        finding = Finding(
+            target_url=endpoint,
+            vuln_type=VulnType.SSRF,
+            severity=Severity.HIGH,
+            title="In-band SSRF via server-side URL fetch",
+            description=(
+                "The server fetches a client-supplied URL and reflects the "
+                "response body in-band. The fetched URL is not directly "
+                "reachable by the client, proving a server-side request "
+                "forgery with internal network reach."
+            ),
+            evidence=Evidence(
+                request_method=method,
+                request_url=endpoint,
+                request_headers=dict(headers),
+                response_status=status if status > 0 else 200,
+                response_body=roundtrip_body,
+            ),
+            source_agent=self.name,
+            confidence=0.9,
+            impact=(
+                "サーバが任意の URL を取得し応答本文を返す in-band SSRF。"
+                "クライアントが直接到達できない内部サービスへサーバ経由で到達でき、"
+                "内部ネットワークの探索・機微情報取得の起点となる。"
+            ),
+            reproduction_steps=[
+                "URL 値フィールドに内部/任意 URL を入れて対象エンドポイントへ送信",
+                "応答に取得本文が in-band 反映されることを確認",
+                "同じ URL へクライアントから直接到達できないこと（差分）を確認",
+            ],
+            tags=["ssrf", "inband", "high"],
+            additional_info={
+                "ssrf_inband_evidence": {
+                    "fetched_url": probe_url,
+                    "server_reflected_body": reflected[:_INBAND_BODY_CAP],
+                    "client_direct_unreachable": True,
+                    "server_status": status,
+                    "trigger_endpoint": endpoint,
+                },
+                "ssrf_inband_replay": {
+                    "method": method,
+                    "url": endpoint,
+                    "body": body,
+                    "content_type": "application/json",
+                    "url_field": url_field,
+                    "probe_url": probe_url,
+                    "reflect_key": reflect_key,
+                },
+                # 審査が参照する生の PoC 対（注入した URL 値フィールドを含む
+                # 送信ペイロードと、サーバ側フェッチ結果の生応答）。
+                "poc_request": (
+                    f"{method} {endpoint} HTTP/1.1\r\n"
+                    "Content-Type: application/json\r\n\r\n"
+                    f"{json.dumps(body)}"
+                ),
+                "poc_response": (
+                    f"HTTP/1.1 {status if status > 0 else 200}\r\n\r\n"
+                    f"{reflected[:_INBAND_BODY_CAP]}"
+                ),
+            },
+        )
+        return [finding]
+
+    def _inband_client(self) -> Any:
+        """注入済みクライアント優先（E2E/テスト）。無ければ AsyncNetworkClient。"""
+        client = getattr(self, "_client", None)
+        if client is not None:
+            return client
+        try:
+            from src.core.infra.network_client import AsyncNetworkClient
+            self._client = AsyncNetworkClient()
+            return self._client
+        except Exception as exc:  # noqa: BLE001 — optional dependency boundary
+            logger.debug("[%s] no in-band client available: %s", self.name, exc)
+            return None
+
+    @staticmethod
+    def _extract_reflected_body(resp_text: str, reflect_key: str) -> str:
+        """reflect_key が与えられれば応答 JSON からその値を取り出す。
+        無ければ応答本文全体を反映本文とみなす（fail-closed は呼び出し側）。"""
+        if reflect_key:
+            try:
+                parsed = json.loads(resp_text)
+            except (ValueError, TypeError):
+                return ""
+            value = parsed.get(reflect_key) if isinstance(parsed, dict) else None
+            if value is None:
+                return ""
+            return value if isinstance(value, str) else json.dumps(value)
+        return resp_text
+
+    @staticmethod
+    async def _client_cannot_reach(client: Any, probe_url: str, headers: Dict[str, str]) -> bool:
+        """スキャナからの probe_url 直接取得が失敗/到達不可なら True。"""
+        try:
+            resp = await client.request("GET", probe_url, headers=dict(headers or {}), timeout=10)
+        except Exception:  # noqa: BLE001 — unreachable is the expected signal
+            return True
+        status = int(getattr(resp, "status", 0) or 0)
+        err = getattr(resp, "error", None)
+        return status <= 0 or bool(err)
 
     async def run_as_tool(self, url: str, params: Dict[str, Any] = None, **_kwargs) -> Dict[str, Any]:
         params = params or {}

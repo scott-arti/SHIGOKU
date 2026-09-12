@@ -6096,3 +6096,18 @@ status_allowed_values:
   - docs/shigoku/plans/done/2026-09-10_sgk-2026-0479_xss-nonce-roundtrip-evidence.md
   - docs/shigoku/plans/done/2026-09-09_sgk-2026-0477_xss-browser-execution-confirmation.md
   - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+- provisional_id: DOC-0552
+  task_id: SGK-2026-0482
+  doc_type: plan
+  title: in-band SSRF（内部到達・応答本文反映）を実対象で本物確定（◎）
+  primary_doc: docs/shigoku/plans/done/2026-09-13_sgk-2026-0482_inband-ssrf-confirmation.md
+  status: done
+  provisional: false
+  task_summary: "能力マップでSSRFは△(OOB基盤未整備・エンジン未接続)。偵察で実ターゲット(crAPI)の認証付きPOST(URL値フィールドをサーバが取得し応答本文をin-bandで返す)を実測確認。内部専用サービス(docker内部ホスト)へ到達しその応答を反映=直接到達不可URLの差分でSSRFを実証でき、OOB基盤は不要。本タスクはこのin-band SSRFを実対象で機械フロア+実再現+実poc_judgeの完全3ゲートで◎へ。非破壊(読み取りのみ・書込なし)。確定バー(凍結payout_grade.py)は既存ssrf_callbackがOOB/メタデータ/指標エコー向けのため、in-band差分用の新マーカー(ssrf_inband: fetched_url非空+server_reflected_body非空+client直接到達不可の差分)をユーザー承認の上で追加。エンジン(smart_ssrf/ssrf_tester)にURL値フィールドのPOST-JSON経路+in-band反映検出+内部到達差分を接続(製品非依存: フィールド名/エンドポイントはハードコードせずパラメータ化・token0)。再現チェッカーに非破壊in-band再取得+差分再観測。製品非依存fixtureのテスト+実crAPI E2E+fail-closed否定側+実poc_judge通過率。実装DeepSeek/Claude独立検証。凍結改変はユーザー明示承認が前提。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/done/2026-09-13_sgk-2026-0482_inband-ssrf-confirmation.md
+  - docs/shigoku/reports/2026-09-13_sgk-2026-0482_inband-ssrf-confirmation_work_report.md
+  - docs/shigoku/worklogs/2026-09-13_sgk-2026-0482_inband-ssrf-confirmation_work_log.md
+  - docs/shigoku/plans/done/2026-09-09_sgk-2026-0478_command-injection-inband-confirmation.md
+  - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
