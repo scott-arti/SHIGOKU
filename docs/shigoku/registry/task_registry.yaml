@@ -6079,3 +6079,20 @@ status_allowed_values:
   - docs/shigoku/plans/done/2026-09-09_sgk-2026-0478_command-injection-inband-confirmation.md
   - docs/shigoku/plans/done/2026-09-10_sgk-2026-0479_xss-nonce-roundtrip-evidence.md
   - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+- provisional_id: DOC-0551
+  task_id: SGK-2026-0481
+  doc_type: plan
+  title: アップロード経由の保存型XSS（実害）を実DVWAで本物確定（◎）
+  primary_doc: docs/shigoku/plans/done/2026-09-10_sgk-2026-0481_stored-xss-via-upload-confirmation.md
+  status: done
+  provisional: false
+  task_summary: "0480でファイルアップロードの設置+取得は機械+再現で確定(○)だが実poc_judgeは実害未証明で非承認。本タスクはアップロードしたHTML/SVGがブラウザ実行される=アップロード経由の保存型XSSという実害を実ブラウザ発火(合言葉往復)まで実証し◎へ。非破壊(alertのみ)。実測(書込承認済): DVWA /vulnerabilities/upload/ に良性HTML(<img src=x onerror=alert('<nonce>')>)→GET /hackable/uploads/<name>がtext/html 200+マーカー→実ブラウザでdialog message==nonce(実行確定)。凍結変更不要: payout_grade xss分岐はbrowser_execution.dialog_observed真でreflected_payload発火(0477)、sealed_reproduction._check_dom_via_browserはvariant dom/stored+test_urlで実ブラウザ再ロードしdialog再観測でmatched(0455/0457)、nonce往復は0479と同型。実装(非凍結): payload_manager.get_xss_probe_payload(nonce)=良性HTML+nonce alert・text/html。file_upload_tester=アップロード+取得URL確定(マーカー往復)ヘルパー。file_upload.py=xss_via_uploadモードで取得URL確定後PlaywrightValidator.validate_xssで実発火確認しobserved==nonceでvuln_type=XSS Finding発行(browser_execution variant=stored/test_url=retrieval_url/nonce/nonce_match+impact/repro)。dialog非発火/nonce不一致はFindingなし(fail-closed)。凍結5無改変。token0。実装DeepSeek/opencode(fixer→makoraはrepo opencode.json一時上書きで回避)・Claude独立検証(実DVWA保存型XSS発火E2E+fail-closed+実poc_judge通過率+非回帰)。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/done/2026-09-10_sgk-2026-0481_stored-xss-via-upload-confirmation.md
+  - docs/shigoku/reports/2026-09-10_sgk-2026-0481_stored-xss-via-upload-confirmation_work_report.md
+  - docs/shigoku/worklogs/2026-09-10_sgk-2026-0481_stored-xss-via-upload-confirmation_work_log.md
+  - docs/shigoku/plans/done/2026-09-10_sgk-2026-0480_file-upload-retrieval-confirmation.md
+  - docs/shigoku/plans/done/2026-09-10_sgk-2026-0479_xss-nonce-roundtrip-evidence.md
+  - docs/shigoku/plans/done/2026-09-09_sgk-2026-0477_xss-browser-execution-confirmation.md
+  - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md

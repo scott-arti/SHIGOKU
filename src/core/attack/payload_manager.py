@@ -128,6 +128,30 @@ class PayloadManager:
             marker=marker,
         )
 
+    def get_xss_probe_payload(self, nonce: str) -> UploadPayload:
+        """アップロード経由の保存型XSS検証用の良性 HTML ペイロード。
+
+        SGK-2026-0481: アップロードした HTML がブラウザで実行される
+        （保存型XSS via file upload）ことを実ブラウザ発火で確認するため、
+        実行毎の nonce を alert() に埋め込んだ良性 HTML を返す。
+        サーバ側実行コード（PHP 等）は含めない（非破壊・alert のみ）。
+        nonce は content にそのまま含まれ、marker にも同値を設定するため
+        取得確認は「本文に nonce が出現するか」で判定できる
+        （content 全体の一致には依存しない）。
+        """
+        content = (
+            "<html><body>"
+            f"<img src=x onerror=alert('{nonce}')>"
+            "</body></html>"
+        ).encode()
+        return UploadPayload(
+            filename=f"probe_xss_{self._random_id()}.html",
+            content=content,
+            mime_type="text/html",
+            technique="stored_xss_via_upload",
+            marker=nonce,
+        )
+
     def _random_marker(self) -> str:
         """実行毎の一意マーカー: SHIGOKU_PROBE_ + 16 hex（secrets）。"""
         return "SHIGOKU_PROBE_" + secrets.token_hex(8)

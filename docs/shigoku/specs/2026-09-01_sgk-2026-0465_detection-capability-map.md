@@ -11,7 +11,7 @@ related_docs:
 - docs/shigoku/plans/done/2026-09-03_sgk-2026-0469_authenticated-scan-token-refresh.md
 - docs/shigoku/plans/2026-09-03_sgk-2026-0470_llm-in-loop-latency-reduction.md
 created_at: '2026-09-01'
-updated_at: '2026-09-10'
+updated_at: '2026-09-11'
 ---
 
 # SHIGOKU 検出能力マップ（脆弱性の種類 × 対応状況）
@@ -45,7 +45,7 @@ updated_at: '2026-09-10'
 | SSRF | サーバに外部アクセスさせる | `smart_ssrf` / `smart_cmd_ssrf` | △ 確証には外部受信(OOB)経路の整備が要る（エンジン未接続・Juice Shop 到達性未確証・crAPI が有力候補） |
 | LFI / パストラバーサル | `/ftp` 配下のファイル取得 | `smart_lfi` | ◎ 本物の対象で確定まで実証（**実 Juice Shop** のパス方式ヌルバイト漏洩でクリーン403→バイパス200→file_content_leak→再現matched→CONFIRMED。パラメータ方式に加えパス方式検出＋差分成功判定を追加・SGK-2026-0474） |
 | 秘密情報の露出 | ソースマップ・機密ファイル・暗号鍵 | `secret/sourcemap` | △ ソースマップ系は対応・列挙系は偵察併用 |
-| ファイルアップロード悪用 | 不正な種類/サイズのファイル | `logic/file_upload` | ○ 設置＋Web取得を機械フロア＋実対象再現で確定（**実 DVWA** に良性・非実行の一意マーカーファイルをアップロード→保存先を応答echo＋マーカー往復GETで確定→payout_grade=True/uploaded_file_retrieved→再現チェッカーが取得URLをGET再読しマーカー再観測→CONFIRMED。SGK-2026-0480。取得不可は fail-closed）。**ただし本物のAI審査(poc_judge)は「良性設置＋取得だけでは実害未証明＝賞金級でない」として非承認（完全3ゲート未達）**＝◎でなく○。実害の実証（アップロード経由の保存型XSS）は SGK-2026-0481 で対応 |
+| ファイルアップロード悪用 | 不正な種類/サイズのファイル | `logic/file_upload` | ◎ **アップロード経由の保存型XSS（実害）を実対象で完全3ゲート確定**（**実 DVWA** に良性 HTML（`<img src=x onerror=alert('<nonce>')>`）をアップロード→取得URLを nonce 往復GETで確定→実ブラウザで dialog message==nonce（実行確定）→payout_grade=True/reflected_payload→再現チェッカーが取得URLを実ブラウザ再ロードし dialog 再観測→matched→CONFIRMED、かつ**実 poc_judge 4/4 承認**。証拠を「生の配信応答本文（nonce ペイロードを含む実バイト列）」で見せる底上げ（SGK-2026-0479 と同型）で通過率 1/4→4/4・バー非低下。SGK-2026-0481。dialog 非発火/nonce 不一致は fail-closed）。**設置＋取得のみ**（良性・非実行ファイルの unrestricted upload with retrieval）は機械フロア＋実対象再現で確定するが、それ単体は実害未証明のため実 poc_judge 非承認＝○（SGK-2026-0480・uploaded_file_retrieved マーカー・取得不可は fail-closed） |
 | SSTI / CRLF / GraphQL悪用 | テンプレ注入・ヘッダ注入・過剰取得 | 各 `smart_*` | △ エンジンあり・実証は今後 |
 
 ## SHIGOKU に武器がないギャップ（Juice Shop にはある）

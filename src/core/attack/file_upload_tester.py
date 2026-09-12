@@ -9,7 +9,7 @@ import ast
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 from urllib.parse import parse_qsl, urljoin
 from src.core.infra.network_client import AsyncNetworkClient
 from src.core.attack.path_predictor import PathPredictor, SuggestedPath
@@ -168,6 +168,52 @@ class FileUploadTester:
                 logger.error(f"Error during upload test ({payload.technique}): {e}")
 
         return results
+
+    async def locate_uploaded(
+        self,
+        target_url: str,
+        param_name: str = "file",
+        payload: Optional[UploadPayload] = None,
+        extra_params: Optional[Any] = None,
+        auth_headers: Optional[Dict[str, str]] = None,
+    ) -> Tuple[str, str]:
+        """与えた payload を1つアップロードし、取得URLをマーカー往復で確定する。
+
+        SGK-2026-0481: 保存型XSS検証の前段として「設置→Web 取得」を本物証跡で
+        確定する。既存 `_execute_upload` / `_extract_response_suggested_paths` /
+        `_verify_retrieval` を再利用する。取得本文で照合するマーカーは
+        `UploadPayload.marker`（XSS probe は nonce）であり、content 全体の
+        一致には依存しない（HTML がサーバ側でラップされても nonce で判定できる）。
+        取得できなければ ("", "") を返す（fail-closed・偽の取得URLを作らない）。
+        """
+        if payload is None:
+            payload = self.payload_manager.get_probe_payload()
+        extra_params = normalize_upload_extra_params(extra_params)
+
+        baseline_body = ""
+        try:
+            baseline = await self.client.request("GET", target_url, headers=auth_headers)
+            baseline_body = getattr(baseline, "text", "") or ""
+        except Exception as e:  # noqa: BLE001 — network boundary, retrieval is best-effort
+            logger.debug("Failed to fetch upload baseline: %s", e)
+
+        result = await self._execute_upload(
+            target_url, param_name, payload, extra_params, auth_headers, baseline_body
+        )
+        if not result.success:
+            return ("", "")
+
+        response_paths = self._extract_response_suggested_paths(
+            target_url,
+            payload.filename,
+            result.response_body,
+        )
+        predicted_paths = self.path_predictor.predict(target_url, payload.filename)
+        result.suggested_paths = self._merge_suggested_paths(response_paths, predicted_paths)
+        await self._verify_retrieval(result, payload, auth_headers)
+        if result.retrieved:
+            return (result.retrieval_url, result.retrieval_marker)
+        return ("", "")
 
     def _extract_response_suggested_paths(
         self,

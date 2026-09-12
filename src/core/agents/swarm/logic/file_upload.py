@@ -6,7 +6,9 @@ Core Attack Module (FileUploadTester) を利用して攻撃を実行し、
 """
 
 import logging
+import secrets
 from typing import List, Dict, Any, Optional
+from urllib.parse import urlparse
 
 from src.core.agents.swarm.base import Specialist, Task
 from src.core.models.finding import Finding, VulnType, Severity, Evidence
@@ -102,7 +104,15 @@ class FileUploadSpecialist(Specialist):
         # パラメータの抽出
         param_name = task.params.get("param_name", "file")
         extra_params = normalize_upload_extra_params(task.params.get("extra_params", {}))
-        
+
+        # SGK-2026-0481: アップロード経由の保存型XSS専用経路（opt-in）。
+        # xss_via_upload が真のときだけ分岐する。従来の file_upload 経路
+        # （0480 の uploaded_file_retrieved）は非回帰のまま。
+        if task.params.get("xss_via_upload"):
+            return await self._execute_xss_via_upload(
+                task, tester, param_name, extra_params
+            )
+
         # 実行 (Aggressive=True 必須)
         results = await tester.test_upload(
             target_url=task.target,
@@ -209,3 +219,154 @@ class FileUploadSpecialist(Specialist):
                 ))
                 
         return findings
+
+    async def _execute_xss_via_upload(
+        self,
+        task: Task,
+        tester: FileUploadTester,
+        param_name: str,
+        extra_params: Dict[str, str],
+    ) -> List[Finding]:
+        """アップロードした HTML がブラウザで実行される保存型XSSを実証する。
+
+        - 実行毎の nonce を埋め込んだ良性 HTML を1つアップロードし、取得URLを
+          マーカー（nonce）往復で確定する。
+        - 取得URLを実ブラウザで開き、dialog message == nonce を観測したときだけ
+          vuln_type=XSS の Finding を発行する。
+        - 取得不可・非発火・nonce 不一致・ブラウザ利用不可は Finding を出さない
+          （fail-closed・偽◎なし）。
+        """
+        nonce = "sgk" + secrets.token_hex(6)
+        payload = tester.payload_manager.get_xss_probe_payload(nonce)
+
+        retrieval_url, _marker = await tester.locate_uploaded(
+            target_url=task.target,
+            param_name=param_name,
+            payload=payload,
+            extra_params=extra_params,
+            auth_headers=task.params.get("headers"),
+        )
+        if not retrieval_url:
+            return []
+
+        cookies = self._cookies_from_headers(task.params.get("headers"), task.target)
+        try:
+            from src.tools.browser.playwright_validator import PlaywrightValidator
+
+            validator = PlaywrightValidator()
+            fired = await validator.validate_xss(
+                retrieval_url, timeout=8.0, cookies=cookies
+            )
+        except Exception as exc:  # noqa: BLE001 — browser tool boundary, fail closed
+            logger.debug("Stored-XSS browser validation unavailable: %s", exc)
+            return []
+        if not fired:
+            return []
+
+        observed = self._first_dialog_message(validator)
+        if observed != nonce:
+            return []
+
+        # SGK-2026-0481 追補: 取得URLの生の応答本文（実際に配信された HTML バイト列＝
+        # nonce ペイロードを含む）を証拠に併記する。SGK-2026-0479 と同型で、要約では
+        # なく独立検証可能な生証拠を審査へ渡す。取得失敗でも Finding は止めない（best-effort）。
+        served_body = ""
+        try:
+            served = await self._client.request(
+                "GET", retrieval_url, headers=task.params.get("headers")
+            )
+            served_body = getattr(served, "text", "") or ""
+        except Exception as exc:  # noqa: BLE001 — network boundary, evidence is best-effort
+            logger.debug("Failed to fetch served body for evidence: %s", exc)
+
+        roundtrip_body = (
+            "[Stored XSS via upload runtime execution]\n"
+            f"test_url={retrieval_url}\n"
+            f"injected_nonce={nonce}\n"
+            f"observed_dialog_message={observed}\n"
+            f"nonce_match=True\n"
+            f"nonce_present_in_served_body={nonce in served_body}\n"
+            "--- raw served response body (GET retrieval_url) ---\n"
+            f"{served_body[:4000]}"
+        )
+        return [Finding(
+            vuln_type=VulnType.XSS,
+            severity=Severity.HIGH,
+            title="Stored XSS via File Upload",
+            description=(
+                f"An uploaded file ('{payload.filename}') is served by the target "
+                "and executed by the browser, running attacker-supplied script in "
+                "the target's origin."
+            ),
+            evidence=Evidence(
+                request_method="GET",
+                request_url=retrieval_url,
+                response_status=200,
+                response_body=roundtrip_body,
+            ),
+            target_url=task.target,
+            source_agent=self.name,
+            confidence=0.9,
+            impact=(
+                "アップロードしたファイルがブラウザで実行される保存型XSS。"
+                "任意スクリプト実行の起点。"
+            ),
+            reproduction_steps=[
+                "HTMLをアップロード",
+                "取得URLをブラウザで開く",
+                "alert発火を確認",
+            ],
+            additional_info={
+                "browser_execution": {
+                    "dialog_observed": True,
+                    "executor": "playwright",
+                    "event": "stored_upload_browser_execution",
+                    "variant": "stored",
+                    "parameter": param_name,
+                    "payload": payload.content.decode(),
+                    "test_url": retrieval_url,
+                    "nonce": nonce,
+                    "observed_dialog_message": observed,
+                    "nonce_match": True,
+                },
+            },
+            tags=["xss", "file_upload", "stored"],
+        )]
+
+    @staticmethod
+    def _first_dialog_message(validator: Any) -> str:
+        """validate_xss 後に記録された最初の dialog ログの message を返す。"""
+        logs = getattr(validator, "_last_observation_logs", None) or []
+        for entry in logs:
+            if isinstance(entry, dict) and entry.get("type") == "dialog":
+                return str(entry.get("message") or "")
+        return ""
+
+    @staticmethod
+    def _cookies_from_headers(
+        headers: Optional[Dict[str, str]], target_url: str
+    ) -> List[Dict[str, Any]]:
+        """'Cookie' ヘッダ文字列を Playwright の cookies 形式へ変換する。"""
+        if not isinstance(headers, dict):
+            return []
+        cookie_header = ""
+        for key, value in headers.items():
+            if str(key).lower() == "cookie":
+                cookie_header = str(value or "")
+                break
+        if not cookie_header:
+            return []
+        domain = urlparse(target_url).hostname or ""
+        cookies: List[Dict[str, Any]] = []
+        for part in cookie_header.split(";"):
+            name, separator, value = part.partition("=")
+            name = name.strip()
+            if not separator or not name:
+                continue
+            cookies.append({
+                "name": name,
+                "value": value.strip(),
+                "domain": domain,
+                "path": "/",
+            })
+        return cookies
