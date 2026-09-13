@@ -201,6 +201,17 @@ _SECRET_EXPOSURE_PATTERNS: tuple = (
     ),
 )
 
+# SGK-2026-0486: XXE ファイル読み取りの署名。外部実体で /etc/passwd を解決
+# できたことの高信頼指標（アプリ応答に自然混入しにくい）。エンジンが読み取る
+# システムファイルの特徴的内容で照合する。
+_XXE_FILE_PATTERNS: tuple = (
+    re.compile(r"root:.*?:0:0:"),                       # /etc/passwd
+    re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----"),
+)
+# XXE ペイロードが外部実体を含むことの検証（発火には payload 側の外部実体
+# 宣言も必須）。
+_XXE_ENTITY_PATTERN = re.compile(r"(?is)<!ENTITY\s+\S+\s+SYSTEM\s")
+
 # Authz differential signals that prove unauthenticated success against an
 # authenticated baseline (manager.py api probes, api_probe_analysis.py).
 _AUTHZ_PROOF_SIGNALS: frozenset = frozenset(
@@ -277,6 +288,11 @@ _MARKER_CATEGORIES: Dict[str, str] = {
     # expected は算術積＋一意マーカー（例 "49<hex>"）のため自然混入・
     # テンプレ捏造不可。1 つでも欠ければ None（fail-closed）。
     "ssti": "template_evaluated",
+    # SGK-2026-0486: XXE（XML External Entity・in-band ファイル読み取り）。発火は
+    # xxe_evidence の完備（request_url 非空＋response_status>0＋payload に外部実体
+    # 宣言（<!ENTITY ... SYSTEM）＋served_body にシステムファイル署名一致）でのみ。
+    # 我々が外部実体を送った事実＋読めないはずのファイル内容の反映が実害の証拠。
+    "xxe": "xxe_file_read",
 }
 
 # ---------------------------------------------------------------------------
@@ -754,6 +770,35 @@ def _match_firing_marker(
                 and expected in served_body
             ):
                 return "template_evaluated"
+        return None
+
+    if vuln_type == "xxe":
+        # 発火は「in-band XXE ファイル読み取りの本物のみ」(SGK-2026-0486):
+        # additional_info.xxe_evidence が、
+        #  (1) request_url 非空、
+        #  (2) response_status > 0、
+        #  (3) payload に外部実体宣言（<!ENTITY ... SYSTEM）が存在、
+        #  (4) served_body にシステムファイルの署名（_XXE_FILE_PATTERNS）が一致、
+        # のすべてを満たすときのみ。1 つでも欠ければ None（fail-closed）。
+        # 我々が外部実体を送った事実＋本来読めないファイル内容の反映が実害の証拠。
+        xxe = info.get("xxe_evidence")
+        if isinstance(xxe, dict):
+            request_url = str(xxe.get("request_url") or "").strip()
+            status = xxe.get("response_status")
+            payload = str(xxe.get("payload") or "")
+            served_body = str(xxe.get("served_body") or "")
+            status_ok = (
+                isinstance(status, int)
+                and not isinstance(status, bool)
+                and status > 0
+            )
+            if (
+                request_url
+                and status_ok
+                and _XXE_ENTITY_PATTERN.search(payload)
+                and any(p.search(served_body) for p in _XXE_FILE_PATTERNS)
+            ):
+                return "xxe_file_read"
         return None
 
     if vuln_type == "file_upload":

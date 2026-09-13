@@ -6156,3 +6156,18 @@ status_allowed_values:
   - docs/shigoku/worklogs/2026-09-13_sgk-2026-0485_ssti-confirmation_work_log.md
   - docs/shigoku/plans/done/2026-09-13_sgk-2026-0484_graphql-authz-exposure-confirmation.md
   - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+- provisional_id: DOC-0556
+  task_id: SGK-2026-0486
+  doc_type: plan
+  title: XXE（XML External Entity）を新エンジン新設で本物確定（◎）
+  primary_doc: docs/shigoku/plans/done/2026-09-13_sgk-2026-0486_xxe-confirmation.md
+  status: done
+  provisional: false
+  task_summary: "能力マップの『エンジンが無いギャップ領域』のうちXXEを新設。コードベースにXXEのテスター/VulnType/specialistは一切不在(真のgreenfield)。DVGA/SKFと同じpostureでOWASP SKFラボ(blabla1337/owasp-skf-lab:xxe・Flask)を127.0.0.1:5089に起動。実測で/homeがrequest.form['xxe']をxml.dom.pulldom.parseString→<items>をexpandNode→toxml()反映するため、外部実体<!ENTITY x SYSTEM \"file:///etc/passwd\">を含むXMLで/etc/passwd内容(root:x:0:0)が応答反映=本物のin-band XXE(ファイル読み取り)を確認。本タスクはこれを実対象で機械フロア+実再現+実poc_judgeの完全3ゲートで◎へ。非破壊(ファイル読み取りのみ)。VulnType.XXE追加、新エンジンsmart_xxe(汎用外部実体ペイロード×一般的XMLラッパ要素名×汎用パラメータ名×raw/formモードで試行しpasswd署名反映で確定・製品固有ハードコードなし・_client seam・署名中心スニペット・構造化xxe_evidence/xxe_replay/生poc対)を新設。確定バー(凍結payout_grade.py)に_XXE_FILE_PATTERNS(passwd/PEM)+_XXE_ENTITY_PATTERN+新マーカーxxe_file_read(request_url非空+status>0+payloadに外部実体宣言+served_bodyにファイル署名一致)をユーザー承認の上fail-closedで追加。再現チェッカー(凍結)は_check_xxe_replayで外部実体payloadを封印内1回再送→署名再観測→matched。製品非依存fixtureのテスト18+実SKF E2E+fail-closed否定側+実poc_judge5/5。凍結改変はユーザー明示承認済。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/done/2026-09-13_sgk-2026-0486_xxe-confirmation.md
+  - docs/shigoku/reports/2026-09-13_sgk-2026-0486_xxe-confirmation_work_report.md
+  - docs/shigoku/worklogs/2026-09-13_sgk-2026-0486_xxe-confirmation_work_log.md
+  - docs/shigoku/plans/done/2026-09-13_sgk-2026-0485_ssti-confirmation.md
+  - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md

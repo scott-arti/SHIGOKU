@@ -83,6 +83,8 @@ from src.core.agents.swarm.injection.payout_grade import (
     _SSRF_INDICATORS,
     _SSRF_METADATA_PATTERNS,
     _XSS_MARKERS,
+    _XXE_ENTITY_PATTERN,
+    _XXE_FILE_PATTERNS,
     _acao_reflects_test_origin,
     _external_redirect_observed,
     assert_read_only_probe,
@@ -493,6 +495,13 @@ class SealedReproductionChecker:
         #       payload が query にあるため専用パスで扱う。
         if self._expected_marker(payload, evidence) == "template_evaluated":
             return self._check_ssti_replay(payload, _info)
+
+        # 2.11) SGK-2026-0486: XXE 専用再現パス。確定済みの外部実体ペイロード
+        #       （form パラメータ or 生 XML ボディ）を封印スコープ内へ 1 回だけ
+        #       再送し、応答本文にシステムファイルの署名が再出現することを
+        #       再観測する。XXE ファイル読み取りは非破壊（読み取りのみ）。
+        if self._expected_marker(payload, evidence) == "xxe_file_read":
+            return self._check_xxe_replay(payload, _info)
 
         # 3) GET-only probe (the sealed re-send is always a GET).
         if not assert_read_only_probe("GET", resolved_url):
@@ -1232,6 +1241,69 @@ class SealedReproductionChecker:
         if expected in resp_body:
             return ReproductionOutcome(
                 "matched", "reproduction_marker_matched:template_evaluated"
+            )
+        return ReproductionOutcome("mismatched", _REASON_MARKER_MISMATCH)
+
+    def _check_xxe_replay(self, payload: dict, info: dict) -> ReproductionOutcome:
+        """XXE の専用再現パス（SGK-2026-0486）。
+
+        元 Finding の xxe_replay 記述子に従い、確定済みの外部実体ペイロードを
+        封印スコープ内へ 1 回だけ再送（form パラメータ or 生 XML ボディ）し、
+        応答本文にシステムファイルの署名（_XXE_FILE_PATTERNS）が再出現すれば
+        matched。ファイル読み取りは非破壊（読み取りのみ）。ライブ再取得本文は
+        照合のみで非永続。
+
+        - matched: ファイル署名の再出現（reproduction_marker_matched:xxe_file_read）
+        - mismatched: 応答あり・署名非再出現（唯一の mismatch 経路）
+        - not_run: client None / スコープ再検証不可 / fingerprint 不一致 /
+          記述子不正（外部実体なし含む）/ 空応答・送信不能（fail-closed）
+        """
+        replay = info.get("xxe_replay")
+        if not isinstance(replay, dict):
+            return ReproductionOutcome("not_run", _REASON_UNKNOWN_CATEGORY)
+        method = str(replay.get("method") or "").strip().upper()
+        url = str(replay.get("url") or "").strip()
+        payload_xml = str(replay.get("payload") or "")
+        param = replay.get("param")
+        content_type = str(replay.get("content_type") or "application/xml")
+        # 外部実体を含まないペイロードは再送しない（fail-closed）。
+        if method != "POST" or not url or not _XXE_ENTITY_PATTERN.search(payload_xml):
+            return ReproductionOutcome("not_run", _REASON_UNKNOWN_CATEGORY)
+        if self._network_client is None:
+            return ReproductionOutcome("not_run", _REASON_DISABLED_NO_CLIENT)
+        resolved_url = self._resolve_url(url)
+        if resolved_url is None:
+            return ReproductionOutcome("not_run", _REASON_MASKED_URL_UNRESOLVABLE)
+        scope_result = revalidate_scope_for_request(
+            resolved_url, scope_definition=self._scope_definition
+        )
+        if not scope_result.allowed:
+            return ReproductionOutcome("not_run", _REASON_SCOPE_REVALIDATION_BLOCKED)
+        evidence = payload.get("evidence")
+        if not isinstance(evidence, dict):
+            evidence = {}
+        param_names = _param_names_from_url(resolved_url)
+        original_fp = build_request_fingerprint(
+            str(evidence.get("request_method") or ""), resolved_url, param_names
+        )
+        replay_fp = build_request_fingerprint(method, resolved_url, param_names)
+        if original_fp != replay_fp:
+            return ReproductionOutcome("not_run", _REASON_REQUEST_FINGERPRINT_MISMATCH)
+        headers = {"Content-Type": content_type}
+        data: Any = {str(param): payload_xml} if param else payload_xml
+        try:
+            status, resp_body = self._send_post_form(
+                "POST", resolved_url, data=data, headers=headers,
+            )
+        except Exception:  # noqa: BLE001 — transport boundary, fail closed
+            self._replays_used += 1
+            return ReproductionOutcome("not_run", _REASON_TRANSPORT_ERROR)
+        self._replays_used += 1
+        if status <= 0 or not resp_body:
+            return ReproductionOutcome("not_run", _REASON_TRANSPORT_ERROR)
+        if any(p.search(resp_body) for p in _XXE_FILE_PATTERNS):
+            return ReproductionOutcome(
+                "matched", "reproduction_marker_matched:xxe_file_read"
             )
         return ReproductionOutcome("mismatched", _REASON_MARKER_MISMATCH)
 
