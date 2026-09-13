@@ -68,8 +68,12 @@ class VulnType(Enum):
     MISCONFIGURATION = "misconfiguration"
     CORS_MISCONFIGURATION = "cors_misconfiguration"
     GRAPHQL_INTROSPECTION = "graphql_introspection"
+    # SGK-2026-0484: GraphQL broken authorization（認証なしのクエリが認可
+    # ゲート付きの機微データを返す）。GRAPHQL_INTROSPECTION は情報開示専用の
+    # ため、実害（機微データ取得）は別 vuln_type として確定バーに載せる。
+    GRAPHQL_AUTHZ_EXPOSURE = "graphql_authz_exposure"
 
-    
+
     # Other
     OTHER = "other"
     RCE = "rce"

@@ -264,6 +264,19 @@ _MARKER_CATEGORIES: Dict[str, str] = {
     # （retrieved_url 非空＋response_status=200＋served_body に資格情報
     # 代入パターン一致）でのみ。
     "secret_leak": "secret_exposed",
+    # SGK-2026-0484: GraphQL broken authorization（認証なしの GraphQL クエリ
+    # が認可ゲート付きの機微データ＝資格情報等を返す）。発火は
+    # graphql_exposure_evidence の完備（endpoint 非空＋response_status=200＋
+    # served_body 非空＋matched_fields 非空＋query 非空、かつ served_body に
+    # matched_fields のいずれかのキーが実在）でのみ。値は redact 済みでも
+    # キー側フィールド名で照合。
+    "graphql_authz_exposure": "graphql_sensitive_exposed",
+    # SGK-2026-0485: SSTI（サーバサイドテンプレートインジェクション）。発火は
+    # ssti_evidence の完備（request_url 非空＋response_status>0＋payload 非空＋
+    # 期待積 expected 非空、かつ served_body に expected が実在）でのみ。
+    # expected は算術積＋一意マーカー（例 "49<hex>"）のため自然混入・
+    # テンプレ捏造不可。1 つでも欠ければ None（fail-closed）。
+    "ssti": "template_evaluated",
 }
 
 # ---------------------------------------------------------------------------
@@ -671,6 +684,76 @@ def _match_firing_marker(
                 and any(p.search(served_body) for p in _SECRET_EXPOSURE_PATTERNS)
             ):
                 return "secret_exposed"
+        return None
+
+    if vuln_type == "graphql_authz_exposure":
+        # 発火は「GraphQL 認可欠陥の本物のみ」(SGK-2026-0484):
+        # additional_info.graphql_exposure_evidence が、
+        #  (1) endpoint 非空（in-scope の GraphQL エンドポイント）、
+        #  (2) response_status == 200（実際に応答が返った）、
+        #  (3) served_body 非空（値 redact 済みの実応答 JSON）、
+        #  (4) matched_fields 非空（応答に実在した機微スカラーフィールド名）、
+        #  (5) query 非空（認証なしで実行した実クエリ）、
+        # かつ served_body に matched_fields のいずれかのキーが実在する
+        # ときのみ。1 つでも欠ければ None（fail-closed・認証なしで機微データが
+        # 返る本物のみ確定に上げる）。served_body の機微値は呼び出し側で
+        # redact 済み（値は不要・照合はキー側フィールド名）。
+        gql = info.get("graphql_exposure_evidence")
+        if isinstance(gql, dict):
+            endpoint = str(gql.get("endpoint") or "").strip()
+            status = gql.get("response_status")
+            served_body = str(gql.get("served_body") or "")
+            query = str(gql.get("query") or "").strip()
+            matched_fields = gql.get("matched_fields")
+            status_ok = (
+                isinstance(status, int)
+                and not isinstance(status, bool)
+                and status == 200
+            )
+            if (
+                endpoint
+                and status_ok
+                and served_body
+                and query
+                and isinstance(matched_fields, (list, tuple))
+                and matched_fields
+                and any(
+                    str(f) and str(f) in served_body for f in matched_fields
+                )
+            ):
+                return "graphql_sensitive_exposed"
+        return None
+
+    if vuln_type == "ssti":
+        # 発火は「テンプレート評価の本物のみ」(SGK-2026-0485):
+        # additional_info.ssti_evidence が、
+        #  (1) request_url 非空、
+        #  (2) response_status > 0（実際に応答が返った）、
+        #  (3) payload 非空（送出した算術テンプレートペイロード）、
+        #  (4) expected 非空（算術積＋一意マーカー。例 "49<hex>"）、
+        # かつ served_body に expected が実在するときのみ。1 つでも欠ければ
+        # None（fail-closed）。expected はマーカー付きで自然混入・捏造不可
+        # のため、算術積の再出現が評価の決定的証拠になる。
+        sst = info.get("ssti_evidence")
+        if isinstance(sst, dict):
+            request_url = str(sst.get("request_url") or "").strip()
+            status = sst.get("response_status")
+            payload = str(sst.get("payload") or "").strip()
+            expected = str(sst.get("expected") or "").strip()
+            served_body = str(sst.get("served_body") or "")
+            status_ok = (
+                isinstance(status, int)
+                and not isinstance(status, bool)
+                and status > 0
+            )
+            if (
+                request_url
+                and status_ok
+                and payload
+                and expected
+                and expected in served_body
+            ):
+                return "template_evaluated"
         return None
 
     if vuln_type == "file_upload":

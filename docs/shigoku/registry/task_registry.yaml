@@ -6126,3 +6126,33 @@ status_allowed_values:
   - docs/shigoku/worklogs/2026-09-13_sgk-2026-0483_enumerated-secret-exposure-confirmation_work_log.md
   - docs/shigoku/plans/done/2026-09-13_sgk-2026-0482_inband-ssrf-confirmation.md
   - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+- provisional_id: DOC-0554
+  task_id: SGK-2026-0484
+  doc_type: plan
+  title: GraphQL 認可欠陥（認証なしで機微データ取得）を実対象で本物確定（◎）
+  primary_doc: docs/shigoku/plans/done/2026-09-13_sgk-2026-0484_graphql-authz-exposure-confirmation.md
+  status: done
+  provisional: false
+  task_summary: "能力マップでSSTI/CRLF/GraphQLは△(実ラボにシンク無し)。実は現行3ラボにGraphQLの実シンクが無いため、DVWA/JuiceShop/crAPIと同じpostureで本物の脆弱GraphQLラボ(DVGA)を制御対象として1つ立て、実測偵察で認証なしのGraphQLクエリがDB資格情報(users{username password})や非公開データ(pastes(public:false))を200で返すことを確認。本タスクはこのGraphQL認可欠陥(認証なしで機微データ取得)を実対象で機械フロア+実再現+実poc_judgeの完全3ゲートで◎へ。非破壊(読み取りクエリのみ・mutation非実行)。秘密値は一切永続/露出しない(値redact・照合はキー側フィールド名)。既存エンジンSmartGraphQLHunterはイントロスペクション情報開示のみ検出で実害クエリ未実行のため、スキーマから機微スカラーフィールドを持つroot Queryフィールドを汎用に特定し認証なしで実クエリ→実データ取得を実証する経路を追加(製品非依存: フィールド名/エンドポイントはハードコードせずスキーマ駆動・token0)。確定バー(凍結payout_grade.py)はbroken_access_control→authz_diffが2アカウント差分専用で認証なし露出型に合わないため、新vuln_type graphql_authz_exposure+新マーカーgraphql_sensitive_exposed(endpoint非空+status200+served_body非空+matched_fields非空+query非空)をユーザー承認の上でfail-closedで追加。再現チェッカー(凍結)はssrf_inband(JSON POST再送→応答再観測)同型の専用パスでクエリ再送→機微フィールド再観測→matched。製品非依存fixtureのテスト+実DVGA E2E+fail-closed否定側+実poc_judge。凍結改変はユーザー明示承認済(進めて)。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/done/2026-09-13_sgk-2026-0484_graphql-authz-exposure-confirmation.md
+  - docs/shigoku/reports/2026-09-13_sgk-2026-0484_graphql-authz-exposure-confirmation_work_report.md
+  - docs/shigoku/worklogs/2026-09-13_sgk-2026-0484_graphql-authz-exposure-confirmation_work_log.md
+  - docs/shigoku/plans/done/2026-09-13_sgk-2026-0483_enumerated-secret-exposure-confirmation.md
+  - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+- provisional_id: DOC-0555
+  task_id: SGK-2026-0485
+  doc_type: plan
+  title: SSTI（サーバサイドテンプレートインジェクション）を実対象で本物確定（◎）
+  primary_doc: docs/shigoku/plans/done/2026-09-13_sgk-2026-0485_ssti-confirmation.md
+  status: done
+  provisional: false
+  task_summary: "能力マップの残る△「SSTI/CRLF」のうちSSTIを◎化。GETのみの実測で現行4ラボ(DVWA/JuiceShop/crAPI/DVGA)にSSTI/CRLF実シンク無しを確認し、DVGAと同じpostureで本物の脆弱アプリOWASP SKFラボ(blabla1337/owasp-skf-lab:ssti・Flask/Jinja2)を制御対象として127.0.0.1:5085に起動。実測で404ハンドラがrender_template_stringにrequest.urlを埋め込むため任意クエリparam(?q={{7*7}})がJinja2評価され49になる本物SSTIを確認。本タスクはこのSSTIを実対象で機械フロア+実再現+実poc_judgeの完全3ゲートで◎へ。非破壊(読み取りクエリのみ・テンプレ評価は状態変更なし)。既存SmartSSTIHunter(SSTIScanner算術確認ペア方式)は自走検出するがevidence.response_status=0・生証拠不足でpayout_grade非到達のため、確定済みpayloadを_client注入seamで1回再送し算術積expected(49+一意マーカーで自然混入・捏造不可)を含む生本文+実statusを捕捉(_capture_ssti・GETはparamsで1回エンコード=二重エンコード回避)、expected中心スニペット(_evidence_snippet・後方反映も保持)で確定グレードEvidence+ssti_evidence+ssti_replay+生poc対を付与。確定バー(凍結payout_grade.py)は_MARKER_CATEGORIES無しのため新マーカーtemplate_evaluated(request_url非空+status>0+payload非空+expected非空+served_bodyにexpected実在)をユーザー承認の上fail-closedで追加。再現チェッカー(凍結)は_check_ssti_replayでpayloadを封印内1回再送→expected再観測→matched。製品非依存fixtureのテスト21+実SKF E2E+fail-closed否定側+実poc_judge5/5。凍結改変はユーザー明示承認済。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/done/2026-09-13_sgk-2026-0485_ssti-confirmation.md
+  - docs/shigoku/reports/2026-09-13_sgk-2026-0485_ssti-confirmation_work_report.md
+  - docs/shigoku/worklogs/2026-09-13_sgk-2026-0485_ssti-confirmation_work_log.md
+  - docs/shigoku/plans/done/2026-09-13_sgk-2026-0484_graphql-authz-exposure-confirmation.md
+  - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md

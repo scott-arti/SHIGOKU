@@ -476,6 +476,24 @@ class SealedReproductionChecker:
         if self._expected_marker(payload, evidence) == "ssrf_inband":
             return self._check_inband_ssrf_replay(payload, _info)
 
+        # 2.9) SGK-2026-0484: GraphQL 認可欠陥 専用再現パス。トリガとなる
+        #      GraphQL クエリ(JSON POST)を封印スコープ内の endpoint へ 1 回
+        #      再送し、応答 JSON に期待する機微フィールドキーが再出現する
+        #      ことを再観測する。GraphQL は JSON POST（body に query を持つ）
+        #      のため GET 再送では再現できず、GET-only ガードより前に分岐する。
+        #      記述子なし/graphql_sensitive_exposed 以外は従来経路へ非回帰
+        #      フォールバック。
+        if self._expected_marker(payload, evidence) == "graphql_sensitive_exposed":
+            return self._check_graphql_exposure_replay(payload, _info)
+
+        # 2.10) SGK-2026-0485: SSTI 専用再現パス。確定済み算術テンプレート
+        #       ペイロードを封印スコープ内へ 1 回だけ再送し、応答本文に期待積
+        #       expected（"49<marker>" 等・一意マーカー付きで捏造不可）が再出現
+        #       することを再観測する。GET はテンプレート評価＝読み取りのみ。
+        #       payload が query にあるため専用パスで扱う。
+        if self._expected_marker(payload, evidence) == "template_evaluated":
+            return self._check_ssti_replay(payload, _info)
+
         # 3) GET-only probe (the sealed re-send is always a GET).
         if not assert_read_only_probe("GET", resolved_url):
             return ReproductionOutcome("not_run", _REASON_READ_ONLY_PROBE_REJECTED)
@@ -1074,6 +1092,177 @@ class SealedReproductionChecker:
                 "matched", "reproduction_marker_matched:ssrf_inband"
             )
         return ReproductionOutcome("mismatched", _REASON_MARKER_MISMATCH)
+
+    def _check_graphql_exposure_replay(
+        self, payload: dict, info: dict
+    ) -> ReproductionOutcome:
+        """GraphQL 認可欠陥の専用再現パス（SGK-2026-0484・POST(JSON) 再送）。
+
+        元 Finding の graphql_bola_replay 記述子に従い、トリガとなる GraphQL
+        クエリ(JSON POST・body に query を持つ)を封印スコープ内の endpoint へ
+        1 回再送し、応答 JSON に期待する機微フィールドキー(reflect_fields)が
+        再出現すれば matched。ライブ再取得本文は照合のみで非永続。
+
+        - matched: reflect_fields のいずれかのキーが応答に再出現
+          （reproduction_marker_matched:graphql_sensitive_exposed）
+        - mismatched: 応答あり・機微フィールド非再出現（唯一の mismatch 経路）
+        - not_run: client None / スコープ再検証不可 / fingerprint 不一致 /
+          記述子不正 / 空応答・送信不能（fail-closed 不変）
+        """
+        replay = info.get("graphql_bola_replay")
+        if not isinstance(replay, dict):
+            return ReproductionOutcome("not_run", _REASON_UNKNOWN_CATEGORY)
+        method = str(replay.get("method") or "").strip().upper()
+        url = str(replay.get("url") or "").strip()
+        body = replay.get("body")
+        reflect_fields = replay.get("reflect_fields")
+        if (
+            method in {"", "GET", "HEAD", "OPTIONS"}
+            or not url
+            or not isinstance(body, dict)
+            or not isinstance(reflect_fields, (list, tuple))
+            or not reflect_fields
+        ):
+            return ReproductionOutcome("not_run", _REASON_UNKNOWN_CATEGORY)
+        if self._network_client is None:
+            return ReproductionOutcome("not_run", _REASON_DISABLED_NO_CLIENT)
+        # 封印スコープはトリガ先（in-scope endpoint）で再検証する。
+        scope_result = revalidate_scope_for_request(
+            url, scope_definition=self._scope_definition
+        )
+        if not scope_result.allowed:
+            return ReproductionOutcome("not_run", _REASON_SCOPE_REVALIDATION_BLOCKED)
+        evidence = payload.get("evidence")
+        if not isinstance(evidence, dict):
+            evidence = {}
+        param_names = _param_names_from_url(url)
+        original_fp = build_request_fingerprint(
+            str(evidence.get("request_method") or ""), url, param_names
+        )
+        replay_fp = build_request_fingerprint(method, url, param_names)
+        if original_fp != replay_fp:
+            return ReproductionOutcome("not_run", _REASON_REQUEST_FINGERPRINT_MISMATCH)
+        headers: dict = {}
+        request_headers = evidence.get("request_headers")
+        if isinstance(request_headers, dict):
+            for key, value in request_headers.items():
+                if str(key).lower() not in {
+                    "content-length", "transfer-encoding", "host", "connection",
+                }:
+                    headers[str(key)] = str(value)
+        headers.setdefault("Content-Type", "application/json")
+        try:
+            status, resp_body = self._send_post_json(method, url, body=body, headers=headers)
+        except Exception:  # noqa: BLE001 — transport boundary, fail closed
+            self._replays_used += 1
+            return ReproductionOutcome("not_run", _REASON_TRANSPORT_ERROR)
+        self._replays_used += 1
+        if status <= 0 or not resp_body:
+            return ReproductionOutcome("not_run", _REASON_TRANSPORT_ERROR)
+        # 応答 JSON に機微フィールドキーが再出現するかを照合する。まず JSON
+        # として解析しキーの実在を確認（構造ベース）。解析不能時は生本文への
+        # 文字列包含にフォールバック（fail-closed 側は変えない）。
+        observed = self._graphql_fields_present(resp_body, reflect_fields)
+        if observed:
+            return ReproductionOutcome(
+                "matched", "reproduction_marker_matched:graphql_sensitive_exposed"
+            )
+        return ReproductionOutcome("mismatched", _REASON_MARKER_MISMATCH)
+
+    def _check_ssti_replay(self, payload: dict, info: dict) -> ReproductionOutcome:
+        """SSTI の専用再現パス（SGK-2026-0485）。
+
+        元 Finding の ssti_replay 記述子に従い、確定済み算術テンプレート
+        ペイロードを封印スコープ内へ 1 回だけ再送し、応答本文に期待積
+        expected（"49<marker>" 等）が再出現すれば matched。GET はテンプレート
+        評価＝読み取りのみ（状態変更なし）。POST は非破壊フォーム再送に限る。
+
+        - matched: expected の再出現（reproduction_marker_matched:template_evaluated）
+        - mismatched: 応答あり・expected 非再出現（唯一の mismatch 経路）
+        - not_run: client None / スコープ再検証不可 / fingerprint 不一致 /
+          記述子不正 / 空応答・送信不能（fail-closed 不変）
+        """
+        replay = info.get("ssti_replay")
+        if not isinstance(replay, dict):
+            return ReproductionOutcome("not_run", _REASON_UNKNOWN_CATEGORY)
+        method = str(replay.get("method") or "").strip().upper()
+        url = str(replay.get("url") or "").strip()
+        expected = str(replay.get("expected") or "").strip()
+        replay_param = str(replay.get("param") or "").strip()
+        replay_payload = str(replay.get("payload") or "")
+        if not url or not expected or method not in {"GET", "POST"}:
+            return ReproductionOutcome("not_run", _REASON_UNKNOWN_CATEGORY)
+        if method == "POST" and not replay_param:
+            return ReproductionOutcome("not_run", _REASON_UNKNOWN_CATEGORY)
+        if self._network_client is None:
+            return ReproductionOutcome("not_run", _REASON_DISABLED_NO_CLIENT)
+        resolved_url = self._resolve_url(url)
+        if resolved_url is None:
+            return ReproductionOutcome("not_run", _REASON_MASKED_URL_UNRESOLVABLE)
+        scope_result = revalidate_scope_for_request(
+            resolved_url, scope_definition=self._scope_definition
+        )
+        if not scope_result.allowed:
+            return ReproductionOutcome("not_run", _REASON_SCOPE_REVALIDATION_BLOCKED)
+        evidence = payload.get("evidence")
+        if not isinstance(evidence, dict):
+            evidence = {}
+        param_names = _param_names_from_url(resolved_url)
+        original_fp = build_request_fingerprint(
+            str(evidence.get("request_method") or ""), resolved_url, param_names
+        )
+        replay_fp = build_request_fingerprint(method, resolved_url, param_names)
+        if original_fp != replay_fp:
+            return ReproductionOutcome("not_run", _REASON_REQUEST_FINGERPRINT_MISMATCH)
+        try:
+            if method == "GET":
+                resp_body, status, _loc = self._send_get(resolved_url)
+            else:
+                headers = {"Content-Type": "application/x-www-form-urlencoded"}
+                status, resp_body = self._send_post_form(
+                    "POST", resolved_url,
+                    data={replay_param: replay_payload}, headers=headers,
+                )
+        except Exception:  # noqa: BLE001 — transport boundary, fail closed
+            self._replays_used += 1
+            return ReproductionOutcome("not_run", _REASON_TRANSPORT_ERROR)
+        self._replays_used += 1
+        if status <= 0 or not resp_body:
+            return ReproductionOutcome("not_run", _REASON_TRANSPORT_ERROR)
+        if expected in resp_body:
+            return ReproductionOutcome(
+                "matched", "reproduction_marker_matched:template_evaluated"
+            )
+        return ReproductionOutcome("mismatched", _REASON_MARKER_MISMATCH)
+
+    @staticmethod
+    def _graphql_fields_present(resp_body: str, reflect_fields: Any) -> bool:
+        """True iff any reflect_field key appears in the GraphQL JSON response
+        (structural key check; falls back to substring on parse failure)."""
+        fields = [str(f) for f in reflect_fields if str(f)]
+        if not fields:
+            return False
+
+        def _walk(node: Any) -> bool:
+            if isinstance(node, dict):
+                for key, value in node.items():
+                    if key in fields:
+                        return True
+                    if _walk(value):
+                        return True
+            elif isinstance(node, list):
+                for item in node:
+                    if _walk(item):
+                        return True
+            return False
+
+        try:
+            parsed = json.loads(resp_body)
+            if _walk(parsed):
+                return True
+        except (ValueError, TypeError):
+            pass
+        return any(f in resp_body for f in fields)
 
     def _send_post_json(
         self, method: str, url: str, *, body: dict, headers: dict
