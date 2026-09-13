@@ -85,6 +85,8 @@ from src.core.agents.swarm.injection.payout_grade import (
     _XSS_MARKERS,
     _XXE_ENTITY_PATTERN,
     _XXE_FILE_PATTERNS,
+    _NOSQL_OPERATOR_PATTERN,
+    _nosql_body_has_data,
     _acao_reflects_test_origin,
     _external_redirect_observed,
     assert_read_only_probe,
@@ -502,6 +504,13 @@ class SealedReproductionChecker:
         #       再観測する。XXE ファイル読み取りは非破壊（読み取りのみ）。
         if self._expected_marker(payload, evidence) == "xxe_file_read":
             return self._check_xxe_replay(payload, _info)
+
+        # 2.12) SGK-2026-0487: NoSQL 演算子注入 専用再現パス。確定済みの演算子
+        #       ペイロード（JSON body）を封印スコープ内へ 1 回だけ再送し、演算子が
+        #       再び成功（2xx＋データ）することを再観測する。演算子成功×リテラル
+        #       失敗の差分は元 finding で確定済み。JSON POST のため専用パスで扱う。
+        if self._expected_marker(payload, evidence) == "nosql_operator_injection":
+            return self._check_nosql_replay(payload, _info)
 
         # 3) GET-only probe (the sealed re-send is always a GET).
         if not assert_read_only_probe("GET", resolved_url):
@@ -1241,6 +1250,73 @@ class SealedReproductionChecker:
         if expected in resp_body:
             return ReproductionOutcome(
                 "matched", "reproduction_marker_matched:template_evaluated"
+            )
+        return ReproductionOutcome("mismatched", _REASON_MARKER_MISMATCH)
+
+    def _check_nosql_replay(self, payload: dict, info: dict) -> ReproductionOutcome:
+        """NoSQL 演算子注入の専用再現パス（SGK-2026-0487）。
+
+        元 Finding の nosql_replay 記述子に従い、確定済みの演算子ペイロード
+        （JSON body）を封印スコープ内へ 1 回だけ再送し、演算子が再び成功
+        （2xx＋実データ）することを再観測する。演算子成功×無効リテラル失敗の
+        差分は元 finding で確定済み（payout_grade が両者を検証）。認証付き
+        エンドポイントの再送は evidence.request_headers（実 auth）を用いる。
+
+        - matched: 演算子が再び成功（reproduction_marker_matched:nosql_operator_injection）
+        - mismatched: 応答あり・演算子が成功しない（唯一の mismatch 経路）
+        - not_run: client None / スコープ再検証不可 / fingerprint 不一致 /
+          記述子不正（演算子なし含む）/ 空応答・送信不能（fail-closed）
+        """
+        replay = info.get("nosql_replay")
+        if not isinstance(replay, dict):
+            return ReproductionOutcome("not_run", _REASON_UNKNOWN_CATEGORY)
+        method = str(replay.get("method") or "").strip().upper()
+        url = str(replay.get("url") or "").strip()
+        body = replay.get("body")
+        if (
+            method != "POST"
+            or not url
+            or not isinstance(body, dict)
+            or not _NOSQL_OPERATOR_PATTERN.search(json.dumps(body))
+        ):
+            return ReproductionOutcome("not_run", _REASON_UNKNOWN_CATEGORY)
+        if self._network_client is None:
+            return ReproductionOutcome("not_run", _REASON_DISABLED_NO_CLIENT)
+        scope_result = revalidate_scope_for_request(
+            url, scope_definition=self._scope_definition
+        )
+        if not scope_result.allowed:
+            return ReproductionOutcome("not_run", _REASON_SCOPE_REVALIDATION_BLOCKED)
+        evidence = payload.get("evidence")
+        if not isinstance(evidence, dict):
+            evidence = {}
+        param_names = _param_names_from_url(url)
+        original_fp = build_request_fingerprint(
+            str(evidence.get("request_method") or ""), url, param_names
+        )
+        replay_fp = build_request_fingerprint(method, url, param_names)
+        if original_fp != replay_fp:
+            return ReproductionOutcome("not_run", _REASON_REQUEST_FINGERPRINT_MISMATCH)
+        headers: dict = {}
+        request_headers = evidence.get("request_headers")
+        if isinstance(request_headers, dict):
+            for key, value in request_headers.items():
+                if str(key).lower() not in {
+                    "content-length", "transfer-encoding", "host", "connection",
+                }:
+                    headers[str(key)] = str(value)
+        headers.setdefault("Content-Type", "application/json")
+        try:
+            status, resp_body = self._send_post_json(method, url, body=body, headers=headers)
+        except Exception:  # noqa: BLE001 — transport boundary, fail closed
+            self._replays_used += 1
+            return ReproductionOutcome("not_run", _REASON_TRANSPORT_ERROR)
+        self._replays_used += 1
+        if status <= 0:
+            return ReproductionOutcome("not_run", _REASON_TRANSPORT_ERROR)
+        if _nosql_body_has_data(status, resp_body):
+            return ReproductionOutcome(
+                "matched", "reproduction_marker_matched:nosql_operator_injection"
             )
         return ReproductionOutcome("mismatched", _REASON_MARKER_MISMATCH)
 

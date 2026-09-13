@@ -212,6 +212,29 @@ _XXE_FILE_PATTERNS: tuple = (
 # 宣言も必須）。
 _XXE_ENTITY_PATTERN = re.compile(r"(?is)<!ENTITY\s+\S+\s+SYSTEM\s")
 
+# SGK-2026-0487: NoSQL(MongoDB) 演算子注入。payload に演算子が含まれることの検証。
+_NOSQL_OPERATOR_PATTERN = re.compile(r"\$(?:ne|gt|gte|lt|lte|regex|in|nin|where|exists)\b")
+
+
+def _nosql_body_has_data(status: Any, body: str) -> bool:
+    """2xx かつ本文が非空の実データ（空 dict/list/null/エラーでない）か。
+    NoSQL 差分確定の「成功」判定に用いる（payout_grade と再現チェッカーで共有）。"""
+    if not (isinstance(status, int) and not isinstance(status, bool) and 200 <= status < 300):
+        return False
+    text = str(body or "").strip()
+    if text in ("", "{}", "[]", "null", "false"):
+        return False
+    try:
+        import json as _json
+        parsed = _json.loads(text)
+    except (ValueError, TypeError):
+        return bool(text)
+    if isinstance(parsed, dict):
+        return len(parsed) > 0
+    if isinstance(parsed, list):
+        return len(parsed) > 0
+    return parsed not in (None, "", 0, False)
+
 # Authz differential signals that prove unauthenticated success against an
 # authenticated baseline (manager.py api probes, api_probe_analysis.py).
 _AUTHZ_PROOF_SIGNALS: frozenset = frozenset(
@@ -293,6 +316,11 @@ _MARKER_CATEGORIES: Dict[str, str] = {
     # 宣言（<!ENTITY ... SYSTEM）＋served_body にシステムファイル署名一致）でのみ。
     # 我々が外部実体を送った事実＋読めないはずのファイル内容の反映が実害の証拠。
     "xxe": "xxe_file_read",
+    # SGK-2026-0487: NoSQL(MongoDB) 演算子注入。発火は nosql_evidence の完備
+    # （request_url 非空＋operator_payload に演算子＋operator が成功(2xx+データ)＋
+    # control（無効リテラル）が失敗）でのみ。演算子成功×リテラル失敗の差分が
+    # 「フィールドがクエリ演算子として解釈された」決定的証拠。
+    "nosql_injection": "nosql_operator_injection",
 }
 
 # ---------------------------------------------------------------------------
@@ -799,6 +827,34 @@ def _match_firing_marker(
                 and any(p.search(served_body) for p in _XXE_FILE_PATTERNS)
             ):
                 return "xxe_file_read"
+        return None
+
+    if vuln_type == "nosql_injection":
+        # 発火は「NoSQL 演算子注入の本物のみ」(SGK-2026-0487):
+        # additional_info.nosql_evidence が、
+        #  (1) request_url 非空、
+        #  (2) operator_payload に MongoDB 演算子が存在、
+        #  (3) 演算子が成功（operator_status 2xx＋operator_served_body に実データ）、
+        #  (4) 負のコントロール（無効リテラル）が失敗（control が 2xx+データでない）、
+        # のすべてを満たすときのみ。1 つでも欠ければ None（fail-closed）。
+        # 演算子成功×リテラル失敗の差分が「クエリ演算子として解釈された」証拠。
+        nsq = info.get("nosql_evidence")
+        if isinstance(nsq, dict):
+            request_url = str(nsq.get("request_url") or "").strip()
+            operator_payload = str(nsq.get("operator_payload") or "")
+            op_ok = _nosql_body_has_data(
+                nsq.get("operator_status"), str(nsq.get("operator_served_body") or "")
+            )
+            ctrl_ok = _nosql_body_has_data(
+                nsq.get("control_status"), str(nsq.get("control_served_body") or "")
+            )
+            if (
+                request_url
+                and _NOSQL_OPERATOR_PATTERN.search(operator_payload)
+                and op_ok
+                and not ctrl_ok
+            ):
+                return "nosql_operator_injection"
         return None
 
     if vuln_type == "file_upload":

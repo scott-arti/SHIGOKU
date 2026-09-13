@@ -6171,3 +6171,18 @@ status_allowed_values:
   - docs/shigoku/worklogs/2026-09-13_sgk-2026-0486_xxe-confirmation_work_log.md
   - docs/shigoku/plans/done/2026-09-13_sgk-2026-0485_ssti-confirmation.md
   - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+- provisional_id: DOC-0557
+  task_id: SGK-2026-0487
+  doc_type: plan
+  title: NoSQL(MongoDB) 演算子注入を実対象で本物確定（◎）
+  primary_doc: docs/shigoku/plans/done/2026-09-13_sgk-2026-0487_nosql-injection-confirmation.md
+  status: done
+  provisional: false
+  task_summary: "能力マップの『エンジンが無いギャップ領域』のNoSQLiを◎化。既存attack/nosql_tester.pyとVulnType.NOSQL_INJECTIONは在るがspecialist/確定バーに未配線(ヒューリスティックのみ)。実測でcrAPIクーポン検証/community/api/v2/coupon/validate-coupon(MongoDB・要認証)がNoSQL演算子注入に脆弱と確認: 無効リテラル→HTTP500、{\"$ne\":null}/{\"$regex\":\".*\"}→HTTP200+有効クーポンTRAC075。有効コードを知らなくても演算子で有効レコード抽出=本物のNoSQL注入(実害:クーポン詐取/検証バイパス/データ抽出)。本タスクは実対象で機械フロア+実再現+実poc_judgeの完全3ゲートで◎へ。非破壊(検証の読み取り)。新エンジンsmart_nosql(SmartNoSQLHunter・候補JSONフィールドに①無効リテラル②MongoDB演算子を送り①失敗×②成功の決定論的差分で確定=IDOR authz_diff同型・_client seam・nosql_evidence(op+control)・nosql_replay・差分2ステップpoc・authはpocマスク/evidence保持・製品固有ハードコードなし)を新設。確定バー(凍結payout_grade.py)に_NOSQL_OPERATOR_PATTERN+_nosql_body_has_data+新マーカーnosql_operator_injection(request_url非空+operatorに演算子+演算子成功2xx+データ+コントロール失敗)をユーザー承認の上fail-closedで追加。再現チェッカー(凍結)は_check_nosql_replayで演算子を封印内1回再送→2xx+データ再観測→matched。秘密規律: authトークンはpocマスク/judge入力から除外(生トークンをLLMに送らない)/封印再現用にevidence.request_headersにのみ保持(ssrf_inband同型)。製品非依存fixtureのテスト19+実crAPI E2E+fail-closed否定側+実poc_judge5/5(差分両ステップを見せて2/5→5/5)。凍結改変はユーザー明示承認済。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/done/2026-09-13_sgk-2026-0487_nosql-injection-confirmation.md
+  - docs/shigoku/reports/2026-09-13_sgk-2026-0487_nosql-injection-confirmation_work_report.md
+  - docs/shigoku/worklogs/2026-09-13_sgk-2026-0487_nosql-injection-confirmation_work_log.md
+  - docs/shigoku/plans/done/2026-09-13_sgk-2026-0486_xxe-confirmation.md
+  - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
