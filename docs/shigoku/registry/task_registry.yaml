@@ -6171,6 +6171,21 @@ status_allowed_values:
   - docs/shigoku/worklogs/2026-09-13_sgk-2026-0486_xxe-confirmation_work_log.md
   - docs/shigoku/plans/done/2026-09-13_sgk-2026-0485_ssti-confirmation.md
   - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+- provisional_id: DOC-0559
+  task_id: SGK-2026-0489
+  doc_type: plan
+  title: Race Condition（TOCTOU）を実対象で本物確定（◎）
+  primary_doc: docs/shigoku/plans/done/2026-09-14_sgk-2026-0489_race-condition-confirmation.md
+  status: done
+  provisional: false
+  task_summary: "能力マップの Race Condition を◎化。既存 RaceConditionSpecialist→RaceConditionTester は『N並列で2xxを数え成功>期待(1)ならTrue』の並列側のみ(逐次コントロールなし・確定バー未接続)。実測でcrAPI apply_couponは並列6/30とも成功1のみ=原子ロック済みでrace非脆弱(想定対象棄却)。DVGA/SKFと同posture で OWASP SKF ラボ blabla1337/owasp-skf-lab:racecondition(Flask race.py)を127.0.0.1:5091に起動。TOCTOU確認: ?action=validate&person=X は先にhello.sh(echo \"X\">hello.txt)を書きsed正規表現[A-Za-z0-9 ]で検証→不正ならboot_clean()削除、/(action=run)はbash hello.sh実行しhello.txt反映。不正ペイロード(シェルメタ+一意マーカー)書込直後〜削除の窓で/がbash hello.sh実行=注入コマンド実行。逐次はマーカー非反映(検証で削除)、並列バーストはマーカー反映(実測round1)=レース経由コマンド注入。reset で戻せる=再現可能・非破壊(良性マーカー書込のみ)。本タスクは実対象で機械フロア+実再現+実poc_judgeの完全3ゲートで◎へ。新エンジンsmart_race_condition(SmartRaceConditionHunter・task由来のtrigger/observe/reset/concurrency/roundsで駆動・逐次コントロール(マーカー非反映)×並列バースト(マーカー反映)の差分+一意マーカーで確定・_client seam・race_evidence(race+control)・race_replay・差分2ステップpoc・製品固有ハードコードなし)を新設。確定バー(凍結payout_grade.py)に_MARKER_CATEGORIES['race_condition']='race_condition_toctou'+発火分岐(request_url非空+marker非空+race_status2xx+markerがrace_served_bodyに実在+control_served_bodyに非実在)をユーザー承認の上fail-closedで追加。再現チェッカー(凍結)は_check_race_replayで新マーカーをtriggerに埋め封印内で並列バースト1シーケンス再実行(両URLスコープ再検証・concurrency/rounds上限クランプ)→新マーカー再出現でmatched(race単発再送不可のためburst再現が正当)。製品非依存fixtureのテスト+実SKF E2E+fail-closed否定側+実poc_judge。凍結改変はユーザー明示承認済。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/done/2026-09-14_sgk-2026-0489_race-condition-confirmation.md
+  - docs/shigoku/reports/2026-09-14_sgk-2026-0489_race-condition-confirmation_work_report.md
+  - docs/shigoku/worklogs/2026-09-14_sgk-2026-0489_race-condition-confirmation_work_log.md
+  - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+  - docs/shigoku/plans/done/2026-09-13_sgk-2026-0488_mass-assignment-confirmation.md
 - provisional_id: DOC-0558
   task_id: SGK-2026-0488
   doc_type: plan

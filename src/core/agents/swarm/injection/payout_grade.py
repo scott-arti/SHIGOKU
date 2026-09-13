@@ -54,6 +54,12 @@ so the payout-grade marker vocabulary stays in sync with the detectors:
                         attacker value (injected_field_value==injected_value)
                         while a control request without it yields a different
                         server default (control_field_value)
+- race_condition_toctou -> smart_race_condition
+                        ``additional_info.race_evidence``: a unique marker is
+                        reflected under a concurrent burst (race_served_body)
+                        but absent under sequential requests
+                        (control_served_body), proving execution in the
+                        check-then-act (TOCTOU) window
 - open_redirect      -> ``external_redirect`` (OpenRedirectSpecialist
                         open_redirect.py): the observed Location header of a
                         3xx response points at the injected attacker-managed
@@ -329,6 +335,11 @@ _MARKER_CATEGORIES: Dict[str, str] = {
     # control（無効リテラル）が失敗）でのみ。演算子成功×リテラル失敗の差分が
     # 「フィールドがクエリ演算子として解釈された」決定的証拠。
     "nosql_injection": "nosql_operator_injection",
+    # SGK-2026-0489: Race Condition（TOCTOU）。発火は race_evidence の完備
+    # （request_url 非空＋marker 非空＋並列バースト成功(2xx)＋marker が
+    # race_served_body に実在＋marker が control_served_body に非実在）でのみ。
+    # 並列で出て逐次で出ない差分が「TOCTOU 窓で実行された」決定的証拠。
+    "race_condition": "race_condition_toctou",
 }
 
 # ---------------------------------------------------------------------------
@@ -671,6 +682,39 @@ def _match_firing_marker(
                 and control_field_value != injected_value
             ):
                 return "privileged_field_assigned"
+        return None
+
+    if vuln_type == "race_condition":
+        # 発火は「TOCTOU レースの本物のみ」(SGK-2026-0489):
+        # additional_info.race_evidence が、
+        #  (1) request_url 非空、
+        #  (2) marker 非空、
+        #  (3) 並列バーストが成功（race_status が 2xx）、
+        #  (4) marker が race_served_body に実在（並列で反映された）、
+        #  (5) marker が control_served_body に非実在（逐次では出ない）、
+        # のすべてを満たすときのみ。1 つでも欠ければ None（fail-closed）。
+        # 並列で出て逐次で出ない差分が「TOCTOU 窓で実行された」決定的証拠。
+        # marker は乱数トークンのため偶然混入・捏造不可。
+        rev = info.get("race_evidence")
+        if isinstance(rev, dict):
+            request_url = str(rev.get("request_url") or "").strip()
+            marker = str(rev.get("marker") or "").strip()
+            race_status = rev.get("race_status")
+            race_body = str(rev.get("race_served_body") or "")
+            control_body = str(rev.get("control_served_body") or "")
+            status_2xx = (
+                isinstance(race_status, int)
+                and not isinstance(race_status, bool)
+                and 200 <= race_status < 300
+            )
+            if (
+                request_url
+                and marker
+                and status_2xx
+                and marker in race_body
+                and marker not in control_body
+            ):
+                return "race_condition_toctou"
         return None
 
     if vuln_type == "open_redirect":

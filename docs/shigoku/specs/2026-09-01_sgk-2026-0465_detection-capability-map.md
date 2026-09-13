@@ -11,7 +11,7 @@ related_docs:
 - docs/shigoku/plans/done/2026-09-03_sgk-2026-0469_authenticated-scan-token-refresh.md
 - docs/shigoku/plans/2026-09-03_sgk-2026-0470_llm-in-loop-latency-reduction.md
 created_at: '2026-09-01'
-updated_at: '2026-09-13'
+updated_at: '2026-09-14'
 ---
 
 # SHIGOKU 検出能力マップ（脆弱性の種類 × 対応状況）
@@ -51,6 +51,7 @@ updated_at: '2026-09-13'
 | NoSQLインジェクション | MongoDB 演算子でクエリ改変（認可/検証バイパス） | `injection/smart_nosql`（新設） + `attack/nosql_tester` | ◎ **NoSQL(MongoDB) 演算子注入を実対象で完全3ゲート確定**（既存 `nosql_tester` は未配線だったため新エンジン `SmartNoSQLHunter` を新設・確定バーに接続。**実 crAPI** のクーポン検証 `/community/api/v2/coupon/validate-coupon`（MongoDB・要認証）で、無効リテラル→HTTP 500／演算子 `{"$ne": null}`→HTTP 200＋有効クーポンの**決定論的差分**で確定（有効コードを知らなくても演算子で有効レコード抽出＝認可/検証バイパス・データ抽出）。確定バー新マーカー `nosql_operator_injection`（request_url 非空＋operator_payload に演算子＋演算子成功(2xx+データ)＋負のコントロール(無効リテラル)失敗）で payout_grade=True→再現チェッカーが演算子を封印スコープ内で 1 回再送し成功を再観測→matched→CONFIRMED、かつ**実 poc_judge 5/5 承認**（差分の両ステップ＝Step1 リテラル失敗/Step2 演算子成功を poc に提示）。SGK-2026-0487。演算子なし/コントロールも成功は fail-closed）。非破壊（検証の読み取り）。認証トークンは poc マスク・judge 入力から除外・封印再現用に evidence にのみ保持（生トークンを LLM に送らない） |
 | SSTI（テンプレ注入） | サーバサイドテンプレートの式評価 | `injection/smart_ssti` + `attack/ssti_scanner` | ◎ **サーバサイドテンプレートインジェクションを実対象で完全3ゲート確定**（現行4ラボ（DVWA/Juice Shop/crAPI/DVGA）に SSTI 実シンクが無いため DVGA と同じ posture で本物の脆弱アプリ **OWASP SKF ラボ `blabla1337/owasp-skf-lab:ssti`**（Flask/Jinja2）を制御対象として起動。実測で 404 ハンドラが `render_template_string` に `request.url` を埋め込むため、任意クエリ param（`?q={{7*7}}`）が Jinja2 で評価され `49` になる本物の SSTI を確認。エンジン `SmartSSTIHunter`（`SSTIScanner` の算術確認ペア方式）が自走検出→確定済み payload を再送し算術積 `expected`（`49`＋**一意マーカー**＝自然混入・テンプレ捏造不可）を含む生本文＋実 status を捕捉→確定バー新マーカー `template_evaluated`（request_url 非空＋status>0＋payload 非空＋expected 非空＋served_body に expected 実在）で payout_grade=True→再現チェッカーが payload を封印スコープ内で 1 回再送し expected を再観測→matched→CONFIRMED、かつ**実 poc_judge 5/5 承認**（「反射でなくサーバ側テンプレート評価・一意マーカーで偶然/捏造を排除・RCE 隣接の実害」）。SGK-2026-0485。未評価/積非再出現は fail-closed）。非破壊（読み取りクエリのみ・テンプレ評価は状態変更なし） |
 | Mass Assignment（一括代入） | 特権フィールドの一括代入で権限昇格・検証バイパス | `injection/smart_mass_assignment`（新設） + `attack/mass_assignment_tester` | ◎ **特権フィールド昇格を実対象で完全3ゲート確定**（既存 `MassAssignmentTester`／`MassAssignmentSpecialist` は「2xx なら success」の status ヒューリスティックで注入フィールドの受理を未検証だったため、差分確認の新エンジン `SmartMassAssignmentHunter` を新設。**実 Juice Shop** の `POST /api/Users`（登録・認証不要）で、`role` を送らない control → サーバ既定 `role="customer"`／`"role":"admin"` を注入 → 応答（永続レコード）に `role="admin"` の**決定論的差分**で確定（本来サーバ側でしか設定できないフィールドを client が上書き＝権限昇格）。`_MARKER_CATEGORIES["mass_assignment"]` を `authz_diff`（IDOR/BAC 意味論・不整合）から専用マーカー `privileged_field_assigned` に分離＋新発火分岐（request_url 非空＋field 非空＋injected_value 非空＋injection 2xx＋反映値==攻撃者値＋control 反映値が非空かつ攻撃者値と異なる。**echo だけの応答は control 反映値が空で不発火**）で payout_grade=True→再現チェッカーが予約済み injection body（未使用の fresh 値）を封印スコープ内で 1 回再送し攻撃者値を再観測→matched→CONFIRMED、かつ**実 poc_judge 5/5 承認**（Step1 control 既定値／Step2 injection 攻撃者値の差分＋profileImage 差分まで裏付けと評価）。SGK-2026-0488。反映なし/control 同値/echo/非2xx は fail-closed）。非破壊（登録＝追加系・使い捨てアカウント）。任意 auth は poc マスク・judge 入力から除外・封印再現用に evidence にのみ保持。エンジンは製品固有のエンドポイント/フィールドをハードコードしない（特権フィールド候補＋task 由来 base body・一意制約フィールドは uuid 更新） |
+| Race Condition（TOCTOU） | check-then-act の窓で並列多重処理・検証バイパス | `injection/smart_race_condition`（新設） + `attack/race_condition_tester` | ◎ **TOCTOU レースを実対象で完全3ゲート確定**（既存 `RaceConditionTester`／`RaceConditionSpecialist` は「N 並列で 2xx を数え成功>期待(1)ならTrue」の**並列側のみ**で逐次コントロール差分がなく確定バー未接続だったため、逐次/並列差分の新エンジン `SmartRaceConditionHunter` を新設。実測で **crAPI クーポン適用は並列30でも成功1＝原子ロック済みで race 非脆弱**と判明（想定対象を事実で棄却）。DVGA/SKF と同じ posture で **OWASP SKF ラボ `blabla1337/owasp-skf-lab:racecondition`**（Flask・`race.py`）を制御対象に起動。`?action=validate` が `hello.sh`（`echo "person" > hello.txt`）を書いた直後〜sed 検証で不正判定→削除するまでの窓で、`/`（`action=run`＝`bash hello.sh`）が並列に走ると注入コマンドが実行される TOCTOU。逐次では一意マーカーが反映されない（検証で削除）が、**並列バーストでは observe 応答（system-message）にマーカーが反映**される決定論的差分で確定（マーカーは乱数トークン＝偶然混入・捏造不可）。ラボは reset で戻せる＝**再現可能**。確定バー新マーカー `race_condition_toctou`（request_url 非空＋marker 非空＋並列成功2xx＋marker が race_body に実在＋control_body に非実在）で payout_grade=True→再現チェッカーが**新しいマーカーで並列バーストを封印スコープ内で再実行**（ThreadPoolExecutor・両URLスコープ再検証・上限クランプ）しマーカー再出現→matched→CONFIRMED、かつ**実 poc_judge 5/5 承認**（Step1 逐次＝"missing"でマーカー無し／Step2 並列＝system-message にマーカー出現の差分を評価）。SGK-2026-0489。逐次でも出る/並列で出ない/非2xx は fail-closed）。非破壊（ラボ自身の表示ファイルへ良性マーカー書き込みのみ）。**差分の証拠は control と race を同一オフセット窓で見せる**（別領域だと差分が審査で成立しない＝poc_judge の指摘への対応・[[poc-judge-raw-evidence]] 拡張） |
 | CRLF悪用 | ヘッダ注入（レスポンス分割） | `injection/smart_crlf` + `attack/crlf_tester` | 対象外（据え置き）。**真の CRLF ヘッダ注入は現代ランタイムが既定で遮断する『ほぼ閉じたクラス』**で実務価値が低い。実測でも成立せず（SKF `http-response-splitting` python/java＝本文反映のXSS系でヘッダ注入なし・bWAPP/PHP5.5 は `header()` が CRLF を拒否）。エンジンは在るが正当に発火する実シンクが現実的対象に不在。curve-fit（自作の緩いサーバ）や EOL 骨董ランタイムで偽◎を作らない方針でユーザー判断により対象外（SGK-2026 CRLF 調査）。稀な本物は今どきアプリでなくリバースプロキシ/CDN/古い放置系に残る |
 
 ## 高度化レベル（確度とは別軸：検出の幅・成熟・自動走行への統合）
@@ -80,6 +81,7 @@ updated_at: '2026-09-13'
 | XXE | ◎ | 低(L1) | 今セッション新設。SKF 単一・in-band ファイル読み1形態・OOB 未・未統合 |
 | NoSQLインジェクション | ◎ | 低(L1) | 今セッション新設。crAPI 単一・JSON 演算子1形態・未統合（第2対象検証も未） |
 | Mass Assignment | ◎ | 低(L1) | 今セッション新設。Juice Shop 単一・登録 role 昇格1形態・未統合（第2対象/更新系検証も未） |
+| Race Condition | ◎ | 低(L1) | 今セッション新設。SKF ラボ単一・逐次/並列差分1形態・未統合（実運用アプリ対象は別途） |
 | CORS 設定ミス | ○ | 中(L2) | エンジン成熟・確定能力実証済み。実ラボが `ACAO:*` で本物脆弱でないため正しく非確定（偽◎回避） |
 | CRLF | 対象外 | — | 現代ランタイムが遮断＝実務価値低。据え置き |
 
@@ -92,7 +94,7 @@ updated_at: '2026-09-13'
 
 - ~~XXE（XML外部実体）~~ — ✅ 新エンジン `smart_xxe` を新設し ◎（SGK-2026-0486・実 SKF ラボで外部実体ローカルファイル読み取りを完全3ゲート）
 - ~~NoSQLインジェクション~~ — ✅ 新エンジン `smart_nosql` を新設し ◎（SGK-2026-0487・実 crAPI クーポン検証で MongoDB 演算子注入を決定論的差分で完全3ゲート）
-- ビジネスロジック系（クーポン悪用・数量マイナス・値引き細工）— 汎用化が難しく、ほぼ未対応
+- ビジネスロジック系（クーポン悪用・数量マイナス・値引き細工）— 汎用化が難しく、ほぼ未対応（※機構としての Race Condition/TOCTOU は SGK-2026-0489 で ◎ 化。ただし意味的なビジネスロジック悪用＝クーポン多重取得・数量マイナス等の一般検出は別途）
 - 既知の脆弱な部品 / 暗号の弱さ — 別枠で現状ほぼ対象外
 
 ## 実証の推奨順（証拠を残して確定に上げやすい順）

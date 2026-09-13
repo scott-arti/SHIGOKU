@@ -520,6 +520,13 @@ class SealedReproductionChecker:
         if self._expected_marker(payload, evidence) == "privileged_field_assigned":
             return self._check_mass_assignment_replay(payload, _info)
 
+        # 2.14) SGK-2026-0489: Race Condition（TOCTOU）専用再現パス。新しい一意
+        #       マーカーを trigger に埋め、封印スコープ内で並列バーストを1シーケンス
+        #       再実行し、observe 応答に新マーカーが再出現することを再観測する。race は
+        #       単発再送では再現できないため burst 再現が正当（GET 限定・上限クランプ）。
+        if self._expected_marker(payload, evidence) == "race_condition_toctou":
+            return self._check_race_replay(payload, _info)
+
         # 3) GET-only probe (the sealed re-send is always a GET).
         if not assert_read_only_probe("GET", resolved_url):
             return ReproductionOutcome("not_run", _REASON_READ_ONLY_PROBE_REJECTED)
@@ -1404,6 +1411,107 @@ class SealedReproductionChecker:
         if present and _ma_norm(value) == expected_value:
             return ReproductionOutcome(
                 "matched", "reproduction_marker_matched:privileged_field_assigned"
+            )
+        return ReproductionOutcome("mismatched", _REASON_MARKER_MISMATCH)
+
+    def _check_race_replay(self, payload: dict, info: dict) -> ReproductionOutcome:
+        """Race Condition（TOCTOU）の専用再現パス（SGK-2026-0489）。
+
+        race_replay 記述子に従い、**新しい一意マーカー**を trigger に埋め、封印スコープ内で
+        並列バーストを1シーケンス再実行し、observe 応答に新マーカーが再出現することを
+        再観測する。race は単発再送では再現できないため burst 再現が正当（並列は
+        ThreadPoolExecutor・concurrency/rounds は上限クランプ・trigger/observe/reset の
+        各 URL をスコープ再検証・GET 限定）。
+
+        - matched: 新マーカーが observe 応答（2xx）に出現
+        - mismatched: バースト完了・新マーカーが出ない（唯一の mismatch 経路）
+        - not_run: client None / スコープ外 / 記述子不正 / GET 以外 / 送信不能（fail-closed）
+        """
+        import uuid as _uuid
+        import concurrent.futures as _cf
+        from urllib.parse import urlencode as _urlencode, urlunsplit as _urlunsplit
+
+        replay = info.get("race_replay")
+        if not isinstance(replay, dict):
+            return ReproductionOutcome("not_run", _REASON_UNKNOWN_CATEGORY)
+        observe = replay.get("observe")
+        trigger = replay.get("trigger")
+        reset = replay.get("reset")
+        if not (isinstance(observe, dict) and isinstance(trigger, dict)):
+            return ReproductionOutcome("not_run", _REASON_UNKNOWN_CATEGORY)
+        obs_url = str(observe.get("url") or "").strip()
+        trg_url = str(trigger.get("url") or "").strip()
+        obs_method = str(observe.get("method") or "GET").strip().upper()
+        trg_method = str(trigger.get("method") or "GET").strip().upper()
+        if not obs_url or not trg_url or obs_method != "GET" or trg_method != "GET":
+            return ReproductionOutcome("not_run", _REASON_UNKNOWN_CATEGORY)
+        if self._network_client is None:
+            return ReproductionOutcome("not_run", _REASON_DISABLED_NO_CLIENT)
+        reset_url = ""
+        if isinstance(reset, dict):
+            reset_url = str(reset.get("url") or "").strip()
+        for u in [obs_url, trg_url] + ([reset_url] if reset_url else []):
+            if not revalidate_scope_for_request(
+                u, scope_definition=self._scope_definition
+            ).allowed:
+                return ReproductionOutcome("not_run", _REASON_SCOPE_REVALIDATION_BLOCKED)
+        concurrency = max(1, min(12, int(replay.get("concurrency") or 8)))
+        rounds = max(1, min(40, int(replay.get("rounds") or 10)))
+        marker = "SHIGOKU_RACE_" + _uuid.uuid4().hex[:12]
+
+        def _full(base_url: str, params: Any) -> str:
+            subst = {
+                k: (v.replace("{marker}", marker) if isinstance(v, str) else v)
+                for k, v in (params if isinstance(params, dict) else {}).items()
+            }
+            parts = urlsplit(base_url)
+            q = dict(parse_qsl(parts.query, keep_blank_values=True))
+            q.update({k: str(v) for k, v in subst.items()})
+            return _urlunsplit(
+                (parts.scheme, parts.netloc, parts.path, _urlencode(q), parts.fragment)
+            )
+
+        trg_full = _full(trg_url, trigger.get("params"))
+        obs_full = _full(obs_url, observe.get("params"))
+        reset_full = _full(reset_url, reset.get("params")) if reset_url else None
+
+        hit = False
+        try:
+            for _ in range(rounds):
+                if reset_full:
+                    try:
+                        self._send_get(reset_full)
+                    except Exception:  # noqa: BLE001 — transport boundary, tolerate
+                        pass
+                    self._replays_used += 1
+                with _cf.ThreadPoolExecutor(max_workers=concurrency * 2) as ex:
+                    obs_futs = []
+                    all_futs = []
+                    for _ in range(concurrency):
+                        all_futs.append(ex.submit(self._send_get, trg_full))
+                        f = ex.submit(self._send_get, obs_full)
+                        obs_futs.append(f)
+                        all_futs.append(f)
+                    _cf.wait(all_futs, timeout=self._timeout_seconds)
+                self._replays_used += concurrency * 2
+                for f in obs_futs:
+                    if not f.done():
+                        continue
+                    try:
+                        body, status, _loc = f.result()
+                    except Exception:  # noqa: BLE001 — per-request failure, skip
+                        continue
+                    if marker in str(body) and 200 <= int(status) < 300:
+                        hit = True
+                        break
+                if hit:
+                    break
+        except Exception:  # noqa: BLE001 — transport boundary, fail closed
+            return ReproductionOutcome("not_run", _REASON_TRANSPORT_ERROR)
+
+        if hit:
+            return ReproductionOutcome(
+                "matched", "reproduction_marker_matched:race_condition_toctou"
             )
         return ReproductionOutcome("mismatched", _REASON_MARKER_MISMATCH)
 
