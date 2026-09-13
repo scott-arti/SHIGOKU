@@ -6171,6 +6171,21 @@ status_allowed_values:
   - docs/shigoku/worklogs/2026-09-13_sgk-2026-0486_xxe-confirmation_work_log.md
   - docs/shigoku/plans/done/2026-09-13_sgk-2026-0485_ssti-confirmation.md
   - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+- provisional_id: DOC-0558
+  task_id: SGK-2026-0488
+  doc_type: plan
+  title: Mass Assignment（特権フィールド昇格）を実対象で本物確定（◎）
+  primary_doc: docs/shigoku/plans/done/2026-09-13_sgk-2026-0488_mass-assignment-confirmation.md
+  status: done
+  provisional: false
+  task_summary: "能力マップの Mass Assignment を◎化。既存 MassAssignmentSpecialist→MassAssignmentTester は2xxならsuccessのstatusヒューリスティックで注入フィールドの受理を未検証(◎不足)、_MARKER_CATEGORIES['mass_assignment']=authz_diff はIDOR/BAC意味論で不整合(相乗り不正・依存テスト皆無)。実測でJuice Shop POST /api/Users(登録・認証不要)がrole特権昇格に脆弱: role無し→サーバ既定role=customer、role:admin注入→応答(永続レコード)にrole=admin。送ってはいけない特権フィールドを攻撃者値でサーバ受理=本物Mass Assignment(権限昇格)。本タスクは実対象で機械フロア+実再現+実poc_judgeの完全3ゲートで◎へ。非破壊(登録=追加系)。新エンジンsmart_mass_assignment(SmartMassAssignmentHunter・base bodyに特権フィールド候補role/is_admin/verified/credit等を1つずつ注入し①control=無し→サーバ既定②injection=有り→攻撃者値の差分で確定・応答本文の同名フィールドを再帰読取・injection反映==攻撃者値かつcontrol反映非空かつ≠攻撃者値でecho排除・_client seam・一意制約フィールドはuuid更新・封印再現用に未使用fresh bodyを予約・差分2ステップpoc・任意authはpocマスク/evidence保持・製品固有ハードコードなし)を新設。確定バー(凍結payout_grade.py)は_MARKER_CATEGORIES['mass_assignment']をauthz_diff→専用privileged_field_assignedに変更+発火分岐(request_url非空+field非空+injected_value非空+injected_status2xx+injected_field_value==injected_value+control_field_value非空かつ≠injected_value)をユーザー承認の上fail-closedで追加。再現チェッカー(凍結)は_check_mass_assignment_replayで予約injection body(fresh email)を封印内1回再送→攻撃者値再観測→matched。製品非依存fixtureのテスト+実Juice Shop E2E+fail-closed否定側+実poc_judge。凍結改変はユーザー明示承認済。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/done/2026-09-13_sgk-2026-0488_mass-assignment-confirmation.md
+  - docs/shigoku/reports/2026-09-13_sgk-2026-0488_mass-assignment-confirmation_work_report.md
+  - docs/shigoku/worklogs/2026-09-13_sgk-2026-0488_mass-assignment-confirmation_work_log.md
+  - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+  - docs/shigoku/plans/done/2026-09-13_sgk-2026-0487_nosql-injection-confirmation.md
 - provisional_id: DOC-0557
   task_id: SGK-2026-0487
   doc_type: plan

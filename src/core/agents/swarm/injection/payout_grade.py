@@ -48,6 +48,12 @@ so the payout-grade marker vocabulary stays in sync with the detectors:
 - authz_diff         -> ``additional_info.authz_differential`` proving
                         unauthenticated success vs authenticated success
                         (manager.py api probes)
+- privileged_field_assigned -> smart_mass_assignment
+                        ``additional_info.mass_assignment_evidence``: an
+                        injected privileged field is persisted with the
+                        attacker value (injected_field_value==injected_value)
+                        while a control request without it yields a different
+                        server default (control_field_value)
 - open_redirect      -> ``external_redirect`` (OpenRedirectSpecialist
                         open_redirect.py): the observed Location header of a
                         3xx response points at the injected attacker-managed
@@ -279,7 +285,9 @@ _MARKER_CATEGORIES: Dict[str, str] = {
     "api": "authz_diff",
     "broken_access_control": "authz_diff",
     "idor": "authz_diff",
-    "mass_assignment": "authz_diff",
+    # SGK-2026-0488: mass assignment は authz_diff（IDOR/BAC の認証有無差分）と
+    # 意味論が異なる（特権フィールドの一括代入受理）。専用マーカーに分離。
+    "mass_assignment": "privileged_field_assigned",
     # SGK-2026-0475: both spellings occur in the codebase
     # (VulnType.CORS_MISCONFIGURATION.value == "cors_misconfiguration";
     # manager.py:1713 also matches "cors").
@@ -614,7 +622,7 @@ def _match_firing_marker(
                 return "ssrf_callback"
         return None
 
-    if vuln_type in {"api", "broken_access_control", "idor", "mass_assignment"}:
+    if vuln_type in {"api", "broken_access_control", "idor"}:
         differential = info.get("authz_differential")
         if isinstance(differential, dict) and str(differential.get("scenario") or "").strip():
             signals = differential.get("signals")
@@ -623,6 +631,46 @@ def _match_firing_marker(
                 or "status_improved_with_auth" in signals
             ):
                 return "authz_diff"
+        return None
+
+    if vuln_type == "mass_assignment":
+        # 発火は「特権フィールド昇格の本物のみ」(SGK-2026-0488):
+        # additional_info.mass_assignment_evidence が、
+        #  (1) request_url 非空、
+        #  (2) field 非空、
+        #  (3) injected_value 非空、
+        #  (4) injection が成功（injected_status が 2xx）、
+        #  (5) 応答に反映された値 injected_field_value が injected_value と一致
+        #      （＝送った特権フィールドがサーバに受理された）、
+        #  (6) control（当該フィールド無し）の反映値 control_field_value が
+        #      非空でかつ injected_value と異なる（＝サーバが既定値を入れる
+        #      server-controlled フィールドを client が上書きした差分）、
+        # のすべてを満たすときのみ。1 つでも欠ければ None（fail-closed）。
+        # control_field_value が空＝echo だけの応答（フィールドを送らないと応答に
+        # 現れない）は発火しない。
+        mae = info.get("mass_assignment_evidence")
+        if isinstance(mae, dict):
+            request_url = str(mae.get("request_url") or "").strip()
+            field = str(mae.get("field") or "").strip()
+            injected_value = str(mae.get("injected_value") or "").strip()
+            injected_status = mae.get("injected_status")
+            injected_field_value = str(mae.get("injected_field_value") or "").strip()
+            control_field_value = str(mae.get("control_field_value") or "").strip()
+            status_2xx = (
+                isinstance(injected_status, int)
+                and not isinstance(injected_status, bool)
+                and 200 <= injected_status < 300
+            )
+            if (
+                request_url
+                and field
+                and injected_value
+                and status_2xx
+                and injected_field_value == injected_value
+                and control_field_value
+                and control_field_value != injected_value
+            ):
+                return "privileged_field_assigned"
         return None
 
     if vuln_type == "open_redirect":
