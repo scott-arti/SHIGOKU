@@ -6171,6 +6171,21 @@ status_allowed_values:
   - docs/shigoku/worklogs/2026-09-13_sgk-2026-0486_xxe-confirmation_work_log.md
   - docs/shigoku/plans/done/2026-09-13_sgk-2026-0485_ssti-confirmation.md
   - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+- provisional_id: DOC-0560
+  task_id: SGK-2026-0490
+  doc_type: plan
+  title: JWT RS256→HS256 キー混同を実対象で本物確定（◎・JWT拡張）
+  primary_doc: docs/shigoku/plans/done/2026-09-14_sgk-2026-0490_jwt-key-confusion-confirmation.md
+  status: done
+  provisional: false
+  task_summary: "既存 jwt_alg_none(◎・マーカーjwt_forgery_accepted)の JWT 拡張として RS256→HS256 キー混同を◎化。確定意味論はalg=noneと同型(unauthベースライン差分+forged_identity反映)で偽造手法が違うだけ→既存マーカーjwt_forgery_acceptedを再利用し封印再現_check_jwt_forgery_replay(forged_token再送・手法非依存)もそのまま流用。実測でJuice ShopはJWT alg=RS256・公開鍵/encryptionkeys/jwt.pubを認証なし入手可・偽造HS256(公開鍵PEMをHMAC秘密に署名・PyJWT2.xは本攻撃を防ぐため手動HMAC)を/rest/user/whoamiに送るとforged identity(data.email)反映=受理、誤り秘密HS256は拒否、トークン無しは空=3者差分で公開鍵をHMAC秘密として検証している本物のキー混同(署名無視でない)を証明。非破壊(読み取りGET)。本タスクは実対象で機械フロア+実再現+実poc_judgeの完全3ゲートで◎へ。新エンジンsmart_jwt_forgery(SmartJWTForgeryHunter・task由来の正規トークン+公開鍵+observeで駆動・識別子クレームに一意マーカー差込・公開鍵秘密/誤り秘密/無しの3者をobserveへ送り①のみ反映でキー混同確定・_client seam・forged_token+forged_identity+unauth_baseline_absent+jwt_alg=hs256+jwt_key_confusion+jwt_forgery_evidence(3者本文)+3者差分poc・正規トークンはfinding非包含(payload導出のみ)・製品固有ハードコードなし)を新設。確定バー(凍結payout_grade.py)に_MARKER_CATEGORIES['jwt_rs256_hs256']='jwt_forgery_accepted'+jwt_rs256_hs256発火分岐(jwt_alg==hs256+jwt_key_confusion真+unauth_baseline_absent真+forged_identity非空かつ反映)をユーザー承認の上fail-closedで追加(既存alg=none分岐は不変で非回帰)。再現チェッカーは改修不要(jwt_forgery_accepted dispatch+_check_jwt_forgery_replayを手法非依存で流用)。製品非依存fixtureのテスト+実Juice Shop E2E+fail-closed否定側+実poc_judge。凍結改変はユーザー明示承認済。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/done/2026-09-14_sgk-2026-0490_jwt-key-confusion-confirmation.md
+  - docs/shigoku/reports/2026-09-14_sgk-2026-0490_jwt-key-confusion-confirmation_work_report.md
+  - docs/shigoku/worklogs/2026-09-14_sgk-2026-0490_jwt-key-confusion-confirmation_work_log.md
+  - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+  - docs/shigoku/plans/done/2026-09-14_sgk-2026-0489_race-condition-confirmation.md
 - provisional_id: DOC-0559
   task_id: SGK-2026-0489
   doc_type: plan

@@ -82,6 +82,14 @@ so the payout-grade marker vocabulary stays in sync with the detectors:
                         and reflected in the forged-token response).
                         Signed/already-accepted / no-differential never
                         fires (fail-closed)
+- jwt_rs256_hs256     -> ``jwt_forgery_accepted`` (smart_jwt_forgery):
+                        RS256->HS256 key confusion — an HS256 token signed
+                        with the server's RSA public key as the HMAC secret
+                        is accepted (jwt_alg=hs256 + jwt_key_confusion +
+                        unauth_baseline_absent + forged_identity reflected).
+                        Shares the marker with jwt_alg_none (same acceptance
+                        semantics, different forgery technique); a wrong-secret
+                        token must be rejected (fail-closed)
 - file_upload         -> ``uploaded_file_retrieved`` (FileUploadSpecialist
                         file_upload.py / FileUploadTester
                         file_upload_tester.py): a benign non-executable file
@@ -303,6 +311,11 @@ _MARKER_CATEGORIES: Dict[str, str] = {
     # (VulnType.JWT_ALG_NONE.value == VulnType.JWT_NONE_ALG.value ==
     # "jwt_alg_none")
     "jwt_alg_none": "jwt_forgery_accepted",
+    # SGK-2026-0490: JWT RS256→HS256 キー混同（公開鍵を HMAC 秘密に HS256 署名した
+    # 偽造トークンの受理）。確定意味論は alg=none と同型（偽造手法が違うだけ）のため
+    # 同一マーカー jwt_forgery_accepted を共有＝封印再現（_check_jwt_forgery_replay）も
+    # forged_token 再送で手法非依存に流用される。
+    "jwt_rs256_hs256": "jwt_forgery_accepted",
     # SGK-2026-0480: unrestricted file upload（良性・非実行ファイルの設置＋
     # Web 取得）。発火は file_upload_evidence の完備（upload_allowed 真＋
     # retrieved 真＋retrieval_marker 非空＋retrieval_url 非空）でのみ。
@@ -783,6 +796,29 @@ def _match_firing_marker(
         #     poc_response への forged_identity 文字列出現）。
         # 1 つでも欠ければ None（fail-closed・既存マーカーには相乗りしない）。
         if str(info.get("jwt_alg") or "").strip().lower() != "none":
+            return None
+        if not bool(info.get("unauth_baseline_absent")):
+            return None
+        forged_identity = str(info.get("forged_identity") or "").strip()
+        if not forged_identity:
+            return None
+        if not (bool(info.get("forged_identity_reflected")) or forged_identity in body):
+            return None
+        return "jwt_forgery_accepted"
+
+    if vuln_type == "jwt_rs256_hs256":
+        # 発火は「RS256→HS256 キー混同の受理の本物のみ」(SGK-2026-0490):
+        # (1) jwt_alg が "hs256"（攻撃者は公開鍵を HMAC 秘密に HS256 署名）、
+        # (2) jwt_key_confusion 真（公開鍵を HMAC 秘密として検証している＝
+        #     誤り秘密は拒否される差分をエンジンが確認した証拠）、
+        # (3) unauth_baseline_absent 真（トークン無しでは forged_identity が
+        #     非出現＝盗んだセッション再生でなく偽造の受理である差分証明）、
+        # (4) forged_identity 非空 かつ 応答に反映。
+        # 1 つでも欠ければ None（fail-closed）。alg=none 分岐とは独立・共有
+        # マーカー jwt_forgery_accepted を返す（偽造手法が違うだけ）。
+        if str(info.get("jwt_alg") or "").strip().lower() != "hs256":
+            return None
+        if not bool(info.get("jwt_key_confusion")):
             return None
         if not bool(info.get("unauth_baseline_absent")):
             return None
