@@ -6171,6 +6171,21 @@ status_allowed_values:
   - docs/shigoku/worklogs/2026-09-13_sgk-2026-0486_xxe-confirmation_work_log.md
   - docs/shigoku/plans/done/2026-09-13_sgk-2026-0485_ssti-confirmation.md
   - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+- provisional_id: DOC-0561
+  task_id: SGK-2026-0491
+  doc_type: plan
+  title: Host Header Injection（認証バイパス）を実対象で本物確定（◎）
+  primary_doc: docs/shigoku/plans/done/2026-09-14_sgk-2026-0491_host-header-injection-confirmation.md
+  status: done
+  provisional: false
+  task_summary: "能力マップの Host Header Injection を◎化。既存 HostHeaderInjectionTester(X-Forwarded-Host等の書換payload)は在るがspecialist/確定バー未接続(reflectionヒューリスティックのみ)・_MARKER_CATEGORIESにhostマーカー無し。DVGA/SKFと同posture で OWASP SKF ラボ host-header-authentication-bypass(Flask)を127.0.0.1:5092に起動。/dashboardは未ログイン時Hostがlocalhost/127.0.0.1(is_local_request)だとadmin panel(製品/給与データ)を返すが非該当ホストはredirect('/')で拒否=Hostヘッダを認可判定に使用する欠陥。実測でHost:localhost→200+給与データ(Mr Mark Oney/50000000)未ログイン取得、Host:attacker.example→302で拒否=Hostヘッダ注入による認証バイパス(制限データ漏洩)。非破壊(読取GET)。本タスクは実対象で機械フロア+実再現+実poc_judgeの完全3ゲートで◎へ。新エンジンsmart_host_header(SmartHostHeaderHunter・task由来のobserve+制限署名で駆動・候補ホストヘッダ×候補バイパス値を注入し署名がinjectionに出てcontrolに出ない差分で確定・allow_redirects=False・_client seam・host_header_evidence(injection+control)・host_header_replay・差分2ステップpoc・製品固有ハードコードなし)を新設。確定バー(凍結payout_grade.py)に_MARKER_CATEGORIES['host_header_injection']='host_header_auth_bypass'+発火分岐(request_url/injected_header/injected_host_value/restricted_signature非空+injection2xx+署名がinjected_bodyに実在+control_bodyに非実在)をユーザー承認の上fail-closedで追加。再現チェッカー(凍結)は_check_host_header_replayで注入ヘッダ付きGETを封印内1回再送し署名再出現でmatched(既存_send_get_jwtの汎用ヘッダGET流用)。製品非依存fixtureのテスト+実SKF E2E+fail-closed否定側+実poc_judge。凍結改変はユーザー明示承認済。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/done/2026-09-14_sgk-2026-0491_host-header-injection-confirmation.md
+  - docs/shigoku/reports/2026-09-14_sgk-2026-0491_host-header-injection-confirmation_work_report.md
+  - docs/shigoku/worklogs/2026-09-14_sgk-2026-0491_host-header-injection-confirmation_work_log.md
+  - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+  - docs/shigoku/plans/done/2026-09-14_sgk-2026-0490_jwt-key-confusion-confirmation.md
 - provisional_id: DOC-0560
   task_id: SGK-2026-0490
   doc_type: plan

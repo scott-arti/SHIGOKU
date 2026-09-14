@@ -60,6 +60,12 @@ so the payout-grade marker vocabulary stays in sync with the detectors:
                         but absent under sequential requests
                         (control_served_body), proving execution in the
                         check-then-act (TOCTOU) window
+- host_header_auth_bypass -> smart_host_header
+                        ``additional_info.host_header_evidence``: injecting a
+                        Host-family header exposes restricted content
+                        (restricted_signature in injected_served_body) that a
+                        non-bypass host does not (absent in
+                        control_served_body)
 - open_redirect      -> ``external_redirect`` (OpenRedirectSpecialist
                         open_redirect.py): the observed Location header of a
                         3xx response points at the injected attacker-managed
@@ -353,6 +359,13 @@ _MARKER_CATEGORIES: Dict[str, str] = {
     # race_served_body に実在＋marker が control_served_body に非実在）でのみ。
     # 並列で出て逐次で出ない差分が「TOCTOU 窓で実行された」決定的証拠。
     "race_condition": "race_condition_toctou",
+    # SGK-2026-0491: Host Header Injection（認証/認可バイパス）。発火は
+    # host_header_evidence の完備（request_url 非空＋injected_header 非空＋
+    # injected_host_value 非空＋restricted_signature 非空＋injection 2xx＋
+    # 署名が injected_served_body に実在＋control_served_body に非実在）でのみ。
+    # 注入ホストで制限署名が出て非バイパスホストで出ない差分が「Host ヘッダを
+    # 認可に信頼している」決定的証拠。
+    "host_header_injection": "host_header_auth_bypass",
 }
 
 # ---------------------------------------------------------------------------
@@ -728,6 +741,43 @@ def _match_firing_marker(
                 and marker not in control_body
             ):
                 return "race_condition_toctou"
+        return None
+
+    if vuln_type == "host_header_injection":
+        # 発火は「Host ヘッダ注入による認可バイパスの本物のみ」(SGK-2026-0491):
+        # additional_info.host_header_evidence が、
+        #  (1) request_url 非空、
+        #  (2) injected_header 非空、
+        #  (3) injected_host_value 非空、
+        #  (4) restricted_signature 非空、
+        #  (5) injection が成功（injected_status 2xx）、
+        #  (6) 署名が injected_served_body に実在（バイパスで制限コンテンツが出た）、
+        #  (7) 署名が control_served_body に非実在（非バイパスでは出ない差分）、
+        # のすべてを満たすときのみ。1 つでも欠ければ None（fail-closed）。
+        hh = info.get("host_header_evidence")
+        if isinstance(hh, dict):
+            request_url = str(hh.get("request_url") or "").strip()
+            header = str(hh.get("injected_header") or "").strip()
+            host_value = str(hh.get("injected_host_value") or "").strip()
+            signature = str(hh.get("restricted_signature") or "").strip()
+            inj_body = str(hh.get("injected_served_body") or "")
+            ctrl_body = str(hh.get("control_served_body") or "")
+            status = hh.get("injected_status")
+            status_2xx = (
+                isinstance(status, int)
+                and not isinstance(status, bool)
+                and 200 <= status < 300
+            )
+            if (
+                request_url
+                and header
+                and host_value
+                and signature
+                and status_2xx
+                and signature in inj_body
+                and signature not in ctrl_body
+            ):
+                return "host_header_auth_bypass"
         return None
 
     if vuln_type == "open_redirect":

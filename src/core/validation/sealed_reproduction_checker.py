@@ -527,6 +527,12 @@ class SealedReproductionChecker:
         if self._expected_marker(payload, evidence) == "race_condition_toctou":
             return self._check_race_replay(payload, _info)
 
+        # 2.15) SGK-2026-0491: Host Header Injection 専用再現パス。注入ヘッダ付き
+        #       GET を封印スコープ内へ 1 回再送し、制限署名が 2xx 応答に再出現
+        #       することを再観測する（GET＋任意ヘッダ送信）。
+        if self._expected_marker(payload, evidence) == "host_header_auth_bypass":
+            return self._check_host_header_replay(payload, _info)
+
         # 3) GET-only probe (the sealed re-send is always a GET).
         if not assert_read_only_probe("GET", resolved_url):
             return ReproductionOutcome("not_run", _REASON_READ_ONLY_PROBE_REJECTED)
@@ -1512,6 +1518,48 @@ class SealedReproductionChecker:
         if hit:
             return ReproductionOutcome(
                 "matched", "reproduction_marker_matched:race_condition_toctou"
+            )
+        return ReproductionOutcome("mismatched", _REASON_MARKER_MISMATCH)
+
+    def _check_host_header_replay(self, payload: dict, info: dict) -> ReproductionOutcome:
+        """Host Header Injection（認可バイパス）の専用再現パス（SGK-2026-0491）。
+
+        host_header_replay 記述子（url/header/value/signature）に従い、注入ヘッダを付けた
+        封印 GET を対象 URL へ 1 回再送し、制限署名が 2xx 応答に再出現すれば matched。
+        GET＋任意ヘッダ送信は既存の汎用ヘッダ GET 経路（_send_get_jwt）を流用する
+        （jwt 固有処理は無く、任意 headers をそのまま送るだけ）。
+
+        - matched: 制限署名が 2xx 応答に再出現
+        - mismatched: 応答あり・署名非再出現（唯一の mismatch 経路）
+        - not_run: client None / スコープ外 / 記述子不正 / 送信不能（fail-closed）
+        """
+        replay = info.get("host_header_replay")
+        if not isinstance(replay, dict):
+            return ReproductionOutcome("not_run", _REASON_UNKNOWN_CATEGORY)
+        url = str(replay.get("url") or "").strip()
+        header = str(replay.get("header") or "").strip()
+        value = str(replay.get("value") or "").strip()
+        signature = str(replay.get("signature") or "").strip()
+        if not url or not header or not value or not signature:
+            return ReproductionOutcome("not_run", _REASON_UNKNOWN_CATEGORY)
+        if self._network_client is None:
+            return ReproductionOutcome("not_run", _REASON_DISABLED_NO_CLIENT)
+        scope_result = revalidate_scope_for_request(
+            url, scope_definition=self._scope_definition
+        )
+        if not scope_result.allowed:
+            return ReproductionOutcome("not_run", _REASON_SCOPE_REVALIDATION_BLOCKED)
+        try:
+            status, body = self._send_get_jwt(url, headers={header: value})
+        except Exception:  # noqa: BLE001 — transport boundary, fail closed
+            self._replays_used += 1
+            return ReproductionOutcome("not_run", _REASON_TRANSPORT_ERROR)
+        self._replays_used += 1
+        if status <= 0:
+            return ReproductionOutcome("not_run", _REASON_TRANSPORT_ERROR)
+        if signature in str(body) and 200 <= int(status) < 300:
+            return ReproductionOutcome(
+                "matched", "reproduction_marker_matched:host_header_auth_bypass"
             )
         return ReproductionOutcome("mismatched", _REASON_MARKER_MISMATCH)
 
