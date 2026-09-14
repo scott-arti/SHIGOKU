@@ -51,6 +51,7 @@ class VulnType(Enum):
     # 読み取り／SSRF）。新規エンジン SmartXXEHunter が担当。
     XXE = "xxe"
     NOSQL_INJECTION = "nosql_injection"
+    LDAP_INJECTION = "ldap_injection"
     CRLF_INJECTION = "crlf_injection"
     OPEN_REDIRECT = "open_redirect"
     HOST_HEADER_INJECTION = "host_header_injection"

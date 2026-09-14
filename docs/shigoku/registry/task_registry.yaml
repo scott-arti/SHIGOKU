@@ -6186,6 +6186,21 @@ status_allowed_values:
   - docs/shigoku/worklogs/2026-09-14_sgk-2026-0497_prototype-pollution_work_log.md
   - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
   - docs/shigoku/plans/done/2026-09-14_sgk-2026-0496_oob-deserialization.md
+- provisional_id: DOC-0569
+  task_id: SGK-2026-0499
+  doc_type: plan
+  title: LDAP インジェクション（認証バイパス）を実対象で本物確定（◎）
+  primary_doc: docs/shigoku/plans/done/2026-09-14_sgk-2026-0499_ldap-injection.md
+  status: done
+  provisional: false
+  task_summary: "能力マップの LDAP インジェクションを◎化。既存 attack/ldap_tester.py は完全プレースホルダ(_test_payload がリクエスト送らず空結果)で未配線。実対象 SKF ldap-injection(Flask・:5000・実 LDAP バックエンド。POST /login が search_filter=(&(cn=<username>)(sn=<password>)) を文字列連結して search_s)。実測: control(ランダムリテラル nouser123/nopass123)→\"Wrong identity provided.\"、注入(username=*&password=*)→\"You are now admin user!\"=正当な資格情報なしの認証バイパス。in-band 差分(メタ文字なしリテラル失敗×LDAP メタ文字成功)で確定する新エンジン smart_ldap_injection(SmartLDAPInjectionHunter・①負のコントロール(ランダムリテラル×2)②LDAP メタ文字ペイロード(*/*・*)(cn=*))(|(cn=* 等)の差分・成功印は task 由来 ldap_success_marker 優先/無ければ2コントロール安定ベースラインに対し注入応答にだけ現れる特徴行を自動導出=製品固有文字列なし・マーカー中心スニペット+コントロール同一領域切り出し(差分は同じ領域の両側)・_client seam・auth は poc マスク/evidence 保持・ldap_evidence/ldap_replay/差分2ステップpoc)を新設。確定バー(凍結 payout_grade.py)に _LDAP_METACHAR_PATTERN(*/)(/(|/(&)+_MARKER_CATEGORIES['ldap_injection']='ldap_injection_confirmed'+発火分岐(request_url 非空+payload にメタ文字+success_marker 非空+injection 2xx+marker が injected_served_body 実在+control_served_body 非実在・fail-closed)をユーザー承認の上追加。finding.py に VulnType.LDAP_INJECTION。再現チェッカー(凍結)は _check_ldap_replay(fresh リテラルの control×確定済みメタ文字ペイロードを form 再送→成功印が注入応答に再出現+コントロールに非出現→matched)。実 SKF E2E: 検出→payout_grade=True/ldap_injection_confirmed→封印再現 matched→CONFIRMED、実 poc_judge 初回一発(is_real=True/impact=True/counter=False)。新規12テスト緑・回帰ゼロ(1382 passed)・凍結3 exit0・製品token0・秘密値非露出。認証バイパス(CRITICAL)・高度化中(L2)。非破壊(読み取り専用の検索)。凍結改変はユーザー明示承認済。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/done/2026-09-14_sgk-2026-0499_ldap-injection.md
+  - docs/shigoku/reports/2026-09-14_sgk-2026-0499_ldap-injection_work_report.md
+  - docs/shigoku/worklogs/2026-09-14_sgk-2026-0499_ldap-injection_work_log.md
+  - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+  - docs/shigoku/plans/done/2026-09-13_sgk-2026-0487_nosql-injection-confirmation.md
 - provisional_id: DOC-0568
   task_id: SGK-2026-0498
   doc_type: plan

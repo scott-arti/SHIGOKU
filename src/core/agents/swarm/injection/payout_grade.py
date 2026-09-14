@@ -252,6 +252,10 @@ _XXE_ENTITY_PATTERN = re.compile(r"(?is)<!ENTITY\s+\S+\s+SYSTEM\s")
 
 # SGK-2026-0487: NoSQL(MongoDB) 演算子注入。payload に演算子が含まれることの検証。
 _NOSQL_OPERATOR_PATTERN = re.compile(r"\$(?:ne|gt|gte|lt|lte|regex|in|nin|where|exists)\b")
+# SGK-2026-0499: LDAP フィルタのメタ文字（ワイルドカード * / フィルタ閉じ→再オープン )( /
+# 論理 OR (| / 論理 AND (&）。リテラル値には現れず、入力が LDAP フィルタとして解釈される
+# ことを示す最小シグネチャ（単なる `=` や `(` 単体は誤検知を避けるため対象外）。
+_LDAP_METACHAR_PATTERN = re.compile(r"\*|\)\(|\(\||\(&")
 
 
 def _nosql_body_has_data(status: Any, body: str) -> bool:
@@ -393,6 +397,13 @@ _MARKER_CATEGORIES: Dict[str, str] = {
     # victim_served_body（クリーン応答）に実在＋marker が control_served_body に非実在）
     # でのみ。クリーンな victim に攻撃者 marker が出ることがキャッシュ配信の決定的証拠。
     "cache_poisoning": "cache_poisoning_confirmed",
+    # SGK-2026-0499: LDAP インジェクション（認証/フィルタバイパス）。発火は
+    # ldap_evidence の完備（request_url 非空＋injection_payload に LDAP メタ文字
+    # （* や )( や (| や (&）＋success_marker 非空＋injection 成功(2xx)＋success_marker が
+    # injected_served_body に実在＋success_marker が control_served_body（メタ文字無しの
+    # リテラル資格情報）に非実在）でのみ。リテラルは失敗しメタ文字で成功する差分が
+    # 「入力が LDAP フィルタとして解釈された」決定的証拠。
+    "ldap_injection": "ldap_injection_confirmed",
 }
 
 # ---------------------------------------------------------------------------
@@ -826,6 +837,42 @@ def _match_firing_marker(
                 and marker not in control_body
             ):
                 return "prototype_pollution_confirmed"
+        return None
+
+    if vuln_type == "ldap_injection":
+        # 発火は「LDAP インジェクション（認証/フィルタバイパス）の本物のみ」(SGK-2026-0499):
+        # additional_info.ldap_evidence が、
+        #  (1) request_url 非空、
+        #  (2) injection_payload に LDAP メタ文字（* / )( / (| / (&）、
+        #  (3) success_marker 非空、
+        #  (4) injection が成功（injected_status 2xx）、
+        #  (5) success_marker が injected_served_body に実在（メタ文字で成功した）、
+        #  (6) success_marker が control_served_body（メタ文字無しリテラル）に非実在、
+        # のすべてを満たすときのみ。1 つでも欠ければ None（fail-closed）。
+        # リテラルは失敗しメタ文字で成功する差分が「入力が LDAP フィルタとして
+        # 解釈された」決定的証拠（＝正当な資格情報なしの認証バイパス）。
+        le = info.get("ldap_evidence")
+        if isinstance(le, dict):
+            request_url = str(le.get("request_url") or "").strip()
+            payload = str(le.get("injection_payload") or "")
+            success_marker = str(le.get("success_marker") or "").strip()
+            inj_body = str(le.get("injected_served_body") or "")
+            ctrl_body = str(le.get("control_served_body") or "")
+            status = le.get("injected_status")
+            status_2xx = (
+                isinstance(status, int)
+                and not isinstance(status, bool)
+                and 200 <= status < 300
+            )
+            if (
+                request_url
+                and _LDAP_METACHAR_PATTERN.search(payload)
+                and success_marker
+                and status_2xx
+                and success_marker in inj_body
+                and success_marker not in ctrl_body
+            ):
+                return "ldap_injection_confirmed"
         return None
 
     if vuln_type == "host_header_injection":

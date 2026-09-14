@@ -86,6 +86,7 @@ from src.core.agents.swarm.injection.payout_grade import (
     _XXE_ENTITY_PATTERN,
     _XXE_FILE_PATTERNS,
     _NOSQL_OPERATOR_PATTERN,
+    _LDAP_METACHAR_PATTERN,
     _nosql_body_has_data,
     _acao_reflects_test_origin,
     _external_redirect_observed,
@@ -540,6 +541,14 @@ class SealedReproductionChecker:
         #       マーカーが再出現することを再観測する（in-band 差分）。
         if self._expected_marker(payload, evidence) == "prototype_pollution_confirmed":
             return self._check_pp_replay(payload, _info)
+
+        # 2.19) SGK-2026-0499: LDAP インジェクション（認証バイパス）専用再現パス。
+        #       確定済みの LDAP メタ文字ペイロードと fresh なランダムリテラルの
+        #       コントロールを封印スコープ内へ再送し、成功印が注入応答に再出現しつつ
+        #       リテラルコントロールには非出現することを再観測する（in-band 差分・
+        #       読み取り専用で非破壊）。
+        if self._expected_marker(payload, evidence) == "ldap_injection_confirmed":
+            return self._check_ldap_replay(payload, _info)
 
         # 2.16) SGK-2026-0492: Web キャッシュポイズニング専用再現パス。新しい marker と
         #       新しい cache-buster で 毒入り GET（unkeyed ヘッダ付き）→ victim GET
@@ -1361,6 +1370,89 @@ class SealedReproductionChecker:
         if _nosql_body_has_data(status, resp_body):
             return ReproductionOutcome(
                 "matched", "reproduction_marker_matched:nosql_operator_injection"
+            )
+        return ReproductionOutcome("mismatched", _REASON_MARKER_MISMATCH)
+
+    def _check_ldap_replay(self, payload: dict, info: dict) -> ReproductionOutcome:
+        """LDAP インジェクション（認証バイパス）の専用再現パス（SGK-2026-0499）。
+
+        元 Finding の ldap_replay 記述子（url/user_param/pass_param/inj_user/inj_pass/
+        success_marker）に従い、封印スコープ内で ①fresh なランダムリテラルの
+        コントロール ②確定済みの LDAP メタ文字ペイロード を順に form POST し、
+        成功印が注入応答に再出現しつつコントロールには非出現することを再観測する。
+        リテラル失敗×メタ文字成功の差分は元 finding で確定済み（payout_grade が両者を
+        検証）。読み取り専用の検索で非破壊。
+
+        - matched: 成功印が注入応答に再出現＋コントロールに非出現
+          （reproduction_marker_matched:ldap_injection_confirmed）
+        - mismatched: 応答あり・差分が再現しない（唯一の mismatch 経路）
+        - not_run: client None / スコープ再検証不可 / 記述子不正（メタ文字なし含む）/
+          送信不能（fail-closed）
+        """
+        import uuid as _uuid
+
+        replay = info.get("ldap_replay")
+        if not isinstance(replay, dict):
+            return ReproductionOutcome("not_run", _REASON_UNKNOWN_CATEGORY)
+        method = str(replay.get("method") or "").strip().upper()
+        url = str(replay.get("url") or "").strip()
+        user_param = str(replay.get("user_param") or "").strip()
+        pass_param = str(replay.get("pass_param") or "").strip()
+        inj_user = str(replay.get("inj_user") or "")
+        inj_pass = str(replay.get("inj_pass") or "")
+        marker = str(replay.get("success_marker") or "").strip()
+        payload_str = f"{inj_user} {inj_pass}"
+        if (
+            method != "POST"
+            or not url
+            or not user_param
+            or not pass_param
+            or not marker
+            or not _LDAP_METACHAR_PATTERN.search(payload_str)
+        ):
+            return ReproductionOutcome("not_run", _REASON_UNKNOWN_CATEGORY)
+        if self._network_client is None:
+            return ReproductionOutcome("not_run", _REASON_DISABLED_NO_CLIENT)
+        scope_result = revalidate_scope_for_request(
+            url, scope_definition=self._scope_definition
+        )
+        if not scope_result.allowed:
+            return ReproductionOutcome("not_run", _REASON_SCOPE_REVALIDATION_BLOCKED)
+        evidence = payload.get("evidence")
+        if not isinstance(evidence, dict):
+            evidence = {}
+        headers: dict = {}
+        request_headers = evidence.get("request_headers")
+        if isinstance(request_headers, dict):
+            for key, value in request_headers.items():
+                if str(key).lower() not in {
+                    "content-length", "transfer-encoding", "host", "connection",
+                }:
+                    headers[str(key)] = str(value)
+        ctrl_user = "shigoku_ldap_" + _uuid.uuid4().hex[:10]
+        ctrl_pass = "shigoku_pw_" + _uuid.uuid4().hex[:10]
+        try:
+            _c_status, ctrl_body = self._send_post_form(
+                method, url, data={user_param: ctrl_user, pass_param: ctrl_pass},
+                headers=headers,
+            )
+            inj_status, inj_body = self._send_post_form(
+                method, url, data={user_param: inj_user, pass_param: inj_pass},
+                headers=headers,
+            )
+        except Exception:  # noqa: BLE001 — transport boundary, fail closed
+            self._replays_used += 1
+            return ReproductionOutcome("not_run", _REASON_TRANSPORT_ERROR)
+        self._replays_used += 1
+        if inj_status <= 0:
+            return ReproductionOutcome("not_run", _REASON_TRANSPORT_ERROR)
+        if (
+            200 <= inj_status < 300
+            and marker in (inj_body or "")
+            and marker not in (ctrl_body or "")
+        ):
+            return ReproductionOutcome(
+                "matched", "reproduction_marker_matched:ldap_injection_confirmed"
             )
         return ReproductionOutcome("mismatched", _REASON_MARKER_MISMATCH)
 
