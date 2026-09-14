@@ -66,6 +66,12 @@ so the payout-grade marker vocabulary stays in sync with the detectors:
                         (restricted_signature in injected_served_body) that a
                         non-bypass host does not (absent in
                         control_served_body)
+- cache_poisoning_confirmed -> smart_cache_poisoning
+                        ``additional_info.cache_poisoning_evidence``: an
+                        attacker marker injected via an unkeyed header is
+                        served to a CLEAN victim request (marker in
+                        victim_served_body) while a different cache key is not
+                        poisoned (absent in control_served_body)
 - open_redirect      -> ``external_redirect`` (OpenRedirectSpecialist
                         open_redirect.py): the observed Location header of a
                         3xx response points at the injected attacker-managed
@@ -366,6 +372,11 @@ _MARKER_CATEGORIES: Dict[str, str] = {
     # 注入ホストで制限署名が出て非バイパスホストで出ない差分が「Host ヘッダを
     # 認可に信頼している」決定的証拠。
     "host_header_injection": "host_header_auth_bypass",
+    # SGK-2026-0492: Web キャッシュポイズニング。発火は cache_poisoning_evidence の
+    # 完備（request_url 非空＋injected_header 非空＋marker 非空＋victim 2xx＋marker が
+    # victim_served_body（クリーン応答）に実在＋marker が control_served_body に非実在）
+    # でのみ。クリーンな victim に攻撃者 marker が出ることがキャッシュ配信の決定的証拠。
+    "cache_poisoning": "cache_poisoning_confirmed",
 }
 
 # ---------------------------------------------------------------------------
@@ -778,6 +789,41 @@ def _match_firing_marker(
                 and signature not in ctrl_body
             ):
                 return "host_header_auth_bypass"
+        return None
+
+    if vuln_type == "cache_poisoning":
+        # 発火は「Web キャッシュポイズニングの本物のみ」(SGK-2026-0492):
+        # additional_info.cache_poisoning_evidence が、
+        #  (1) request_url 非空、
+        #  (2) injected_header 非空（unkeyed 入力）、
+        #  (3) marker 非空（一意の攻撃者ホスト）、
+        #  (4) victim が成功（victim_status 2xx）、
+        #  (5) marker が victim_served_body（クリーン応答）に実在＝キャッシュ配信、
+        #  (6) marker が control_served_body（別鍵）に非実在、
+        # のすべてを満たすときのみ。1 つでも欠ければ None（fail-closed）。
+        # クリーンな victim に攻撃者 marker が出ることがキャッシュ配信の決定的証拠。
+        cp = info.get("cache_poisoning_evidence")
+        if isinstance(cp, dict):
+            request_url = str(cp.get("request_url") or "").strip()
+            header = str(cp.get("injected_header") or "").strip()
+            marker = str(cp.get("marker") or "").strip()
+            victim_body = str(cp.get("victim_served_body") or "")
+            control_body = str(cp.get("control_served_body") or "")
+            v_status = cp.get("victim_status")
+            status_2xx = (
+                isinstance(v_status, int)
+                and not isinstance(v_status, bool)
+                and 200 <= v_status < 300
+            )
+            if (
+                request_url
+                and header
+                and marker
+                and status_2xx
+                and marker in victim_body
+                and marker not in control_body
+            ):
+                return "cache_poisoning_confirmed"
         return None
 
     if vuln_type == "open_redirect":

@@ -533,6 +533,14 @@ class SealedReproductionChecker:
         if self._expected_marker(payload, evidence) == "host_header_auth_bypass":
             return self._check_host_header_replay(payload, _info)
 
+        # 2.16) SGK-2026-0492: Web キャッシュポイズニング専用再現パス。新しい marker と
+        #       新しい cache-buster で 毒入り GET（unkeyed ヘッダ付き）→ victim GET
+        #       （クリーン）の2手を封印スコープ内で送り、victim 応答に新 marker が
+        #       再出現することを再観測する。キャッシュは単発再送では再現不可のため
+        #       poison→victim の2手再現が正当（GET のみ・fresh 鍵で隔離）。
+        if self._expected_marker(payload, evidence) == "cache_poisoning_confirmed":
+            return self._check_cache_poisoning_replay(payload, _info)
+
         # 3) GET-only probe (the sealed re-send is always a GET).
         if not assert_read_only_probe("GET", resolved_url):
             return ReproductionOutcome("not_run", _REASON_READ_ONLY_PROBE_REJECTED)
@@ -1518,6 +1526,68 @@ class SealedReproductionChecker:
         if hit:
             return ReproductionOutcome(
                 "matched", "reproduction_marker_matched:race_condition_toctou"
+            )
+        return ReproductionOutcome("mismatched", _REASON_MARKER_MISMATCH)
+
+    def _check_cache_poisoning_replay(self, payload: dict, info: dict) -> ReproductionOutcome:
+        """Web キャッシュポイズニングの専用再現パス（SGK-2026-0492）。
+
+        cache_poisoning_replay 記述子（base_url/header）に従い、**新しい marker と新しい
+        cache-buster** で 毒入り GET（unkeyed ヘッダ付き）→ victim GET（クリーン）の2手を
+        封印スコープ内で送り、victim（クリーン）応答に新 marker が再出現すれば matched。
+        キャッシュは単発再送では再現不可のため poison→victim の2手再現が正当（GET のみ・
+        fresh cache-buster で隔離した鍵のみ汚染・非破壊）。
+
+        - matched: 新 marker が victim（クリーン）応答（2xx）に再出現
+        - mismatched: 応答あり・marker 非再出現（唯一の mismatch 経路）
+        - not_run: client None / スコープ外 / 記述子不正 / 送信不能（fail-closed）
+        """
+        import uuid as _uuid
+        from urllib.parse import (
+            urlsplit as _urlsplit, urlunsplit as _urlunsplit,
+            parse_qsl as _parse_qsl, urlencode as _urlencode,
+        )
+
+        replay = info.get("cache_poisoning_replay")
+        if not isinstance(replay, dict):
+            return ReproductionOutcome("not_run", _REASON_UNKNOWN_CATEGORY)
+        base = str(replay.get("base_url") or "").strip()
+        header = str(replay.get("header") or "").strip()
+        if not base or not header:
+            return ReproductionOutcome("not_run", _REASON_UNKNOWN_CATEGORY)
+        if self._network_client is None:
+            return ReproductionOutcome("not_run", _REASON_DISABLED_NO_CLIENT)
+        scope_result = revalidate_scope_for_request(
+            base, scope_definition=self._scope_definition
+        )
+        if not scope_result.allowed:
+            return ReproductionOutcome("not_run", _REASON_SCOPE_REVALIDATION_BLOCKED)
+        marker = "shigoku-cp-" + _uuid.uuid4().hex[:12] + ".evil.example"
+        parts = _urlsplit(base)
+        q = _parse_qsl(parts.query, keep_blank_values=True)
+        q.append(("shigoku_cp", _uuid.uuid4().hex[:16]))
+        poison_url = _urlunsplit(
+            (parts.scheme, parts.netloc, parts.path, _urlencode(q), parts.fragment)
+        )
+        # 毒入り GET（unkeyed ヘッダ付き）。
+        try:
+            self._send_get_jwt(poison_url, headers={header: marker})
+        except Exception:  # noqa: BLE001 — transport boundary, fail closed
+            self._replays_used += 1
+            return ReproductionOutcome("not_run", _REASON_TRANSPORT_ERROR)
+        self._replays_used += 1
+        # victim GET（クリーン）。_send_get は (body, status, location) を返す。
+        try:
+            body, status, _loc = self._send_get(poison_url)
+        except Exception:  # noqa: BLE001 — transport boundary, fail closed
+            self._replays_used += 1
+            return ReproductionOutcome("not_run", _REASON_TRANSPORT_ERROR)
+        self._replays_used += 1
+        if status <= 0:
+            return ReproductionOutcome("not_run", _REASON_TRANSPORT_ERROR)
+        if marker in str(body) and 200 <= int(status) < 300:
+            return ReproductionOutcome(
+                "matched", "reproduction_marker_matched:cache_poisoning_confirmed"
             )
         return ReproductionOutcome("mismatched", _REASON_MARKER_MISMATCH)
 

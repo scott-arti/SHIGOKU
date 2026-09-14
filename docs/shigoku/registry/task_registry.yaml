@@ -6171,6 +6171,21 @@ status_allowed_values:
   - docs/shigoku/worklogs/2026-09-13_sgk-2026-0486_xxe-confirmation_work_log.md
   - docs/shigoku/plans/done/2026-09-13_sgk-2026-0485_ssti-confirmation.md
   - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+- provisional_id: DOC-0562
+  task_id: SGK-2026-0492
+  doc_type: plan
+  title: Web キャッシュポイズニングを実対象で本物確定（◎）
+  primary_doc: docs/shigoku/plans/done/2026-09-14_sgk-2026-0492_web-cache-poisoning-confirmation.md
+  status: done
+  provisional: false
+  task_summary: "能力マップのキャッシュポイズニングを◎化。既存high_risk_tester.pyのCachePoisoner(X-Forwarded-Host等unkeyed候補・unkeyed検出・cache buster)は在るがspecialist/確定バー未接続・cacheマーカー無し。DVGA/SKFと同posture で OWASP SKF ラボ web-cache-poisoning(Flask+flask_caching)を127.0.0.1:5093に起動。/<path>はX-Forwarded-Hostでrequest.hostを上書きしtracker_site=request.hostを反映、キャッシュキーはfull_path(X-Forwarded-Hostはunkeyed)。実測で毒入り(X-Forwarded-Host:一意marker+一意cache-buster)→marker反映+キャッシュ、victim(同URLクリーン)→markerが配信=キャッシュHITで毒がvictimに届く、control(別cache-busterクリーン)→marker無し=教科書的Webキャッシュポイズニング。非破壊(一意cache-busterで隔離キーに良性markerのみ・実ユーザー経路を汚さない)。本タスクは実対象で機械フロア+実再現+実poc_judgeの完全3ゲートで◎へ。新エンジンsmart_cache_poisoning(SmartCachePoisoningHunter・候補unkeyedヘッダを一意cache-buster URLへ①毒入り②victim③controlの順で送りmarkerがpoison反映かつvictimに出てcontrolに出ない差分で確定・_client seam・marker中心スニペット・cache_poisoning_evidence(victim/control/poison)・cache_poisoning_replay・差分poc・製品固有ハードコードなし)を新設。確定バー(凍結payout_grade.py)に_MARKER_CATEGORIES['cache_poisoning']='cache_poisoning_confirmed'+発火分岐(request_url/injected_header/marker非空+victim2xx+markerがvictim_served_bodyに実在+control_served_bodyに非実在)をユーザー承認の上fail-closedで追加。再現チェッカー(凍結)は_check_cache_poisoning_replayで新marker+新cache-busterで毒入りGET→victim GETの2手を封印内で送りvictimに新marker再出現でmatched(キャッシュは単発再送不可のため2手再現が正当・GETのみ・freshキー隔離)。製品非依存fixtureのテスト+実SKF E2E+fail-closed否定側+実poc_judge。凍結改変はユーザー明示承認済。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/done/2026-09-14_sgk-2026-0492_web-cache-poisoning-confirmation.md
+  - docs/shigoku/reports/2026-09-14_sgk-2026-0492_web-cache-poisoning-confirmation_work_report.md
+  - docs/shigoku/worklogs/2026-09-14_sgk-2026-0492_web-cache-poisoning-confirmation_work_log.md
+  - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+  - docs/shigoku/plans/done/2026-09-14_sgk-2026-0491_host-header-injection-confirmation.md
 - provisional_id: DOC-0561
   task_id: SGK-2026-0491
   doc_type: plan
