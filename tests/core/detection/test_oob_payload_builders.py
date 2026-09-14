@@ -17,6 +17,19 @@ def test_python_pickle_contains_callback_and_os_system():
     assert _CB.encode() in raw
 
 
+def test_java_snakeyaml_contains_scriptengine_gadget_and_callback():
+    # SGK-2026-0498: SnakeYAML ScriptEngineManager ガジェット。load() で JVM の ServiceLoader が
+    # URLClassLoader のベース URL（末尾 '/'）に META-INF/services を付けて外向き取得する。
+    raw = build_oob_payload("java_snakeyaml", _CB)
+    assert isinstance(raw, bytes)
+    text = raw.decode("utf-8")
+    assert "javax.script.ScriptEngineManager" in text
+    assert "java.net.URLClassLoader" in text
+    assert "java.net.URL" in text
+    # コールバックはベース URL 化（末尾 '/'）＝ token を含むパス配下を叩かせる。
+    assert (_CB + "/") in text
+
+
 def test_unknown_builder_raises():
     with pytest.raises(ValueError):
         build_oob_payload("no_such_builder", _CB)

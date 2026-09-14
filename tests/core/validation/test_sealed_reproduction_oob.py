@@ -149,6 +149,27 @@ def test_matched_builder_mode_deser():
         srv.shutdown()
 
 
+def test_matched_path_mode_java_deser():
+    # Java SnakeYAML: builder=java_snakeyaml を base64 で URL パス末尾に付けて GET 再現
+    # （SGK-2026-0498・path モード）。fresh callback からガジェットを作り直す。
+    srv, url = _start_target()
+    try:
+        f = _finding(url).to_dict()
+        f["additional_info"]["oob_replay"] = {
+            "method": "GET", "url": url, "mode": "path", "param": "",
+            "content_type": None, "builder": "java_snakeyaml", "encoding": "base64",
+            "payload_template": "{OOB}",
+        }
+        chk = SealedReproductionChecker(
+            network_client=None, scope_definition=_SCOPE,
+            oob_provider=_FakeOOBProvider(will_callback=True), timeout_seconds=5,
+        )
+        out = chk.check(f)
+        assert out.status == "matched"
+    finally:
+        srv.shutdown()
+
+
 def test_mismatched_when_no_callback():
     srv, url = _start_target()
     try:

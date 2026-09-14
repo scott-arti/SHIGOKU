@@ -55,8 +55,15 @@ class LocalOOBListener:
         self._interactions: Dict[str, List[OOBInteraction]] = {}
         
         # ルーティング設定
+        # 単一セグメント (通常の SSRF/XXE/pickle コールバック)
         self._app.router.add_route('*', '/callback/{token}', self._handle_callback)
+        # 多段パス: Java ScriptEngineManager 等が末尾に
+        # /META-INF/services/javax.script.ScriptEngineFactory を付けて取得するため、
+        # token は先頭セグメントのみ捕捉し残りは tail に逃がす ({tail:.*} は '/' を含めて一致)。
+        # /callback/ 付きを先に登録して /{token}/{tail} が token='callback' で誤取得するのを防ぐ。
+        self._app.router.add_route('*', '/callback/{token}/{tail:.*}', self._handle_callback)
         self._app.router.add_route('*', '/{token}', self._handle_callback)  # ルート直下も拾う
+        self._app.router.add_route('*', '/{token}/{tail:.*}', self._handle_callback)
 
     async def start(self):
         """サーバーを起動"""

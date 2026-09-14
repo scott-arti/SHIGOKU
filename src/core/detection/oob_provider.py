@@ -79,17 +79,25 @@ class LocalOOBProvider:
         interactions = self._listener.get_interactions(token)
         if not interactions:
             return None
-        i = interactions[0]
-        return {
-            "token": token,
-            "channel": self.channel,
-            "remote_ip": getattr(i, "remote_ip", ""),
-            "method": getattr(i, "method", ""),
-            "path": getattr(i, "path", ""),
-            "query_string": getattr(i, "query_string", ""),
-            "timestamp": getattr(i, "timestamp", 0.0),
-            "headers": dict(getattr(i, "raw_headers", {}) or {}),
-        }
+
+        def _as_dict(it: Any) -> Dict[str, Any]:
+            return {
+                "token": token,
+                "channel": self.channel,
+                "remote_ip": getattr(it, "remote_ip", ""),
+                "method": getattr(it, "method", ""),
+                "path": getattr(it, "path", ""),
+                "query_string": getattr(it, "query_string", ""),
+                "timestamp": getattr(it, "timestamp", 0.0),
+                "headers": dict(getattr(it, "raw_headers", {}) or {}),
+            }
+
+        first = _as_dict(interactions[0])
+        # 追加: 同一 token に届いた全インタラクション（例: Java ScriptEngineManager は
+        # META-INF/services 取得→返した名前のクラス取得と複数回叩く）。生の受信ログとして
+        # PoC に載せられるよう additive に付与する（既存 consumer は特定キーのみ参照）。
+        first["interactions"] = [_as_dict(it) for it in interactions]
+        return first
 
     async def __aenter__(self) -> "LocalOOBProvider":
         await self.start()

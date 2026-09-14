@@ -1642,7 +1642,7 @@ class SealedReproductionChecker:
         if (
             not url
             or (not builder and "{OOB}" not in template)
-            or mode not in ("form", "raw", "query", "json")
+            or mode not in ("form", "raw", "query", "json", "path")
             or (mode in ("form", "query", "json") and not param)
             or method not in ("GET", "POST")
         ):
@@ -1672,6 +1672,9 @@ class SealedReproductionChecker:
                 loop = asyncio.get_event_loop()
 
                 def _send():
+                    if mode == "path":  # deser: encoded gadget appended to URL path (GET)
+                        full = url.rstrip("/") + "/" + str(body)
+                        return requests.get(full, timeout=timeout_s, allow_redirects=False)
                     if mode == "raw":
                         headers = {"Content-Type": str(content_type or "application/xml")}
                         return requests.post(url, data=body, headers=headers,
