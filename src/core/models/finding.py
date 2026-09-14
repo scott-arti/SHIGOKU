@@ -70,6 +70,7 @@ class VulnType(Enum):
     # Configuration
     MISCONFIGURATION = "misconfiguration"
     CACHE_POISONING = "cache_poisoning"
+    SUBDOMAIN_TAKEOVER = "subdomain_takeover"
     CORS_MISCONFIGURATION = "cors_misconfiguration"
     GRAPHQL_INTROSPECTION = "graphql_introspection"
     # SGK-2026-0484: GraphQL broken authorization（認証なしのクエリが認可

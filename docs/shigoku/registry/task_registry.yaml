@@ -6171,6 +6171,21 @@ status_allowed_values:
   - docs/shigoku/worklogs/2026-09-13_sgk-2026-0486_xxe-confirmation_work_log.md
   - docs/shigoku/plans/done/2026-09-13_sgk-2026-0485_ssti-confirmation.md
   - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+- provisional_id: DOC-0563
+  task_id: SGK-2026-0493
+  doc_type: plan
+  title: Subdomain Takeover を機能として ◯（非破壊フィンガープリント検出）
+  primary_doc: docs/shigoku/plans/done/2026-09-14_sgk-2026-0493_subdomain-takeover-detection.md
+  status: done
+  provisional: false
+  task_summary: "Subdomain Takeover を機能として◯化（ユーザー指示: まず◯・チェックは当面手動でよい）。◎は実際にリソース登録して奪取が必要=破壊的・スコープ外のため行わず、CORS同様の非破壊フィンガープリント検出+候補Findingを整備。既存資産(config/providers/takeover_provider_matrix.yaml=AWS S3/GitHub Pages/Heroku/Azureのcan-i-take-over-xyz由来実fingerprint_domains+error_tokens、takeover_provider_matrix_adapterのProviderMatrixLoader/find_by_fingerprint_domain/find_by_error_token、subzy/subjack)はswarm未配線・Finding化されていなかった。実測で実GitHub Pages未登録<rand>.github.ioが本文にThere isn't a GitHub Pages site here(実error_token)を返すことを確認=実データで検出成立。dnspython未導入(CNAME解決はbest-effort・host名/recon由来cnameで代用)。finding.pyにVulnType.SUBDOMAIN_TAKEOVER追加。新エンジンsmart_subdomain_takeover(SmartSubdomainTakeoverHunter・matrixロードしhost/cnameをfingerprint_domain照合+取得本文をerror_token照合・error_token一致で候補Finding・confidence0.9=CNAME委譲一致/0.6=サインのみ・false_positive_twin注意・_client seam・error_token中心スニペット・subdomain_takeover_evidence(host/cname/provider/matched_token/cname_match/verification_urls/claim_prerequisites/grade=candidate)・製品固有ハードコードなし)を新設。確定バー・再現チェッカーは改変なし(◯候補はpayout_grade非発火=人手claimで◎化)。破壊的奪取なし(GETのみ)。実GitHub Pages未登録サブドメインで候補検出を実証(手動確認可)。製品非依存fixtureのテスト6緑。凍結5 exit0(確定バー未改変)・回帰ゼロ。能力マップにSubdomain Takeover◯追加(◎は破壊的claimが要るため人手・別途)。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/done/2026-09-14_sgk-2026-0493_subdomain-takeover-detection.md
+  - docs/shigoku/reports/2026-09-14_sgk-2026-0493_subdomain-takeover-detection_work_report.md
+  - docs/shigoku/worklogs/2026-09-14_sgk-2026-0493_subdomain-takeover-detection_work_log.md
+  - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+  - docs/shigoku/plans/done/2026-09-14_sgk-2026-0492_web-cache-poisoning-confirmation.md
 - provisional_id: DOC-0562
   task_id: SGK-2026-0492
   doc_type: plan
