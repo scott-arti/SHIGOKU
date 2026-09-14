@@ -19,6 +19,11 @@ class _TargetHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b"")
 
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"")
+
     def log_message(self, *a):
         pass
 
@@ -101,6 +106,25 @@ def test_matched_when_fresh_token_called_back():
         out = chk.check(_finding(url).to_dict())
         assert out.status == "matched"
         assert "oob_interaction_received" in out.reason
+    finally:
+        srv.shutdown()
+
+
+def test_matched_query_mode_ssrf():
+    # SSRF: callback URL を query パラメータに入れる GET 再現（SGK-2026-0495）。
+    srv, url = _start_target()
+    try:
+        f = _finding(url).to_dict()
+        f["additional_info"]["oob_replay"] = {
+            "method": "GET", "url": url, "mode": "query", "param": "url",
+            "content_type": None, "payload_template": "{OOB}",
+        }
+        chk = SealedReproductionChecker(
+            network_client=None, scope_definition=_SCOPE,
+            oob_provider=_FakeOOBProvider(will_callback=True), timeout_seconds=5,
+        )
+        out = chk.check(f)
+        assert out.status == "matched"
     finally:
         srv.shutdown()
 

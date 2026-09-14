@@ -1630,11 +1630,11 @@ class SealedReproductionChecker:
         content_type = replay.get("content_type")
         template = str(replay.get("payload_template") or "")
         if (
-            method != "POST"
-            or not url
+            not url
             or "{OOB}" not in template
-            or mode not in ("form", "raw")
-            or (mode == "form" and not param)
+            or mode not in ("form", "raw", "query", "json")
+            or (mode in ("form", "query", "json") and not param)
+            or method not in ("GET", "POST")
         ):
             return ReproductionOutcome("not_run", _REASON_UNKNOWN_CATEGORY)
         scope_result = revalidate_scope_for_request(
@@ -1659,7 +1659,13 @@ class SealedReproductionChecker:
                         headers = {"Content-Type": str(content_type or "application/xml")}
                         return requests.post(url, data=body, headers=headers,
                                              timeout=timeout_s, allow_redirects=False)
-                    return requests.post(url, data={param: body},
+                    if mode == "query":  # SSRF: callback URL in a query param (GET)
+                        return requests.get(url, params={param: body},
+                                            timeout=timeout_s, allow_redirects=False)
+                    if mode == "json":   # SSRF: callback URL in a JSON field (POST)
+                        return requests.post(url, json={param: body},
+                                             timeout=timeout_s, allow_redirects=False)
+                    return requests.post(url, data={param: body},  # form
                                          timeout=timeout_s, allow_redirects=False)
 
                 try:

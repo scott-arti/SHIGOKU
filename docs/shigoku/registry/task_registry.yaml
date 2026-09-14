@@ -6171,6 +6171,21 @@ status_allowed_values:
   - docs/shigoku/worklogs/2026-09-13_sgk-2026-0486_xxe-confirmation_work_log.md
   - docs/shigoku/plans/done/2026-09-13_sgk-2026-0485_ssti-confirmation.md
   - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+- provisional_id: DOC-0565
+  task_id: SGK-2026-0495
+  doc_type: plan
+  title: Blind(OOB) SSRF を実対象で本物確定（◎・OOB 基盤の横展開）
+  primary_doc: docs/shigoku/plans/done/2026-09-14_sgk-2026-0495_blind-ssrf-oob.md
+  status: done
+  provisional: false
+  task_summary: "SGK-2026-0494 の OOB 基盤(OOBProvider+LocalOOBProvider+汎用マーカーoob_interaction_received+_check_oob_replay)を横展開しblind SSRFを◎化。SSRFはサーバがリクエスト中のURLをfetchするが結果を返さないため我々のOOB受信器をfetch先に指定しtoken到達で確定=宛先を変えるだけ・新エンジンはFinding作るだけ・payout_grade不変(汎用OOBマーカーがvuln_type=ssrfでそのまま発火)。SKF ssrfラボ(--network host)のPOST /check_existence form urlをrequests.headでサーバ側fetch(内容非返却=実質ブラインド)、URLパラメータにOOBコールバックを入れると標的がHEAD /callback/tokenで受信器へ到達。新エンジンsmart_blind_ssrf(候補URLパラメータ×form/query/jsonモードにcallback注入→pollでtoken到達確認・_client/_oob seam・oob_evidence(payload=token含む送出値)/oob_replay(mode/param/payload_template={OOB})/生OOB inbound載せたpoc・製品固有ハードコードなし・非破壊)。確定バーpayout_grade改変なし。再現チェッカー(凍結)は_check_oob_replayにquery(GET)/json(POST)モード追加(従来form/raw+・実標的の?url=/{url:}汎用性)。実SKF E2E: blind SSRF OOB検出→payout_grade=True→封印再現matched→CONFIRMED、実poc_judge 5/5(標的=python-requestsからHEAD callbackが受信器へ到達+token相関)。新規9テスト緑・回帰ゼロ(1302 passed・先行失敗3)・凍結3 exit0・payout_grade不変・製品token0。OOB SQLi/デシリアライズも同型で追加可能。凍結改変はユーザー明示承認済。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/done/2026-09-14_sgk-2026-0495_blind-ssrf-oob.md
+  - docs/shigoku/reports/2026-09-14_sgk-2026-0495_blind-ssrf-oob_work_report.md
+  - docs/shigoku/worklogs/2026-09-14_sgk-2026-0495_blind-ssrf-oob_work_log.md
+  - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+  - docs/shigoku/plans/done/2026-09-14_sgk-2026-0494_oob-generalization-blind-xxe.md
 - provisional_id: DOC-0564
   task_id: SGK-2026-0494
   doc_type: plan
