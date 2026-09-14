@@ -72,6 +72,12 @@ so the payout-grade marker vocabulary stays in sync with the detectors:
                         served to a CLEAN victim request (marker in
                         victim_served_body) while a different cache key is not
                         poisoned (absent in control_served_body)
+- oob_interaction_received -> generic OOB (smart_blind_xxe etc.):
+                        ``additional_info.oob_evidence``: a unique token we
+                        placed inside the payload was delivered to our own OOB
+                        receiver by the target (token in payload AND in the
+                        received interaction.path). vuln_type-agnostic — works
+                        for blind XXE / SSRF / SQLi / deserialization
 - open_redirect      -> ``external_redirect`` (OpenRedirectSpecialist
                         open_redirect.py): the observed Location header of a
                         3xx response points at the injected attacker-managed
@@ -600,6 +606,30 @@ def _match_firing_marker(
         poc_response=info.get("poc_response", ""),
     )
     body_lower = body.lower()
+
+    # SGK-2026-0494: OOB（帯域外）確認は vuln_type 横断の汎用経路。ブラインド脆弱性
+    # （XXE/SSRF/SQLi 等）で in-band に何も返らなくても、「我々が生成した一意 token を
+    # ペイロードに埋めて送り、標的が我々の受信器へその token でコールバックした」事実
+    # （additional_info.oob_evidence）が揃えば発火する。要件（すべて必須）:
+    #  (1) token 非空、(2) token が payload に実在（＝我々が送った外部実体/URL に埋めた）、
+    #  (3) interaction_received 真、(4) 受信した interaction.path に token が実在
+    #     （＝標的からのコールバックが我々の一意 token を運んできた）。
+    # 乱数 token のため偶然混入・捏造不可。1 つでも欠ければ通常の in-band 経路へ
+    # フォールバック（fail-closed・既存マーカーは不変）。
+    oob = info.get("oob_evidence")
+    if isinstance(oob, dict):
+        oob_token = str(oob.get("token") or "").strip()
+        oob_payload = str(oob.get("payload") or "")
+        oob_received = bool(oob.get("interaction_received"))
+        oob_interaction = oob.get("interaction")
+        oob_path = str(oob_interaction.get("path") or "") if isinstance(oob_interaction, dict) else ""
+        if (
+            oob_token
+            and oob_token in oob_payload
+            and oob_received
+            and oob_token in oob_path
+        ):
+            return "oob_interaction_received"
 
     if vuln_type == "sqli":
         if any(re.search(p, body, re.IGNORECASE) for p in _SQL_ERROR_PATTERNS):

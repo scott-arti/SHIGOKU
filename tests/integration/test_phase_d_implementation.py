@@ -24,7 +24,6 @@ from src.core.detection.time_based_detector import (
     detect_time_based_sqli
 )
 from src.core.evasion.waf_evasion import UCB1WAFEvasion, create_ucb1_evasion
-from src.core.detection.oob_correlator import OOBCorrelationManager
 
 # Phase D-3 imports
 from src.core.reporting.evidence_collector import (
@@ -170,24 +169,9 @@ class TestPhaseD2DetectionEngines:
         stats = evasion.get_statistics()
         assert stats["base64_encoded"]["success_rate"] > stats["hex_encoded"]["success_rate"]
     
-    @pytest.mark.asyncio
-    async def test_oob_correlation_manager(self):
-        """Test OOB correlation manager"""
-        from src.core.detection.oob_correlator import LocalOOBProvider
-        
-        provider = LocalOOBProvider()
-        await provider.start_server()
-        
-        manager = OOBCorrelationManager(provider)
-        await manager.initialize()
-        
-        # Generate token
-        token = await manager.register_oob_test(ttl_seconds=60)
-        assert token.correlation_id.startswith("local-")
-        assert not token.is_expired()
-        
-        await manager.close()
-        await provider.close()
+    # NOTE: test_oob_correlation_manager removed with the placeholder
+    # oob_correlator.py (SGK-2026-0494). Real OOB uses LocalOOBListener via the
+    # OOBProvider abstraction; see tests/... for the confirmed OOB path.
 
 
 class TestPhaseD3AdvancedFeatures:

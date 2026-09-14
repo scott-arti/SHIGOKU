@@ -389,6 +389,7 @@ class SealedReproductionChecker:
         time_budget_seconds: float = 60.0,  # run 全体の再送時間予算
         timeout_seconds: float = 15.0,      # 1 送信のタイムアウト
         browser_validator=None,             # PlaywrightValidator 互換。None なら遅延生成
+        oob_provider=None,                  # OOBProvider 互換（SGK-2026-0494）。None なら OOB 再現は not_run
     ) -> None:
         self._network_client = network_client
         self._scope_definition = scope_definition
@@ -398,6 +399,7 @@ class SealedReproductionChecker:
         self._timeout_seconds = max(1.0, float(timeout_seconds))
         self._browser_validator_arg = browser_validator
         self._browser_validator_instance = None
+        self._oob_provider = oob_provider
         self._replays_used = 0
         self._started_at = time.monotonic()
 
@@ -540,6 +542,13 @@ class SealedReproductionChecker:
         #       poison→victim の2手再現が正当（GET のみ・fresh 鍵で隔離）。
         if self._expected_marker(payload, evidence) == "cache_poisoning_confirmed":
             return self._check_cache_poisoning_replay(payload, _info)
+
+        # 2.17) SGK-2026-0494: OOB（帯域外）専用再現パス。新しい一意 token＋コールバック
+        #       を発行し、payload_template に埋めて封印スコープ内へ 1 回再送、標的が我々の
+        #       受信器へその新 token でコールバックしたら matched。ブラインドは in-band
+        #       再送では再現不可のため OOB 受信での再観測が正当（要 oob_provider）。
+        if self._expected_marker(payload, evidence) == "oob_interaction_received":
+            return self._check_oob_replay(payload, _info)
 
         # 3) GET-only probe (the sealed re-send is always a GET).
         if not assert_read_only_probe("GET", resolved_url):
@@ -1588,6 +1597,102 @@ class SealedReproductionChecker:
         if marker in str(body) and 200 <= int(status) < 300:
             return ReproductionOutcome(
                 "matched", "reproduction_marker_matched:cache_poisoning_confirmed"
+            )
+        return ReproductionOutcome("mismatched", _REASON_MARKER_MISMATCH)
+
+    def _check_oob_replay(self, payload: dict, info: dict) -> ReproductionOutcome:
+        """OOB（帯域外）ブラインド脆弱性の専用再現パス（SGK-2026-0494）。
+
+        oob_replay 記述子（method=POST / url / mode(form|raw) / param / content_type /
+        payload_template（``{OOB}`` プレースホルダ））に従い、**新しい一意 token＋コールバック**を
+        oob_provider から発行して payload に埋め、封印スコープ内へ 1 回再送し、標的が我々の受信器へ
+        その新 token でコールバックしたら matched。ブラインドは in-band 再送では再現不可のため
+        OOB 受信での再観測が正当（要 oob_provider・fresh token で隔離・非破壊）。async な受信器を
+        呼び出し元の実行コンテキストに依存せず回すため、専用スレッド内で ``asyncio.run`` する。
+
+        - matched: 新 token のコールバックが受信器に到達
+        - mismatched: 送信成功・コールバック非到達（唯一の mismatch 経路）
+        - not_run: provider None / 記述子不正 / スコープ外 / 送信不能（fail-closed）
+        """
+        import asyncio
+        import concurrent.futures
+
+        provider = self._oob_provider
+        if provider is None:
+            return ReproductionOutcome("not_run", _REASON_DISABLED_NO_CLIENT)
+        replay = info.get("oob_replay")
+        if not isinstance(replay, dict):
+            return ReproductionOutcome("not_run", _REASON_UNKNOWN_CATEGORY)
+        method = str(replay.get("method") or "POST").strip().upper()
+        url = str(replay.get("url") or "").strip()
+        mode = str(replay.get("mode") or "").strip().lower()
+        param = str(replay.get("param") or "").strip()
+        content_type = replay.get("content_type")
+        template = str(replay.get("payload_template") or "")
+        if (
+            method != "POST"
+            or not url
+            or "{OOB}" not in template
+            or mode not in ("form", "raw")
+            or (mode == "form" and not param)
+        ):
+            return ReproductionOutcome("not_run", _REASON_UNKNOWN_CATEGORY)
+        scope_result = revalidate_scope_for_request(
+            url, scope_definition=self._scope_definition
+        )
+        if not scope_result.allowed:
+            return ReproductionOutcome("not_run", _REASON_SCOPE_REVALIDATION_BLOCKED)
+
+        timeout_s = int(self._timeout_seconds)
+
+        async def _do():
+            started = False
+            try:
+                await provider.start()
+                started = True
+                cb_url, token = provider.new_callback()
+                body = template.replace("{OOB}", cb_url)
+                loop = asyncio.get_event_loop()
+
+                def _send():
+                    if mode == "raw":
+                        headers = {"Content-Type": str(content_type or "application/xml")}
+                        return requests.post(url, data=body, headers=headers,
+                                             timeout=timeout_s, allow_redirects=False)
+                    return requests.post(url, data={param: body},
+                                         timeout=timeout_s, allow_redirects=False)
+
+                try:
+                    await loop.run_in_executor(None, _send)
+                except Exception:  # noqa: BLE001 — send failed → cannot conclude
+                    return token, None, False
+                interaction = await provider.poll(token, timeout=min(15.0, float(timeout_s)))
+                return token, interaction, True
+            finally:
+                if started:
+                    try:
+                        await provider.stop()
+                    except Exception:  # noqa: BLE001 — best-effort cleanup
+                        pass
+
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                token, interaction, sent = ex.submit(lambda: asyncio.run(_do())).result(
+                    timeout=timeout_s + 25
+                )
+        except Exception:  # noqa: BLE001 — loop/transport boundary, fail closed
+            self._replays_used += 1
+            return ReproductionOutcome("not_run", _REASON_TRANSPORT_ERROR)
+        self._replays_used += 1
+        if not sent:
+            return ReproductionOutcome("not_run", _REASON_TRANSPORT_ERROR)
+        if (
+            isinstance(interaction, dict)
+            and token
+            and token in str(interaction.get("path") or "")
+        ):
+            return ReproductionOutcome(
+                "matched", "reproduction_marker_matched:oob_interaction_received"
             )
         return ReproductionOutcome("mismatched", _REASON_MARKER_MISMATCH)
 

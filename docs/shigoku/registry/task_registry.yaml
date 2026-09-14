@@ -6171,6 +6171,21 @@ status_allowed_values:
   - docs/shigoku/worklogs/2026-09-13_sgk-2026-0486_xxe-confirmation_work_log.md
   - docs/shigoku/plans/done/2026-09-13_sgk-2026-0485_ssti-confirmation.md
   - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+- provisional_id: DOC-0564
+  task_id: SGK-2026-0494
+  doc_type: plan
+  title: OOB(帯域外)検出基盤の汎化＋blind XXE を実対象で本物確定（◎）
+  primary_doc: docs/shigoku/plans/done/2026-09-14_sgk-2026-0494_oob-generalization-blind-xxe.md
+  status: done
+  provisional: false
+  task_summary: "ブラインド脆弱性(in-band無反射)を外向きコールバックで確定するOOB基盤を汎化し、blind XXEを◎化(ユーザー指示: 受信器差し替え可能なOOBProvider抽象化で当面は自前ローカルHTTP受信LocalOOBListener・将来は自前interactshを無改修で差込・Placeholderは影響なければ削除)。事実: 受信器は3つ(LocalOOBListener=実HTTP:13337でmaster_conductor/smart_sqli/oob_verifierに配線済=実質メイン、interactsh_client=公開interactsh.com/BBOT未導入でガード、oob_correlator=poll/start_serverがPlaceholder・本番未使用・consumerは統合テスト1メソッドのみ)。実測でSKF xxeラボに外部実体SYSTEM http://受信器/callback/tokenを送るとXMLパーサが受信器をfetch=token到達(blind XXE OOB成立)。docker→host:13337はfirewall不通のためlabを--network hostで起動しlab→127.0.0.1:13337を通す(=実標的には公開受信器が必要な裏付け)。Placeholderのoob_correlator.py削除(統合テスト外科除去)。新規detection/oob_provider(OOBProvider Protocol+LocalOOBProvider・new_callback/poll・callback_baseで到達先差替可)。新エンジンinjection/smart_blind_xxe(providerから一意コールバック発行→外部実体をform/rawで送信→pollでtoken到達確認・_client/_oob seam・oob_evidence/oob_replay({OOB}テンプレ)/生OOB inboundリクエスト載せたpoc/unique_oob_callback_received・製品固有ハードコードなし)。確定バー(凍結payout_grade.py)は_match_firing_marker先頭にvuln_type横断の汎用OOB分岐(token非空+tokenがpayloadに実在+interaction_received+受信pathにtoken実在→oob_interaction_received・欠ければin-band経路へfallback=fail-closed)。再現チェッカー(凍結)はoob_provider seam+dispatch+_check_oob_replay(新token+新コールバックでpayload_template埋めて1回再送→受信器再観測→matched・async受信器を専用スレッドasyncio.runで回す)。実SKF E2E: 検出→payout_grade=True→封印再現matched→CONFIRMED、実poc_judge 5/5(初回OOBを#コメント要約で0/5→生inboundリクエスト+token相関をraw提示で5/5=poc-judge-raw-evidenceのOOB版)。この基盤でblind SSRF/OOB SQLi/デシリアライズも同型で確定可能に。新規テスト20緑・回帰ゼロ(1296 passed・先行失敗3)・凍結3 exit0・製品token0。DNS-only OOBと公開interactshは別タスク(抽象化は差替可能に設計済)。凍結改変はユーザー明示承認済。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/done/2026-09-14_sgk-2026-0494_oob-generalization-blind-xxe.md
+  - docs/shigoku/reports/2026-09-14_sgk-2026-0494_oob-generalization-blind-xxe_work_report.md
+  - docs/shigoku/worklogs/2026-09-14_sgk-2026-0494_oob-generalization-blind-xxe_work_log.md
+  - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+  - docs/shigoku/plans/done/2026-09-14_sgk-2026-0493_subdomain-takeover-detection.md
 - provisional_id: DOC-0563
   task_id: SGK-2026-0493
   doc_type: plan
