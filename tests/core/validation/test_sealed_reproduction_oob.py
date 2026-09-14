@@ -129,6 +129,26 @@ def test_matched_query_mode_ssrf():
         srv.shutdown()
 
 
+def test_matched_builder_mode_deser():
+    # デシリアライズ: builder パスで fresh callback からガジェットを作り直し再送（SGK-2026-0496）。
+    srv, url = _start_target()
+    try:
+        f = _finding(url).to_dict()
+        f["additional_info"]["oob_replay"] = {
+            "method": "POST", "url": url, "mode": "form", "param": "data_obj",
+            "content_type": None, "builder": "python_pickle", "encoding": "hex",
+            "payload_template": "{OOB}",
+        }
+        chk = SealedReproductionChecker(
+            network_client=None, scope_definition=_SCOPE,
+            oob_provider=_FakeOOBProvider(will_callback=True), timeout_seconds=5,
+        )
+        out = chk.check(f)
+        assert out.status == "matched"
+    finally:
+        srv.shutdown()
+
+
 def test_mismatched_when_no_callback():
     srv, url = _start_target()
     try:

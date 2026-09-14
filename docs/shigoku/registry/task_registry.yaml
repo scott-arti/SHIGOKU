@@ -6171,6 +6171,21 @@ status_allowed_values:
   - docs/shigoku/worklogs/2026-09-13_sgk-2026-0486_xxe-confirmation_work_log.md
   - docs/shigoku/plans/done/2026-09-13_sgk-2026-0485_ssti-confirmation.md
   - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+- provisional_id: DOC-0566
+  task_id: SGK-2026-0496
+  doc_type: plan
+  title: OOB 安全でないデシリアライズ（RCE級）を実対象で本物確定（◎）
+  primary_doc: docs/shigoku/plans/done/2026-09-14_sgk-2026-0496_oob-deserialization.md
+  status: done
+  provisional: false
+  task_summary: "OOB基盤(0494/0495)を横展開し安全でないデシリアライズ(RCE級)を◎化。OOB SQLiはSKF sqli=SQLiteでネットワーク関数無し=OOB不可・実対象無しで据え置き(ユーザー判断)→本タスクへ。SKF des-pickle(--network host・POST /sync form data_obj=hex(pickle)をpickle.loadで逆シリアライズ=RCE)に__reduce__→os.system(python3 urllib callback)のpickleをhex送信→標的が逆シリアライズ→一意token受信器到達=OOBデシリアライズ成立。新規detection/oob_payload_builders(build_oob_payload(kind,cb)->bytes+encode_payload・python_pickleは__reduce__→os.system(curl/wget/python3 callback)・エンジンと封印再現builderパスで共有・良性コールバックのみ)。新エンジンinjection/smart_blind_deser(SmartOOBDeserHunter・provider callback発行→ビルダでガジェット生成→hex→候補sinkパラメータへ送信→pollでtoken到達確認・_client/_oob seam・oob_evidence(payload=token含むcallback記述)/oob_replay(builder/encoding)/生OOB inbound poc・製品固有なし)。確定バー(凍結)は_MARKER_CATEGORIES['deserialization']='oob_interaction_received'追加(汎用OOB分岐発火可能に)。再現チェッカー(凍結)は_check_oob_replayにbuilderパス追加(fresh callbackからbuild_oob_payload+encodeで作り直し再送=バイナリpickle正しく再生成)。実SKF E2E: OOBデシリアライズ検出→payout_grade=True→封印再現matched(builderパス)→CONFIRMED、実poc_judge 5/5。新規15テスト緑(生成pickleはunpickleせずバイト検査で実行回避)・回帰ゼロ(1313 passed)・凍結3 exit0・製品token0。Java/PHP builderと in-band確認は別途。凍結改変はユーザー明示承認済。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/done/2026-09-14_sgk-2026-0496_oob-deserialization.md
+  - docs/shigoku/reports/2026-09-14_sgk-2026-0496_oob-deserialization_work_report.md
+  - docs/shigoku/worklogs/2026-09-14_sgk-2026-0496_oob-deserialization_work_log.md
+  - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+  - docs/shigoku/plans/done/2026-09-14_sgk-2026-0495_blind-ssrf-oob.md
 - provisional_id: DOC-0565
   task_id: SGK-2026-0495
   doc_type: plan

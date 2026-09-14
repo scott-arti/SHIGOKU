@@ -1629,9 +1629,13 @@ class SealedReproductionChecker:
         param = str(replay.get("param") or "").strip()
         content_type = replay.get("content_type")
         template = str(replay.get("payload_template") or "")
+        # SGK-2026-0496: builder パス（デシリアライズ等）は fresh callback からペイロードを
+        # 作り直す（{OOB} 文字列置換ではない）。builder が指定されたときはそちらを使う。
+        builder = str(replay.get("builder") or "").strip()
+        encoding = str(replay.get("encoding") or "raw").strip()
         if (
             not url
-            or "{OOB}" not in template
+            or (not builder and "{OOB}" not in template)
             or mode not in ("form", "raw", "query", "json")
             or (mode in ("form", "query", "json") and not param)
             or method not in ("GET", "POST")
@@ -1651,7 +1655,14 @@ class SealedReproductionChecker:
                 await provider.start()
                 started = True
                 cb_url, token = provider.new_callback()
-                body = template.replace("{OOB}", cb_url)
+                if builder:
+                    # fresh callback からデシリアライズ等のガジェットを作り直す。
+                    from src.core.detection.oob_payload_builders import (
+                        build_oob_payload, encode_payload,
+                    )
+                    body = encode_payload(build_oob_payload(builder, cb_url), encoding)
+                else:
+                    body = template.replace("{OOB}", cb_url)
                 loop = asyncio.get_event_loop()
 
                 def _send():

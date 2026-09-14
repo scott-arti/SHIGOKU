@@ -378,6 +378,11 @@ _MARKER_CATEGORIES: Dict[str, str] = {
     # 注入ホストで制限署名が出て非バイパスホストで出ない差分が「Host ヘッダを
     # 認可に信頼している」決定的証拠。
     "host_header_injection": "host_header_auth_bypass",
+    # SGK-2026-0496: Insecure Deserialization。in-band 確認は未実装だが、OOB(帯域外)
+    # 確認（デシリアライズ時のコールバック）で汎用マーカー oob_interaction_received を
+    # 発火させるため vuln_type を既知カテゴリに登録する（in-band 専用ブランチは無し＝
+    # OOB 経路が唯一の発火。将来 in-band ガジェット確認を足す場合はブランチ追加）。
+    "deserialization": "oob_interaction_received",
     # SGK-2026-0492: Web キャッシュポイズニング。発火は cache_poisoning_evidence の
     # 完備（request_url 非空＋injected_header 非空＋marker 非空＋victim 2xx＋marker が
     # victim_served_body（クリーン応答）に実在＋marker が control_served_body に非実在）
