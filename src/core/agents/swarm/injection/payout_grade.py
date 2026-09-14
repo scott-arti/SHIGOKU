@@ -383,6 +383,11 @@ _MARKER_CATEGORIES: Dict[str, str] = {
     # 発火させるため vuln_type を既知カテゴリに登録する（in-band 専用ブランチは無し＝
     # OOB 経路が唯一の発火。将来 in-band ガジェット確認を足す場合はブランチ追加）。
     "deserialization": "oob_interaction_received",
+    # SGK-2026-0497: Prototype Pollution（Node.js）。発火は prototype_pollution_evidence の
+    # 完備（sink_url／observe_url／pollute_property／marker 非空＋observe 2xx＋marker が
+    # polluted_served_body に実在＋control_served_body に非実在）でのみ。汚染後に新オブジェクトへ
+    # マーカーが現れて汚染前は現れない差分が Object.prototype 汚染の決定的証拠。
+    "prototype_pollution": "prototype_pollution_confirmed",
     # SGK-2026-0492: Web キャッシュポイズニング。発火は cache_poisoning_evidence の
     # 完備（request_url 非空＋injected_header 非空＋marker 非空＋victim 2xx＋marker が
     # victim_served_body（クリーン応答）に実在＋marker が control_served_body に非実在）
@@ -787,6 +792,40 @@ def _match_firing_marker(
                 and marker not in control_body
             ):
                 return "race_condition_toctou"
+        return None
+
+    if vuln_type == "prototype_pollution":
+        # 発火は「プロトタイプ汚染の本物のみ」(SGK-2026-0497):
+        # additional_info.prototype_pollution_evidence が、
+        #  (1) sink_url 非空、(2) observe_url 非空、(3) pollute_property 非空、
+        #  (4) marker 非空、(5) observe が成功（observe_status 2xx）、
+        #  (6) marker が polluted_served_body（汚染後の新オブジェクト応答）に実在、
+        #  (7) marker が control_served_body（汚染前）に非実在、
+        # のすべてを満たすときのみ。1 つでも欠ければ None（fail-closed）。
+        pp = info.get("prototype_pollution_evidence")
+        if isinstance(pp, dict):
+            sink_url = str(pp.get("sink_url") or "").strip()
+            observe_url = str(pp.get("observe_url") or "").strip()
+            prop = str(pp.get("pollute_property") or "").strip()
+            marker = str(pp.get("marker") or "").strip()
+            polluted_body = str(pp.get("polluted_served_body") or "")
+            control_body = str(pp.get("control_served_body") or "")
+            status = pp.get("observe_status")
+            status_2xx = (
+                isinstance(status, int)
+                and not isinstance(status, bool)
+                and 200 <= status < 300
+            )
+            if (
+                sink_url
+                and observe_url
+                and prop
+                and marker
+                and status_2xx
+                and marker in polluted_body
+                and marker not in control_body
+            ):
+                return "prototype_pollution_confirmed"
         return None
 
     if vuln_type == "host_header_injection":

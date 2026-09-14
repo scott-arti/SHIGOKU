@@ -6171,6 +6171,21 @@ status_allowed_values:
   - docs/shigoku/worklogs/2026-09-13_sgk-2026-0486_xxe-confirmation_work_log.md
   - docs/shigoku/plans/done/2026-09-13_sgk-2026-0485_ssti-confirmation.md
   - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+- provisional_id: DOC-0567
+  task_id: SGK-2026-0497
+  doc_type: plan
+  title: プロトタイプ汚染（サーバサイド Node.js）を実対象で本物確定（◎）
+  primary_doc: docs/shigoku/plans/done/2026-09-14_sgk-2026-0497_prototype-pollution.md
+  status: done
+  provisional: false
+  task_summary: "能力マップのプロトタイプ汚染を◎化。既存prototype_pollution_testerは未配線。in-band差分で確定する新エンジンを新設。SKF js-prototype-pollution(Node/Express・POST /messageが_.merge({},req.body,...)=lodash PP sink・entrypoint app.js不在で実体index.js)で__proto__.adminに一意マーカーを送ると以降/createで作るadmin無し新ユーザーの/login(Admin欄)にマーカー継承出現・汚染前は空。新エンジンsmart_prototype_pollution(task由来sink/setup/observeで①control汚染前②pollute③observe汚染後の差分+一意マーカーで確定・_client seam・marker中心スニペット・pp_evidence/pp_replay/3ステップpoc・製品固有なし)。確定バー(凍結)は_MARKER_CATEGORIES['prototype_pollution']='prototype_pollution_confirmed'+発火分岐(sink/observe/property/marker非空+observe2xx+markerがpolluted実在+control非実在・fail-closed)。再現チェッカー(凍結)は_check_pp_replay(新マーカーでpollute→setup→observe再実行→新オブジェクト再出現でmatched・json sinkはContent-Type:application/json明示)。実SKF E2E: 検出→payout_grade=True→封印再現matched→CONFIRMED、実poc_judge 5/5。新規19テスト緑・回帰ゼロ(1312 passed)・凍結3 exit0・製品token0。汚染プロパティ次第でprivesc/認証バイパス/DoS/RCE。凍結改変はユーザー明示承認済。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/done/2026-09-14_sgk-2026-0497_prototype-pollution.md
+  - docs/shigoku/reports/2026-09-14_sgk-2026-0497_prototype-pollution_work_report.md
+  - docs/shigoku/worklogs/2026-09-14_sgk-2026-0497_prototype-pollution_work_log.md
+  - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+  - docs/shigoku/plans/done/2026-09-14_sgk-2026-0496_oob-deserialization.md
 - provisional_id: DOC-0566
   task_id: SGK-2026-0496
   doc_type: plan

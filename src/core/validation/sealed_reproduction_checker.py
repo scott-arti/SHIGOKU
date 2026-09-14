@@ -535,6 +535,12 @@ class SealedReproductionChecker:
         if self._expected_marker(payload, evidence) == "host_header_auth_bypass":
             return self._check_host_header_replay(payload, _info)
 
+        # 2.18) SGK-2026-0497: Prototype Pollution 専用再現パス。新しい一意マーカーで
+        #       pollute→setup→observe を封印スコープ内で再実行し、汚染後の新オブジェクトに
+        #       マーカーが再出現することを再観測する（in-band 差分）。
+        if self._expected_marker(payload, evidence) == "prototype_pollution_confirmed":
+            return self._check_pp_replay(payload, _info)
+
         # 2.16) SGK-2026-0492: Web キャッシュポイズニング専用再現パス。新しい marker と
         #       新しい cache-buster で 毒入り GET（unkeyed ヘッダ付き）→ victim GET
         #       （クリーン）の2手を封印スコープ内で送り、victim 応答に新 marker が
@@ -1710,6 +1716,79 @@ class SealedReproductionChecker:
         ):
             return ReproductionOutcome(
                 "matched", "reproduction_marker_matched:oob_interaction_received"
+            )
+        return ReproductionOutcome("mismatched", _REASON_MARKER_MISMATCH)
+
+    def _check_pp_replay(self, payload: dict, info: dict) -> ReproductionOutcome:
+        """Prototype Pollution の専用再現パス（SGK-2026-0497）。
+
+        prototype_pollution_replay 記述子（sink/setup/observe/property）に従い、**新しい一意
+        マーカー**で pollute→setup→observe を封印スコープ内で順に再送し、汚染後の**新オブジェクト**の
+        observe 応答に新マーカーが再出現すれば matched（in-band 差分）。汚染は Object.prototype への
+        グローバル状態変更だが良性マーカーのみ・非破壊。
+
+        - matched: 新マーカーが汚染後 observe に再出現
+        - mismatched: 応答あり・非再出現（唯一の mismatch 経路）
+        - not_run: client None / スコープ外 / 記述子不正 / 送信不能（fail-closed）
+        """
+        import uuid as _uuid
+
+        replay = info.get("prototype_pollution_replay")
+        if not isinstance(replay, dict):
+            return ReproductionOutcome("not_run", _REASON_UNKNOWN_CATEGORY)
+        sink = replay.get("sink")
+        observe = replay.get("observe")
+        setup = replay.get("setup") if isinstance(replay.get("setup"), list) else []
+        prop = str(replay.get("property") or "").strip()
+        if not (isinstance(sink, dict) and isinstance(observe, dict)):
+            return ReproductionOutcome("not_run", _REASON_UNKNOWN_CATEGORY)
+        sink_url = str(sink.get("url") or "").strip()
+        obs_url = str(observe.get("url") or "").strip()
+        if not sink_url or not obs_url or not prop:
+            return ReproductionOutcome("not_run", _REASON_UNKNOWN_CATEGORY)
+        if self._network_client is None:
+            return ReproductionOutcome("not_run", _REASON_DISABLED_NO_CLIENT)
+        urls = [sink_url, obs_url] + [
+            str(s.get("url") or "") for s in setup if isinstance(s, dict)
+        ]
+        for u in urls:
+            if not u or not revalidate_scope_for_request(
+                u, scope_definition=self._scope_definition
+            ).allowed:
+                return ReproductionOutcome("not_run", _REASON_SCOPE_REVALIDATION_BLOCKED)
+
+        from src.core.agents.swarm.injection.smart_prototype_pollution import _subst as _pp_subst
+
+        marker = "shigoku_pp_" + _uuid.uuid4().hex[:12]
+        uniq = "ppr" + _uuid.uuid4().hex[:8]
+
+        def _send(step: dict, mk: str, uq: str):
+            method = str(step.get("method") or "POST").upper()
+            url = str(step.get("url"))
+            mode = str(step.get("mode") or "form").lower()
+            body = _pp_subst(step.get("body") or {}, mk, uq)
+            if mode == "json":
+                # express.json() 等に解析させるため Content-Type を明示（欠落すると汚染不発）。
+                return self._send_post_json(
+                    method, url, body=body, headers={"Content-Type": "application/json"}
+                )
+            return self._send_post_form(method, url, data=body, headers={})
+
+        try:
+            _send(sink, marker, "ppsink")           # pollute
+            for s in setup:                          # setup fresh object
+                if isinstance(s, dict):
+                    _send(s, marker, uniq)
+            status, body = _send(observe, marker, uniq)  # observe
+        except Exception:  # noqa: BLE001 — transport boundary, fail closed
+            self._replays_used += 1
+            return ReproductionOutcome("not_run", _REASON_TRANSPORT_ERROR)
+        self._replays_used += 1
+        if status <= 0:
+            return ReproductionOutcome("not_run", _REASON_TRANSPORT_ERROR)
+        if marker in str(body) and 200 <= int(status) < 300:
+            return ReproductionOutcome(
+                "matched", "reproduction_marker_matched:prototype_pollution_confirmed"
             )
         return ReproductionOutcome("mismatched", _REASON_MARKER_MISMATCH)
 
