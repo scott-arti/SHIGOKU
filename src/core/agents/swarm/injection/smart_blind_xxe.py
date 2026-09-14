@@ -203,41 +203,81 @@ class SmartBlindXXEHunter(Specialist):
         cb_headers = interaction.get("headers") if isinstance(interaction.get("headers"), dict) else {}
         cb_host = str(cb_headers.get("Host") or cb_headers.get("host") or "")
         cb_ua = str(cb_headers.get("User-Agent") or cb_headers.get("user-agent") or "")
+        channel = str(interaction.get("channel") or "http").lower()
+        if channel == "dns":
+            # DNS OOB: 受信器は権威 DNS として動作し、標的のリゾルバが送ってきた
+            # DNS クエリ（token を含む FQDN）を記録する。HTTP 形式で書かない（判定は
+            # 「一貫した生の受信アーティファクト」を求める・[[poc-judge-raw-evidence]]）。
+            oob_block = (
+                "===== RAW OUT-OF-BAND DNS QUERY OBSERVED AT OUR DNS RECEIVER =====\r\n"
+                "Our receiver is the authoritative DNS server for the callback domain; the "
+                "target's own resolver sent this DNS query (recorded verbatim):\r\n"
+                f"DNS query: QNAME={cb_path} (type A) from resolver/source {remote_ip}\r\n"
+                "\r\n"
+                f"CORRELATION: the random token '{token}' is the leftmost label of the queried "
+                "FQDN above AND was placed by us ONLY inside the external-entity SYSTEM URL of "
+                "the XML in the request (poc_request). No in-band channel could deliver this "
+                "token to our DNS server; the only cause is the target's XML parser resolving "
+                "our external entity's hostname. => blind (out-of-band, DNS) XXE confirmed."
+            )
+        else:
+            oob_block = (
+                "===== RAW OUT-OF-BAND REQUEST OBSERVED AT OUR OOB RECEIVER =====\r\n"
+                "The target itself made this inbound HTTP request to our server:\r\n"
+                f"{cb_method} {cb_path} HTTP/1.1\r\n"
+                + (f"Host: {cb_host}\r\n" if cb_host else "")
+                + (f"User-Agent: {cb_ua}\r\n" if cb_ua else "")
+                + f"(source IP: {remote_ip}, received_at: {cb_ts})\r\n"
+                "\r\n"
+                f"CORRELATION: the random token '{token}' appears in the path above AND was placed "
+                "by us ONLY inside the external-entity SYSTEM URL of the XML in the request "
+                "(poc_request). There is no in-band channel that could deliver this token to our "
+                "server; the only cause is the target's XML parser resolving our external entity. "
+                "=> blind (out-of-band) XXE confirmed."
+            )
         poc_response = (
             f"HTTP/1.1 {status}\r\n"
             "\r\n"
             "(in-band response is blind: no reflection/error revealing the entity)\r\n"
             "\r\n"
-            "===== RAW OUT-OF-BAND REQUEST OBSERVED AT OUR OOB RECEIVER =====\r\n"
-            "The target itself made this inbound HTTP request to our server:\r\n"
-            f"{cb_method} {cb_path} HTTP/1.1\r\n"
-            + (f"Host: {cb_host}\r\n" if cb_host else "")
-            + (f"User-Agent: {cb_ua}\r\n" if cb_ua else "")
-            + f"(source IP: {remote_ip}, received_at: {cb_ts})\r\n"
-            "\r\n"
-            f"CORRELATION: the random token '{token}' appears in the path above AND was placed "
-            "by us ONLY inside the external-entity SYSTEM URL of the XML in the request "
-            "(poc_request). There is no in-band channel that could deliver this token to our "
-            "server; the only cause is the target's XML parser resolving our external entity. "
-            "=> blind (out-of-band) XXE confirmed."
+            + oob_block
         )
-        impact = (
-            f"標的の XML パーサが外部実体 `SYSTEM \"{callback_url}\"` を**外向きに取得**した。"
-            f"応答は in-band では何も返さない（HTTP {status}・ブラインド）が、我々の受信器に一意 token "
-            f"'{token}' のコールバックが標的（{remote_ip}）から届いた。token は我々が送った外部実体 URL に"
-            "しか存在しないため、これは XML パーサが外部実体を解決した決定的証拠。ブラインド XXE は"
-            "内部 SSRF・ローカルファイル/メタデータの OOB 抜き出し等に直結する実害。"
-        )
+        if channel == "dns":
+            impact = (
+                f"標的の XML パーサが外部実体 `SYSTEM \"{callback_url}\"` の**ホスト名を名前解決**した。"
+                f"応答は in-band では何も返さない（HTTP {status}・ブラインド）が、我々が権威 DNS として"
+                f"動作する受信器に、一意 token '{token}' を含む FQDN の DNS クエリが標的側リゾルバ（{remote_ip}）"
+                "から届いた。token は我々が送った外部実体 URL のホスト名にしか存在しないため、これは XML "
+                "パーサが外部実体を解決した決定的証拠。真ブラインド（標的が外向き HTTP を出せない環境でも DNS "
+                "解決だけで確定でき、内部 SSRF・OOB データ抜き出しに直結）。"
+            )
+            title = "Blind (OOB, DNS) XXE via external-entity hostname resolution"
+            description = (
+                "Blind XXE confirmed out-of-band via DNS: an external entity whose hostname carries a "
+                f"unique token caused the target's XML parser to resolve it, and the DNS query for token "
+                f"'{token}' reached our authoritative DNS receiver from the target ({remote_ip}). No "
+                f"in-band reflection (HTTP {status})."
+            )
+        else:
+            impact = (
+                f"標的の XML パーサが外部実体 `SYSTEM \"{callback_url}\"` を**外向きに取得**した。"
+                f"応答は in-band では何も返さない（HTTP {status}・ブラインド）が、我々の受信器に一意 token "
+                f"'{token}' のコールバックが標的（{remote_ip}）から届いた。token は我々が送った外部実体 URL に"
+                "しか存在しないため、これは XML パーサが外部実体を解決した決定的証拠。ブラインド XXE は"
+                "内部 SSRF・ローカルファイル/メタデータの OOB 抜き出し等に直結する実害。"
+            )
+            title = "Blind (OOB) XXE via external-entity HTTP callback"
+            description = (
+                "Blind XXE confirmed out-of-band: an external entity pointing at our OOB receiver "
+                f"caused the target's XML parser to fetch it, delivering the unique token '{token}' "
+                f"to our receiver from the target ({remote_ip}). No in-band reflection (HTTP {status})."
+            )
         return Finding(
             target_url=target_url,
             vuln_type=VulnType.XXE,
             severity=Severity.HIGH,
-            title="Blind (OOB) XXE via external-entity HTTP callback",
-            description=(
-                "Blind XXE confirmed out-of-band: an external entity pointing at our OOB receiver "
-                f"caused the target's XML parser to fetch it, delivering the unique token '{token}' "
-                f"to our receiver from the target ({remote_ip}). No in-band reflection (HTTP {status})."
-            ),
+            title=title,
+            description=description,
             source_agent=self.name,
             confidence=0.95,
             impact=impact,

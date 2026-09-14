@@ -6186,6 +6186,21 @@ status_allowed_values:
   - docs/shigoku/worklogs/2026-09-14_sgk-2026-0497_prototype-pollution_work_log.md
   - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
   - docs/shigoku/plans/done/2026-09-14_sgk-2026-0496_oob-deserialization.md
+- provisional_id: DOC-0570
+  task_id: SGK-2026-0500
+  doc_type: plan
+  title: DNS OOB 受信器（真ブラインド拡張）を新設し実対象で DNS-OOB を完全3ゲート確定（◎）
+  primary_doc: docs/shigoku/plans/done/2026-09-14_sgk-2026-0500_dns-oob-receiver.md
+  status: done
+  provisional: false
+  task_summary: "OOB 基盤(SGK-2026-0494)は HTTP 受信のみで真ブラインド(標的が外向き HTTP を出せないが DNS 解決はする/DNS でしか漏れない)を拾えなかった。依存ゼロの DNS OOB 受信器と OOBProvider 実装を新設し、既存 blind エンジンがプロバイダ差し替えだけで DNS-only を確定できることを実対象で実証(受信器差し替え設計の実証)。環境制約: dnspython 未導入・:53 は root 必要・bridge→host 高ポート firewall 不通→受信器は stdlib のみ、ローカルは受信器をコンテナ :53 起動＋標的 docker --dns で名前解決を向ける(コンテナ間は非 firewall)。実装(新設2＋非凍結1・凍結0): utils/dns_oob_listener.py(stdlib のみ UDP DNS サーバ・QNAME 自前解析・token 記録・良性 A 応答・port 可変)、detection/oob_provider.py に LocalDNSOOBProvider(channel=dns・new_callback は既存エンジン互換 URL http://<token>.<domain>/ か hostname_only・poll は問い合わせ FQDN を path に写像=汎用マーカー無改修で発火)、smart_blind_xxe.py の PoC を channel 対応(DNS は QNAME+送信元の DNS クエリ行として提示・HTTP 行混在なし)。payout_grade/sealed_reproduction_checker は無改修(汎用マーカー oob_interaction_received が token in interaction.path で発火するため DNS でもそのまま通る=凍結0改修)。実対象: SKF xxe ラボを docker --dns=<受信器> で起動→blind XXE 外部実体 SYSTEM http://<token>.oob.test/ を送信→標的の XML パーサがホスト名を名前解決→その DNS クエリ(token 含む FQDN)が受信器に到達(in-band 500 空=真ブラインド)。実 SmartBlindXXEHunter(DNS プロバイダ差し替え・エンジン無改修)が finding 生成→GATE1 payout_grade=True/oob_interaction_received→GATE2 封印再現 matched(新 token 再送→標的再解決→再記録=DNS 上の live 再現)→GATE3 実 poc_judge 連続5回 True/True(初回は PoC が HTTP 形式で却下→DNS 専用フレーミング修正で安定)。新規単体テスト(listener/provider/blind XXE DNS PoC)緑・既存 HTTP blind XXE 非回帰・凍結3 exit0・製品token0・秘密値非露出。真ブラインド DNS-OOB=◎(高度化中 L2)。正直なスコープ: インターネット標的運用は権威 DNS を自ドメインに委譲し :53 で受けるデプロイ(自前ホスト interactsh 相当)が必要=別途。ローカル封印再現は受信器コンテナを docker logs 経由でポーリングするシムを用いたが受信器コードも DNS クエリも本物。凍結ファイル無改修。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/done/2026-09-14_sgk-2026-0500_dns-oob-receiver.md
+  - docs/shigoku/reports/2026-09-14_sgk-2026-0500_dns-oob-receiver_work_report.md
+  - docs/shigoku/worklogs/2026-09-14_sgk-2026-0500_dns-oob-receiver_work_log.md
+  - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+  - docs/shigoku/plans/done/2026-09-14_sgk-2026-0494_oob-blind-xxe.md
 - provisional_id: DOC-0569
   task_id: SGK-2026-0499
   doc_type: plan

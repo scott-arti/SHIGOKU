@@ -78,9 +78,53 @@ def test_builds_payout_grade_finding_on_oob_callback():
     assert r.marker == "oob_interaction_received"
 
 
+class _FakeDNSOOBProvider:
+    """DNS OOB プロバイダ模擬（channel=dns・poll は問い合わせ FQDN を path に写像）。"""
+
+    channel = "dns"
+
+    def __init__(self):
+        self._n = 0
+
+    async def start(self):
+        pass
+
+    async def stop(self):
+        pass
+
+    def new_callback(self):
+        self._n += 1
+        token = "dnsxxetok%d" % self._n
+        return f"http://{token}.oob.test/", token
+
+    async def poll(self, token, timeout=10.0):
+        return {
+            "token": token, "channel": "dns", "remote_ip": "10.0.0.9",
+            "method": "DNS", "path": f"{token}.oob.test", "query_string": "",
+            "timestamp": 1.0, "headers": {},
+        }
+
+
 def test_no_finding_when_no_callback():
     findings = _run(_FakeOOBProvider(will_callback=False))
     assert [f for f in findings if f.vuln_type == VulnType.XXE] == []
+
+
+def test_dns_channel_renders_dns_framed_poc():
+    # SGK-2026-0500: DNS OOB は DNS クエリとして提示（HTTP 形式で書かない）。
+    findings = _run(_FakeDNSOOBProvider())
+    exp = [f for f in findings if f.vuln_type == VulnType.XXE]
+    assert exp, "blind DNS XXE finding not produced"
+    d = exp[0].to_dict()
+    poc_res = d["additional_info"]["poc_response"]
+    ev = d["additional_info"]["oob_evidence"]
+    assert "RAW OUT-OF-BAND DNS QUERY" in poc_res
+    assert "QNAME=" in poc_res
+    assert "HTTP/1.1" not in poc_res.split("=====")[-1]  # OOB ブロックに HTTP 行を混ぜない
+    assert ev["token"] in ev["interaction"]["path"]
+    r = evaluate_payout_grade(d)
+    assert r.payout_grade is True          # 汎用 OOB マーカーは DNS でも発火（無改修）
+    assert r.marker == "oob_interaction_received"
 
 
 def test_replay_descriptor_has_placeholder_template():

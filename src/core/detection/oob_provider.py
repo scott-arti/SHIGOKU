@@ -105,3 +105,82 @@ class LocalOOBProvider:
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
         await self.stop()
+
+
+class LocalDNSOOBProvider:
+    """自前ローカル DNS 受信（`LocalDNSOOBListener` ラッパ）。真ブラインド（DNS-only）用。
+
+    ``new_callback`` はデフォルトで URL ``http://<token>.<domain>/`` を返す（既存の blind
+    XXE/SSRF エンジンは callback URL からペイロードを組むため無改修で使える。標的が
+    ``<token>.<domain>`` を**名前解決するだけ**で DNS クエリが受信器に届き OOB 証拠になる。
+    HTTP に到達できない真ブラインドでも DNS 解決だけで確定できるのが要点）。``hostname_only``
+    を渡すと URL でなくホスト名そのものを返す（ホスト名を値に取る sink 用）。
+
+    poll は受信した DNS クエリの **FQDN を ``path`` に写像**して返す（確定バーの汎用マーカー
+    ``oob_interaction_received`` は ``token in interaction.path`` で発火するため payout_grade は
+    無改修）。受信器の到達性: 本番は権威 DNS を自ドメインに委譲し :53 で受ける。ローカルは
+    標的コンテナを ``docker --dns <受信器IP>`` で起動して名前解決を受信器へ向ける。
+    """
+
+    channel = "dns"
+
+    def __init__(
+        self,
+        host: str = "0.0.0.0",
+        port: int = 53,
+        base_domain: str = "oob.test",
+        hostname_only: bool = False,
+    ) -> None:
+        from src.core.utils.dns_oob_listener import LocalDNSOOBListener
+        self._listener = LocalDNSOOBListener(
+            host=host, port=port, base_domain=base_domain)
+        self._hostname_only = hostname_only
+
+    async def start(self) -> None:
+        self._listener.start()
+
+    async def stop(self) -> None:
+        self._listener.stop()
+
+    def new_callback(self) -> Tuple[str, str]:
+        hostname, token = self._listener.generate_hostname()
+        if self._hostname_only:
+            return hostname, token
+        return f"http://{hostname}/", token
+
+    async def poll(self, token: str, timeout: float = 10.0) -> Optional[Dict[str, Any]]:
+        import asyncio
+
+        loop = asyncio.get_event_loop()
+        received = await loop.run_in_executor(
+            None, self._listener.wait_for_interaction, token, timeout)
+        if not received:
+            return None
+        interactions = self._listener.get_interactions(token)
+        if not interactions:
+            return None
+
+        def _as_dict(it: Any) -> Dict[str, Any]:
+            return {
+                "token": token,
+                "channel": self.channel,
+                "remote_ip": getattr(it, "remote_ip", ""),
+                "method": "DNS",
+                # 確定バーは token in path で発火するため、問い合わせ FQDN を path に写像。
+                "path": getattr(it, "qname", ""),
+                "query_string": "",
+                "qtype": getattr(it, "qtype", 0),
+                "timestamp": getattr(it, "timestamp", 0.0),
+                "headers": {},
+            }
+
+        first = _as_dict(interactions[0])
+        first["interactions"] = [_as_dict(it) for it in interactions]
+        return first
+
+    async def __aenter__(self) -> "LocalDNSOOBProvider":
+        await self.start()
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        await self.stop()
