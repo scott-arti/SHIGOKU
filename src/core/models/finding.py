@@ -44,6 +44,9 @@ class VulnType(Enum):
     # Injection
     XSS = "xss"
     SQLI = "sqli"
+    # SGK-2026-0502: boolean ベースのブラインド SQLi。error-based(sqli) とは確定バーの
+    # マーカーが異なる（blind_sqli_confirmed）ため独立の vuln_type にする。
+    BLIND_SQLI = "blind_sqli"
     SSRF = "ssrf"
     SSTI = "ssti"
     LFI = "lfi"

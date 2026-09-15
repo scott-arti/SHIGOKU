@@ -256,6 +256,9 @@ _NOSQL_OPERATOR_PATTERN = re.compile(r"\$(?:ne|gt|gte|lt|lte|regex|in|nin|where|
 # 論理 OR (| / 論理 AND (&）。リテラル値には現れず、入力が LDAP フィルタとして解釈される
 # ことを示す最小シグネチャ（単なる `=` や `(` 単体は誤検知を避けるため対象外）。
 _LDAP_METACHAR_PATTERN = re.compile(r"\*|\)\(|\(\||\(&")
+# SGK-2026-0502: boolean ベースのブラインド SQLi。オラクル校正に使う恒真/恒偽条件が
+# SQL の数値比較（例 1=1 / 1=2）であることの最小シグネチャ。
+_SQL_BOOLEAN_PATTERN = re.compile(r"\d+\s*=\s*\d+")
 
 
 def _nosql_body_has_data(status: Any, body: str) -> bool:
@@ -311,6 +314,8 @@ _REFUTE_SIGNAL_KEYS: tuple = (
 # vuln_type -> expected marker vocabulary (known categories).
 _MARKER_CATEGORIES: Dict[str, str] = {
     "sqli": "sql_error",
+    # SGK-2026-0502: boolean ベースのブラインド SQLi。error-based(sql_error) とは別マーカー。
+    "blind_sqli": "blind_sqli_confirmed",
     "xss": "reflected_payload",
     "lfi": "file_content_leak",
     "cmd_ssrf": "command_execution",
@@ -873,6 +878,37 @@ def _match_firing_marker(
                 and success_marker not in ctrl_body
             ):
                 return "ldap_injection_confirmed"
+        return None
+
+    if vuln_type == "blind_sqli":
+        # 発火は「boolean ベースのブラインド SQLi の本物のみ」(SGK-2026-0502):
+        # additional_info.blind_sqli_evidence が、
+        #  (1) request_url 非空、
+        #  (2) 恒真/恒偽条件がともに SQL の数値比較（1=1 / 1=2 等）、
+        #  (3) 校正済みオラクルが恒真を TRUE・恒偽を FALSE に分類、
+        #  (4) 抽出対象フィールド名 非空、
+        #  (5) 実データ抽出値 非空（＝真偽オラクルだけで DB 内容を実際に復元した）、
+        # のすべてを満たすときのみ。1 つでも欠ければ None（fail-closed）。
+        # 抽出値は真偽差分のみから復元され、応答本文にデータは出ない＝ブラインド SQLi の実害。
+        be = info.get("blind_sqli_evidence")
+        if isinstance(be, dict):
+            request_url = str(be.get("request_url") or "").strip()
+            true_cond = str(be.get("true_condition") or "")
+            false_cond = str(be.get("false_condition") or "")
+            true_class = str(be.get("oracle_true_class") or "").strip().lower()
+            false_class = str(be.get("oracle_false_class") or "").strip().lower()
+            extracted_field = str(be.get("extracted_field") or "").strip()
+            extracted_value = str(be.get("extracted_value") or "").strip()
+            if (
+                request_url
+                and _SQL_BOOLEAN_PATTERN.search(true_cond)
+                and _SQL_BOOLEAN_PATTERN.search(false_cond)
+                and true_class == "true"
+                and false_class == "false"
+                and extracted_field
+                and extracted_value
+            ):
+                return "blind_sqli_confirmed"
         return None
 
     if vuln_type == "host_header_injection":

@@ -11,7 +11,7 @@ related_docs:
 - docs/shigoku/plans/done/2026-09-03_sgk-2026-0469_authenticated-scan-token-refresh.md
 - docs/shigoku/plans/2026-09-03_sgk-2026-0470_llm-in-loop-latency-reduction.md
 created_at: '2026-09-01'
-updated_at: '2026-09-15'
+updated_at: '2026-09-16'
 ---
 
 # SHIGOKU 検出能力マップ（脆弱性の種類 × 対応状況）
@@ -36,7 +36,7 @@ updated_at: '2026-09-15'
 |---|---|---|---|
 | 保存型XSS | コメント/フィードバックに保存し閲覧者で発火 | `smart_xss` + `stored_xss_detector` | ◎ 本物のブラウザ警告まで実証済み（確定1・variant=stored） |
 | 反射型/DOM型XSS | 検索欄・URLパラメータ経由 | `smart_xss` | ◎ 本物の対象で確定まで実証（**実 Juice Shop** の search DOM XSS(innerHTML sink)を実ブラウザで alert 発火→確定バーが実ブラウザ発火(browser_execution.dialog_observed)を発火信号に採用→再現チェッカーが Juice Shop へ再ナビゲートし alert 再観測→CONFIRMED。SGK-2026-0477。dialog 非観測は fail-closed で非確定）。**実エンジン自走＋実 AI 審査(poc_judge)まで通した完全3ゲートで CONFIRMED を実証（SGK-2026-0479）**。実行証拠を「合言葉往復」（注入 alert に実行毎ランダム nonce→ブラウザ dialog message が nonce と一致=テンプレ捏造不可の実行証拠）に強化し、実 poc_judge の通過率を 1/3→5/6 に改善（バー非低下・証拠の見せ方を底上げ） |
-| SQLインジェクション | ログインの `' OR 1=1--`・商品検索 | `smart_sqli`（エラーベース＋影響実証） | ◎ 本物の証拠付きで確定まで実証済み（現行コードベースで確定2件・param q/data・error(500)＋boolean差分＋非機微`sqlite_version()`抽出・GET-only・機微抽出0。SGK-2026-0466 で再実証） |
+| SQLインジェクション | ログインの `' OR 1=1--`・商品検索 | `smart_sqli`（エラーベース＋影響実証）＋ `smart_blind_sqli`（boolean ブラインド・新設） | ◎ 本物の証拠付きで確定まで実証済み（現行コードベースで確定2件・param q/data・error(500)＋boolean差分＋非機微`sqlite_version()`抽出・GET-only・機微抽出0。SGK-2026-0466 で再実証）。**boolean ベース・ブラインド SQLi（データ抽出）も ◎**（SGK-2026-0502・新エンジン `smart_blind_sqli`＝別 vuln_type `blind_sqli`。既存の error-based は「target に `sqli_blind` を含むときだけ time-based 強制」というラボ名依存ヒューリスティックで curve-fit 気味だったため、**自己校正した真偽オラクル**の新エンジンを新設。**実 SKF `sqli-blind`**（`/home/<pageId>` が `WHERE pageId=<pageId>` を引用符なし数値連結・行あり=通常ページ/行なし=404）で、恒真 `1 AND 1=1`→TRUE クラス／恒偽 `1 AND 1=2`→FALSE クラスの特徴行を**実行時に自動導出**（`<title>`/自然文を優先採点・SVG パス断片等は減点＝製品固有ハードコードなし）し、真偽オラクルの二分探索で `unicode(substr((SELECT sqlite_version()),i,1))` を評価して DB バージョン `3.25.3` を**本文にデータを一切出さず1文字ずつ抽出**＝ブラインドのデータ窃取。確定バー新 vuln_type `blind_sqli`＋新マーカー `blind_sqli_confirmed`（恒真恒偽が SQL 数値比較＋オラクルが true/false 分類＋抽出フィールド名/抽出値 非空・fail-closed）で payout_grade=True→再現チェッカー `_check_blind_sqli_replay` がオラクルを封印スコープ内で再校正し先頭文字を再抽出→matched→CONFIRMED、かつ**実 poc_judge 3回連続 is_real/impact True**（先頭数文字の等値確認 `=code`→TRUE/`=code+1`→FALSE の実 request/response 対を transcript として提示＝抽出が主張でなく実測。初回は SVG 断片シグネチャ＋抽出が主張のみで却下→意味のある行優先＋transcript raw 提示で通過＝poc-judge-raw-evidence の SQLi 版）。error-based(`sqli`/`sql_error`)パスは無改変。数値文脈・SKF 単一・time-based/機微抽出/JSON 注入点は別途） |
 | アクセス制御欠陥 / IDOR | 他人のカゴ・他人の注文の閲覧 | `logic/idor` + `response_comparator` + API probe authB マトリクス | ◎ 本物の対象で cross-account BOLA を確定まで実証（**実 Juice Shop・実2アカウント・実コード・実 HTTP** で「Aのログインで Bのかごが見えた」→ payout_grade=True・SGK-2026-0468 part-2）。狙い撃ちの高速確定が実戦経路。**注**: フル自律走行での自動発見は速度（AI逐次判断）＋認証トークン失効の制約あり → SGK-2026-0469/0470 で追跡（確定の実力とは別問題） |
 | 認証の弱さ / JWT | 弱いパスワード・admin ログイン・トークン細工 | `auth/auth_ninja` + `injection/smart_jwt_forgery`（新設） + 再認証 | ◎ 本物の対象で確定まで実証（**実 Juice Shop** で JWT alg=none 無署名偽造トークンをサーバが受理＝完全な認証バイパスを確定。fabricated identity を GET のみで反映・トークン無しとの差分で証明・確定バー新マーカー jwt_forgery_accepted・SGK-2026-0476）。**JWT 拡張：RS256→HS256 キー混同も ◎**（**実 Juice Shop**・alg=RS256・公開鍵 `/encryptionkeys/jwt.pub` を認証なし入手→公開鍵 PEM を HMAC 秘密に HS256 署名した偽造トークンを新エンジン `SmartJWTForgeryHunter` が作成し `/rest/user/whoami` へ送ると受理＝forged identity 反映。**3者差分**（公開鍵秘密＝受理／誤り秘密＝拒否＝サーバは署名検証している／トークン無し＝空）でキー混同を厳密に証明。確定は alg=none と**共有マーカー jwt_forgery_accepted**＝偽造手法が違うだけで確定意味論は同じ・封印再現も forged_token 再送で手法非依存に流用（sealed_reproduction 改修不要）。payout_grade は `jwt_rs256_hs256` 分岐（jwt_alg=hs256＋jwt_key_confusion＋unauth_baseline_absent＋forged_identity 反映）で fail-closed 発火・**実 poc_judge 5/5**・SGK-2026-0490。PyJWT 2.x は本攻撃を防ぐため手動 HMAC で署名。正規トークン＝ユーザーの秘密は payload 導出のみで finding 非包含。誤り秘密でも反映＝署名未検証は本エンジンでは非確定）。署名検証を正しく行うサーバでは fail-closed で正しく非確定。弱い admin パスワード（admin123）もログイン成功を実測 |
 | CORS 設定ミス | 任意オリジンからの読み取り | `smart_cors` | ○ 本物確定能力あり（**認証付きオリジン反映＋ACAC:true＋機微データ越境読み取り**を確定バーの新マーカー cors_credentialed_reflection で確定・制御対象でフル判定 CONFIRMED を実証・SGK-2026-0475）。**実 Juice Shop は `ACAO:*`（反映なし・認証なし）＝公開データのみのため fail-closed で正しく非確定**（偽◎を出さない。`*` を確定に上げるのは禁止 curve-fit） |
@@ -72,7 +72,7 @@ updated_at: '2026-09-15'
 
 | 種類 | 確度 | 高度化 | 高度化に足りないもの（残り課題） |
 |---|---|---|---|
-| SQLインジェクション | ◎ | 高(L3) | フル自律走行で確定まで実証済み。最も成熟 |
+| SQLインジェクション | ◎ | 高(L3) | フル自律走行で確定まで実証済み。最も成熟。**boolean ブラインド抽出も◎**（SGK-2026-0502・別 vuln_type `blind_sqli`・自己校正オラクル＋実データ抽出・数値文脈/SKF 単一・time-based は別途） |
 | 保存型XSS | ◎ | 中〜高 | 実ブラウザ実行＋パイプライン有。多対象横断の網羅は限定 |
 | 反射/DOM型XSS | ◎ | 中〜高 | 実ブラウザ発火＋nonce＋実 poc_judge。対象は主に Juice Shop |
 | コマンドインジェクション | ◎ | 中(L2) | 実 DVWA in-band・poc_judge 7/8。POST フォーム形態中心 |

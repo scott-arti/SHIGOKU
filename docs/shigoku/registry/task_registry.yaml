@@ -6186,6 +6186,20 @@ status_allowed_values:
   - docs/shigoku/worklogs/2026-09-14_sgk-2026-0497_prototype-pollution_work_log.md
   - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
   - docs/shigoku/plans/done/2026-09-14_sgk-2026-0496_oob-deserialization.md
+- provisional_id: DOC-0572
+  task_id: SGK-2026-0502
+  doc_type: plan
+  title: boolean ベース・ブラインド SQLi（データ抽出）を実対象で本物確定（◎）
+  primary_doc: docs/shigoku/plans/done/2026-09-16_sgk-2026-0502_boolean-blind-sqli.md
+  status: done
+  provisional: false
+  task_summary: "既存 smart_sqli は error-based(sql_error)が本体で、boolean ブラインド抽出は target に文字列 sqli_blind を含むときだけ time-based を強制発火するラボ名依存ヒューリスティック(_run_time_based_blind_precheck)で curve-fit 気味・SQLite は SLEEP なしで time-based 不安定だった。真の boolean ブラインド抽出能力を、自己校正オラクル＋実データ抽出の新エンジンで◎化。実対象 SKF sqli-blind(Flask・:5000・SQLite。/home/<pageId> が SELECT pageId,title,content FROM pages WHERE pageId=<pageId> を引用符なし数値連結し、行あり=通常ページ/行なし=404・status は常に200)。実装(新設1＋承認済み凍結2): smart_blind_sqli(SmartBlindSQLiHunter)=恒真 1 AND 1=1/恒偽 1 AND 1=2 を送り TRUE 応答専用行と FALSE 応答専用行を実行時自動導出(_derive_signature=absent 本文に部分一致しない意味の強い行を <title>/自然文優先で採点・SVG パス断片やタグ属性 soup は減点＝poc_judge が『切り詰め差と区別不能』と却下するのを回避)し、恒真=TRUE・恒偽=FALSE に分類できれば注入確定→その真偽オラクルの二分探索で unicode(substr((SELECT sqlite_version()),i,1)) を評価し DB バージョンを1文字ずつ抽出(既定は非機微な sqlite_version())。先頭数文字は等値確認(=code→TRUE/=code+1→FALSE)の実 request/response 対を transcript として PoC に記録。URL/注入値構築は build_blind_sqli_url/value のモジュール関数に切り出し sealed と共有(重複排除)。payout_grade(凍結)に新 vuln_type blind_sqli→新マーカー blind_sqli_confirmed + _SQL_BOOLEAN_PATTERN + fail-closed 発火分岐(request_url 非空＋恒真恒偽が SQL 数値比較＋オラクルが true/false 分類＋抽出フィールド名非空＋抽出値非空)、error-based(sqli/sql_error)は無改変。finding.py に VulnType.BLIND_SQLI。sealed_reproduction(凍結)に _check_blind_sqli_replay(恒真/恒偽 GET でオラクル再校正＋二分探索で先頭文字再抽出→元抽出値の先頭文字と一致で matched)。実 SKF E2E: 検出(true_sig=<title>SKF Labs</title>/false_sig=<title>SKF Labs - 404 Error</title>・sqlite_version()=3.25.3 を真偽差分だけで抽出)→GATE1 payout_grade=True/blind_sqli_confirmed→GATE2 封印再現 matched→GATE3 実 poc_judge 3回連続 is_real=True/impact=True/counter=False/needs_human=False。初回 is_real=False(自動導出 true_sig が SVG パス断片で真偽差判別不能・抽出が主張のみ)→シグネチャ選定を <title>/自然文優先に改善＋抽出 transcript を raw 提示で is_real=True/impact=True に到達(バー非低下=poc-judge-raw-evidence の SQLi 版)。新規11テスト緑・error-based SQLi/LDAP 非回帰・凍結3 exit0・回帰ゼロ(1344 passed)・製品token0・秘密値非露出(既定抽出は非機微 DB バージョン)・docker 後片付け済。boolean ブラインド SQLi(データ窃取)=◎(高度化中 L2・数値文脈・SKF 単一)。既存 error-based SQLi(◎ L3)とは別 vuln_type で併存。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/done/2026-09-16_sgk-2026-0502_boolean-blind-sqli.md
+  - docs/shigoku/reports/2026-09-16_sgk-2026-0502_boolean-blind-sqli_work_report.md
+  - docs/shigoku/worklogs/2026-09-16_sgk-2026-0502_boolean-blind-sqli_work_log.md
+  - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
 - provisional_id: DOC-0571
   task_id: SGK-2026-0501
   doc_type: plan
