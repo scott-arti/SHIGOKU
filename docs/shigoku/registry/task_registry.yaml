@@ -6186,6 +6186,21 @@ status_allowed_values:
   - docs/shigoku/worklogs/2026-09-14_sgk-2026-0497_prototype-pollution_work_log.md
   - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
   - docs/shigoku/plans/done/2026-09-14_sgk-2026-0496_oob-deserialization.md
+- provisional_id: DOC-0571
+  task_id: SGK-2026-0501
+  doc_type: plan
+  title: DNS-OOB を SSRF/deser へ横展開（deser=DNS-only 真ブラインド◎・SSRF=DNS プリミティブ確定）
+  primary_doc: docs/shigoku/plans/done/2026-09-15_sgk-2026-0501_dns-oob-ssrf-deser.md
+  status: done
+  provisional: false
+  task_summary: "SGK-2026-0500 で新設した DNS OOB 受信器(utils/dns_oob_listener＋LocalDNSOOBProvider)を、既存 blind エンジンへプロバイダ差し替えだけで広げる設計を SSRF と deserialization で実証。両エンジン(smart_blind_ssrf/smart_blind_deser)は OOB ブロックを HTTP 形式で固定し interaction.channel を分岐に使っていなかった(常に channel=http を直書き)ため、XXE(0500)と同型に channel 対応へ改修(非凍結2・凍結0)。channel==dns のとき OOB ブロックを『権威 DNS が受けた DNS クエリ(QNAME＋送信元)』として提示し HTTP 行を混ぜない・impact/title/description を DNS 用に分岐・oob_evidence.channel に実チャネル反映。確定バー(payout_grade・sealed)は無改修(汎用マーカー oob_interaction_received が token in interaction.path で DNS でも発火)。実対象: 受信器を wcp イメージ(py3.7)で :53 コンテナ起動し標的を docker --dns で名前解決を向ける(コンテナ間非 firewall・0500 と同 topology)。deser=実 java-des-yaml で SmartOOBDeserHunter(java_snakeyaml/base64/path)が DNS プロバイダ差し替え・エンジン無改修で finding→GATE1 payout_grade=True/oob_interaction_received→GATE2 封印再現 matched→GATE3 実 poc_judge 3回連続 is_real=True/impact=True/counter=False/needs_human=False(ガジェット内 URL のホスト解決＝逆シリアライズ＋ガジェット連鎖の発火＝RCE 級の実測)＝DNS-only 真ブラインド deser ◎。ssrf=実 ssrf ラボ(form url)で SmartBlindSSRFHunter が無改修で finding→GATE1=True・GATE2 matched・GATE3 実 poc_judge 3回連続 is_real=True だが impact=False(DNS 解決は『サーバがホスト名を解決した』事実のみ・内部到達/データ取得の実害は未実測で仮定)＝プリミティブ確定どまり(◎ 未達)を curve-fit で覆さず honest に記録(SSRF の完全な実害確定は HTTP コールバックの SGK-2026-0495 で既に◎)。DNS 証拠の強さは vuln_type 依存(deser は解決＝コード実行連鎖の発火／SSRF は解決≠内部到達)。新規 DNS チャネルテスト2件緑・既存 HTTP 経路(SSRF/deser/XXE)非回帰・凍結3 exit0・凍結(payout_grade/sealed)無改修・製品token0・秘密値非露出・回帰ゼロ(1358 passed)・docker 後片付け済。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/done/2026-09-15_sgk-2026-0501_dns-oob-ssrf-deser.md
+  - docs/shigoku/reports/2026-09-15_sgk-2026-0501_dns-oob-ssrf-deser_work_report.md
+  - docs/shigoku/worklogs/2026-09-15_sgk-2026-0501_dns-oob-ssrf-deser_work_log.md
+  - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+  - docs/shigoku/plans/done/2026-09-14_sgk-2026-0500_dns-oob-receiver.md
 - provisional_id: DOC-0570
   task_id: SGK-2026-0500
   doc_type: plan

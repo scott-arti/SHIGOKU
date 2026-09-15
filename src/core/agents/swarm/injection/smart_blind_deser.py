@@ -180,6 +180,7 @@ class SmartOOBDeserHunter(Specialist):
         sent_url = str(proof.get("sent_url") or url)
         sent_payload = str(proof.get("sent_payload") or "")
         remote_ip = str(interaction.get("remote_ip", ""))
+        channel = str(interaction.get("channel") or "http").lower()
         cb_method = str(interaction.get("method") or "GET")
         cb_path = str(interaction.get("path") or "")
         cb_headers = interaction.get("headers") if isinstance(interaction.get("headers"), dict) else {}
@@ -229,67 +230,120 @@ class SmartOOBDeserHunter(Specialist):
                 f"# ^ the body above is the {encoding}-encoded {kind} payload actually sent in "
                 f"{where} ({gadget_desc}). Target will {deser_verb}."
             )
-        # 生の受信ログ: 同一 token に届いた全インバウンド行（Java は META-INF 取得→返した
-        # クラス名の取得と複数回叩く）＋ User-Agent（Java/x.x.x = JVM 由来の決定的証拠）。
-        inbound_lines = []
-        for it in all_inter:
-            m = str(it.get("method") or "")
-            p = str(it.get("path") or "")
-            ih = it.get("headers") if isinstance(it.get("headers"), dict) else {}
-            ua = str(ih.get("User-Agent") or ih.get("user-agent") or "")
-            inbound_lines.append(
-                f"  {m} {p} HTTP/1.1" + (f"   (User-Agent: {ua})" if ua else "")
+        if channel == "dns":
+            # DNS OOB: 逆シリアライズ時に標的リゾルバが gadget 内ホスト名を解決した DNS クエリ
+            # として提示（HTTP 形式で書かない・[[poc-judge-raw-evidence]]）。
+            dns_lines = []
+            for it in all_inter:
+                p = str(it.get("path") or "")
+                dns_lines.append(f"  DNS query: QNAME={p} (type A)")
+            inbound_block = "\r\n".join(dns_lines)
+            poc_response = (
+                f"HTTP/1.1 {status}\r\n"
+                "\r\n"
+                "(in-band response does not reveal gadget execution: blind)\r\n"
+                "\r\n"
+                "===== RAW OUT-OF-BAND DNS QUERIES OBSERVED AT OUR DNS RECEIVER (server log) =====\r\n"
+                "Our receiver is the authoritative DNS server for the callback domain; during "
+                "processing of the request above, the target's own resolver sent these DNS queries:\r\n"
+                f"{inbound_block}\r\n"
+                f"  (resolver/source {remote_ip})\r\n"
+                "\r\n"
+                f"CORRELATION: the random token '{token}' is the leftmost label of every queried FQDN "
+                f"above AND was placed by us ONLY inside the {kind} gadget we sent (visible in the "
+                "request URL above). No in-band channel could deliver this token to our DNS server; "
+                "the target parsing/deserializing our attacker-controlled input and resolving the "
+                "gadget's callback hostname is the only cause"
+                + (
+                    ". The gadget's URLClassLoader/ServiceLoader resolves the attacker-named host "
+                    "before fetching, so the query proves the JVM acted on our gadget"
+                    if kind == "java_snakeyaml"
+                    else ""
+                )
+                + " => blind (out-of-band, DNS) insecure deserialization (RCE-class) confirmed."
             )
-        inbound_block = "\r\n".join(inbound_lines)
-        poc_response = (
-            f"HTTP/1.1 {status}\r\n"
-            "\r\n"
-            "(in-band response does not reveal gadget execution: blind)\r\n"
-            "\r\n"
-            "===== RAW OUT-OF-BAND REQUESTS OBSERVED AT OUR OOB RECEIVER (server log) =====\r\n"
-            "During processing of the request above, the target itself connected to our receiver:\r\n"
-            f"{inbound_block}\r\n"
-            + (f"  Host: {cb_host}\r\n" if cb_host else "")
-            + f"  (source IP: {remote_ip}"
-            + (f", User-Agent: {cb_ua}" if cb_ua else "")
-            + ")\r\n"
-            "\r\n"
-            f"CORRELATION: the random token '{token}' appears in every inbound path above AND was "
-            f"placed by us ONLY inside the {kind} gadget we sent (visible in the request URL above). "
-            "No in-band channel could deliver this token to our server; the target parsing/"
-            "deserializing our attacker-controlled input is the only cause"
-            + (
-                ". The User-Agent identifies the target's own JVM as the client, and the follow-up "
-                "fetch of the class name we returned (…/<ClassName>.class) is the JVM's ServiceLoader "
-                "attempting to load attacker-named code"
-                if kind == "java_snakeyaml"
-                else ""
+        else:
+            # 生の受信ログ: 同一 token に届いた全インバウンド行（Java は META-INF 取得→返した
+            # クラス名の取得と複数回叩く）＋ User-Agent（Java/x.x.x = JVM 由来の決定的証拠）。
+            inbound_lines = []
+            for it in all_inter:
+                m = str(it.get("method") or "")
+                p = str(it.get("path") or "")
+                ih = it.get("headers") if isinstance(it.get("headers"), dict) else {}
+                ua = str(ih.get("User-Agent") or ih.get("user-agent") or "")
+                inbound_lines.append(
+                    f"  {m} {p} HTTP/1.1" + (f"   (User-Agent: {ua})" if ua else "")
+                )
+            inbound_block = "\r\n".join(inbound_lines)
+            poc_response = (
+                f"HTTP/1.1 {status}\r\n"
+                "\r\n"
+                "(in-band response does not reveal gadget execution: blind)\r\n"
+                "\r\n"
+                "===== RAW OUT-OF-BAND REQUESTS OBSERVED AT OUR OOB RECEIVER (server log) =====\r\n"
+                "During processing of the request above, the target itself connected to our receiver:\r\n"
+                f"{inbound_block}\r\n"
+                + (f"  Host: {cb_host}\r\n" if cb_host else "")
+                + f"  (source IP: {remote_ip}"
+                + (f", User-Agent: {cb_ua}" if cb_ua else "")
+                + ")\r\n"
+                "\r\n"
+                f"CORRELATION: the random token '{token}' appears in every inbound path above AND was "
+                f"placed by us ONLY inside the {kind} gadget we sent (visible in the request URL above). "
+                "No in-band channel could deliver this token to our server; the target parsing/"
+                "deserializing our attacker-controlled input is the only cause"
+                + (
+                    ". The User-Agent identifies the target's own JVM as the client, and the follow-up "
+                    "fetch of the class name we returned (…/<ClassName>.class) is the JVM's ServiceLoader "
+                    "attempting to load attacker-named code"
+                    if kind == "java_snakeyaml"
+                    else ""
+                )
+                + " => blind (out-of-band) insecure deserialization (RCE-class) confirmed."
             )
-            + " => blind (out-of-band) insecure deserialization (RCE-class) confirmed."
-        )
         gadget_ja = (
             "（SnakeYAML の ScriptEngineManager/URLClassLoader ガジェット→JVM の ServiceLoader が"
             "外向き HTTP 取得）"
             if kind == "java_snakeyaml"
             else "（`__reduce__`→`os.system`）"
         )
-        impact = (
-            f"標的が攻撃者制御の {kind} オブジェクトを逆シリアライズし、ガジェット{gadget_ja}"
-            "を起動した。in-band では何も返さない（ブラインド）が、逆シリアライズ時に"
-            f"我々の受信器へ一意 token '{token}' のコールバックが標的（{remote_ip}）から届いた。token は"
-            "我々が送ったガジェットにしか存在しないため、任意コード実行に至る安全でないデシリアライズの"
-            "決定的証拠（RCE 級・良性コールバックで非破壊確認）。"
-        )
+        if channel == "dns":
+            impact = (
+                f"標的が攻撃者制御の {kind} オブジェクトを逆シリアライズし、ガジェット{gadget_ja}"
+                "を起動した。in-band では何も返さない（ブラインド）が、逆シリアライズ時にガジェット内の"
+                f"コールバック**ホスト名を名前解決**する DNS クエリ（一意 token '{token}' を含む FQDN）が、"
+                f"我々が権威 DNS として動作する受信器へ標的側リゾルバ（{remote_ip}）から届いた。token は"
+                "我々が送ったガジェットにしか存在しないため、任意コード実行に至る安全でないデシリアライズの"
+                "決定的証拠（RCE 級・真ブラインド／標的が外向き HTTP を出せない環境でも DNS 解決だけで確定・"
+                "良性コールバックで非破壊確認）。"
+            )
+            title = "Blind (OOB, DNS) Insecure Deserialization via gadget hostname resolution"
+            description = (
+                f"Insecure deserialization confirmed out-of-band via DNS: a {kind} gadget caused the "
+                f"target to resolve its callback hostname, and the DNS query for token '{token}' reached "
+                f"our authoritative DNS receiver from the target ({remote_ip}) during deserialization. "
+                f"No in-band reflection (HTTP {status}). RCE-class."
+            )
+        else:
+            impact = (
+                f"標的が攻撃者制御の {kind} オブジェクトを逆シリアライズし、ガジェット{gadget_ja}"
+                "を起動した。in-band では何も返さない（ブラインド）が、逆シリアライズ時に"
+                f"我々の受信器へ一意 token '{token}' のコールバックが標的（{remote_ip}）から届いた。token は"
+                "我々が送ったガジェットにしか存在しないため、任意コード実行に至る安全でないデシリアライズの"
+                "決定的証拠（RCE 級・良性コールバックで非破壊確認）。"
+            )
+            title = "Blind (OOB) Insecure Deserialization via callback gadget"
+            description = (
+                f"Insecure deserialization confirmed out-of-band: a {kind} gadget delivered the unique "
+                f"token '{token}' to our receiver from the target ({remote_ip}) during deserialization. "
+                f"No in-band reflection (HTTP {status}). RCE-class."
+            )
         return Finding(
             target_url=target_url,
             vuln_type=VulnType.DESERIALIZATION,
             severity=Severity.CRITICAL,
-            title="Blind (OOB) Insecure Deserialization via callback gadget",
-            description=(
-                f"Insecure deserialization confirmed out-of-band: a {kind} gadget delivered the unique "
-                f"token '{token}' to our receiver from the target ({remote_ip}) during deserialization. "
-                f"No in-band reflection (HTTP {status}). RCE-class."
-            ),
+            title=title,
+            description=description,
             source_agent=self.name,
             confidence=0.97,
             impact=impact,
@@ -312,7 +366,7 @@ class SmartOOBDeserHunter(Specialist):
             additional_info={
                 "oob_evidence": {
                     "vuln_class": "deserialization",
-                    "channel": "http",
+                    "channel": channel,
                     "token": token,
                     "callback_url": callback_url,
                     # token を含む「送出内容」= payout_grade の "token in payload" 検証に用いる

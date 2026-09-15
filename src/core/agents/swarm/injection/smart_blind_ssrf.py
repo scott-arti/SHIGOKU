@@ -158,6 +158,7 @@ class SmartBlindSSRFHunter(Specialist):
         status = proof["request_status"]
         interaction = proof["interaction"]
         remote_ip = str(interaction.get("remote_ip", ""))
+        channel = str(interaction.get("channel") or "http").lower()
         cb_method = str(interaction.get("method") or "GET")
         cb_path = str(interaction.get("path") or "")
         cb_headers = interaction.get("headers") if isinstance(interaction.get("headers"), dict) else {}
@@ -173,40 +174,79 @@ class SmartBlindSSRFHunter(Specialist):
                      else f"Content-Type: application/x-www-form-urlencoded\r\n\r\n{param}={callback_url}"))
             + f"\r\n# ^ Blind SSRF: our OOB callback URL is placed in {where}."
         )
+        if channel == "dns":
+            # DNS OOB: 受信器は権威 DNS として動作し、標的リゾルバが送ってきた DNS クエリ
+            # （token を含む FQDN）を記録する。HTTP 形式で書かない（判定は「一貫した生の
+            # 受信アーティファクト」を求める・[[poc-judge-raw-evidence]]）。
+            oob_block = (
+                "===== RAW OUT-OF-BAND DNS QUERY OBSERVED AT OUR DNS RECEIVER =====\r\n"
+                "Our receiver is the authoritative DNS server for the callback domain; the "
+                "target's own resolver sent this DNS query (recorded verbatim):\r\n"
+                f"DNS query: QNAME={cb_path} (type A) from resolver/source {remote_ip}\r\n"
+                "\r\n"
+                f"CORRELATION: the random token '{token}' is the leftmost label of the queried "
+                "FQDN above AND was placed by us ONLY inside the callback URL we supplied as the "
+                "fetch target. No in-band channel could deliver this token to our DNS server; the "
+                "only cause is the target resolving our URL's hostname before the server-side fetch. "
+                "=> blind (out-of-band, DNS) SSRF confirmed."
+            )
+        else:
+            oob_block = (
+                "===== RAW OUT-OF-BAND REQUEST OBSERVED AT OUR OOB RECEIVER =====\r\n"
+                "The target server itself made this inbound request to our server:\r\n"
+                f"{cb_method} {cb_path} HTTP/1.1\r\n"
+                + (f"Host: {cb_host}\r\n" if cb_host else "")
+                + (f"User-Agent: {cb_ua}\r\n" if cb_ua else "")
+                + f"(source IP: {remote_ip})\r\n"
+                "\r\n"
+                f"CORRELATION: the random token '{token}' appears in the path above AND was placed by us "
+                "ONLY inside the callback URL we supplied as the fetch target. No in-band channel could "
+                "deliver this token to our server; the only cause is the target performing a server-side "
+                "fetch of our URL => blind (out-of-band) SSRF confirmed."
+            )
         poc_response = (
             f"HTTP/1.1 {status}\r\n"
             "\r\n"
             "(in-band response does not reveal the fetch result: blind)\r\n"
             "\r\n"
-            "===== RAW OUT-OF-BAND REQUEST OBSERVED AT OUR OOB RECEIVER =====\r\n"
-            "The target server itself made this inbound request to our server:\r\n"
-            f"{cb_method} {cb_path} HTTP/1.1\r\n"
-            + (f"Host: {cb_host}\r\n" if cb_host else "")
-            + (f"User-Agent: {cb_ua}\r\n" if cb_ua else "")
-            + f"(source IP: {remote_ip})\r\n"
-            "\r\n"
-            f"CORRELATION: the random token '{token}' appears in the path above AND was placed by us "
-            "ONLY inside the callback URL we supplied as the fetch target. No in-band channel could "
-            "deliver this token to our server; the only cause is the target performing a server-side "
-            "fetch of our URL => blind (out-of-band) SSRF confirmed."
+            + oob_block
         )
-        impact = (
-            f"標的サーバがリクエスト中の URL（{where}）を**サーバ側で取得**した。in-band では取得結果を"
-            f"返さない（HTTP {status}・ブラインド）が、我々の受信器に一意 token '{token}' のコールバックが"
-            f"標的（{remote_ip}）から届いた。token は我々が指定した URL にしか存在しないため、サーバが"
-            "我々の URL を fetch した決定的証拠。ブラインド SSRF は内部サービス到達・クラウドメタデータ"
-            "取得・内部ポートスキャン等に直結する実害。"
-        )
+        if channel == "dns":
+            impact = (
+                f"標的サーバがリクエスト中の URL（{where}）の**ホスト名を名前解決**した。in-band では"
+                f"取得結果を返さない（HTTP {status}・ブラインド）が、我々が権威 DNS として動作する受信器に、"
+                f"一意 token '{token}' を含む FQDN の DNS クエリが標的側リゾルバ（{remote_ip}）から届いた。"
+                "token は我々が指定した URL のホスト名にしか存在しないため、サーバが我々の URL を解決した"
+                "決定的証拠。真ブラインド（標的が外向き HTTP を出せない環境でも DNS 解決だけで確定でき、"
+                "内部サービス到達・クラウドメタデータ取得・内部ポートスキャン等に直結する実害）。"
+            )
+            title = "Blind (OOB, DNS) SSRF via server-side hostname resolution"
+            description = (
+                "Blind SSRF confirmed out-of-band via DNS: a callback URL supplied in the request "
+                f"({where}) caused the target to resolve its hostname, and the DNS query for token "
+                f"'{token}' reached our authoritative DNS receiver from the target ({remote_ip}). No "
+                f"in-band reflection (HTTP {status})."
+            )
+        else:
+            impact = (
+                f"標的サーバがリクエスト中の URL（{where}）を**サーバ側で取得**した。in-band では取得結果を"
+                f"返さない（HTTP {status}・ブラインド）が、我々の受信器に一意 token '{token}' のコールバックが"
+                f"標的（{remote_ip}）から届いた。token は我々が指定した URL にしか存在しないため、サーバが"
+                "我々の URL を fetch した決定的証拠。ブラインド SSRF は内部サービス到達・クラウドメタデータ"
+                "取得・内部ポートスキャン等に直結する実害。"
+            )
+            title = "Blind (OOB) SSRF via server-side fetch callback"
+            description = (
+                "Blind SSRF confirmed out-of-band: a callback URL supplied in the request "
+                f"({where}) caused the target to fetch it, delivering the unique token '{token}' to "
+                f"our receiver from the target ({remote_ip}). No in-band reflection (HTTP {status})."
+            )
         return Finding(
             target_url=target_url,
             vuln_type=VulnType.SSRF,
             severity=Severity.HIGH,
-            title="Blind (OOB) SSRF via server-side fetch callback",
-            description=(
-                "Blind SSRF confirmed out-of-band: a callback URL supplied in the request "
-                f"({where}) caused the target to fetch it, delivering the unique token '{token}' to "
-                f"our receiver from the target ({remote_ip}). No in-band reflection (HTTP {status})."
-            ),
+            title=title,
+            description=description,
             source_agent=self.name,
             confidence=0.95,
             impact=impact,
@@ -228,7 +268,7 @@ class SmartBlindSSRFHunter(Specialist):
             additional_info={
                 "oob_evidence": {
                     "vuln_class": "ssrf",
-                    "channel": "http",
+                    "channel": channel,
                     "token": token,
                     "callback_url": callback_url,
                     # token を含む「送出値」= payout_grade の "token in payload" 検証に用いる。

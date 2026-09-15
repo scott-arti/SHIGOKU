@@ -97,3 +97,45 @@ def test_hex_encoded_payload_sent():
     sent = client.calls[0]["data"]
     assert isinstance(sent, dict) and "data_obj" in sent
     bytes.fromhex(sent["data_obj"])  # 有効な hex（例外なら失敗）
+
+
+class _FakeDNSOOBProvider:
+    """DNS OOB プロバイダ模擬（channel=dns・poll は問い合わせ FQDN を path に写像）。"""
+
+    channel = "dns"
+
+    def __init__(self):
+        self._n = 0
+
+    async def start(self):
+        pass
+
+    async def stop(self):
+        pass
+
+    def new_callback(self):
+        self._n += 1
+        token = "dnsdesertok%d" % self._n
+        return f"http://{token}.oob.test/", token
+
+    async def poll(self, token, timeout=10.0):
+        return {"token": token, "channel": "dns", "remote_ip": "10.0.0.9",
+                "method": "DNS", "path": f"{token}.oob.test", "headers": {}}
+
+
+def test_dns_channel_renders_dns_framed_poc():
+    # SGK-2026-0501: DNS OOB は DNS クエリとして提示（HTTP 形式で書かない）。
+    findings = _run(_FakeDNSOOBProvider())
+    exp = [f for f in findings if f.vuln_type == VulnType.DESERIALIZATION]
+    assert exp, "blind DNS deserialization finding not produced"
+    d = exp[0].to_dict()
+    poc_res = d["additional_info"]["poc_response"]
+    ev = d["additional_info"]["oob_evidence"]
+    assert ev["channel"] == "dns"
+    assert "RAW OUT-OF-BAND DNS QUERIES" in poc_res
+    assert "QNAME=" in poc_res
+    assert "HTTP/1.1" not in poc_res.split("=====")[-1]  # OOB ブロックに HTTP 行を混ぜない
+    assert ev["token"] in ev["interaction"]["path"]
+    r = evaluate_payout_grade(d)
+    assert r.payout_grade is True          # 汎用 OOB マーカーは DNS でも発火（無改修）
+    assert r.marker == "oob_interaction_received"
