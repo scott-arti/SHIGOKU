@@ -6186,6 +6186,20 @@ status_allowed_values:
   - docs/shigoku/worklogs/2026-09-14_sgk-2026-0497_prototype-pollution_work_log.md
   - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
   - docs/shigoku/plans/done/2026-09-14_sgk-2026-0496_oob-deserialization.md
+- provisional_id: DOC-0573
+  task_id: SGK-2026-0503
+  doc_type: plan
+  title: HTTP リクエストスマグリング（CL.TE desync）を実対象で本物確定（◎）
+  primary_doc: docs/shigoku/plans/done/2026-09-16_sgk-2026-0503_http-request-smuggling.md
+  status: done
+  provisional: false
+  task_summary: "賞金最高額帯の HTTP リクエストスマグリングはコードベースに実装皆無(high_risk_tester にも無し)＝新規構築。front-end(プロキシ/LB/CDN)と back-end が本体長を Content-Length と Transfer-Encoding のどちらで判断するかで食い違うと片方が本体の一部を次リクエストの先頭として解釈する=desync(クロスリクエスト汚染)。最大の関門はローカルで本物の脆弱構成を組むこと(スマグリングは topology 依存で SKF 等の既製ラボが無い)。依存ゼロの自前制御対象 smuggle_lab.py(back-end が Transfer-Encoding: chunked を尊重・front-end が Content-Length だけで本体長を決め単一上流接続を共有する、現実的に脆弱な front/back ペア=curve-fit でなく CL.TE 不一致という教科書的な本物の脆弱挙動)を用い、feasibility を先に socket レベルで実証(古典 CL.TE スマグルが決定論的成立・victim REQLINE にスマグル残余混入・一意トークンをスマグル側プレフィックスにのみ置くと別 victim 応答にトークン出現/clean 非出現=捏造不可の相関)。実装(新設1＋承認済み凍結2): smart_request_smuggling(SmartRequestSmugglingHunter)=CL.TE/TE.CL ビルダ(build_clte_smuggle/build_tecl_smuggle)で隠しプレフィックスに一意トークンを仕込んだ desync 要求を送り、clean baseline victim→smuggle→別接続 victim の3手で victim 応答にトークン出現＋clean 非出現なら確定。生バイト制御のため raw socket(_raw_send seam・_default_raw_send は Content-Length を見て応答1つを読み切る=keep-alive のタイムアウト待ち回避)。payout_grade(凍結)に新 vuln_type http_request_smuggling→新マーカー http_request_smuggling_confirmed + fail-closed 発火分岐(request_url 非空＋variant clte/tecl＋token 非空＋token が poisoned_victim_body 実在＋clean_victim_body 非実在)。finding.py に VulnType.HTTP_REQUEST_SMUGGLING。sealed_reproduction(凍結)に _check_smuggling_replay(fresh トークンで desync 要求を再送し汚染再観測・raw socket・非破壊)。E2E(制御対象 CL.TE): 検出→GATE1 payout_grade=True/http_request_smuggling_confirmed→GATE2 封印再現 matched→GATE3 実 poc_judge 3回連続 is_real=True/impact=True/counter=False/needs_human=False(初回一発・審査理由=一意トークンがスマグル側プレフィックスにのみ存在し別 victim 応答に出現/clean 非出現＝front/back の境界判断不一致で攻撃者制御バイトが別要求の処理・応答に混入＝応答キュー汚染・キャッシュ汚染・資格情報奪取に発展し得る実害)。落とし穴: _default_raw_send が keep-alive で切断まで読み各要求で timeout 待ち→ハング→Content-Length を見て読み切る修正。新規10テスト緑・凍結3 exit0・製品token0・秘密値非露出。CL.TE desync=◎(高度化 低 L1・CL.TE 1形態・制御対象・http のみ)。TE.CL/タイミングベース/TLS/実インターネット標的・パイプライン統合は別途。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/done/2026-09-16_sgk-2026-0503_http-request-smuggling.md
+  - docs/shigoku/reports/2026-09-16_sgk-2026-0503_http-request-smuggling_work_report.md
+  - docs/shigoku/worklogs/2026-09-16_sgk-2026-0503_http-request-smuggling_work_log.md
+  - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
 - provisional_id: DOC-0572
   task_id: SGK-2026-0502
   doc_type: plan

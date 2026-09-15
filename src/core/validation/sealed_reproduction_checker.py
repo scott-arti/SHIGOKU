@@ -553,6 +553,9 @@ class SealedReproductionChecker:
         if self._expected_marker(payload, evidence) == "blind_sqli_confirmed":
             return self._check_blind_sqli_replay(payload, _info)
 
+        if self._expected_marker(payload, evidence) == "http_request_smuggling_confirmed":
+            return self._check_smuggling_replay(payload, _info)
+
         # 2.16) SGK-2026-0492: Web キャッシュポイズニング専用再現パス。新しい marker と
         #       新しい cache-buster で 毒入り GET（unkeyed ヘッダ付き）→ victim GET
         #       （クリーン）の2手を封印スコープ内で送り、victim 応答に新 marker が
@@ -1558,6 +1561,67 @@ class SealedReproductionChecker:
         if chr(lo) == orig_value[0]:
             return ReproductionOutcome(
                 "matched", "reproduction_marker_matched:blind_sqli_confirmed"
+            )
+        return ReproductionOutcome("mismatched", _REASON_MARKER_MISMATCH)
+
+    def _check_smuggling_replay(self, payload: dict, info: dict) -> ReproductionOutcome:
+        """HTTP リクエストスマグリング（desync）の専用再現パス（SGK-2026-0503）。
+
+        元 Finding の smuggling_replay 記述子（host/port/path/variant）に従い、封印スコープ内で
+        **fresh な一意トークン**を隠しプレフィックスに仕込んだ desync 要求を再送し、別 victim 要求の
+        応答にそのトークンが混入（clean baseline には非出現）することを再観測する。生バイト制御が
+        必要なため raw socket（``_raw_send`` seam・既定は実 socket）で送受信する。非破壊。
+
+        - matched: fresh トークンが poisoned victim 応答に再出現＋clean に非出現
+        - mismatched: 応答あり・汚染が再現しない
+        - not_run: 記述子不正 / スコープ再検証不可 / 送信不能（fail-closed）
+        """
+        import secrets as _secrets
+        from src.core.agents.swarm.injection.smart_request_smuggling import (
+            _VARIANT_BUILDERS,
+            _default_raw_send,
+            _body_text,
+        )
+
+        replay = info.get("smuggling_replay")
+        if not isinstance(replay, dict):
+            return ReproductionOutcome("not_run", _REASON_UNKNOWN_CATEGORY)
+        host = str(replay.get("host") or "").strip()
+        try:
+            port = int(replay.get("port") or 0)
+        except (TypeError, ValueError):
+            return ReproductionOutcome("not_run", _REASON_UNKNOWN_CATEGORY)
+        path = str(replay.get("path") or "/") or "/"
+        variant = str(replay.get("variant") or "").strip().lower()
+        builder = _VARIANT_BUILDERS.get(variant)
+        if not host or port <= 0 or builder is None:
+            return ReproductionOutcome("not_run", _REASON_UNKNOWN_CATEGORY)
+        request_url = f"http://{host}:{port}{path}"
+        scope_result = revalidate_scope_for_request(
+            request_url, scope_definition=self._scope_definition
+        )
+        if not scope_result.allowed:
+            return ReproductionOutcome("not_run", _REASON_SCOPE_REVALIDATION_BLOCKED)
+
+        sender = getattr(self, "_raw_send", None) or _default_raw_send
+        token = "smug" + _secrets.token_hex(5)
+        prefix = (b"GET /" + token.encode() + b" HTTP/1.1\r\nX-Smuggle: " + token.encode())
+        smuggle = builder(path, host, prefix)
+        victim = (b"GET " + path.encode() + b" HTTP/1.1\r\nHost: " + host.encode()
+                  + b"\r\nContent-Length: 0\r\n\r\n")
+        timeout = float(self._timeout_seconds)
+        try:
+            clean = _body_text(sender(host, port, victim, timeout))
+            sender(host, port, smuggle, timeout)
+            time.sleep(0.15)
+            poisoned = _body_text(sender(host, port, victim, timeout))
+        except OSError:
+            self._replays_used += 1
+            return ReproductionOutcome("not_run", _REASON_TRANSPORT_ERROR)
+        self._replays_used += 1
+        if token in poisoned and token not in clean:
+            return ReproductionOutcome(
+                "matched", "reproduction_marker_matched:http_request_smuggling_confirmed"
             )
         return ReproductionOutcome("mismatched", _REASON_MARKER_MISMATCH)
 

@@ -56,6 +56,9 @@ class VulnType(Enum):
     NOSQL_INJECTION = "nosql_injection"
     LDAP_INJECTION = "ldap_injection"
     CRLF_INJECTION = "crlf_injection"
+    # SGK-2026-0503: HTTP リクエストスマグリング（front-end/back-end の CL/TE 解釈不一致で
+    # 別リクエストへ混入＝クロスリクエスト汚染）。新規エンジン SmartRequestSmugglingHunter。
+    HTTP_REQUEST_SMUGGLING = "http_request_smuggling"
     OPEN_REDIRECT = "open_redirect"
     HOST_HEADER_INJECTION = "host_header_injection"
     DESERIALIZATION = "deserialization"

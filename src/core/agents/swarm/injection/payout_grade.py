@@ -323,6 +323,8 @@ _MARKER_CATEGORIES: Dict[str, str] = {
     "rce": "command_execution",
     "ssrf": "ssrf_callback",
     "open_redirect": "external_redirect",
+    # SGK-2026-0503: HTTP リクエストスマグリング（CL/TE desync のクロスリクエスト汚染）。
+    "http_request_smuggling": "http_request_smuggling_confirmed",
     "api": "authz_diff",
     "broken_access_control": "authz_diff",
     "idor": "authz_diff",
@@ -878,6 +880,34 @@ def _match_firing_marker(
                 and success_marker not in ctrl_body
             ):
                 return "ldap_injection_confirmed"
+        return None
+
+    if vuln_type == "http_request_smuggling":
+        # 発火は「HTTP リクエストスマグリング（desync）の本物のみ」(SGK-2026-0503):
+        # additional_info.smuggling_evidence が、
+        #  (1) request_url 非空、
+        #  (2) variant が clte / tecl、
+        #  (3) token 非空、
+        #  (4) token が poisoned_victim_body（別 victim 要求の応答）に実在、
+        #  (5) token が clean_victim_body（スマグル前の基準応答）に非実在、
+        # のすべてを満たすときのみ。1 つでも欠ければ None（fail-closed）。
+        # スマグル側の隠しプレフィックスにしか無い乱数 token が別 victim 応答に出現＝別要求への
+        # 混入＝クロスリクエスト汚染の決定的証拠（偶然混入・捏造不可）。
+        se = info.get("smuggling_evidence")
+        if isinstance(se, dict):
+            request_url = str(se.get("request_url") or "").strip()
+            variant = str(se.get("variant") or "").strip().lower()
+            token = str(se.get("token") or "").strip()
+            poisoned = str(se.get("poisoned_victim_body") or "")
+            clean = str(se.get("clean_victim_body") or "")
+            if (
+                request_url
+                and variant in ("clte", "tecl")
+                and token
+                and token in poisoned
+                and token not in clean
+            ):
+                return "http_request_smuggling_confirmed"
         return None
 
     if vuln_type == "blind_sqli":
