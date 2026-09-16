@@ -151,6 +151,8 @@ def build_unknown_hypotheses(
         or "api" in path
     ):
         hypotheses.append("idor")
+        # SGK-2026-0504: JSON API 面は NoSQL 演算子注入の実対象になり得る（非破壊の差分テスト）。
+        hypotheses.append("nosql")
         signals.append("api_json_surface")
 
     if any(token in path for token in ["/admin", "/manage", "/console", "/internal", "/account"]) and response_status in {200, 204, 302, 401, 403}:

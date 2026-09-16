@@ -91,7 +91,7 @@ updated_at: '2026-09-16'
 | 安全でないデシリアライズ | ◎ | 中(L2) | 今セッション新設。OOB 基盤横展開で Python pickle(SGK-2026-0496)＋Java SnakeYAML(SGK-2026-0498) のデシリアライズ(RCE級)を◎。SnakeYAML は ScriptEngineManager ガジェット・path モード注入。ネイティブ Java シリアライズ(ysoserial系)/JNDI・in-band 確認・DNS-only OOB は別途。PHP unserialize はラボ無し・POP アプリ固有で実装不可(据え置き) |
 | プロトタイプ汚染 | ◎ | 低(L1) | 今セッション新設。Node.js サーバサイド PP を in-band 差分で◎。lodash.merge sink・SKF 単一・クライアント側 PP は別途 |
 | HTTP リクエストスマグリング | ◎ | 低(L1) | 今セッション新設。CL.TE desync をトークン相関のクロスリクエスト汚染で◎（自前制御対象＝既製ラボ無し）。CL.TE 1形態・http のみ・TE.CL/タイミング/TLS/実標的・統合は別途 |
-| NoSQLインジェクション | ◎ | 低(L1) | 今セッション新設。crAPI 単一・JSON 演算子1形態・未統合（第2対象検証も未） |
+| NoSQLインジェクション | ◎ | 低〜中 | crAPI 単一・JSON 演算子1形態。**自律走行の入口へ配線済（pilot・SGK-2026-0504）**＝`InjectionManagerAgent` の3点継ぎ目（登録・routing・dispatch）をレジストリ駆動に一般化し `nosql` を登録→`api_json_surface` 仮説で選択→汎用 `_run_registered_hunter` で起動（単体テストで実証・旧9種は挙動不変）。第2対象検証・実 crAPI 自走E2E◎認証・第2 dispatch(`vuln_type`経路)は後続 |
 | LDAPインジェクション | ◎ | 中(L2) | 今セッション新設。認証バイパスの in-band 差分（リテラル失敗×メタ文字成功）・成功印自動導出・マーカー中心スニペット。SKF 単一・フォーム認証のみ・ブラインド（真偽/時間）/属性開示/GET・JSON 注入点は別途 |
 | Mass Assignment | ◎ | 低(L1) | 今セッション新設。Juice Shop 単一・登録 role 昇格1形態・未統合（第2対象/更新系検証も未） |
 | Race Condition | ◎ | 低(L1) | 今セッション新設。SKF ラボ単一・逐次/並列差分1形態・未統合（実運用アプリ対象は別途） |
@@ -103,6 +103,12 @@ updated_at: '2026-09-16'
 
 **方針（現時点）**: まず**検出の幅を広げる**ことを優先し、低(L1)の項目が併存してよい。高度化（複数対象検証・
 形態拡張・パイプライン統合・OOB 基盤）は幅を広げた後にまとめて引き上げる。
+
+**フェーズB（自律走行への統合）進行中**: 新設15ハンターは単体E2E◎だが自律走行の入口（`InjectionManagerAgent`
+の登録・routing・dispatch の3点継ぎ目）に未配線だった（棚卸し済・SGK-2026-0504）。この3点継ぎ目を
+**レジストリ駆動に一般化**（`manager_internal/hunter_registry.py` に1エントリ足すだけで登録・routing・
+汎用 dispatch に載る）し、pilot として `nosql` を配線済（旧9種は挙動不変）。残り14ハンターの配線・
+第2 dispatch(`vuln_type`経路)・OOB 受信器の自走統合・各実対象の自走E2E◎認証は後続タスクで1本ずつ。
 
 ## SHIGOKU に武器がないギャップ（Juice Shop にはある）
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import json
 import logging
 import random
@@ -122,6 +123,10 @@ from src.core.agents.swarm.injection.manager_internal.process_url_dispatcher imp
 from src.core.agents.swarm.injection.manager_internal.unknown_hypotheses import (
     build_unknown_hypotheses,
     build_unknown_idor_candidate_finding,
+)
+from src.core.agents.swarm.injection.manager_internal.hunter_registry import (
+    HUNTER_SPEC_BY_KEY,
+    NEW_HUNTER_SPECS,
 )
 from src.core.engine.finding_funnel_trace import get_finding_funnel, url_fingerprint
 from src.core.agents.swarm.injection.payout_grade import (
@@ -636,6 +641,16 @@ class InjectionManagerAgent(BaseManagerAgent):
         except ImportError:
             logger.warning("SmartGraphQLHunter not available")
 
+        # SGK-2026-0504: レジストリ駆動で新設ハンターを登録（データ追加のみで自走経路に載る）。
+        # 旧9種と同方針で lazy import・個別失敗は他を止めない。
+        for spec in NEW_HUNTER_SPECS:
+            try:
+                module = importlib.import_module(spec.module)
+                hunter_cls = getattr(module, spec.class_name)
+                self.specialists[spec.key] = hunter_cls(config=self.config)
+            except (ImportError, AttributeError):
+                logger.warning("%s not available (registry hunter)", spec.class_name)
+
     def _register_initial_tools(self) -> None:
         """LLM が使用するツールの登録"""
         self.register_tool(
@@ -752,6 +767,13 @@ class InjectionManagerAgent(BaseManagerAgent):
             elif specialist == "graphql":
                 graphql_result = await self.run_graphql_hunter(url=url, params=base_params, quick_mode=quick_mode)
                 unknown_results.append(graphql_result)
+            elif specialist in HUNTER_SPEC_BY_KEY:
+                # SGK-2026-0504: レジストリ駆動の新設ハンターを汎用 dispatch で起動。
+                unknown_results.append(
+                    await self._run_registered_hunter(
+                        specialist, url=url, params=base_params, quick_mode=quick_mode
+                    )
+                )
 
         merged_params: List[str] = []
         for partial in unknown_results:
@@ -5247,6 +5269,59 @@ class InjectionManagerAgent(BaseManagerAgent):
             vuln_name="LFI/Path Traversal",
             severity="HIGH",
             not_found_message="No LFI vulnerabilities found",
+        )
+
+    async def _run_registered_hunter(
+        self, specialist_key: str, url: str, params: Dict[str, Any] = None, quick_mode: bool = False, **_kwargs
+    ) -> Dict[str, Any]:
+        """SGK-2026-0504: レジストリ駆動の新設ハンターを汎用に起動する。
+
+        旧9種の `run_*_hunter` と同じ骨格（build_hunter_task→execute_with_retry→
+        findings 収集→normalize→format_simple_hunter_result）を specialist_key で
+        パラメータ化したもの。個別のブランチを増やさず新 vuln クラスを dispatch できる。
+        """
+        spec = HUNTER_SPEC_BY_KEY.get(specialist_key)
+        if spec is None or specialist_key not in self.specialists:
+            return {
+                "error": f"{specialist_key} specialist not available",
+                "findings_count": 0,
+                "tested_params": [],
+            }
+
+        logger.info(
+            "[%s] Delegating %s check to %s (registry hunter, quick_mode=%s)",
+            self.name, specialist_key, spec.class_name, quick_mode,
+        )
+
+        target_task, detection_mode = build_hunter_task(
+            url=url,
+            specialist_key=specialist_key,
+            task_name=f"{spec.vuln_name} Check",
+            tags=[specialist_key],
+            params=params,
+            kwargs=_kwargs,
+            current_context=self.current_context,
+            phase2_detection_mode=self._phase2_detection_mode,
+            normalize_tool_supplied_params=self._normalize_tool_supplied_params,
+            resolve_detection_mode=self._resolve_detection_mode,
+        )
+
+        findings = await self.specialists[specialist_key].execute_with_retry(target_task, quick_mode=quick_mode) or []
+        self.current_context["findings"].extend(findings)
+
+        tested_params: List[str] = []
+        if findings and hasattr(findings[0], "additional_info"):
+            tested_params = findings[0].additional_info.get("tested_params", []) or []
+        normalize_findings_additional_info(
+            findings, tested_params, detection_mode, excluded_params=self.EXCLUDED_TESTED_PARAMS
+        )
+        return format_simple_hunter_result(
+            findings=findings,
+            url=url,
+            excluded_params=self.EXCLUDED_TESTED_PARAMS,
+            vuln_name=spec.vuln_name,
+            severity=spec.severity,
+            not_found_message=f"No {spec.vuln_name} vulnerabilities found",
         )
 
     async def run_ssti_hunter(self, url: str, params: Dict[str, Any] = None, quick_mode: bool = False, **_kwargs) -> Dict[str, Any]:

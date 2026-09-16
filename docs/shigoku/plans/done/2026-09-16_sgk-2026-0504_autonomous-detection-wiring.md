@@ -1,9 +1,11 @@
 ---
 task_id: SGK-2026-0504
 doc_type: plan
-status: active
+status: done
 parent_task_id: SGK-2026-0442
 related_docs:
+- docs/shigoku/reports/2026-09-16_sgk-2026-0504_autonomous-detection-wiring_work_report.md
+- docs/shigoku/worklogs/2026-09-16_sgk-2026-0504_autonomous-detection-wiring_work_log.md
 - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
 - docs/shigoku/roadmaps/2026-08-12_sgk-2026-0442_confirmation-and-candidate-lifecycle-program.md
 tags:

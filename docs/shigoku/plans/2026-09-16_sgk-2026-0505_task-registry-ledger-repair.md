@@ -4,7 +4,7 @@ doc_type: plan
 status: active
 parent_task_id: null
 related_docs:
-- docs/shigoku/plans/2026-09-16_sgk-2026-0504_autonomous-detection-wiring.md
+- docs/shigoku/plans/done/2026-09-16_sgk-2026-0504_autonomous-detection-wiring.md
 tags:
 - shigoku
 - registry
