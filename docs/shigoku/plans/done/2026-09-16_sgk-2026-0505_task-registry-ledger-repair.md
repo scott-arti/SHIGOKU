@@ -1,9 +1,11 @@
 ---
 task_id: SGK-2026-0505
 doc_type: plan
-status: active
+status: done
 parent_task_id: null
 related_docs:
+- docs/shigoku/reports/2026-09-16_sgk-2026-0505_task-registry-ledger-repair_work_report.md
+- docs/shigoku/worklogs/2026-09-16_sgk-2026-0505_task-registry-ledger-repair_work_log.md
 - docs/shigoku/plans/done/2026-09-16_sgk-2026-0504_autonomous-detection-wiring.md
 tags:
 - shigoku

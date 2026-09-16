@@ -6429,12 +6429,15 @@ tasks:
   task_id: SGK-2026-0505
   doc_type: plan
   title: "タスクレジストリ/台帳の整合性修復（誤ネスト是正＋台帳再生成）"
-  primary_doc: docs/shigoku/plans/2026-09-16_sgk-2026-0505_task-registry-ledger-repair.md
-  status: active
+  primary_doc: docs/shigoku/plans/done/2026-09-16_sgk-2026-0505_task-registry-ledger-repair.md
+  status: done
   provisional: false
   task_summary: "task_registry.yaml の allowed_values ブロックが tasks シーケンスを分断し 0465-0503 の39件が status_allowed_values 配下に誤ネスト=validate 対象外(実質未登録)だった破損を修復。allowed_values 2ブロックを全 task の後(EOF)へ relocate し 0465-0503 を tasks 直下へ復帰。validate は allowed_values キーを参照しないため relocate は安全(reader 確認済)。task_ledger.md/.csv は派生物のため create_shigoku_task.py::write_task_ledger() で registry から再生成(手書き追記しない)。潜在データ損失(正規ツール実行時に status_allowed_values 上書きで39件消失)の地雷も除去。破損の真因は正規ツール create_shigoku_task.py を使わず registry EOF へ手動 append したこと(スクリプト自体はバグなし)。"
   parent_task_id: null
   related_docs:
+  - docs/shigoku/plans/done/2026-09-16_sgk-2026-0505_task-registry-ledger-repair.md
+  - docs/shigoku/reports/2026-09-16_sgk-2026-0505_task-registry-ledger-repair_work_report.md
+  - docs/shigoku/worklogs/2026-09-16_sgk-2026-0505_task-registry-ledger-repair_work_log.md
   - docs/shigoku/plans/done/2026-09-16_sgk-2026-0504_autonomous-detection-wiring.md
 doc_type_allowed_values:
 - spec
