@@ -73,7 +73,7 @@ updated_at: '2026-09-17'
 
 | 種類 | 確度 | 高度化 | 高度化に足りないもの（残り課題） |
 |---|---|---|---|
-| SQLインジェクション | ◎ | 高(L3) | フル自律走行で確定まで実証済み。最も成熟。**boolean ブラインド抽出も◎**（SGK-2026-0502・別 vuln_type `blind_sqli`・自己校正オラクル＋実データ抽出・数値文脈/SKF 単一・time-based は別途）。**blind_sqli を自律走行の入口へ配線済（SGK-2026-0506）**＝`hunter_registry` に登録し、sqli 面かつクエリ param があるとき routing 選択→汎用 dispatch で起動。`_effective_target` が対象 URL から mode=query/先頭 param/現在値を**自己適応**（ラボ固有ヒント不使用＝非カーブフィット。明示 mode・クエリ無しは従来の path 挙動を保持）。実対象の自走E2E◎認証・文字列文脈/複数DB抽出は honest boundary で後続（非該当は fail-close） |
+| SQLインジェクション | ◎ | 高(L3) | フル自律走行で確定まで実証済み。最も成熟。**boolean ブラインド抽出も◎**（SGK-2026-0502・別 vuln_type `blind_sqli`・自己校正オラクル＋実データ抽出・数値文脈/SKF 単一・time-based は別途）。**blind_sqli を自律走行へ配線（SGK-2026-0506 機構＋SGK-2026-0507 本流相乗り）**＝`hunter_registry` に登録し `_effective_target` が対象 URL から mode=query/先頭 param/現在値を**自己適応**（ラボ固有ヒント不使用＝非カーブフィット・明示 mode/クエリ無しは path 保持）。**本流発火**は分類器が付ける既存 vuln_type=`sqli` に相乗り（`attach_vuln_types=("sqli",)`・0504 の unknown 経路配線は既定未発火だったため本流へ是正）。実対象の自走E2E◎認証（実 session で dispatch 実測）・文字列文脈/複数DB抽出は honest boundary で後続（非該当は fail-close） |
 | 保存型XSS | ◎ | 中〜高 | 実ブラウザ実行＋パイプライン有。多対象横断の網羅は限定 |
 | 反射/DOM型XSS | ◎ | 中〜高 | 実ブラウザ発火＋nonce＋実 poc_judge。対象は主に Juice Shop |
 | コマンドインジェクション | ◎ | 中(L2) | 実 DVWA in-band・poc_judge 7/8。POST フォーム形態中心 |
@@ -91,7 +91,7 @@ updated_at: '2026-09-17'
 | 安全でないデシリアライズ | ◎ | 中(L2) | 今セッション新設。OOB 基盤横展開で Python pickle(SGK-2026-0496)＋Java SnakeYAML(SGK-2026-0498) のデシリアライズ(RCE級)を◎。SnakeYAML は ScriptEngineManager ガジェット・path モード注入。ネイティブ Java シリアライズ(ysoserial系)/JNDI・in-band 確認・DNS-only OOB は別途。PHP unserialize はラボ無し・POP アプリ固有で実装不可(据え置き) |
 | プロトタイプ汚染 | ◎ | 低(L1) | 今セッション新設。Node.js サーバサイド PP を in-band 差分で◎。lodash.merge sink・SKF 単一・クライアント側 PP は別途 |
 | HTTP リクエストスマグリング | ◎ | 低(L1) | 今セッション新設。CL.TE desync をトークン相関のクロスリクエスト汚染で◎（自前制御対象＝既製ラボ無し）。CL.TE 1形態・http のみ・TE.CL/タイミング/TLS/実標的・統合は別途 |
-| NoSQLインジェクション | ◎ | 低〜中 | crAPI 単一・JSON 演算子1形態。**自律走行の入口へ配線済（pilot・SGK-2026-0504）**＝`InjectionManagerAgent` の3点継ぎ目（登録・routing・dispatch）をレジストリ駆動に一般化し `nosql` を登録→`api_json_surface` 仮説で選択→汎用 `_run_registered_hunter` で起動（単体テストで実証・旧9種は挙動不変）。第2対象検証・実 crAPI 自走E2E◎認証・第2 dispatch(`vuln_type`経路)は後続 |
+| NoSQLインジェクション | ◎ | 低〜中 | crAPI 単一・JSON 演算子1形態。**自律走行へ配線（pilot・SGK-2026-0504 機構＋SGK-2026-0507 本流相乗り）**＝`InjectionManagerAgent` の3点継ぎ目をレジストリ駆動に一般化し `nosql` を登録・汎用 `_run_registered_hunter` で起動（旧9種は挙動不変）。**本流発火**は分類器が付ける既存 vuln_type=`api`（JSON API 面）に相乗り（`attach_vuln_types=("api",)`・0504 の unknown 経路配線は既定未発火だったため本流へ是正）。第2対象検証・実 crAPI 自走E2E◎認証（実 session で dispatch 実測）は後続 |
 | LDAPインジェクション | ◎ | 中(L2) | 今セッション新設。認証バイパスの in-band 差分（リテラル失敗×メタ文字成功）・成功印自動導出・マーカー中心スニペット。SKF 単一・フォーム認証のみ・ブラインド（真偽/時間）/属性開示/GET・JSON 注入点は別途 |
 | Mass Assignment | ◎ | 低(L1) | 今セッション新設。Juice Shop 単一・登録 role 昇格1形態・未統合（第2対象/更新系検証も未） |
 | Race Condition | ◎ | 低(L1) | 今セッション新設。SKF ラボ単一・逐次/並列差分1形態・未統合（実運用アプリ対象は別途） |

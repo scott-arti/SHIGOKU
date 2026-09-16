@@ -38,6 +38,10 @@ class HunterSpec:
     hypotheses: Tuple[str, ...]
     vuln_name: str
     severity: str
+    # SGK-2026-0507: 本流ディスパッチ（_process_single_url の vuln_type 分岐）で、この既存 vuln_type の
+    # 後に相乗り実行する。検出面が一致する既存 vuln_type を宣言する（例 blind_sqli→"sqli"・nosql→"api"）。
+    # 空なら本流の相乗りをしない（unknown 経路のみ）。
+    attach_vuln_types: Tuple[str, ...] = ()
 
 
 # 新設ハンターの宣言（1エントリ=1配線）。pilot=NoSQL（SGK-2026-0504）。
@@ -49,6 +53,8 @@ NEW_HUNTER_SPECS: Tuple[HunterSpec, ...] = (
         hypotheses=("nosql",),
         vuln_name="NoSQL Injection",
         severity="HIGH",
+        # JSON API 面は分類器で vuln_type="api" になる（SGK-2026-0507・実 session 実測）。
+        attach_vuln_types=("api",),
     ),
     # SGK-2026-0506: boolean ブラインド SQLi。URL 駆動で自己適応（query モード）。
     HunterSpec(
@@ -58,6 +64,8 @@ NEW_HUNTER_SPECS: Tuple[HunterSpec, ...] = (
         hypotheses=("blind_sqli",),
         vuln_name="Blind SQL Injection",
         severity="HIGH",
+        # クエリ param 面は分類器で vuln_type="sqli" になる（SGK-2026-0507・実 session 実測）。
+        attach_vuln_types=("sqli",),
     ),
 )
 

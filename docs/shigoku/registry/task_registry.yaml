@@ -6454,6 +6454,22 @@ tasks:
   - docs/shigoku/worklogs/2026-09-16_sgk-2026-0506_blind-sqli-autonomous-wiring_work_log.md
   - docs/shigoku/plans/done/2026-09-16_sgk-2026-0504_autonomous-detection-wiring.md
   - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+- provisional_id: DOC-0577
+  task_id: SGK-2026-0507
+  doc_type: plan
+  title: "登録ハンターを本流ディスパッチ(vuln_type 経路)へ相乗り配線"
+  primary_doc: docs/shigoku/plans/done/2026-09-16_sgk-2026-0507_registered-hunter-primary-path-wiring.md
+  status: done
+  provisional: false
+  task_summary: "0504/0506 の nosql/blind_sqli 配線先(_run_unknown_hypothesis_scans)は unknown 経路の非既定サブパス(unknown_classification_only=False)にしか無く既定の自律走行で未発火と判明。実 session(session_20260902_014352.json)の vuln_type 割当は cors/crlf/api/xss/sqli/csrf/broken_access_control で nosql/blind_sqli 無し=分類器は JSON API を api、クエリ param を sqli に割当。分類器を改造せず新ハンターを既存 vuln_type 分岐へ相乗り(HunterSpec.attach_vuln_types: blind_sqli→sqli, nosql→api)。_process_single_url の if/elif/else 直後に attach 一致の登録ハンターを追加起動(primary hunter の後・findings 加算)。既存9分岐/分類器/確定バー(凍結)/unknown 経路は無変更。完了の本丸はユーザー実走行の session で nosql/blind_sqli が dispatch されたことの実測(単体E2Eでなく本流の実証)。残り11ハンター相乗りは非カーブフィットで1本ずつ後続。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/done/2026-09-16_sgk-2026-0507_registered-hunter-primary-path-wiring.md
+  - docs/shigoku/reports/2026-09-16_sgk-2026-0507_registered-hunter-primary-path-wiring_work_report.md
+  - docs/shigoku/worklogs/2026-09-16_sgk-2026-0507_registered-hunter-primary-path-wiring_work_log.md
+  - docs/shigoku/plans/done/2026-09-16_sgk-2026-0504_autonomous-detection-wiring.md
+  - docs/shigoku/plans/done/2026-09-16_sgk-2026-0506_blind-sqli-autonomous-wiring.md
+  - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
 doc_type_allowed_values:
 - spec
 - roadmap

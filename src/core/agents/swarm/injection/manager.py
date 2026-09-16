@@ -4800,6 +4800,23 @@ class InjectionManagerAgent(BaseManagerAgent):
                             findings_count = 1
                             findings_list = [idor_candidate]
 
+            # SGK-2026-0507: 本流 vuln_type に相乗り宣言した登録ハンターを追加実行する（分類器は
+            # 改造せず、既存分岐の後に attach_vuln_types が一致する登録ハンターを走らせて本流で発火させる）。
+            for _spec in NEW_HUNTER_SPECS:
+                if vuln_type in _spec.attach_vuln_types and _spec.key in self.specialists:
+                    self._mark_attempt_trace(trace_context, f"attached:{_spec.key}:start")
+                    _attached = await self._run_registered_hunter(
+                        _spec.key, url=url, params=base_params, quick_mode=quick_mode
+                    )
+                    _extra = int(_attached.get("findings_count", 0) or 0)
+                    if _extra > 0:
+                        findings_count += _extra
+                        findings_list = self.current_context["findings"][-findings_count:]
+                        tested_params = sanitize_tested_params(
+                            tested_params + (_attached.get("tested_params", []) or []),
+                            excluded_params=self.EXCLUDED_TESTED_PARAMS,
+                        )
+
             normalize_findings_additional_info(findings_list, tested_params, detection_mode, excluded_params=self.EXCLUDED_TESTED_PARAMS)
 
             # キャッシュに結果を保存
