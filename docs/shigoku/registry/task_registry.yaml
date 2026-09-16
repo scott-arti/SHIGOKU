@@ -1,5 +1,5 @@
 version: 1
-updated_at: '2026-08-05'
+updated_at: '2026-09-16'
 namespace: SGK
 id_rules:
   core: SGK-YYYY-NNNN
@@ -5822,20 +5822,19 @@ tasks:
   - docs/shigoku/plans/done/2026-08-30_sgk-2026-0462_canonical-save-endpoints-wiring.md
   - docs/shigoku/reports/2026-09-01_sgk-2026-0464_candidate-xss-dedup-url-normalization_work_report.md
   - docs/shigoku/worklogs/2026-09-01_sgk-2026-0464_candidate-xss-dedup-url-normalization_work_log.md
-doc_type_allowed_values:
-- spec
-- roadmap
-- plan
-- subtask_plan
-- work_report
-- work_log
-- manual
-status_allowed_values:
-- backlog
-- active
-- done
-- deferred
-- archived
+- provisional_id: DOC-0574
+  task_id: SGK-2026-0504
+  doc_type: plan
+  title: "自律走行への検出エンジン統合（フェーズB）: 棚卸し確定＋配線土台の一般化"
+  primary_doc: docs/shigoku/plans/2026-09-16_sgk-2026-0504_autonomous-detection-wiring.md
+  status: active
+  provisional: false
+  task_summary: "フェーズB(自律走行統合)の土台タスク。棚卸し(読み取り専用)で、直近◎化した新設15ハンター(blind_sqli/request_smuggling/blind_ssrf/blind_deser/prototype_pollution/blind_xxe/nosql/ldap_injection/xxe/mass_assignment/race_condition/host_header/cache_poisoning/subdomain_takeover/jwt_forgery)が単体E2Eのみで自律走行の入口に未配線と確定(全クラスの instantiate 箇所を grep し自モジュール以外に無し・finding.py参照はコメント)。自走入口はInjectionManagerAgent(swarm/injection/manager.py・master_conductorから起動)の3点継ぎ目=①self.specialists登録(manager.py:569-637)②signal→hypothesis→specialist選択(manager_internal/unknown_hypotheses.py+specialist_router.py)③dispatch分岐(manager.py:718-754)で、いずれも旧9種(sqli/xss/lfi/cmd_ssrf/ssrf/ssti/cors/crlf/graphql)のみ。下流ゲート(sealed_reproduction_checker/payout_grade _MARKER_CATEGORIES)は配線済=欠けは入口だけ。本タスクは3点継ぎ目をレジストリ駆動に一般化(新vulnクラスをデータ追加で載せられる形・既存9種は挙動不変の回帰ガード)し、pilotとしてin-band受信器不要で既に◎のsmart_nosqlを1本新機構で登録→api_json_surface signalで選択→dispatch起動が通ることをテストで実証。凍結5ファイル無改変。NOT in scope: 残り14ハンター個別配線/OOB受信器(HTTP・DNS)の自走統合/pilot nosqlの実crAPI自走E2E◎認証/速度・トークン失効(0469/0470)。"
+  parent_task_id: SGK-2026-0442
+  related_docs:
+  - docs/shigoku/plans/2026-09-16_sgk-2026-0504_autonomous-detection-wiring.md
+  - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+  - docs/shigoku/roadmaps/2026-08-12_sgk-2026-0442_confirmation-and-candidate-lifecycle-program.md
 - provisional_id: DOC-0534
   task_id: SGK-2026-0465
   doc_type: spec
@@ -6424,3 +6423,28 @@ status_allowed_values:
   - docs/shigoku/worklogs/2026-09-13_sgk-2026-0487_nosql-injection-confirmation_work_log.md
   - docs/shigoku/plans/done/2026-09-13_sgk-2026-0486_xxe-confirmation.md
   - docs/shigoku/specs/2026-09-01_sgk-2026-0465_detection-capability-map.md
+- provisional_id: DOC-0575
+  task_id: SGK-2026-0505
+  doc_type: plan
+  title: "タスクレジストリ/台帳の整合性修復（誤ネスト是正＋台帳再生成）"
+  primary_doc: docs/shigoku/plans/2026-09-16_sgk-2026-0505_task-registry-ledger-repair.md
+  status: active
+  provisional: false
+  task_summary: "task_registry.yaml の allowed_values ブロックが tasks シーケンスを分断し 0465-0503 の39件が status_allowed_values 配下に誤ネスト=validate 対象外(実質未登録)だった破損を修復。allowed_values 2ブロックを全 task の後(EOF)へ relocate し 0465-0503 を tasks 直下へ復帰。validate は allowed_values キーを参照しないため relocate は安全(reader 確認済)。task_ledger.md/.csv は派生物のため create_shigoku_task.py::write_task_ledger() で registry から再生成(手書き追記しない)。潜在データ損失(正規ツール実行時に status_allowed_values 上書きで39件消失)の地雷も除去。破損の真因は正規ツール create_shigoku_task.py を使わず registry EOF へ手動 append したこと(スクリプト自体はバグなし)。"
+  parent_task_id: null
+  related_docs:
+  - docs/shigoku/plans/2026-09-16_sgk-2026-0504_autonomous-detection-wiring.md
+doc_type_allowed_values:
+- spec
+- roadmap
+- plan
+- subtask_plan
+- work_report
+- work_log
+- manual
+status_allowed_values:
+- backlog
+- active
+- done
+- deferred
+- archived
