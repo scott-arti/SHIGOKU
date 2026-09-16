@@ -40,7 +40,7 @@ class HunterSpec:
     severity: str
 
 
-# 新設ハンターの宣言（1エントリ=1配線）。まずは pilot として NoSQL を載せる。
+# 新設ハンターの宣言（1エントリ=1配線）。pilot=NoSQL（SGK-2026-0504）。
 NEW_HUNTER_SPECS: Tuple[HunterSpec, ...] = (
     HunterSpec(
         key="nosql",
@@ -48,6 +48,15 @@ NEW_HUNTER_SPECS: Tuple[HunterSpec, ...] = (
         class_name="SmartNoSQLHunter",
         hypotheses=("nosql",),
         vuln_name="NoSQL Injection",
+        severity="HIGH",
+    ),
+    # SGK-2026-0506: boolean ブラインド SQLi。URL 駆動で自己適応（query モード）。
+    HunterSpec(
+        key="blind_sqli",
+        module="src.core.agents.swarm.injection.smart_blind_sqli",
+        class_name="SmartBlindSQLiHunter",
+        hypotheses=("blind_sqli",),
+        vuln_name="Blind SQL Injection",
         severity="HIGH",
     ),
 )

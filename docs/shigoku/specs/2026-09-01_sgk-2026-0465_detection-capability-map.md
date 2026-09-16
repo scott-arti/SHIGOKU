@@ -11,7 +11,7 @@ related_docs:
 - docs/shigoku/plans/done/2026-09-03_sgk-2026-0469_authenticated-scan-token-refresh.md
 - docs/shigoku/plans/2026-09-03_sgk-2026-0470_llm-in-loop-latency-reduction.md
 created_at: '2026-09-01'
-updated_at: '2026-09-16'
+updated_at: '2026-09-17'
 ---
 
 # SHIGOKU 検出能力マップ（脆弱性の種類 × 対応状況）
@@ -73,7 +73,7 @@ updated_at: '2026-09-16'
 
 | 種類 | 確度 | 高度化 | 高度化に足りないもの（残り課題） |
 |---|---|---|---|
-| SQLインジェクション | ◎ | 高(L3) | フル自律走行で確定まで実証済み。最も成熟。**boolean ブラインド抽出も◎**（SGK-2026-0502・別 vuln_type `blind_sqli`・自己校正オラクル＋実データ抽出・数値文脈/SKF 単一・time-based は別途） |
+| SQLインジェクション | ◎ | 高(L3) | フル自律走行で確定まで実証済み。最も成熟。**boolean ブラインド抽出も◎**（SGK-2026-0502・別 vuln_type `blind_sqli`・自己校正オラクル＋実データ抽出・数値文脈/SKF 単一・time-based は別途）。**blind_sqli を自律走行の入口へ配線済（SGK-2026-0506）**＝`hunter_registry` に登録し、sqli 面かつクエリ param があるとき routing 選択→汎用 dispatch で起動。`_effective_target` が対象 URL から mode=query/先頭 param/現在値を**自己適応**（ラボ固有ヒント不使用＝非カーブフィット。明示 mode・クエリ無しは従来の path 挙動を保持）。実対象の自走E2E◎認証・文字列文脈/複数DB抽出は honest boundary で後続（非該当は fail-close） |
 | 保存型XSS | ◎ | 中〜高 | 実ブラウザ実行＋パイプライン有。多対象横断の網羅は限定 |
 | 反射/DOM型XSS | ◎ | 中〜高 | 実ブラウザ発火＋nonce＋実 poc_judge。対象は主に Juice Shop |
 | コマンドインジェクション | ◎ | 中(L2) | 実 DVWA in-band・poc_judge 7/8。POST フォーム形態中心 |

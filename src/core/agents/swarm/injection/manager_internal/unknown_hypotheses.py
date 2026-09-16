@@ -97,6 +97,12 @@ def build_unknown_hypotheses(
         hypotheses.append("sqli")
         signals.append("sqli_signal")
 
+    # SGK-2026-0506: sqli 面かつクエリ param があれば boolean ブラインドも併走させる
+    # （error-based が拾わない真偽差分を追加カバー。blind_sqli は URL 駆動でクエリ param に自己適応）。
+    if query_keys and "sqli" in hypotheses:
+        hypotheses.append("blind_sqli")
+        signals.append("blind_sqli_signal")
+
     if any(k in path for k in ["search", "comment", "feedback", "profile", "message", "chat"]) or (all_param_keys & xss_keys) or bool(form_fields):
         hypotheses.append("xss")
         signals.append("xss_signal")
