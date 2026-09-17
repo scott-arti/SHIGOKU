@@ -104,11 +104,26 @@ updated_at: '2026-09-17'
 **方針（現時点）**: まず**検出の幅を広げる**ことを優先し、低(L1)の項目が併存してよい。高度化（複数対象検証・
 形態拡張・パイプライン統合・OOB 基盤）は幅を広げた後にまとめて引き上げる。
 
-**フェーズB（自律走行への統合）進行中**: 新設15ハンターは単体E2E◎だが自律走行の入口（`InjectionManagerAgent`
-の登録・routing・dispatch の3点継ぎ目）に未配線だった（棚卸し済・SGK-2026-0504）。この3点継ぎ目を
-**レジストリ駆動に一般化**（`manager_internal/hunter_registry.py` に1エントリ足すだけで登録・routing・
-汎用 dispatch に載る）し、pilot として `nosql` を配線済（旧9種は挙動不変）。残り14ハンターの配線・
-第2 dispatch(`vuln_type`経路)・OOB 受信器の自走統合・各実対象の自走E2E◎認証は後続タスクで1本ずつ。
+**フェーズB（自律走行への統合）— 第1段（1行 attach で自走化できる枠）は完了・区切り（2026-09-17）**:
+自律走行の入口を **レジストリ駆動に一般化**（SGK-2026-0504・`manager_internal/hunter_registry.py` に
+`HunterSpec` を1エントリ＋既存 vuln_type への `attach_vuln_types` を宣言するだけで、登録・routing・本流
+`_process_single_url` の相乗り dispatch に載る）。旧9種は挙動不変。
+
+- **自走で実発火する検出クラス**: 旧9種（sqli/xss/lfi/cmd_ssrf/ssrf/ssti/cors/crlf/graphql）＋
+  **`nosql`（SGK-2026-0504/0507・`api` 面相乗り・実 vulntest 走行で dispatch ×4 実測）**＋
+  **`blind_sqli`（SGK-2026-0506/0507・`sqli` 面相乗り・URL 駆動で query 自己適応）**。
+- **境界の事実（重要・非カーブフィット）**: 「`HunterSpec` を1行足すだけで自走」できるのは、対象 URL と
+  実応答**だけ**から自己適応できるハンター（nosql/blind_sqli）に限られる。残りの◎ハンターは大半が
+  **狙い撃ち confirmer**で、実行に外部入力が要る（例: `mass_assignment`=登録リクエストボディ／
+  `ldap`=login フォーム面＋フィールド名／`host_header`=制限署名／`xxe`=XML ボディ／
+  `prototype_pollution`/`race`/`cache`=多段シナリオ）。これらを 1行 attach しても入力欠落で
+  fail-close＝dormant になる。**ヒントをコードに埋めれば curve-fit**なので、それはしない。
+- **未達（＝次フェーズの別プロジェクト）**:
+  1. **入力 enrichment 層**: recon 由来の request body/フォーム/フィールド/認証文脈を confirmer へ
+     供給する共通経路（1投資で mass_assignment/ldap/xxe 等が同時に自走化・非カーブフィット）。
+  2. **OOB 受信器の自走統合**: blind_ssrf/deser/xxe（RCE 級）を自律走行で発火させる受信器ライフサイクル。
+  3. **LDAP は login フォームが自律走行で auth へ供給されない**ため保留（recon タグ付け enrichment が前提）。
+  4. 各自走ハンターの実対象フル自走E2E◎認証（速度/トークン失効は SGK-2026-0469/0470）。
 
 ## SHIGOKU に武器がないギャップ（Juice Shop にはある）
 
